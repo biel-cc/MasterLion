@@ -26,7 +26,10 @@ hidden.
 Before deploying the test rollout:
 
 1. Copy `overlays/test/secret.env.example` to the ignored `secret.env` and set the three dedicated
-   QStash values. Never commit populated secrets or reuse production signing keys.
+   QStash values. To obtain a temporary ACK kubeconfig through Alibaba Cloud CLI, use
+   `scripts/operations/deployAckTestWithAliyunCli.sh`; see
+   `docs/operations/ack-test-aliyun-cli.md`. Never commit populated secrets or reuse production
+   signing keys.
 2. Confirm the application database migrations have completed, including
    `0117_use_halfvec_for_user_memory_embeddings`, and the user-memory tables, 2048-dimension
    `halfvec` columns, pgvector, and ParadeDB indexes exist.
