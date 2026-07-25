@@ -2444,6 +2444,15 @@
   {
     "children": {
       "fixes": [
+        "stabilize Aihub i18n translation requests."
+      ]
+    },
+    "date": "2026-07-25",
+    "version": "1.0.11"
+  },
+  {
+    "children": {
+      "fixes": [
         "improve i18n retry resilience."
       ]
     },

@@ -2,6 +2,31 @@
 
 # Changelog
 
+### [Version 1.0.11](https://github.com/chaaak6/Masterino/compare/v1.0.10...v1.0.11)
+
+<sup>Released on **2026-07-25**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: stabilize Aihub i18n translation requests.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: stabilize Aihub i18n translation requests, closes [#52](https://github.com/chaaak6/Masterino/issues/52) ([2c2ded9](https://github.com/chaaak6/Masterino/commit/2c2ded9))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.0.10](https://github.com/chaaak6/Masterino/compare/v1.0.9...v1.0.10)
 
 <sup>Released on **2026-07-24**</sup>
