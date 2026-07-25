@@ -26,6 +26,7 @@ module.exports = defineConfig({
     'fa-IR',
   ],
   temperature: 0,
+  concurrency: 2,
   saveImmediately: true,
   modelName: process.env.I18N_MODEL_NAME || 'gpt-4o',
   experimental: {
