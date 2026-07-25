@@ -11,6 +11,9 @@ ACK_REGION="${ACK_REGION:-cn-shenzhen}"
 ACK_PRIVATE_IP_ADDRESS="${ACK_PRIVATE_IP_ADDRESS:-true}"
 ACK_KUBECONFIG_MINUTES="${ACK_KUBECONFIG_MINUTES:-120}"
 ACK_TEST_ACTION="${ACK_TEST_ACTION:-validate}"
+AIHUB_MANAGED_TOKEN_NAME="${AIHUB_MANAGED_TOKEN_NAME:-masterlion-managed}"
+AIHUB_REQUIRED_CHAT_MODEL="${AIHUB_REQUIRED_CHAT_MODEL:-glm-5.2}"
+AIHUB_REQUIRED_EMBEDDING_MODEL="${AIHUB_REQUIRED_EMBEDDING_MODEL:-text-embedding-3-large}"
 NAMESPACE="masterino-test"
 
 fail() {
@@ -176,6 +179,83 @@ prepare_secret_files() {
   chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE"
 }
 
+check_aihub_authorization() {
+  require_env ACK_TEST_AIHUB_USERNAME
+  require_env AIHUB_MANAGED_TOKEN_NAME
+  require_env AIHUB_REQUIRED_CHAT_MODEL
+  require_env AIHUB_REQUIRED_EMBEDDING_MODEL
+
+  kubectl -n "$NAMESPACE" exec deployment/masterino-aihub-db-bridge -- \
+    node --input-type=module -e '
+      const [
+        username,
+        tokenName,
+        requiredChatModel,
+        requiredEmbeddingModel,
+      ] = process.argv.slice(1);
+      const baseUrl = "http://127.0.0.1:3218";
+      const bridgeToken = process.env.AIHUB_BRIDGE_TOKEN;
+      if (!bridgeToken) throw new Error("AIHUB_BRIDGE_TOKEN is missing in the bridge pod");
+
+      const request = async (path) => {
+        const response = await fetch(`${baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${bridgeToken}` },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body?.success !== true) {
+          throw new Error(`Aihub bridge request failed (${response.status})`);
+        }
+        return body.data;
+      };
+
+      const user = await request(
+        `/v1/users/resolve?username=${encodeURIComponent(username)}`,
+      );
+      const tokens = await request(
+        `/v1/users/${user.id}/managed-tokens?name=${encodeURIComponent(tokenName)}`,
+      );
+      const exactToken = Array.isArray(tokens)
+        ? tokens.find((token) => token.name === tokenName)
+        : undefined;
+      if (!exactToken) {
+        throw new Error(`Aihub token "${tokenName}" was not found for the test user`);
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      if (Number(exactToken.status) !== 1) {
+        throw new Error(`Aihub token "${tokenName}" is disabled`);
+      }
+      if (Number(exactToken.expired_time) !== -1 && Number(exactToken.expired_time) <= now) {
+        throw new Error(`Aihub token "${tokenName}" is expired`);
+      }
+      if (!exactToken.unlimited_quota && Number(exactToken.remain_quota) <= 0) {
+        throw new Error(`Aihub token "${tokenName}" has no remaining quota`);
+      }
+
+      const models = await request(
+        `/v1/users/${user.id}/models?tokenName=${encodeURIComponent(tokenName)}`,
+      );
+      const accessibleModels = new Set(Array.isArray(models) ? models : []);
+      const missingModels = [requiredChatModel, requiredEmbeddingModel].filter(
+        (model) => !accessibleModels.has(model),
+      );
+      if (missingModels.length > 0) {
+        throw new Error(
+          `Aihub user group or token "${tokenName}" does not authorize: ${missingModels.join(", ")}`,
+        );
+      }
+
+      console.log(
+        `Aihub authorization check passed for token "${tokenName}": ` +
+          `${requiredChatModel}, ${requiredEmbeddingModel}`,
+      );
+    ' \
+    "$ACK_TEST_AIHUB_USERNAME" \
+    "$AIHUB_MANAGED_TOKEN_NAME" \
+    "$AIHUB_REQUIRED_CHAT_MODEL" \
+    "$AIHUB_REQUIRED_EMBEDDING_MODEL"
+}
+
 require_command bash
 require_command base64
 require_command mktemp
@@ -198,6 +278,9 @@ case "$ACK_TEST_ACTION" in
   preflight)
     bash ./deploy.sh --env test preflight
     ;;
+  aihub-check)
+    check_aihub_authorization
+    ;;
   validate)
     require_digest MASTERLION_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
@@ -218,11 +301,12 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test create-secret "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE"
     bash ./deploy.sh --env test deploy
     bash ./deploy.sh --env test rollout
+    check_aihub_authorization
     ;;
   status)
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, validate, deploy, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, or status"
     ;;
 esac

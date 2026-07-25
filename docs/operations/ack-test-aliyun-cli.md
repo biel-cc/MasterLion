@@ -67,6 +67,18 @@ Read-only identity and cluster capability check:
 ACK_TEST_ACTION=preflight bash scripts/operations/deployAckTestWithAliyunCli.sh
 ```
 
+Read-only Aihub authorization check for a designated test user:
+
+```bash
+export ACK_TEST_ACTION=aihub-check
+export ACK_TEST_AIHUB_USERNAME='<Aihub username>'
+bash scripts/operations/deployAckTestWithAliyunCli.sh
+```
+
+This check requires an exact `masterlion-managed` token. It fails if the Bridge would otherwise
+fall back to a differently named token, if the token is disabled, expired, or out of quota, or if
+the user-group/token intersection does not contain both required models.
+
 Render and validate manifests with immutable image digests:
 
 ```bash
@@ -78,12 +90,14 @@ Deploy the private test staging state:
 ```bash
 export ACK_TEST_ACTION=deploy
 export CONFIRM_ACK_TEST_DEPLOY=masterino-test
+export ACK_TEST_AIHUB_USERNAME='<Aihub username>'
 bash scripts/operations/deployAckTestWithAliyunCli.sh
 ```
 
 The deploy action creates or updates Kubernetes Secrets, applies the migration overlay, and waits
-for PostgreSQL, Redis, and Aihub DB Bridge. Masterino remains at zero replicas with no public
-Ingress until database readiness is separately confirmed. Starting Masterino, private acceptance,
-cutover, and the QStash hourly schedule remain explicit follow-up operations.
+for PostgreSQL, Redis, and Aihub DB Bridge. It then runs the same exact-token authorization gate.
+Masterino remains at zero replicas with no public Ingress until database readiness is separately
+confirmed. Starting Masterino, private acceptance, cutover, and the QStash hourly schedule remain
+explicit follow-up operations.
 
 Do not echo the secret environment or enable shell tracing while running the command.
