@@ -10,6 +10,7 @@ export default {
   'activity.narrative': 'Narrative',
   'activity.notes': 'Notes',
   'analysis.action.button': 'Request memory analysis',
+  'analysis.action.enableFirst': 'Enable Memory in personal settings before requesting analysis.',
   'analysis.modal.cancel': 'Cancel',
   'analysis.modal.helper':
     "By default Masterino will analyze all unprocessed conversations. It's optional to select a date range to analyze.",

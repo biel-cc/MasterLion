@@ -9,6 +9,7 @@
   "activity.narrative": "叙述",
   "activity.notes": "备注",
   "analysis.action.button": "请求记忆分析",
+  "analysis.action.enableFirst": "请先在个人设置中启用记忆功能，再请求记忆分析。",
   "analysis.modal.cancel": "取消",
   "analysis.modal.helper": "默认情况下，小宗狮AI将分析所有未处理的对话。您也可以选择一个日期范围进行分析（可选）。",
   "analysis.modal.rangePlaceholder": "未选择日期范围；将分析所有对话。",
