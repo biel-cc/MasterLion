@@ -86,24 +86,24 @@ describe('SettingsAction', () => {
     it('should include field in diffs when user resets it to default value', async () => {
       const { result } = renderHook(() => useUserStore());
 
-      // First, set memory.enabled to false (non-default value)
-      await act(async () => {
-        await result.current.setSettings({ memory: { enabled: false } });
-      });
-
-      expect(userService.updateUserSettings).toHaveBeenLastCalledWith(
-        expect.objectContaining({ memory: { enabled: false } }),
-        expect.any(AbortSignal),
-      );
-
-      // Then, reset memory.enabled back to true (default value)
-      // This should still include memory in the diffs to override the previously saved value
+      // First, explicitly enable memory (non-default opt-in value)
       await act(async () => {
         await result.current.setSettings({ memory: { enabled: true } });
       });
 
       expect(userService.updateUserSettings).toHaveBeenLastCalledWith(
         expect.objectContaining({ memory: { enabled: true } }),
+        expect.any(AbortSignal),
+      );
+
+      // Then, reset memory.enabled back to false (default value)
+      // This should still include memory in the diffs to override the previously saved value
+      await act(async () => {
+        await result.current.setSettings({ memory: { enabled: false } });
+      });
+
+      expect(userService.updateUserSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ memory: { enabled: false } }),
         expect.any(AbortSignal),
       );
     });
