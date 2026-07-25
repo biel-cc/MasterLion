@@ -75,7 +75,7 @@ jobs:
             sleep "$retry_delay"
           done
         env:
-          I18N_MODEL_NAME: glm-5.2
+          I18N_MODEL_NAME: deepseek-v4-flash
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_PROXY_URL: ${{ secrets.OPENAI_PROXY_URL }}
 
