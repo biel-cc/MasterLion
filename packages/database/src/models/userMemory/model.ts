@@ -44,6 +44,8 @@ import {
   userMemoriesExperiences,
   userMemoriesIdentities,
   userMemoriesPreferences,
+  userPersonaDocumentHistories,
+  userPersonaDocuments,
 } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
@@ -2447,7 +2449,13 @@ export class UserMemoryModel {
   };
 
   deleteAll = async (): Promise<void> => {
-    await this.db.delete(userMemories).where(this.memoryWhere(userMemories));
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(userPersonaDocumentHistories)
+        .where(this.memoryWhere(userPersonaDocumentHistories));
+      await tx.delete(userPersonaDocuments).where(this.memoryWhere(userPersonaDocuments));
+      await tx.delete(userMemories).where(this.memoryWhere(userMemories));
+    });
   };
 
   searchActivities = async (params: {
