@@ -6,8 +6,11 @@ resources:
   - namespace.yaml
   - storageclass.yaml
   - configmap.yaml
+  - memory-worker.yaml
 patches:
   - path: storage-patch.yaml
 replicas:
   - name: masterino
+    count: 1
+  - name: masterino-memory-worker
     count: 1

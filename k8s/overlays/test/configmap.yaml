@@ -26,7 +26,6 @@ data:
   SSRF_ALLOW_PRIVATE_IP_ADDRESS: '1'
   DEFAULT_FILES_CONFIG: 'embedding_model=newapi/text-embedding-3-large,query_mode=full_text'
   CHUNKS_AUTO_EMBEDDING: '1'
-  MEMORY_USER_MEMORY_WEBHOOK_BASE_URL: 'https://mlai-test.bielcrystal.com'
   MEMORY_USER_MEMORY_GATEKEEPER_PROVIDER: 'newapi'
   MEMORY_USER_MEMORY_GATEKEEPER_MODEL: 'glm-5.2'
   MEMORY_USER_MEMORY_LAYER_EXTRACTOR_PROVIDER: 'newapi'

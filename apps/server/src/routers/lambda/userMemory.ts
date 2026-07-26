@@ -25,16 +25,14 @@ import {
   UserMemoryPreferenceModel,
 } from '@/database/models/userMemory';
 import { UserPersonaModel } from '@/database/models/userMemory/persona';
-import { appEnv } from '@/envs/app';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { getServerFeatureFlagsStateFromRuntimeConfig } from '@/server/featureFlags';
-import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
 import {
   buildWorkflowPayloadInput,
-  MemoryExtractionWorkflowService,
   normalizeMemoryExtractionPayload,
 } from '@/server/services/memory/userMemory/extract';
+import { MemoryExtractionQueueService } from '@/server/services/memory/userMemory/queue/service';
 
 const userMemoryProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
@@ -300,15 +298,11 @@ export const userMemoryRouter = router({
         };
       }
 
-      const { webhook, upstashWorkflowExtraHeaders } = parseMemoryExtractionConfig();
-      const baseUrl = webhook.baseUrl || appEnv.INTERNAL_APP_URL || appEnv.APP_URL;
-
       try {
-        const { workflowRunId } = await MemoryExtractionWorkflowService.triggerProcessUsers(
+        const { jobId } = await MemoryExtractionQueueService.triggerProcessUsers(
           buildWorkflowPayloadInput(
             normalizeMemoryExtractionPayload({
               asyncTaskId: taskId,
-              baseUrl,
               forceAll: false,
               forceTopics: false,
               fromDate: input.fromDate,
@@ -319,15 +313,14 @@ export const userMemoryRouter = router({
               userInitiated: true,
             }),
           ),
-          { extraHeaders: upstashWorkflowExtraHeaders },
         );
 
         await ctx.asyncTaskModel.update(taskId, {
           metadata: {
             ...metadata,
             control: {
-              upstash: {
-                workflowRunIds: workflowRunId ? [workflowRunId] : [],
+              queue: {
+                jobIds: jobId ? [jobId] : [],
               },
             },
           } as UserMemoryExtractionMetadata,
@@ -336,14 +329,14 @@ export const userMemoryRouter = router({
         await ctx.asyncTaskModel.update(taskId, {
           error: new AsyncTaskError(
             AsyncTaskErrorType.TaskTriggerError,
-            'Failed to schedule memory extraction workflow',
+            'Failed to schedule memory extraction queue job',
           ),
           status: AsyncTaskStatus.Error,
         });
         throw new TRPCError({
           cause: error,
           code: 'INTERNAL_SERVER_ERROR',
-          message: 'Failed to trigger user memory extraction',
+          message: 'Failed to enqueue user memory extraction',
         });
       }
 

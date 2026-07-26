@@ -48,8 +48,6 @@ import type {
   UserServiceModelConfig,
 } from '@lobechat/types';
 import { RequestTrigger } from '@lobechat/types';
-import { type FlowControl } from '@upstash/qstash';
-import { Client } from '@upstash/workflow';
 import debug from 'debug';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { join } from 'pathe';
@@ -124,21 +122,23 @@ export interface MemoryExtractionHourlyWorkflowPayload {
   baseUrl?: string;
   cursor?: MemoryExtractionWorkflowCursor;
   dryRun?: boolean;
+  queueRunId?: string;
 }
 
 export interface MemoryExtractionNormalizedPayload {
   asyncTaskId?: string;
-  baseUrl: string;
+  baseUrl?: string;
   forceAll: boolean;
   forceTopics: boolean;
   from?: Date;
   identityCursor: number;
   layers: LayersEnum[];
   /**
-   * - `workflow` depends on Upstash Workflows to process the extraction asynchronously.
+   * - `workflow` schedules asynchronous extraction on the internal Redis queue.
    * - `direct` processes the extraction within the webhook request itself.
    */
   mode: 'workflow' | 'direct';
+  queueRunId?: string;
   sourceIds?: string[];
   sources: MemorySourceType[];
   to?: Date;
@@ -160,6 +160,7 @@ export const memoryExtractionPayloadSchema = z.object({
   identityCursor: z.coerce.number().int().nonnegative().optional(),
   layers: z.array(z.nativeEnum(LayersEnum)).optional(),
   mode: z.enum(['workflow', 'direct']).optional(),
+  queueRunId: z.string().min(1).optional(),
   sourceIds: z.array(z.string()).optional(),
   sources: z.array(z.string()).optional(),
   toDate: z.coerce.date().optional(),
@@ -211,7 +212,6 @@ export const normalizeMemoryExtractionPayload = (
 ): MemoryExtractionNormalizedPayload => {
   const parsed = memoryExtractionPayloadSchema.parse(payload);
   const baseUrl = parsed.baseUrl || fallbackBaseUrl;
-  if (!baseUrl) throw new Error('Missing baseUrl for workflow trigger');
 
   return {
     asyncTaskId: parsed.asyncTaskId,
@@ -222,6 +222,7 @@ export const normalizeMemoryExtractionPayload = (
     identityCursor: parsed.identityCursor ?? 0,
     layers: normalizeLayers(parsed.layers),
     mode: parsed.mode ?? 'workflow',
+    queueRunId: parsed.queueRunId,
     sourceIds: Array.from(new Set(parsed.sourceIds || [])).filter(Boolean),
     sources: normalizeSources(parsed.sources),
     to: parsed.toDate,
@@ -260,6 +261,7 @@ export const buildWorkflowPayloadInput = (
   identityCursor: payload.identityCursor,
   layers: payload.layers,
   mode: payload.mode,
+  queueRunId: payload.queueRunId,
   sourceIds: payload.sourceIds,
   sources: payload.sources,
   toDate: payload.to,
@@ -2685,132 +2687,5 @@ export class MemoryExtractionExecutor {
         }
       },
     );
-  }
-}
-
-const WORKFLOW_PATHS = {
-  hourly: '/api/workflows/memory-user-memory/call-cron-hourly-analysis',
-  personaUpdate: '/api/workflows/memory-user-memory/pipelines/persona/update-writing',
-  topicBatch: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-topics',
-  userTopics: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-user-topics',
-  users: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-users',
-} as const;
-
-const getWorkflowUrl = (path: string, baseUrl: string) => {
-  const url = new URL(path, baseUrl);
-
-  return url.toString();
-};
-
-const getWorkflowClient = () => {
-  const token = process.env.QSTASH_TOKEN;
-  if (!token) throw new Error('QSTASH_TOKEN is required to trigger workflows');
-
-  const config: ConstructorParameters<typeof Client>[0] = { token };
-
-  if (process.env.QSTASH_URL) {
-    (config as Record<string, unknown>).url = process.env.QSTASH_URL;
-  }
-
-  return new Client(config);
-};
-
-export class MemoryExtractionWorkflowService {
-  private static client: Client;
-
-  private static getClient() {
-    if (!this.client) {
-      this.client = getWorkflowClient();
-    }
-
-    return this.client;
-  }
-
-  static triggerProcessUsers(
-    payload: MemoryExtractionPayloadInput,
-    options?: { extraHeaders?: Record<string, string> },
-  ) {
-    if (!payload.baseUrl) {
-      throw new Error('Missing baseUrl for workflow trigger');
-    }
-
-    const url = getWorkflowUrl(WORKFLOW_PATHS.users, payload.baseUrl);
-    return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
-  }
-
-  static triggerHourly(
-    payload: MemoryExtractionHourlyWorkflowPayload,
-    options?: { extraHeaders?: Record<string, string> },
-  ) {
-    if (!payload.baseUrl) {
-      throw new Error('Missing baseUrl for workflow trigger');
-    }
-
-    const url = getWorkflowUrl(WORKFLOW_PATHS.hourly, payload.baseUrl);
-    return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
-  }
-
-  static triggerProcessUserTopics(
-    payload: UserTopicWorkflowPayload,
-    options?: { extraHeaders?: Record<string, string> },
-  ) {
-    if (!payload.baseUrl) {
-      throw new Error('Missing baseUrl for workflow trigger');
-    }
-
-    const url = getWorkflowUrl(WORKFLOW_PATHS.userTopics, payload.baseUrl);
-    return this.getClient().trigger({
-      body: payload,
-      headers: options?.extraHeaders,
-      url,
-    });
-  }
-
-  static triggerProcessTopics(
-    userId: string,
-    payload: MemoryExtractionPayloadInput,
-    options?: { extraHeaders?: Record<string, string> },
-  ) {
-    if (!payload.baseUrl) {
-      throw new Error('Missing baseUrl for workflow trigger');
-    }
-
-    const url = getWorkflowUrl(WORKFLOW_PATHS.topicBatch, payload.baseUrl);
-    return this.getClient().trigger({
-      body: payload,
-      flowControl: {
-        key: `memory-user-memory.pipelines.chat-topic.process-topics.user.${userId}`,
-        // NOTICE: if modified the parallelism of
-        // src/server/workflows-hono/memory-user-memory/workflows/processTopics.ts
-        // or added new memory layer, make sure to update the number below.
-        //
-        // Currently, CEPA (context, experience, preference, activity) + identity = 5 layers.
-        // and since identity requires sequential processing, we set parallelism to 5.
-        parallelism: 5,
-      },
-      headers: options?.extraHeaders,
-      url,
-    });
-  }
-
-  static triggerPersonaUpdate(
-    userId: string,
-    baseUrl: string,
-    options?: { extraHeaders?: Record<string, string> },
-  ) {
-    if (!baseUrl) {
-      throw new Error('Missing baseUrl for workflow trigger');
-    }
-
-    const url = getWorkflowUrl(WORKFLOW_PATHS.personaUpdate, baseUrl);
-    return this.getClient().trigger({
-      body: { userIds: [userId] },
-      flowControl: {
-        key: `memory-user-memory.pipelines.persona.update-write.${userId}`,
-        parallelism: 1,
-      } satisfies FlowControl,
-      headers: options?.extraHeaders,
-      url,
-    });
   }
 }

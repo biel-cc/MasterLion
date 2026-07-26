@@ -7,12 +7,12 @@ import {
   buildWorkflowPayloadInput,
   MemoryExtractionExecutor,
   memoryExtractionPayloadSchema,
-  MemoryExtractionWorkflowService,
   normalizeMemoryExtractionPayload,
 } from '@/server/services/memory/userMemory/extract';
+import { MemoryExtractionQueueService } from '@/server/services/memory/userMemory/queue/service';
 
 export const POST = async (req: Request) => {
-  const { webhook, upstashWorkflowExtraHeaders } = parseMemoryExtractionConfig();
+  const { webhook } = parseMemoryExtractionConfig();
 
   if (webhook.headers && Object.keys(webhook.headers).length > 0) {
     for (const [key, value] of Object.entries(webhook.headers)) {
@@ -28,12 +28,7 @@ export const POST = async (req: Request) => {
 
   try {
     const json = await req.json();
-    const origin = new URL(req.url).origin;
-
-    const payload = memoryExtractionPayloadSchema.parse({
-      ...json,
-      baseUrl: json.baseUrl || origin,
-    });
+    const payload = memoryExtractionPayloadSchema.parse(json);
     if (payload.fromDate && payload.toDate && payload.fromDate > payload.toDate) {
       return NextResponse.json(
         { error: '`fromDate` cannot be later than `toDate`' },
@@ -41,7 +36,7 @@ export const POST = async (req: Request) => {
       );
     }
 
-    const params = normalizeMemoryExtractionPayload(payload, origin);
+    const params = normalizeMemoryExtractionPayload(payload);
     if (params.workspaceId) {
       return NextResponse.json(
         { error: 'Memory extraction is only available in personal space' },
@@ -73,13 +68,12 @@ export const POST = async (req: Request) => {
     }
 
     if (enabledParams.mode === 'workflow') {
-      const { workflowRunId } = await MemoryExtractionWorkflowService.triggerProcessUsers(
+      const { jobId } = await MemoryExtractionQueueService.triggerProcessUsers(
         buildWorkflowPayloadInput(enabledParams),
-        { extraHeaders: upstashWorkflowExtraHeaders },
       );
 
       return NextResponse.json(
-        { message: 'Memory extraction scheduled via workflow.', workflowRunId },
+        { jobId, message: 'Memory extraction scheduled on the internal queue.' },
         { status: 202 },
       );
     }

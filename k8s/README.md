@@ -25,11 +25,10 @@ hidden.
 
 Before deploying the test rollout:
 
-1. Copy `overlays/test/secret.env.example` to the ignored `secret.env` and set the three dedicated
-   QStash values. To obtain a temporary ACK kubeconfig through Alibaba Cloud CLI, use
+1. Copy `overlays/test/secret.env.example` to the ignored `secret.env`. No QStash or other
+   external workflow credential is required. To obtain a temporary ACK kubeconfig through Alibaba Cloud CLI, use
    `scripts/operations/deployAckTestWithAliyunCli.sh`; see
-   `docs/operations/ack-test-aliyun-cli.md`. Never commit populated secrets or reuse production
-   signing keys.
+   `docs/operations/ack-test-aliyun-cli.md`. Never commit populated secrets.
 
 2. Confirm the application database migrations have completed, including
    `0117_use_halfvec_for_user_memory_embeddings`, and the user-memory tables, 2048-dimension
@@ -49,18 +48,23 @@ Before deploying the test rollout:
 
    The check rejects Bridge fallback to a differently named token.
 
-4. Verify a manual historical extraction end to end before creating a schedule.
+4. Verify a manual historical extraction end to end while
+   `MEMORY_QUEUE_SCHEDULER_ENABLED=0`.
 
-After manual extraction succeeds, create an hourly Upstash schedule that sends `POST` to:
+Memory extraction runs through the in-cluster `masterino-memory-worker` Deployment using BullMQ
+and the persistent `masterino-redis` StatefulSet. Redis uses AOF and `noeviction`; BullMQ keys are
+isolated under the `${REDIS_PREFIX}:memory-queue` prefix.
 
-```text
-https://mlai-test.bielcrystal.com/api/workflows/memory-user-memory/call-cron-hourly-analysis
-```
+After manual extraction succeeds, change `MEMORY_QUEUE_SCHEDULER_ENABLED` to `1` in
+`overlays/test/memory-worker.yaml`, redeploy the same immutable application image, and verify that
+the worker registers the `memory-user-memory-hourly` scheduler. No public webhook or external
+schedule is involved.
 
-Monitor workflow retries, application errors, Aihub requests, and quota usage. Disabling Memory
+Monitor queue retries, failed jobs, worker restarts, application errors, Aihub requests, and quota
+usage. Disabling Memory
 stops recall and new extraction but does not delete saved data; users can delete individual items
-or clear all memory. A future production rollout must use the production domain, independent
-QStash credentials, and an explicit production `+memory` flag.
+or clear all memory. A future production rollout must add its own worker Deployment and an explicit
+production `+memory` flag; production remains disabled in this change.
 
 Application image tags in the base are render-time markers. `deploy.sh` requires immutable
 `sha256:` digests and replaces the markers in memory before applying resources.

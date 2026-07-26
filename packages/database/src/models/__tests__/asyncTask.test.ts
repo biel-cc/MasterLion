@@ -548,6 +548,38 @@ describe('initUserMemoryExtractionMetadata', () => {
     expect(result.control?.upstash).toEqual({ workflowRunIds: [] });
   });
 
+  it('should preserve internal memory queue job ids', () => {
+    const result = initUserMemoryExtractionMetadata({
+      control: {
+        queue: {
+          jobIds: ['job-1', 'job-2'],
+        },
+      },
+      progress: {
+        completedTopics: 0,
+        totalTopics: 2,
+      },
+      source: 'chat_topic',
+    });
+
+    expect(result.control?.queue).toEqual({ jobIds: ['job-1', 'job-2'] });
+  });
+
+  it('should default queue job ids to an empty array when missing', () => {
+    const result = initUserMemoryExtractionMetadata({
+      control: {
+        queue: {},
+      },
+      progress: {
+        completedTopics: 0,
+        totalTopics: null,
+      },
+      source: 'chat_topic',
+    });
+
+    expect(result.control?.queue).toEqual({ jobIds: [] });
+  });
+
   it('should leave upstash undefined when control has no upstash field', () => {
     const result = initUserMemoryExtractionMetadata({
       control: {

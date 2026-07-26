@@ -47,14 +47,14 @@ describe('normalizeMemoryExtractionPayload', () => {
     expect(normalized.userIds).toEqual(['user-a', 'user-b']);
   });
 
-  it('throws when baseUrl is missing in both payload and fallback', () => {
+  it('allows internal queue payloads without a webhook base URL', () => {
     const payload: MemoryExtractionPayloadInput = {
       forceAll: false,
       forceTopics: false,
       userIds: [],
     };
 
-    expect(() => normalizeMemoryExtractionPayload(payload)).toThrow('Missing baseUrl');
+    expect(normalizeMemoryExtractionPayload(payload).baseUrl).toBeUndefined();
   });
 });
 
@@ -67,6 +67,7 @@ describe('buildWorkflowPayloadInput', () => {
     identityCursor: 0,
     layers: [],
     mode: 'workflow',
+    queueRunId: 'run-1',
     sourceIds: [],
     sources: [MemorySourceType.ChatTopic],
     to: undefined,
@@ -84,6 +85,7 @@ describe('buildWorkflowPayloadInput', () => {
     expect(payload.userIds).toEqual(['user-x', 'user-y']);
     expect(payload.baseUrl).toBe('https://api.example.com');
     expect(payload.mode).toBe('workflow');
+    expect(payload.queueRunId).toBe('run-1');
   });
 
   it('preserves explicit userId when provided', () => {

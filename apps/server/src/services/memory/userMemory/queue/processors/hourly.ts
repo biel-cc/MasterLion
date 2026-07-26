@@ -1,34 +1,24 @@
 import { MemorySourceType } from '@lobechat/types';
-import { type WorkflowContext } from '@upstash/workflow';
 import { chunk } from 'es-toolkit/compat';
 
-import { appEnv } from '@/envs/app';
 import { getServerFeatureFlagsStateFromRuntimeConfig } from '@/server/featureFlags';
-import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
+
 import {
   buildWorkflowPayloadInput,
   MemoryExtractionExecutor,
   type MemoryExtractionHourlyWorkflowPayload,
-  MemoryExtractionWorkflowService,
   normalizeMemoryExtractionPayload,
-} from '@/server/services/memory/userMemory/extract';
+} from '../../extract';
+import { type MemoryQueueContext } from '../context';
+import { MemoryExtractionQueueService } from '../service';
 
 const USER_PAGE_SIZE = 200;
 const USER_BATCH_SIZE = 20;
 
-const { webhook, upstashWorkflowExtraHeaders } = parseMemoryExtractionConfig();
-
-const resolveBaseUrl = () => webhook.baseUrl || appEnv.INTERNAL_APP_URL || appEnv.APP_URL;
-
 export const hourlyWorkflowHandler = async (
-  context: WorkflowContext<MemoryExtractionHourlyWorkflowPayload>,
+  context: MemoryQueueContext<MemoryExtractionHourlyWorkflowPayload>,
 ) => {
   const { cursor, dryRun } = context.requestPayload || {};
-
-  const baseUrl = resolveBaseUrl();
-  if (!baseUrl) {
-    throw new Error('Missing baseUrl for hourly memory extraction workflow');
-  }
 
   const parsedCursor = cursor
     ? { createdAt: new Date(cursor.createdAt), id: cursor.id }
@@ -68,10 +58,11 @@ export const hourlyWorkflowHandler = async (
   if (userIds.length === 0) {
     if (nextCursor) {
       await context.run('memory:user-memory:hourly:schedule-next-page', () =>
-        MemoryExtractionWorkflowService.triggerHourly(
-          { baseUrl, cursor: nextCursor, dryRun },
-          { extraHeaders: upstashWorkflowExtraHeaders },
-        ),
+        MemoryExtractionQueueService.triggerHourly({
+          cursor: nextCursor,
+          dryRun,
+          queueRunId: context.requestPayload.queueRunId,
+        }),
       );
     }
 
@@ -87,16 +78,15 @@ export const hourlyWorkflowHandler = async (
     await Promise.all(
       batches.map((batchUserIds, index) =>
         context.run(`memory:user-memory:hourly:trigger-users:${index}`, () =>
-          MemoryExtractionWorkflowService.triggerProcessUsers(
+          MemoryExtractionQueueService.triggerProcessUsers(
             buildWorkflowPayloadInput(
               normalizeMemoryExtractionPayload({
-                baseUrl,
                 mode: 'workflow',
+                queueRunId: context.requestPayload.queueRunId,
                 sources: [MemorySourceType.ChatTopic],
                 userIds: batchUserIds,
               }),
             ),
-            { extraHeaders: upstashWorkflowExtraHeaders },
           ),
         ),
       ),
@@ -105,14 +95,11 @@ export const hourlyWorkflowHandler = async (
 
   if (nextCursor) {
     await context.run('memory:user-memory:hourly:schedule-next-page', () =>
-      MemoryExtractionWorkflowService.triggerHourly(
-        {
-          baseUrl,
-          cursor: nextCursor,
-          dryRun,
-        },
-        { extraHeaders: upstashWorkflowExtraHeaders },
-      ),
+      MemoryExtractionQueueService.triggerHourly({
+        cursor: nextCursor,
+        dryRun,
+        queueRunId: context.requestPayload.queueRunId,
+      }),
     );
   }
 
@@ -122,12 +109,4 @@ export const hourlyWorkflowHandler = async (
     processedUsers: userIds.length,
     scheduledBatches: dryRun ? 0 : chunk(userIds, USER_BATCH_SIZE).length,
   };
-};
-
-export const hourlyWorkflowOptions = {
-  flowControl: {
-    key: 'memory-user-memory.call-cron-hourly-analysis',
-    parallelism: 1,
-    ratePerSecond: 1,
-  },
 };

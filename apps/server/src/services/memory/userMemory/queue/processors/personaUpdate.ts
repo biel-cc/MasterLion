@@ -1,4 +1,3 @@
-import { type WorkflowContext } from '@upstash/workflow';
 import { z } from 'zod';
 
 import { getServerDB } from '@/database/server';
@@ -8,11 +7,16 @@ import {
   UserPersonaService,
 } from '@/server/services/memory/userMemory/persona/service';
 
+import { type MemoryQueueContext } from '../context';
+import { type MemoryPersonaQueuePayload } from '../types';
+
 const workflowPayloadSchema = z.object({
   userIds: z.array(z.string()).optional(),
 });
 
-export const personaUpdateHandler = async (context: WorkflowContext) => {
+export const personaUpdateHandler = async (
+  context: MemoryQueueContext<MemoryPersonaQueuePayload>,
+) => {
   const payload = await context.run('memory:pipelines:persona:update-writing:parse-payload', () =>
     workflowPayloadSchema.parse(context.requestPayload || {}),
   );

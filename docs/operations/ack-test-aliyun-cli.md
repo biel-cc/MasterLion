@@ -47,8 +47,9 @@ Platform-issued values:
 
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`: dedicated test OSS RAM credential.
 - `AIHUB_READONLY_DATABASE_URL`: read-only Aihub database account, available only to the bridge.
-- `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY`: dedicated test
-  Upstash QStash credentials.
+
+Personal-memory background work uses the in-cluster Redis and
+`masterino-memory-worker`; it does not require QStash or another external workflow secret.
 
 Non-secret deployment inputs:
 
@@ -97,7 +98,8 @@ bash scripts/operations/deployAckTestWithAliyunCli.sh
 The deploy action creates or updates Kubernetes Secrets, applies the migration overlay, and waits
 for PostgreSQL, Redis, and Aihub DB Bridge. It then runs the same exact-token authorization gate.
 Masterino remains at zero replicas with no public Ingress until database readiness is separately
-confirmed. Starting Masterino, private acceptance, cutover, and the QStash hourly schedule remain
-explicit follow-up operations.
+confirmed. Starting Masterino and its memory worker, private acceptance, cutover, and enabling the
+internal hourly BullMQ scheduler remain explicit follow-up operations. The scheduler flag stays
+off for the first manual extraction acceptance.
 
 Do not echo the secret environment or enable shell tracing while running the command.
