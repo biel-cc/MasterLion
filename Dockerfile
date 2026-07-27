@@ -68,7 +68,6 @@ COPY --from=workspace-manifests /manifests/ ./
 # 【新增】corepack-cache 挂载：避免每次构建重新下载 pnpm 本体。
 RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
     --mount=type=cache,id=masterino-pnpm-store,target=/pnpm/store,sharing=locked \
-    --mount=type=cache,id=masterino-corepack-cache,target=/root/.cache/node/corepack,sharing=locked \
     set -e && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         export SENTRYCLI_CDNURL="https://npmmirror.com/mirrors/sentry-cli"; \
@@ -76,9 +75,8 @@ RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
         echo 'canvas_binary_host_mirror=https://npmmirror.com/mirrors/canvas' >> .npmrc; \
         export FFMPEG_BINARIES_URL="https://npmmirror.com/mirrors/ffmpeg-static"; \
     fi && \
-    export COREPACK_NPM_REGISTRY="$(npm config get registry | sed 's/\/$//')" && \
-    corepack enable && \
-    corepack prepare "$(node -p 'require("./package.json").packageManager')" --activate && \
+    PNPM_VERSION="$(node -p 'require("./package.json").packageManager.match(/^pnpm@([^+]+)/)[1]')" && \
+    npm install --global "pnpm@${PNPM_VERSION}" && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         pnpm config set registry "https://registry.npmmirror.com/"; \
     fi && \
