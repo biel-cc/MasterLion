@@ -83,7 +83,7 @@ RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
         pnpm config set registry "https://registry.npmmirror.com/"; \
     fi && \
     pnpm config set store-dir /pnpm/store && \
-    pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline && \
+    pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline --prod=false && \
     mkdir -p /deps && \
     echo '{"name":"deps","private":true}' > /deps/package.json && \
     pnpm add --dir /deps pg drizzle-orm --prefer-offline
