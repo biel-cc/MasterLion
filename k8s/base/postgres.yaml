@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/paradedb:latest-pg17
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/paradedb@sha256:87b5800365c938825e31d04ccbf0a6902ad58f81962d0e58c0c9b3188e030b81
           ports:
             - containerPort: 5432
               name: postgres

@@ -10,7 +10,7 @@ import { UpdatePlanInspector } from './UpdatePlan';
 import { UpdateTodosInspector } from './UpdateTodos';
 
 /**
- * Lobe Agent Inspector Components Registry
+ * Masterino Agent Inspector Components Registry
  *
  * Inspector components customize the title/header area
  * of tool calls in the conversation UI.

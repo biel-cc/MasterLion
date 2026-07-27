@@ -25,9 +25,12 @@ declare global {
     __SERVER_CONFIG__: SPAServerConfig | undefined;
     lobeEnv?: {
       chromeVersion?: string;
+      cloudServer?: string;
+      cloudServerAliases?: string[];
       darwinMajorVersion?: number;
       electronVersion?: string;
       isMacTahoe?: boolean;
+      marketBaseUrl?: string;
       nodeVersion?: string;
       platform?: NodeJS.Platform;
     };

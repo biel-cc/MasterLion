@@ -35,7 +35,7 @@ const ConsentClient = memo<ClientProps>(({ uid, clientId, scopes, clientMetadata
   const clientDisplayName = clientMetadata?.clientName || clientId;
 
   if (BUILTIN_CLIENTS.has(clientId)) {
-    return <BuiltinConsent uid={clientId} />;
+    return <BuiltinConsent uid={uid} />;
   }
 
   return (

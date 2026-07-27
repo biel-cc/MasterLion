@@ -200,14 +200,14 @@ export default defineFixtures({
             url: 'https://example.com/codex-render',
           },
           {
-            snippet: 'How LobeHub maps builtin tool inspectors, renders, and display controls.',
-            title: 'LobeHub builtin tool render registry',
+            snippet: 'How Masterino maps builtin tool inspectors, renders, and display controls.',
+            title: 'Masterino builtin tool render registry',
             url: 'https://example.com/lobehub-tools',
           },
         ],
       },
       content:
-        'Search results\n\n1. Codex tool render examples - https://example.com/codex-render\n2. LobeHub builtin tool render registry - https://example.com/lobehub-tools',
+        'Search results\n\n1. Codex tool render examples - https://example.com/codex-render\n2. Masterino builtin tool render registry - https://example.com/lobehub-tools',
     }),
   },
 });

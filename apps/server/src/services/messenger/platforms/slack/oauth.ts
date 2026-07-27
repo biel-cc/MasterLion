@@ -21,7 +21,7 @@ import type {
  * Messenger-specific extras kept on top of the per-agent set:
  *   - `im:write` — open a DM with the linker to deliver the account-link
  *     button privately when a slash command is invoked from a public channel
- *   - `users:read.email` — match Slack identity to a LobeHub account during
+ *   - `users:read.email` — match Slack identity to a Masterino account during
  *     the link flow
  *
  * `reactions:write` powers the inline feedback in

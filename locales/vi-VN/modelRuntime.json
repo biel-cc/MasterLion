@@ -1,6 +1,6 @@
 {
   "AccountDeactivated": "Tài khoản của bạn đã bị vô hiệu hóa hoặc tạm ngưng. Điều này có thể do chính sách, lý do bảo mật hoặc xem xét tài khoản. Vui lòng liên hệ với bộ phận hỗ trợ của nhà cung cấp để được trợ giúp.",
-  "AgentRuntimeError": "Lỗi thực thi thời gian chạy của mô hình ngôn ngữ Lobe. Vui lòng khắc phục sự cố hoặc thử lại dựa trên thông tin sau.",
+  "AgentRuntimeError": "Lỗi thực thi thời gian chạy của mô hình ngôn ngữ Masterino. Vui lòng khắc phục sự cố hoặc thử lại dựa trên thông tin sau.",
   "CapabilityNotSupported": "Rất tiếc, mô hình này không hỗ trợ khả năng được yêu cầu (chẳng hạn như đầu vào hình ảnh hoặc gọi công cụ). Vui lòng chuyển sang một mô hình hỗ trợ tính năng này.",
   "ComfyUIBizError": "Đã xảy ra lỗi khi yêu cầu dịch vụ ComfyUI. Vui lòng khắc phục sự cố bằng thông tin dưới đây hoặc thử lại.",
   "ComfyUIEmptyResult": "Không có hình ảnh nào được tạo bởi ComfyUI. Vui lòng kiểm tra cấu hình mô hình hoặc thử lại.",

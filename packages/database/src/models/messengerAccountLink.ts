@@ -2,7 +2,7 @@ import { and, eq, type SQL } from 'drizzle-orm';
 
 import type { MessengerAccountLinkItem, NewMessengerAccountLink } from '../schemas';
 import { messengerAccountLinks } from '../schemas';
-import type { LobeChatDatabase } from '../type';
+import type { MasterinoDatabase } from '../type';
 
 /**
  * Tenant id for global-token platforms (Telegram today, Discord later) —
@@ -13,7 +13,7 @@ const GLOBAL_TENANT_ID = '';
 
 /**
  * Thrown by `upsertForPlatform` when the IM identity is already bound to a
- * different LobeHub user. Callers (e.g. the messenger router) should surface
+ * different Masterino user. Callers (e.g. the messenger router) should surface
  * a friendly 409 — never let the underlying DB unique-index error escape.
  */
 export class MessengerAccountLinkConflictError extends Error {
@@ -21,14 +21,14 @@ export class MessengerAccountLinkConflictError extends Error {
   readonly existingUserId: string;
 
   constructor(existingUserId: string, message?: string) {
-    super(message ?? 'IM identity is already linked to another LobeHub user');
+    super(message ?? 'IM identity is already linked to another Masterino user');
     this.name = 'MessengerAccountLinkConflictError';
     this.existingUserId = existingUserId;
   }
 }
 
 /**
- * Thrown when the same LobeHub user already has a different IM identity bound
+ * Thrown when the same Masterino user already has a different IM identity bound
  * for the requested `(platform, tenant)` scope and must explicitly unlink
  * before switching accounts.
  */
@@ -43,9 +43,9 @@ export class MessengerAccountLinkRelinkRequiredError extends Error {
 
 export class MessengerAccountLinkModel {
   private userId: string;
-  private db: LobeChatDatabase;
+  private db: MasterinoDatabase;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: MasterinoDatabase, userId: string) {
     this.userId = userId;
     this.db = db;
   }
@@ -73,7 +73,7 @@ export class MessengerAccountLinkModel {
    * `(user, platform, tenant)` — so we never let the
    * `messenger_account_links_platform_tenant_user_unique` constraint surface
    * as an opaque DB error when the IM identity is already owned by another
-   * LobeHub user; we throw `MessengerAccountLinkConflictError` instead.
+   * Masterino user; we throw `MessengerAccountLinkConflictError` instead.
    *
    * Returns the resulting link row.
    */
@@ -246,7 +246,7 @@ export class MessengerAccountLinkModel {
    * the multi-tenant router pass the resolved `team_id` / `enterprise_id`.
    */
   static findByPlatformUser = async (
-    db: LobeChatDatabase,
+    db: MasterinoDatabase,
     platform: string,
     platformUserId: string,
     tenantId: string = GLOBAL_TENANT_ID,
@@ -268,7 +268,7 @@ export class MessengerAccountLinkModel {
 
   /** Static setter used by IM `/switch` (no user-scope context, but trusted by sender match). */
   static setActiveAgentById = async (
-    db: LobeChatDatabase,
+    db: MasterinoDatabase,
     linkId: string,
     agentId: string | null,
   ): Promise<MessengerAccountLinkItem | undefined> => {
@@ -283,13 +283,13 @@ export class MessengerAccountLinkModel {
   /**
    * Static scope switch used by IM `/switch`. Moves the link to a new active
    * scope (personal → `null`, or a workspace id) and sets the active agent to
-   * `agentId` — callers pass the scope's default agent (inbox/LobeAI) so
+   * `agentId` — callers pass the scope's default agent (inbox/Masterino) so
    * switching never leaves the session agent-less; pass `null` only when the
    * target scope has no agents. Caller must authorize access to the target
    * scope first.
    */
   static setActiveScope = async (
-    db: LobeChatDatabase,
+    db: MasterinoDatabase,
     linkId: string,
     workspaceId: string | null,
     agentId: string | null = null,

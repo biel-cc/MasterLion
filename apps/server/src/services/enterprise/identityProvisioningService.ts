@@ -380,21 +380,21 @@ export class IdentityProvisioningService {
           // Aihub with the same email). Falling back to this email lets the
           // provisioning lookup match an existing Aihub user instead of creating
           // a duplicate.
-          let masterLionUsername: string | undefined;
-          let masterLionEmail: string | undefined;
+          let masterionUsername: string | undefined;
+          let masterionEmail: string | undefined;
           if (typeof this.db.query?.users?.findFirst === 'function') {
             const userRow = await this.db.query.users.findFirst({
               columns: { email: true, username: true },
               where: eq(users.id, input.userId),
             });
-            masterLionUsername = userRow?.username ?? undefined;
-            masterLionEmail = userRow?.email ?? undefined;
+            masterionUsername = userRow?.username ?? undefined;
+            masterionEmail = userRow?.email ?? undefined;
           }
 
           const provisioningResult = await adapter.provisionEnterpriseUser({
-            email: asTrimmedString(input.email) ?? masterLionEmail,
+            email: asTrimmedString(input.email) ?? masterionEmail,
             employeeNumber: input.employeeNumber,
-            masterLionUsername,
+            masterionUsername,
             name: input.name,
             policy,
             userId: input.userId,

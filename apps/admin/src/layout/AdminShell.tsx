@@ -7,6 +7,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Store,
   Users,
   Workflow,
 } from 'lucide-react';
@@ -56,6 +57,11 @@ const navItems: MenuProps['items'] = [
     icon: <Plug size={18} />,
     key: '/mcp',
     label: <Link to="/mcp">MCP</Link>,
+  },
+  {
+    icon: <Store size={18} />,
+    key: '/market',
+    label: <Link to="/market">内部 Market</Link>,
   },
   {
     icon: <ScrollText size={18} />,

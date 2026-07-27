@@ -1,0 +1,33 @@
+{
+  "name": "@masterlion/market",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/migrate.ts",
+    "runner": "tsx src/runner.ts",
+    "start": "node dist/index.js",
+    "start:runner": "node dist/runner.js",
+    "test": "vitest run --silent='passed-only'",
+    "type-check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "~3.932.0",
+    "@aws-sdk/s3-request-presigner": "~3.932.0",
+    "hono": "^4.11.1",
+    "ioredis": "^5.9.2",
+    "pg": "^8.17.2",
+    "undici": "^7.19.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@lobehub/market-sdk": "0.38.0",
+    "@types/node": "^24.0.14",
+    "@types/pg": "^8.16.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4"
+  }
+}

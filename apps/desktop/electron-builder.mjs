@@ -65,9 +65,9 @@ const getPublishConfig = () => {
   console.info(`📦 ${channelPath} channel: No UPDATE_SERVER_URL, falling back to GitHub provider`);
   return [
     {
-      owner: 'lobehub',
+      owner: 'chaaak6',
       provider: 'github',
-      repo: 'lobehub',
+      repo: 'MasterLion',
     },
   ];
 };
@@ -91,13 +91,6 @@ const getProtocolScheme = () => {
 };
 
 const protocolScheme = getProtocolScheme();
-
-// Determine icon file based on version type
-const getIconFileName = () => {
-  if (isStable || isCanary) return 'Icon';
-  // nightly uses pre-release icon
-  return 'Icon-nightly';
-};
 
 /**
  * @type {import('electron-builder').Configuration}
@@ -138,8 +131,7 @@ const config = {
   /**
    * AfterPack hook for post-processing:
    * 1. Copy native modules to asar.unpacked (resolving pnpm symlinks)
-   * 2. Copy Liquid Glass Assets.car for macOS 26+
-   * 3. Remove unused Electron Framework localizations
+   * 2. Remove unused Electron Framework localizations
    *
    * @see https://github.com/electron-userland/electron-builder/issues/9254
    * @see https://github.com/MultiboxLabs/flow-browser/pull/159
@@ -171,10 +163,6 @@ const config = {
       return;
     }
 
-    const iconFileName = getIconFileName();
-    const assetsCarSource = path.join(__dirname, 'build', `${iconFileName}.Assets.car`);
-    const assetsCarDest = path.join(resourcesPath, 'Assets.car');
-
     // Remove unused Electron Framework localizations to reduce app size
     const frameworkResourcePath = path.join(
       context.appOutDir,
@@ -202,18 +190,8 @@ const config = {
     } catch {
       // Non-critical: folder may not exist depending on packaging details
     }
-
-    try {
-      await fs.access(assetsCarSource);
-      await fs.copyFile(assetsCarSource, assetsCarDest);
-      console.info(`✅ Copied Liquid Glass icon: ${iconFileName}.Assets.car`);
-    } catch {
-      // Non-critical: Assets.car not found or copy failed
-      // App will use fallback .icns icon on all macOS versions
-      console.info(`⏭️  Skipping Assets.car (not found or copy failed)`);
-    }
   },
-  appId: 'com.lobehub.lobehub-desktop',
+  appId: 'com.masterion.desktop',
   appImage: {
     artifactName: '${productName}-${version}.${ext}',
   },
@@ -327,6 +305,10 @@ const config = {
   extraResources: [
     { from: 'resources/bin', to: 'bin' },
     { from: 'resources/cli-package.json', to: 'package.json' },
+  ],
+  extraFiles: [
+    { from: 'resources/desktop-config.json', to: 'desktop-config.json' },
+    { from: 'resources/desktop-config.README.txt', to: 'desktop-config.README.txt' },
   ],
 
   win: {

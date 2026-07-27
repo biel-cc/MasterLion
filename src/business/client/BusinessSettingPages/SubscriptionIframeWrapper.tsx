@@ -5,10 +5,11 @@ import { Spin } from 'antd';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { OFFICIAL_URL } from '@/const/url';
 import { useIsCloudActive } from '@/hooks/useIsCloudActive';
 import { remoteServerService } from '@/services/electron/remoteServer';
 import { electronSystemService } from '@/services/electron/system';
+import { useElectronStore } from '@/store/electron';
+import { electronSyncSelectors } from '@/store/electron/selectors/sync';
 import { useServerConfigStore } from '@/store/serverConfig';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 
@@ -25,6 +26,7 @@ export const SubscriptionIframeWrapper = memo<SubscriptionIframeWrapperProps>(({
 
   const { i18n } = useTranslation();
   const isCloudActive = useIsCloudActive();
+  const cloudServer = useElectronStore(electronSyncSelectors.remoteServerUrl);
 
   const enableBusinessFeatures = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
 
@@ -33,13 +35,13 @@ export const SubscriptionIframeWrapper = memo<SubscriptionIframeWrapperProps>(({
 
     const path =
       page === 'notification' ? '/embed/settings/notification' : `/embed/subscription/${page}`;
-    const url = new URL(path, OFFICIAL_URL);
+    const url = new URL(path, cloudServer);
     // Sync locale to embed page via hl parameter
     if (i18n.language) {
       url.searchParams.set('hl', i18n.language);
     }
     return url.toString();
-  }, [page, i18n.language, isCloudActive]);
+  }, [page, i18n.language, isCloudActive, cloudServer]);
 
   useEffect(() => {
     const initSession = async () => {

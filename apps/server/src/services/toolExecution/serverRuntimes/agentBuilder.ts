@@ -309,7 +309,7 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
 
           // OAuth-based tools (Composio, LobehubSkill) cannot be installed in background context
           return {
-            content: `Installing official integrations that require OAuth (Composio, LobehubSkill) is not supported in background execution. Please install "${identifier}" from the Agent Builder UI instead.`,
+            content: `Installing official integrations that require OAuth (Composio, Masterino Skill) is not supported in background execution. Please install "${identifier}" from the Agent Builder UI instead.`,
             error: { message: 'OAuth not available in background context', type: 'NotSupported' },
             success: false,
           };

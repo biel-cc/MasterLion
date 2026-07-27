@@ -1,0 +1,5 @@
+{
+  "cloudServer": "https://masterion.bielcrystal.com",
+  "cloudServerAliases": ["https://mlai-test.bielcrystal.com"],
+  "marketBaseUrl": "https://masterion.bielcrystal.com/market"
+}

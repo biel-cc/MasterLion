@@ -1,0 +1,9 @@
+Masterino 桌面端服务配置
+
+1. desktop-config.json 会随免安装目录放在 Masterino.exe 旁边。
+2. 修改配置后，需要完全退出并重新启动客户端。
+3. cloudServer 是默认生产服务地址，只能填写 http:// 或 https:// 开头的域名源，不要附加路径。
+4. cloudServerAliases 是可从登录页直接连接的兼容 Cloud 地址列表。测试环境已配置为：
+   https://mlai-test.bielcrystal.com
+5. marketBaseUrl 可以省略；省略时自动使用 <cloudServer>/market。
+6. 其他自托管地址仍可从登录页输入，但服务器必须提供 /api/desktop/auth-config，并且 APP_URL 必须与输入地址同源。

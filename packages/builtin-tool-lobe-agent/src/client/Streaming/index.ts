@@ -5,7 +5,7 @@ import { CallSubAgentStreaming } from './CallSubAgent';
 import { CreatePlanStreaming } from './CreatePlan';
 
 /**
- * Lobe Agent Streaming Components Registry
+ * Masterino Agent Streaming Components Registry
  *
  * Streaming components render tool calls while they are still
  * executing, allowing real-time feedback to users.

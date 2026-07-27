@@ -99,4 +99,17 @@ describe('InterestsStep', () => {
     expect(mocks.updateInterests).toHaveBeenCalledWith(['writing']);
     expect(onNext).toHaveBeenCalled();
   });
+
+  it('does not advance when saving interests fails', async () => {
+    const user = userEvent.setup();
+    const onNext = vi.fn();
+    mocks.updateInterests.mockRejectedValueOnce(new Error('database unavailable'));
+    render(<InterestsStep onBack={vi.fn()} onNext={onNext} />);
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('interests.saveError')).toBeInTheDocument();
+    expect(onNext).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
 });

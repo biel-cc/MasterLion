@@ -444,7 +444,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser({
       ...enterpriseUserInput,
-      masterLionUsername: 'ada',
+      masterionUsername: 'ada',
     });
 
     expect(result).toEqual({
@@ -452,7 +452,7 @@ describe('NewApiProvisioningAdapter', () => {
       newApiUserId: 9001,
       status: 'active',
     });
-    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8003, 9001, 'MasterLion_ada');
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8003, 9001, 'Masterino_ada');
   });
 
   it('continues without error when bridge reassign fails (degraded mode)', async () => {

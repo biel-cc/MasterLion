@@ -29,12 +29,12 @@ const APP_URL = process.env.APP_URL
 // Falls back to APP_URL if not set
 const INTERNAL_APP_URL = process.env.INTERNAL_APP_URL || APP_URL;
 
-const ASSISTANT_INDEX_URL = 'https://registry.npmmirror.com/@lobehub/agents-index/v1/files/public';
+const ASSISTANT_INDEX_URL = 'http://localhost:3220/indexes/agents';
 
-const PLUGINS_INDEX_URL = 'https://registry.npmmirror.com/@lobehub/plugins-index/v1/files/public';
+const PLUGINS_INDEX_URL = 'http://localhost:3220/indexes/plugins';
 
 export const getAppConfig = () => {
-  return createEnv({
+  const config = createEnv({
     clientPrefix: 'NEXT_PUBLIC_',
     client: {
       NEXT_PUBLIC_ENABLE_SENTRY: z.boolean(),
@@ -61,6 +61,7 @@ export const getAppConfig = () => {
       SSRF_ALLOW_IP_ADDRESS_LIST: z.string().optional(),
 
       MARKET_BASE_URL: z.string().optional(),
+      MARKET_ALLOW_EXTERNAL_FALLBACK: z.boolean().optional(),
       /**
        * Trusted Client Secret for Market API authentication
        * 64-character hex string (32 bytes) shared with Market server
@@ -117,6 +118,7 @@ export const getAppConfig = () => {
       SSRF_ALLOW_PRIVATE_IP_ADDRESS: process.env.SSRF_ALLOW_PRIVATE_IP_ADDRESS === '1',
       SSRF_ALLOW_IP_ADDRESS_LIST: process.env.SSRF_ALLOW_IP_ADDRESS_LIST,
       MARKET_BASE_URL: process.env.MARKET_BASE_URL,
+      MARKET_ALLOW_EXTERNAL_FALLBACK: process.env.MARKET_ALLOW_EXTERNAL_FALLBACK === '1',
 
       MARKET_TRUSTED_CLIENT_SECRET: process.env.MARKET_TRUSTED_CLIENT_SECRET,
       MARKET_TRUSTED_CLIENT_ID: process.env.MARKET_TRUSTED_CLIENT_ID,
@@ -128,6 +130,15 @@ export const getAppConfig = () => {
       TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED === '1',
     },
   });
+  if (process.env.NODE_ENV === 'production' && !config.MARKET_ALLOW_EXTERNAL_FALLBACK) {
+    const missing = [
+      ['MARKET_BASE_URL', config.MARKET_BASE_URL],
+      ['MARKET_TRUSTED_CLIENT_ID', config.MARKET_TRUSTED_CLIENT_ID],
+      ['MARKET_TRUSTED_CLIENT_SECRET', config.MARKET_TRUSTED_CLIENT_SECRET],
+    ].filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length) throw new Error(`Internal Market configuration is required: ${missing.join(', ')}`);
+  }
+  return config;
 };
 
 export const appEnv = getAppConfig();

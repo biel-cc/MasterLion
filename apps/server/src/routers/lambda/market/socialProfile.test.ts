@@ -29,6 +29,7 @@ describe('socialProfileRouter.submitRepo', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('MARKET_BASE_URL', 'http://masterlion-market:3220');
     fetchSpy = vi.spyOn(globalThis, 'fetch' as never);
     fetchSpy.mockResolvedValue(
       new Response(JSON.stringify({ message: 'submitted' }), {

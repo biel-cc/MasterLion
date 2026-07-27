@@ -1,6 +1,6 @@
 {
   "AccountDeactivated": "Twoje konto zostało dezaktywowane lub zawieszone. Może to być spowodowane naruszeniem zasad, względami bezpieczeństwa lub przeglądem konta. Skontaktuj się z pomocą techniczną dostawcy, aby uzyskać pomoc.",
-  "AgentRuntimeError": "Błąd wykonania modelu językowego Lobe. Proszę rozwiązać problem lub spróbować ponownie na podstawie poniższych informacji.",
+  "AgentRuntimeError": "Błąd wykonania modelu językowego Masterino. Proszę rozwiązać problem lub spróbować ponownie na podstawie poniższych informacji.",
   "CapabilityNotSupported": "Przepraszamy, ten model nie obsługuje żądanej funkcji (takiej jak wejście wizualne lub wywoływanie narzędzi). Proszę przełączyć się na model, który to obsługuje.",
   "ComfyUIBizError": "Wystąpił błąd podczas żądania usługi ComfyUI. Proszę rozwiązać problem na podstawie poniższych informacji lub spróbować ponownie.",
   "ComfyUIEmptyResult": "ComfyUI nie wygenerował żadnego obrazu. Proszę sprawdzić konfigurację modelu lub spróbować ponownie.",

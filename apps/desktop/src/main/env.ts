@@ -2,6 +2,8 @@ import { createEnv } from '@t3-oss/env-core';
 import { memoize } from 'es-toolkit';
 import { z } from 'zod';
 
+import { loadDesktopRuntimeConfig } from '../common/desktopRuntimeConfig';
+
 const normalizeEnvString = (input: unknown) => {
   if (typeof input !== 'string') return undefined;
   const trimmed = input.trim();
@@ -50,12 +52,19 @@ const envNumber = (defaultValue: number) =>
     }, z.number().optional())
     .default(defaultValue);
 
-const getRuntimeEnv = () => ({
-  ...process.env,
-  DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
-  UPDATE_CHANNEL: process.env.UPDATE_CHANNEL,
-  UPDATE_SERVER_URL: process.env.UPDATE_SERVER_URL,
-});
+const getRuntimeEnv = () => {
+  const officialCloudServer =
+    normalizeEnvString(process.env.OFFICIAL_CLOUD_SERVER) ?? loadDesktopRuntimeConfig().cloudServer;
+
+  return {
+    ...process.env,
+    DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
+    DISABLE_APP_UPDATE: process.env.DISABLE_APP_UPDATE,
+    OFFICIAL_CLOUD_SERVER: officialCloudServer,
+    UPDATE_CHANNEL: process.env.UPDATE_CHANNEL,
+    UPDATE_SERVER_URL: process.env.UPDATE_SERVER_URL,
+  };
+};
 
 /**
  * Desktop (Electron main process) runtime env access.
@@ -79,6 +88,9 @@ export const getDesktopEnv = memoize(() =>
 
       DESKTOP_EXTERNAL_NAVIGATION_HOSTS: z.string().optional().default(''),
 
+      // Test builds must never pull and install upstream desktop releases.
+      DISABLE_APP_UPDATE: envBoolean(false),
+
       // device gateway url override (dev: point at a local `wrangler dev` instance,
       // e.g. http://localhost:8787). Falls back to the stored value, then the
       // production gateway.
@@ -95,7 +107,7 @@ export const getDesktopEnv = memoize(() =>
       NODE_ENV: z.enum(['development', 'production', 'test']).optional(),
 
       // cloud server url (can be overridden for selfhost/dev)
-      OFFICIAL_CLOUD_SERVER: z.string().optional().default('https://aihub.bielcrystal.com'),
+      OFFICIAL_CLOUD_SERVER: z.string().url(),
 
       // updater
       // process.env.xxx will replace in build stage

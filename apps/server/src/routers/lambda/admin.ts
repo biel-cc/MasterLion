@@ -3,6 +3,7 @@ import { and, count, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { provisionWecomLoginAccount } from '@/libs/better-auth/wecom-login-provisioning';
+import { UserModel } from '@/database/models/user';
 import {
   type PrincipalType,
   ResourceAclRepository,
@@ -27,6 +28,7 @@ import {
 } from '@/database/schemas';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { generateTrustedClientToken } from '@/libs/trusted-client';
 import {
   type AdminRbacPermissionCode,
   requireAdminAccess,
@@ -39,6 +41,7 @@ import {
   upsertWecomSsoConfig,
   wecomSsoUpdateInputSchema,
 } from '@/server/services/enterprise/wecomSsoService';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 type PlatformAdminRole = 'platform_admin' | 'super_admin';
 
@@ -1457,6 +1460,34 @@ const requireResourceAclManage = (ctx: unknown, resourceType: ResourceType) =>
 
 const adminProcedure = authedProcedure.use(serverDatabase);
 
+const callInternalMarketAdmin = async <T>(
+  ctx: unknown,
+  path: string,
+  init?: { body?: unknown; method?: 'GET' | 'PATCH' | 'POST' },
+): Promise<T> => {
+  const admin = await requirePlatformAdmin(ctx);
+  const db = getServerDBFromContext(ctx) as any;
+  const user = await UserModel.findById(db, admin.userId);
+  if (!user?.email) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Admin user email is required' });
+  const token = generateTrustedClientToken({
+    email: user.email,
+    name: user.fullName || user.username || undefined,
+    userId: admin.userId,
+  });
+  if (!token) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Market Trusted Client is not configured' });
+  const response = await fetch(`${getInternalMarketBaseUrl()}${path}`, {
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    headers: { 'content-type': 'application/json', 'x-lobe-trust-token': token },
+    method: init?.method || 'GET',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new TRPCError({ code: response.status === 403 ? 'FORBIDDEN' : 'BAD_GATEWAY', message: `Market: ${message}` });
+  }
+  return response.json() as Promise<T>;
+};
+
 export const adminRouter = router({
   listUsers: adminProcedure.input(paginationInput).query(async ({ ctx, input }) => {
     await requireUserManage(ctx);
@@ -1700,6 +1731,82 @@ export const adminRouter = router({
 
     return emptyList<AdminMcpConnectorItem>();
   }),
+
+  listMarketReviews: adminProcedure.query(async ({ ctx }) =>
+    callInternalMarketAdmin<{ items: Array<{
+      identifier: string;
+      name: string;
+      ownerName?: string;
+      scanResult?: Record<string, unknown>;
+      submittedAt?: string;
+      type: string;
+      version: string;
+      workflowState: string;
+    }>; totalCount: number }>(ctx, '/api/internal/reviews'),
+  ),
+
+  listMarketResources: adminProcedure.query(async ({ ctx }) =>
+    callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(ctx, '/api/internal/resources'),
+  ),
+
+  reviewMarketResource: adminProcedure
+    .input(z.object({
+      action: z.enum(['scan-start', 'scan-passed', 'scan-failed', 'approve', 'reject', 'publish', 'deprecate']),
+      identifier: z.string().min(1),
+      reason: z.string().max(2000).optional(),
+      scanResult: z.record(z.any()).optional(),
+      type: z.enum(['agent', 'agent-group', 'skill', 'mcp', 'plugin', 'model', 'provider']),
+    }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx,
+      `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/review`,
+      { body: { action: input.action, reason: input.reason, scanResult: input.scanResult }, method: 'POST' },
+    )),
+
+  listMarketAudit: adminProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(500).default(100) }))
+    .query(async ({ ctx, input }) => callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(ctx, `/api/internal/audit?limit=${input.limit}`)),
+
+  listMarketConnectorAllowlist: adminProcedure.query(async ({ ctx }) =>
+    callInternalMarketAdmin<{ items: Array<{ enabled: boolean; hostname: string; id: string; port?: number; protocol: string; provider: string }> }>(ctx, '/api/internal/allowlist'),
+  ),
+
+  upsertMarketConnectorAllowlist: adminProcedure
+    .input(z.object({ allowPrivate: z.boolean().optional(), provider: z.string().min(1), url: z.string().url() }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/allowlist', { body: input, method: 'POST' })),
+
+  updateMarketConnectorAllowlist: adminProcedure
+    .input(z.object({ enabled: z.boolean(), id: z.union([z.string(), z.number()]) }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, `/api/internal/allowlist/${encodeURIComponent(String(input.id))}`, {
+      body: { enabled: input.enabled },
+      method: 'PATCH',
+    })),
+
+  importMarketPackage: adminProcedure
+    .input(z.object({ payload: z.record(z.any()), signature: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/import', { body: input, method: 'POST' })),
+
+  rollbackMarketResource: adminProcedure
+    .input(z.object({ identifier: z.string().min(1), type: z.string().min(1), version: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx,
+      `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/rollback`,
+      { body: { version: input.version }, method: 'POST' },
+    )),
+
+  listMarketCategories: adminProcedure.query(async ({ ctx }) =>
+    callInternalMarketAdmin<{ items: unknown[] }>(ctx, '/api/internal/categories'),
+  ),
+
+  upsertMarketCategory: adminProcedure
+    .input(z.object({ localizations: z.record(z.any()).optional(), resourceType: z.string().min(1), slug: z.string().min(1), sortOrder: z.number().int().optional() }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/categories', { body: input, method: 'POST' })),
+
+  listMarketAccounts: adminProcedure.query(async ({ ctx }) =>
+    callInternalMarketAdmin<{ items: unknown[] }>(ctx, '/api/internal/accounts'),
+  ),
+
+  updateMarketAccountRole: adminProcedure
+    .input(z.object({ role: z.enum(['submitter', 'reviewer', 'admin']), userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, `/api/internal/accounts/${encodeURIComponent(input.userId)}/role`, { body: { role: input.role }, method: 'POST' })),
 
   org: router({
     departments: router({

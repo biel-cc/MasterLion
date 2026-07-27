@@ -82,7 +82,7 @@ Masterino 是基于现代 AI Chat / Agent 架构改造的公司内部工作台�
 ## 目录说明
 
 ```text
-MasterLion/
+Masterino/
 ├─ src/                         # Web / SPA 主应用源码
 ├─ packages/                    # Agent、工具、runtime、business const 等 workspace 包
 ├─ apps/

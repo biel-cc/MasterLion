@@ -745,7 +745,7 @@ export class MessengerRouter {
 
     // Channel-join welcome (Slack `member_joined_channel`). Counterpart to the
     // App Home `Messages`-tab welcome in `handleAppHomeOpened` — the marketplace
-    // listing reviewers also test the `/invite @MasterLion` entry point, so the
+    // listing reviewers also test the `/invite @Masterino` entry point, so the
     // bot must speak up the first time it lands in a channel. Other events
     // (regular members joining) are filtered out by the `botUserId` check.
     bot.onMemberJoinedChannel(async (event) => {
@@ -1341,7 +1341,7 @@ export class MessengerRouter {
 
   /**
    * Slack `member_joined_channel` welcome. Fires the first time the bot
-   * itself joins a channel (via `/invite @MasterLion` or being added through the
+   * itself joins a channel (via `/invite @Masterino` or being added through the
    * channel settings). Slack retries `member_joined_channel` aggressively on
    * 5xx, and re-adding-then-removing-then-re-adding a bot would fire it again,
    * so `setIfNotExists` keys on the channel id to keep the greeting one-shot.

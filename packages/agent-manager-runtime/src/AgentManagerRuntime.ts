@@ -694,7 +694,7 @@ export class AgentManagerRuntime {
           }
         }
 
-        // Check if it's a LobehubSkill provider
+        // Check if it's a Masterino Skill provider
         const isLobehubSkillEnabled =
           typeof window !== 'undefined' &&
           window.global_serverConfigStore?.getState()?.serverConfig?.enableLobehubSkill;
@@ -915,7 +915,7 @@ export class AgentManagerRuntime {
     if (server?.status === LobehubSkillStatus.CONNECTED) {
       await this.enablePluginForAgent(agentId, identifier);
       return {
-        content: `Successfully enabled LobehubSkill provider: ${providerInfo.label}`,
+        content: `Successfully enabled Masterino Skill provider: ${providerInfo.label}`,
         state: {
           installed: true,
           isLobehubSkill: true,
@@ -940,7 +940,7 @@ export class AgentManagerRuntime {
 
     if (!authInfo.authorizeUrl) {
       return {
-        content: `LobehubSkill provider "${providerInfo.label}" requires OAuth authorization but no authorization URL is available.`,
+        content: `Masterino Skill provider "${providerInfo.label}" requires OAuth authorization but no authorization URL is available.`,
         state: {
           installed: false,
           isLobehubSkill: true,
@@ -961,7 +961,7 @@ export class AgentManagerRuntime {
     if (authResult.success) {
       await this.enablePluginForAgent(agentId, identifier);
       return {
-        content: `Successfully connected and enabled LobehubSkill provider: ${providerInfo.label}`,
+        content: `Successfully connected and enabled Masterino Skill provider: ${providerInfo.label}`,
         state: {
           installed: true,
           isLobehubSkill: true,
@@ -975,7 +975,7 @@ export class AgentManagerRuntime {
     }
 
     return {
-      content: `OAuth authorization was cancelled or failed for LobehubSkill provider: ${providerInfo.label}. Please try again.`,
+      content: `OAuth authorization was cancelled or failed for Masterino Skill provider: ${providerInfo.label}. Please try again.`,
       state: {
         installed: false,
         isLobehubSkill: true,

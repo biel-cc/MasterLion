@@ -199,6 +199,9 @@ const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development
 
 Object.assign(process.env, loadEnv(mode, ROOT_DIR, ''));
 const updateChannel = process.env.UPDATE_CHANNEL;
+const isTestDesktopBuild = process.env.DESKTOP_BUILD_FLAVOR === 'test';
+const desktopCloudServer = process.env.NEXT_PUBLIC_DESKTOP_CLOUD_SERVER?.trim() || '';
+const desktopMarketBaseUrl = process.env.NEXT_PUBLIC_MARKET_BASE_URL?.trim() || '';
 const desktopPackageJson = JSON.parse(
   readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
 ) as { version: string };
@@ -282,6 +285,9 @@ export default defineConfig({
     },
     define: {
       'process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS': JSON.stringify(externalNavigationHosts),
+      'process.env.DISABLE_APP_UPDATE': JSON.stringify(
+        isTestDesktopBuild ? '1' : process.env.DISABLE_APP_UPDATE,
+      ),
       'process.env.UPDATE_CHANNEL': JSON.stringify(process.env.UPDATE_CHANNEL),
       'process.env.UPDATE_SERVER_URL': JSON.stringify(process.env.UPDATE_SERVER_URL),
     },
@@ -323,7 +329,9 @@ export default defineConfig({
     },
     define: {
       ...sharedRendererDefine({ isMobile: false, isElectron: true }),
-      __MAIN_VERSION__: JSON.stringify(desktopPackageJson.version),
+      'process.env.NEXT_PUBLIC_DESKTOP_CLOUD_SERVER': JSON.stringify(desktopCloudServer),
+      'process.env.NEXT_PUBLIC_MARKET_BASE_URL': JSON.stringify(desktopMarketBaseUrl),
+      '__MAIN_VERSION__': JSON.stringify(desktopPackageJson.version),
     },
     optimizeDeps: sharedOptimizeDeps,
     plugins: [

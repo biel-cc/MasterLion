@@ -36,6 +36,10 @@ const DETERMINISTIC_FAILURES = [
 
 // Create logger
 const logger = createLogger('controllers:RemoteServerConfigCtr');
+const SECURE_STORAGE_UNAVAILABLE_ERROR =
+  'Secure token storage is unavailable; refusing to store authentication tokens';
+const TOKEN_REFRESH_TIMEOUT = 30 * 1000;
+const TOKEN_REFRESH_TIMEOUT_ERROR = `Token refresh timed out after ${TOKEN_REFRESH_TIMEOUT / 1000} seconds`;
 
 /**
  * Remote Server Configuration Controller
@@ -48,17 +52,33 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    */
   private readonly encryptedTokensKey = 'encryptedTokens';
 
+  private isSecureStorageAvailable(): boolean {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return false;
+      if (process.platform !== 'linux') return true;
+
+      const getSelectedStorageBackend = (
+        safeStorage as typeof safeStorage & { getSelectedStorageBackend?: () => string }
+      ).getSelectedStorageBackend;
+      if (!getSelectedStorageBackend) return false;
+
+      return getSelectedStorageBackend.call(safeStorage) !== 'basic_text';
+    } catch (error) {
+      logger.error('Failed to verify secure storage backend:', error);
+      return false;
+    }
+  }
+
   /**
    * Normalize legacy config that used local storageMode.
    * Local mode has been removed; fall back to cloud.
    */
   private normalizeConfig = (config: DataSyncConfig): DataSyncConfig => {
-    // Use type assertion to handle legacy 'local' value from stored data
     if ((config.storageMode as string) !== 'local') return config;
 
     const nextConfig: DataSyncConfig = {
       ...config,
-      remoteServerUrl: config.remoteServerUrl || OFFICIAL_CLOUD_SERVER,
+      remoteServerUrl: OFFICIAL_CLOUD_SERVER,
       storageMode: 'cloud',
     };
 
@@ -79,25 +99,33 @@ export default class RemoteServerConfigCtr extends ControllerModule {
     const normalized = this.normalizeConfig(config);
 
     logger.debug(
-      `Remote server config: active=${normalized.active}, storageMode=${normalized.storageMode}, url=${normalized.remoteServerUrl}`,
+      `Remote server config: active=${normalized.active}, storageMode=${normalized.storageMode}`,
     );
 
-    return normalized;
+    return normalized.storageMode === 'cloud'
+      ? {
+          ...normalized,
+          remoteServerUrl: normalized.remoteServerUrl?.trim() || OFFICIAL_CLOUD_SERVER,
+        }
+      : normalized;
   }
 
   /**
    * Check if remote server is properly configured and ready for use
-   * For 'cloud' mode, only checks if active (remoteServerUrl is undefined, uses OFFICIAL_CLOUD_SERVER)
+   * For 'cloud' mode, only checks if active (remoteServerUrl mirrors desktop-config.json)
    * For 'selfHost' mode, checks if active AND remoteServerUrl is configured
    * @param config Optional config object, if not provided will fetch current config
    * @returns true if remote server is properly configured
    */
   async isRemoteServerConfigured(config?: DataSyncConfig): Promise<boolean> {
     const effectiveConfig = config ?? (await this.getRemoteServerConfig());
-    const isActive = Boolean(effectiveConfig.active);
+    return this.isRemoteServerConfigValid(effectiveConfig);
+  }
+
+  private isRemoteServerConfigValid(config: DataSyncConfig): boolean {
+    const isActive = Boolean(config.active);
     const isSelfHostConfigured =
-      effectiveConfig.storageMode !== 'selfHost' ||
-      this.isValidSelfHostRemoteUrl(effectiveConfig.remoteServerUrl);
+      config.storageMode !== 'selfHost' || this.isValidSelfHostRemoteUrl(config.remoteServerUrl);
 
     return isActive && isSelfHostConfigured;
   }
@@ -116,19 +144,80 @@ export default class RemoteServerConfigCtr extends ControllerModule {
     }
   }
 
+  private getRemoteServerOrigin(config: DataSyncConfig): string | null {
+    const remoteServerUrl =
+      config.storageMode === 'cloud'
+        ? config.remoteServerUrl?.trim() || OFFICIAL_CLOUD_SERVER
+        : config.remoteServerUrl?.trim();
+    if (!remoteServerUrl) return null;
+
+    try {
+      return new URL(remoteServerUrl).origin;
+    } catch {
+      return remoteServerUrl;
+    }
+  }
+
+  /**
+   * Check whether an authorization attempt still targets the configured server.
+   * The comparison is origin-only because OIDC issuer tokens must never cross origins.
+   */
+  isRemoteServerOriginCurrent(remoteServerUrl: string): boolean {
+    const currentConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+
+    try {
+      return this.getRemoteServerOrigin(currentConfig) === new URL(remoteServerUrl).origin;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Atomically activate the configured server only if it still matches the
+   * authorization attempt. There is deliberately no await between reading and
+   * writing the config, so another IPC cannot switch origins in that gap.
+   */
+  activateRemoteServerForOrigin(remoteServerUrl: string): boolean {
+    const { storeManager } = this.app;
+    const currentConfig = this.normalizeConfig(storeManager.get('dataSyncConfig'));
+
+    let expectedOrigin: string;
+    try {
+      expectedOrigin = new URL(remoteServerUrl).origin;
+    } catch {
+      return false;
+    }
+
+    if (this.getRemoteServerOrigin(currentConfig) !== expectedOrigin) return false;
+
+    storeManager.set('dataSyncConfig', { ...currentConfig, active: true });
+    this.broadcastRemoteServerConfigUpdated();
+    return true;
+  }
+
   /**
    * Set remote server configuration
    */
   @IpcMethod()
   async setRemoteServerConfig(config: Partial<DataSyncConfig>) {
     logger.info(
-      `Setting remote server storageMode: active=${config.active}, storageMode=${config.storageMode}, url=${config.remoteServerUrl}`,
+      `Setting remote server storageMode: active=${config.active}, storageMode=${config.storageMode}`,
     );
     const { storeManager } = this.app;
     const prev: DataSyncConfig = storeManager.get('dataSyncConfig');
 
     // Save configuration with legacy local storage fallback
-    const merged = this.normalizeConfig({ ...prev, ...config });
+    const previousConfig = this.normalizeConfig(prev);
+    const merged = this.normalizeConfig({ ...previousConfig, ...config });
+    const targetChanged =
+      this.getRemoteServerOrigin(previousConfig) !== this.getRemoteServerOrigin(merged);
+    const isDeactivating = Boolean(previousConfig.active) && !Boolean(merged.active);
+
+    // Tokens are scoped to the server that issued them. Clear them before an
+    // origin switch (or explicit deactivation) so a background proxy cannot
+    // attach the previous server's token to the pending target.
+    if (targetChanged || isDeactivating) await this.clearTokens();
+
     storeManager.set('dataSyncConfig', merged);
 
     this.broadcastRemoteServerConfigUpdated();
@@ -184,6 +273,23 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    * Used to prevent concurrent refreshes and allow callers to wait.
    */
   private refreshPromise: Promise<{ error?: string; success: boolean }> | null = null;
+  private refreshPromiseGeneration: number | null = null;
+  private tokenGeneration = 0;
+
+  /**
+   * Clear all in-memory token state and remove the persisted token record.
+   * This synchronous core is also used when secure storage is unavailable,
+   * before any legacy value can be loaded or returned.
+   */
+  private clearTokenStateAndStore() {
+    this.tokenGeneration += 1;
+    this.encryptedAccessToken = undefined;
+    this.encryptedRefreshToken = undefined;
+    this.tokenExpiresAt = undefined;
+    this.lastRefreshAt = undefined;
+    logger.debug(`Deleting tokens from store key: ${this.encryptedTokensKey}`);
+    this.app.storeManager.delete(this.encryptedTokensKey);
+  }
 
   /**
    * Encrypt and store tokens
@@ -194,57 +300,72 @@ export default class RemoteServerConfigCtr extends ControllerModule {
   async saveTokens(accessToken: string, refreshToken: string, expiresIn?: number) {
     logger.info('Saving encrypted tokens');
 
-    // Calculate expiration time if provided
-    if (expiresIn) {
-      this.tokenExpiresAt = Date.now() + expiresIn * 1000;
-      logger.debug(`Token expires at: ${new Date(this.tokenExpiresAt).toISOString()}`);
-    } else {
-      this.tokenExpiresAt = undefined;
+    if (!this.isSecureStorageAvailable()) {
+      logger.error(SECURE_STORAGE_UNAVAILABLE_ERROR);
+      await this.clearTokens();
+      throw new Error(SECURE_STORAGE_UNAVAILABLE_ERROR);
     }
 
-    // Update last refresh time
-    this.lastRefreshAt = Date.now();
-    logger.debug(`Token last refreshed at: ${new Date(this.lastRefreshAt).toISOString()}`);
+    const currentConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+    const issuerOrigin = this.getRemoteServerOrigin(currentConfig);
+    if (
+      !issuerOrigin ||
+      (currentConfig.storageMode === 'selfHost' &&
+        !this.isValidSelfHostRemoteUrl(currentConfig.remoteServerUrl))
+    ) {
+      await this.clearTokens();
+      throw new Error('Cannot save OIDC tokens without a valid remote server origin');
+    }
 
-    // If platform doesn't support secure storage, store raw tokens
-    if (!safeStorage.isEncryptionAvailable()) {
-      logger.warn('Safe storage not available, storing tokens unencrypted');
-      this.encryptedAccessToken = accessToken;
-      this.encryptedRefreshToken = refreshToken;
-      // Persist unencrypted tokens (consider security implications)
+    const tokenExpiresAt = expiresIn ? Date.now() + expiresIn * 1000 : undefined;
+    const lastRefreshAt = Date.now();
+
+    try {
+      logger.debug('Encrypting tokens using safe storage');
+      const encryptedAccessToken = Buffer.from(safeStorage.encryptString(accessToken)).toString(
+        'base64',
+      );
+      const encryptedRefreshToken = Buffer.from(safeStorage.encryptString(refreshToken)).toString(
+        'base64',
+      );
+
+      logger.debug(`Persisting encrypted tokens to store key: ${this.encryptedTokensKey}`);
       this.app.storeManager.set(this.encryptedTokensKey, {
-        accessToken: this.encryptedAccessToken,
-        expiresAt: this.tokenExpiresAt,
-        lastRefreshAt: this.lastRefreshAt,
-        refreshToken: this.encryptedRefreshToken,
+        accessToken: encryptedAccessToken,
+        expiresAt: tokenExpiresAt,
+        issuerOrigin,
+        lastRefreshAt,
+        refreshToken: encryptedRefreshToken,
       });
-      return;
+
+      // Only expose the new token state in memory after encrypted persistence succeeds.
+      this.tokenGeneration += 1;
+      this.encryptedAccessToken = encryptedAccessToken;
+      this.encryptedRefreshToken = encryptedRefreshToken;
+      this.tokenExpiresAt = tokenExpiresAt;
+      this.lastRefreshAt = lastRefreshAt;
+
+      if (tokenExpiresAt) {
+        logger.debug(`Token expires at: ${new Date(tokenExpiresAt).toISOString()}`);
+      }
+      logger.debug(`Token last refreshed at: ${new Date(lastRefreshAt).toISOString()}`);
+    } catch (error) {
+      logger.error('Failed to securely encrypt or persist tokens:', error);
+      await this.clearTokens();
+      throw error;
     }
-
-    // Encrypt tokens
-    logger.debug('Encrypting tokens using safe storage');
-    this.encryptedAccessToken = Buffer.from(safeStorage.encryptString(accessToken)).toString(
-      'base64',
-    );
-
-    this.encryptedRefreshToken = Buffer.from(safeStorage.encryptString(refreshToken)).toString(
-      'base64',
-    );
-
-    // Persist encrypted tokens
-    logger.debug(`Persisting encrypted tokens to store key: ${this.encryptedTokensKey}`);
-    this.app.storeManager.set(this.encryptedTokensKey, {
-      accessToken: this.encryptedAccessToken,
-      expiresAt: this.tokenExpiresAt,
-      lastRefreshAt: this.lastRefreshAt,
-      refreshToken: this.encryptedRefreshToken,
-    });
   }
 
   /**
    * Get decrypted access token
    */
   async getAccessToken(): Promise<string | null> {
+    if (!this.isSecureStorageAvailable()) {
+      logger.error('Safe storage not available; clearing tokens and denying access token read');
+      await this.clearTokens();
+      return null;
+    }
+
     // Try loading from memory first
     if (!this.encryptedAccessToken) {
       logger.debug('Access token not in memory, trying to load from store...');
@@ -256,14 +377,6 @@ export default class RemoteServerConfigCtr extends ControllerModule {
       return null;
     }
 
-    // If platform doesn't support secure storage, return stored token
-    if (!safeStorage.isEncryptionAvailable()) {
-      logger.debug(
-        'Safe storage not available, returning potentially unencrypted token from memory/store',
-      );
-      return this.encryptedAccessToken;
-    }
-
     try {
       // Decrypt token
       logger.debug('Decrypting access token');
@@ -271,6 +384,7 @@ export default class RemoteServerConfigCtr extends ControllerModule {
       return safeStorage.decryptString(encryptedData);
     } catch (error) {
       logger.error('Failed to decrypt access token:', error);
+      await this.clearTokens();
       return null;
     }
   }
@@ -279,6 +393,12 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    * Get decrypted refresh token
    */
   async getRefreshToken(): Promise<string | null> {
+    if (!this.isSecureStorageAvailable()) {
+      logger.error('Safe storage not available; clearing tokens and denying refresh token read');
+      await this.clearTokens();
+      return null;
+    }
+
     // Try loading from memory first
     if (!this.encryptedRefreshToken) {
       logger.debug('Refresh token not in memory, trying to load from store...');
@@ -290,14 +410,6 @@ export default class RemoteServerConfigCtr extends ControllerModule {
       return null;
     }
 
-    // If platform doesn't support secure storage, return stored token
-    if (!safeStorage.isEncryptionAvailable()) {
-      logger.debug(
-        'Safe storage not available, returning potentially unencrypted token from memory/store',
-      );
-      return this.encryptedRefreshToken;
-    }
-
     try {
       // Decrypt token
       logger.debug('Decrypting refresh token');
@@ -305,6 +417,7 @@ export default class RemoteServerConfigCtr extends ControllerModule {
       return safeStorage.decryptString(encryptedData);
     } catch (error) {
       logger.error('Failed to decrypt refresh token:', error);
+      await this.clearTokens();
       return null;
     }
   }
@@ -314,12 +427,7 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    */
   async clearTokens() {
     logger.info('Clearing access and refresh tokens');
-    this.encryptedAccessToken = undefined;
-    this.encryptedRefreshToken = undefined;
-    this.tokenExpiresAt = undefined;
-    // Also clear from persistent storage
-    logger.debug(`Deleting tokens from store key: ${this.encryptedTokensKey}`);
-    this.app.storeManager.delete(this.encryptedTokensKey);
+    this.clearTokenStateAndStore();
 
     // Disconnect gateway when tokens are cleared (logout / token refresh failure)
     const gatewaySrv = this.app.getService(GatewayConnectionService);
@@ -381,8 +489,11 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    * Concurrent callers share the in-progress refresh promise.
    */
   async refreshAccessToken(): Promise<{ error?: string; success: boolean }> {
-    // If a refresh is already in progress, return the existing promise
-    if (this.refreshPromise) {
+    const refreshGeneration = this.tokenGeneration;
+
+    // Concurrent refreshes for the same credential generation share one request.
+    // A server/token switch advances the generation and must not reuse the old request.
+    if (this.refreshPromise && this.refreshPromiseGeneration === refreshGeneration) {
       logger.debug('Token refresh already in progress, returning existing promise.');
       return this.refreshPromise;
     }
@@ -393,10 +504,15 @@ export default class RemoteServerConfigCtr extends ControllerModule {
     // as the request lands. Resending it (e.g. after a lost response) triggers reuse
     // detection — invalid_grant + revocation of the whole grant — which logs the user
     // out. Transient failures are recovered by the next refresh cycle instead.
-    this.refreshPromise = this.performTokenRefresh().finally(() => {
+    const refreshPromise = this.performTokenRefresh(refreshGeneration).finally(() => {
+      if (this.refreshPromise !== refreshPromise) return;
+
       logger.debug('Clearing the refresh promise reference.');
       this.refreshPromise = null;
+      this.refreshPromiseGeneration = null;
     });
+    this.refreshPromise = refreshPromise;
+    this.refreshPromiseGeneration = refreshGeneration;
 
     return this.refreshPromise;
   }
@@ -405,7 +521,53 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    * Performs the actual token refresh logic.
    * This method is called by refreshAccessToken and wrapped in a promise.
    */
-  private async performTokenRefresh(): Promise<{ error?: string; success: boolean }> {
+  private isTokenRefreshCurrent(expectedGeneration: number, expectedOrigin: string): boolean {
+    if (this.tokenGeneration !== expectedGeneration) return false;
+
+    const currentConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+    return (
+      this.isRemoteServerConfigValid(currentConfig) &&
+      this.getRemoteServerOrigin(currentConfig) === expectedOrigin
+    );
+  }
+
+  private waitForTokenRefreshOperation<T>(
+    operation: Promise<T>,
+    deadline: number,
+    abortController: AbortController,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const timeoutId = setTimeout(
+        () => {
+          if (settled) return;
+          settled = true;
+          abortController.abort();
+          reject(new Error(TOKEN_REFRESH_TIMEOUT_ERROR));
+        },
+        Math.max(1, deadline - Date.now()),
+      );
+
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        callback();
+      };
+
+      operation.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+    });
+  }
+
+  private async performTokenRefresh(
+    expectedGeneration: number,
+  ): Promise<{ error?: string; success: boolean }> {
+    const abortController = new AbortController();
+    const deadline = Date.now() + TOKEN_REFRESH_TIMEOUT;
+
     try {
       // Get configuration information
       const config = await this.getRemoteServerConfig();
@@ -415,11 +577,26 @@ export default class RemoteServerConfigCtr extends ControllerModule {
         return { error: 'Remote server is not active or configured', success: false };
       }
 
+      const expectedOrigin = this.getRemoteServerOrigin(config);
+      if (!expectedOrigin || !this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+        return {
+          error: 'Token refresh was superseded by a server or credential change',
+          success: false,
+        };
+      }
+
       // Get refresh token
       const refreshToken = await this.getRefreshToken();
       if (!refreshToken) {
         logger.error('No refresh token available for refresh operation.');
         return { error: 'No refresh token available', success: false };
+      }
+
+      if (!this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+        return {
+          error: 'Token refresh was superseded by a server or credential change',
+          success: false,
+        };
       }
 
       // Construct refresh request
@@ -441,25 +618,83 @@ export default class RemoteServerConfigCtr extends ControllerModule {
         'Content-Type': 'application/x-www-form-urlencoded',
       };
       appendVercelCookie(headers);
-      const response = await netFetch(tokenUrl.toString(), { body, headers, method: 'POST' });
+      const response = await this.waitForTokenRefreshOperation(
+        netFetch(tokenUrl.toString(), {
+          body,
+          headers,
+          method: 'POST',
+          signal: abortController.signal,
+        }),
+        deadline,
+        abortController,
+      );
+
+      if (!this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+        return {
+          error: 'Token refresh was superseded by a server or credential change',
+          success: false,
+        };
+      }
 
       if (!response.ok) {
         // Try to parse error response
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = `Token refresh failed: ${response.status} ${response.statusText} ${
-          errorData.error_description || errorData.error || ''
-        }`.trim();
-        logger.error(errorMessage, errorData);
+        let errorData: Record<string, unknown> = {};
+        try {
+          errorData = await this.waitForTokenRefreshOperation(
+            response.json(),
+            deadline,
+            abortController,
+          );
+        } catch (error) {
+          if (error instanceof Error && error.message === TOKEN_REFRESH_TIMEOUT_ERROR) throw error;
+        }
+        if (!this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+          return {
+            error: 'Token refresh was superseded by a server or credential change',
+            success: false,
+          };
+        }
+        const errorDetail =
+          typeof errorData.error_description === 'string'
+            ? errorData.error_description
+            : typeof errorData.error === 'string'
+              ? errorData.error
+              : '';
+        const errorMessage =
+          `Token refresh failed: ${response.status} ${response.statusText} ${errorDetail}`.trim();
+        logger.error(errorMessage);
         return { error: errorMessage, success: false };
       }
 
       // Parse response
-      const data = await response.json();
+      const data = await this.waitForTokenRefreshOperation(
+        response.json(),
+        deadline,
+        abortController,
+      );
+      if (!this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+        return {
+          error: 'Token refresh was superseded by a server or credential change',
+          success: false,
+        };
+      }
 
       // Check if response contains necessary tokens
       if (!data.access_token || !data.refresh_token) {
-        logger.error('Refresh response missing access_token or refresh_token', data);
+        logger.error('Refresh response missing access_token or refresh_token', {
+          hasAccessToken: Boolean(data.access_token),
+          hasRefreshToken: Boolean(data.refresh_token),
+        });
         return { error: 'Missing tokens in refresh response', success: false };
+      }
+
+      // The response may arrive after the user switched servers or completed a
+      // different login. Verify again immediately before the synchronous token write.
+      if (!this.isTokenRefreshCurrent(expectedGeneration, expectedOrigin)) {
+        return {
+          error: 'Token refresh was superseded by a server or credential change',
+          success: false,
+        };
       }
 
       // Save new tokens
@@ -471,6 +706,8 @@ export default class RemoteServerConfigCtr extends ControllerModule {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('Exception during token refresh operation:', errorMessage, error);
       return { error: `Exception occurred during token refresh: ${errorMessage}`, success: false };
+    } finally {
+      abortController.abort();
     }
   }
 
@@ -479,11 +716,49 @@ export default class RemoteServerConfigCtr extends ControllerModule {
    * This should be called during initialization or if memory tokens are missing.
    */
   private loadTokensFromStore() {
+    if (!this.isSecureStorageAvailable()) {
+      logger.error('Safe storage not available; deleting persisted tokens without loading them');
+      this.clearTokenStateAndStore();
+      return;
+    }
+
     logger.debug(`Attempting to load tokens from store key: ${this.encryptedTokensKey}`);
+    const currentConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+    const currentOrigin = this.getRemoteServerOrigin(currentConfig);
     const storedTokens = this.app.storeManager.get(this.encryptedTokensKey);
 
     if (storedTokens && storedTokens.accessToken && storedTokens.refreshToken) {
+      if (
+        !this.isRemoteServerConfigValid(currentConfig) ||
+        !storedTokens.issuerOrigin ||
+        storedTokens.issuerOrigin !== currentOrigin
+      ) {
+        logger.warn(
+          'Discarding stored tokens because their issuer does not match the active server',
+          {
+            hasIssuerOrigin: Boolean(storedTokens.issuerOrigin),
+            issuerMatches: Boolean(currentOrigin && storedTokens.issuerOrigin === currentOrigin),
+          },
+        );
+        this.clearTokenStateAndStore();
+        this.app.storeManager.set('dataSyncConfig', { ...currentConfig, active: false });
+        this.broadcastRemoteServerConfigUpdated();
+        return;
+      }
+
+      try {
+        // Validate both stored values before caching any token or metadata in memory.
+        // Legacy plaintext fallback values fail Electron's authenticated decryption.
+        safeStorage.decryptString(Buffer.from(storedTokens.accessToken, 'base64'));
+        safeStorage.decryptString(Buffer.from(storedTokens.refreshToken, 'base64'));
+      } catch (error) {
+        logger.error('Stored tokens are not valid safeStorage ciphertext; deleting them:', error);
+        this.clearTokenStateAndStore();
+        return;
+      }
+
       logger.info('Successfully loaded tokens from store into memory.');
+      this.tokenGeneration += 1;
       this.encryptedAccessToken = storedTokens.accessToken;
       this.encryptedRefreshToken = storedTokens.refreshToken;
       this.tokenExpiresAt = storedTokens.expiresAt;
@@ -519,7 +794,9 @@ export default class RemoteServerConfigCtr extends ControllerModule {
   async getRemoteServerUrl(config?: DataSyncConfig) {
     const dataConfig = this.normalizeConfig(config ?? (await this.getRemoteServerConfig()));
 
-    return dataConfig.storageMode === 'cloud' ? OFFICIAL_CLOUD_SERVER : dataConfig.remoteServerUrl;
+    return dataConfig.storageMode === 'cloud'
+      ? dataConfig.remoteServerUrl?.trim() || OFFICIAL_CLOUD_SERVER
+      : dataConfig.remoteServerUrl;
   }
 
   /**
@@ -537,15 +814,48 @@ export default class RemoteServerConfigCtr extends ControllerModule {
     const session = electronSession.fromPartition(partition);
 
     session.webRequest.onBeforeSendHeaders(
-      { urls: ['https://aihub.bielcrystal.com/*', 'https://*.bielcrystal.com/*'] },
+      { urls: ['http://*/*', 'https://*/*'] },
       async (details, callback) => {
         const requestHeaders = { ...details.requestHeaders };
 
-        const token = await this.getAccessToken();
+        // Never preserve a renderer-provided auth header. Authentication is
+        // added back only after validating the current active server origin.
+        for (const headerName of Object.keys(requestHeaders)) {
+          if (headerName.toLowerCase() === 'oidc-auth') delete requestHeaders[headerName];
+        }
 
-        if (token) {
+        try {
+          const requestOrigin = new URL(details.url).origin;
+          const initialConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+
+          if (
+            !this.isRemoteServerConfigValid(initialConfig) ||
+            this.getRemoteServerOrigin(initialConfig) !== requestOrigin
+          ) {
+            callback({ requestHeaders });
+            return;
+          }
+
+          const token = await this.getAccessToken();
+          if (!token) {
+            callback({ requestHeaders });
+            return;
+          }
+
+          // Re-read after token decryption so a concurrent origin switch fails closed.
+          const currentConfig = this.normalizeConfig(this.app.storeManager.get('dataSyncConfig'));
+          if (
+            !this.isRemoteServerConfigValid(currentConfig) ||
+            this.getRemoteServerOrigin(currentConfig) !== requestOrigin
+          ) {
+            callback({ requestHeaders });
+            return;
+          }
+
           requestHeaders['Oidc-Auth'] = token;
-          logger.debug(`Injected Oidc-Auth token for: ${details.url}`);
+          logger.debug(`Injected Oidc-Auth token for ${requestOrigin}`);
+        } catch (error) {
+          logger.warn('Skipping subscription webview auth injection:', error);
         }
 
         callback({ requestHeaders });

@@ -41,7 +41,7 @@ const logger = createLogger('controllers:GatewayConnectionCtr');
 
 /**
  * Inject the lh-notify protocol into the first turn of a new hetero-agent session.
- * Tells the agent binary how to push results back to the LobeHub chat UI via `lh notify`.
+ * Tells the agent binary how to push results back to the Masterino chat UI via `lh notify`.
  * Ported directly from apps/cli/src/tools/heteroTask.ts so desktop and CLI stay in sync.
  */
 function buildNotifyProtocol(lhPath: string, topicId: string): string {
@@ -786,7 +786,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
       const openclawAgent = process.env['OPENCLAW_AGENT_ID'] ?? 'main';
 
       // Always inject the notify protocol so openclaw knows how to report results
-      // back to the LobeHub UI — even if the previous turn failed and the session
+      // back to the Masterino UI — even if the previous turn failed and the session
       // history was not cleanly committed.
       const enrichedPrompt = `${prompt}\n\n${buildNotifyProtocol(lhPath, topicId)}`;
 

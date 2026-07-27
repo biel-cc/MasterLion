@@ -1,0 +1,44 @@
+{
+  "source": "D:\\MasterLion\\apps\\desktop\\build\\masterino-icon-render.png",
+  "originalSize": [
+    3960,
+    4096
+  ],
+  "manualCrop": null,
+  "trimModeRequested": "alpha",
+  "trimModeApplied": "alpha",
+  "contentBounds": [
+    0,
+    0,
+    3960,
+    4096
+  ],
+  "croppedSize": [
+    3960,
+    4096
+  ],
+  "smallSource": {
+    "source": "D:\\MasterLion\\apps\\desktop\\build\\masterino-icon-small.png",
+    "originalSize": [
+      2048,
+      2048
+    ],
+    "manualCrop": null,
+    "trimModeRequested": "none",
+    "trimModeApplied": "none",
+    "contentBounds": [
+      0,
+      0,
+      2048,
+      2048
+    ],
+    "croppedSize": [
+      2048,
+      2048
+    ]
+  },
+  "appContentScale": 0.8,
+  "maskableContentScale": 0.64,
+  "outputRoot": "D:\\MasterLion",
+  "preview": "D:\\MasterLion\\apps\\desktop\\build\\icon-preview.png"
+}

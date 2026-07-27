@@ -6,7 +6,7 @@ import ClearTodosIntervention from './ClearTodos';
 import CreatePlanIntervention from './CreatePlan';
 
 /**
- * Lobe Agent Intervention Components Registry
+ * Masterino Agent Intervention Components Registry
  *
  * Intervention components allow users to review and modify tool parameters
  * before the tool is executed.

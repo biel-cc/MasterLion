@@ -5,10 +5,9 @@ import { type NextRequest } from 'next/server';
 
 import { type TrustedClientUserInfo } from '@/libs/trusted-client';
 import { generateTrustedClientToken, getTrustedClientTokenForSession } from '@/libs/trusted-client';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 const log = debug('lobe-server:market-service');
-
-const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
 
 // ============================== Helper Functions ==============================
 
@@ -99,7 +98,7 @@ export class MarketService {
 
     this.market = new MarketSDK({
       accessToken,
-      baseURL: MARKET_BASE_URL,
+      baseURL: getInternalMarketBaseUrl(),
       clientId: clientCredentials?.clientId,
       clientSecret: clientCredentials?.clientSecret,
       ownerAccountId,
@@ -108,7 +107,7 @@ export class MarketService {
 
     log(
       'MarketService initialized: baseURL=%s, hasAccessToken=%s, hasTrustedToken=%s, hasClientCredentials=%s, ownerAccountId=%s',
-      MARKET_BASE_URL,
+      getInternalMarketBaseUrl(),
       !!accessToken,
       !!resolvedTrustedClientToken,
       !!clientCredentials,
@@ -203,7 +202,7 @@ export class MarketService {
    * Get user info with trusted client token (server-side)
    */
   async getUserInfoWithTrustedClient() {
-    const userInfoUrl = `${MARKET_BASE_URL}/lobehub-oidc/userinfo`;
+    const userInfoUrl = `${getInternalMarketBaseUrl()}/lobehub-oidc/userinfo`;
     const response = await fetch(userInfoUrl, {
       // @ts-ignore
       headers: this.market.headers,
@@ -572,7 +571,7 @@ export class MarketService {
             identifier: providerId,
             meta: {
               avatar: icon || '🔗',
-              description: `LobeHub Skill: ${providerLabel}`,
+              description: `Masterino Skill: ${providerLabel}`,
               tags: ['lobehub-skill', providerId],
               title: providerLabel,
             },
@@ -663,7 +662,7 @@ export class MarketService {
       orgSegment === undefined
         ? '/api/v1/user/creds/upload'
         : `/api/v1/organizations/${orgSegment}/creds/upload`;
-    const uploadUrl = `${MARKET_BASE_URL}${uploadPath}`;
+    const uploadUrl = `${getInternalMarketBaseUrl()}${uploadPath}`;
     const response = await fetch(uploadUrl, {
       body: formData,
       headers: authHeaders,

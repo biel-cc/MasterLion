@@ -62,6 +62,7 @@ describe('agentRouter.publishOrCreate', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('MARKET_BASE_URL', 'http://masterlion-market:3220');
     mockMarketSDK.headers = {};
     mockMarketUserInfoValue.current = {
       email: 'actor@example.com',
@@ -81,13 +82,13 @@ describe('agentRouter.publishOrCreate', () => {
     );
   });
 
-  it('returns builtin onboarding agents when no market auth exists', async () => {
+  it('fails onboarding catalog loading when internal Market auth is missing', async () => {
     mockMarketUserInfoValue.current = undefined;
     const caller = agentRouter.createCaller({ serverDB: {}, userId: 'user-1' } as any);
 
-    const result = await caller.getOnboardingFull({ locale: 'zh-CN' });
-
-    expect(Object.keys(result).length).toBeGreaterThan(0);
+    await expect(caller.getOnboardingFull({ locale: 'zh-CN' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

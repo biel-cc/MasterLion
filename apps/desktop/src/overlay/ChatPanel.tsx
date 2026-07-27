@@ -1,4 +1,3 @@
-import { Select } from '@base-ui/react/select';
 import type {
   OverlayCaptureUploadStatus,
   ScreenCaptureAgentOption,
@@ -6,6 +5,17 @@ import type {
   ScreenCaptureOverlayTheme,
 } from '@lobechat/electron-client-ipc';
 import { ModelIcon } from '@lobehub/icons';
+import {
+  SelectItem,
+  SelectItemIndicator,
+  SelectItemText,
+  SelectPopup,
+  SelectPortal,
+  SelectPositioner,
+  SelectRoot,
+  SelectTrigger,
+  SelectValue,
+} from '@lobehub/ui/base-ui';
 import { AlertCircleIcon, CheckIcon, ChevronDownIcon, Loader2Icon, XIcon } from 'lucide-react';
 import type {
   CSSProperties,
@@ -482,12 +492,12 @@ const ChatPanel = memo<ChatPanelProps>(
 
           <div className={styles.actionBar}>
             <div className={styles.actionBarLeft}>
-              <Select.Root
+              <SelectRoot
                 disabled={!hasAgents}
                 value={agentId ?? ''}
                 onValueChange={handleAgentChange}
               >
-                <Select.Trigger
+                <SelectTrigger
                   aria-label={OVERLAY_COPY.agentSelectLabel}
                   className={cn(styles.selectChip, !hasAgents && styles.selectChipDisabled)}
                 >
@@ -497,44 +507,40 @@ const ChatPanel = memo<ChatPanelProps>(
                     size={18}
                     title={currentAgent?.title}
                   />
-                  <Select.Value className={styles.chipLabel}>
+                  <SelectValue className={styles.chipLabel}>
                     {currentAgent?.title ?? OVERLAY_COPY.agentSelectPlaceholder}
-                  </Select.Value>
+                  </SelectValue>
                   <ChevronDownIcon className={styles.chevron} size={12} strokeWidth={2} />
-                </Select.Trigger>
-                <Select.Portal>
-                  <Select.Positioner
-                    align="start"
-                    className={styles.popupPositioner}
-                    sideOffset={6}
-                  >
-                    <Select.Popup className={styles.popup}>
+                </SelectTrigger>
+                <SelectPortal>
+                  <SelectPositioner align="start" className={styles.popupPositioner} sideOffset={6}>
+                    <SelectPopup className={styles.popup}>
                       {agents?.map((item) => (
-                        <Select.Item className={styles.popupItem} key={item.id} value={item.id}>
-                          <Select.ItemIndicator className={styles.popupItemIndicator}>
+                        <SelectItem className={styles.popupItem} key={item.id} value={item.id}>
+                          <SelectItemIndicator className={styles.popupItemIndicator}>
                             <CheckIcon size={12} strokeWidth={2.4} />
-                          </Select.ItemIndicator>
-                          <Select.ItemText>
+                          </SelectItemIndicator>
+                          <SelectItemText>
                             {item.avatar &&
                             typeof item.avatar === 'string' &&
                             item.avatar.length <= 4
                               ? `${item.avatar} ${item.title}`
                               : item.title}
-                          </Select.ItemText>
-                        </Select.Item>
+                          </SelectItemText>
+                        </SelectItem>
                       ))}
-                    </Select.Popup>
-                  </Select.Positioner>
-                </Select.Portal>
-              </Select.Root>
+                    </SelectPopup>
+                  </SelectPositioner>
+                </SelectPortal>
+              </SelectRoot>
 
               {showModelSelector && (
-                <Select.Root
+                <SelectRoot
                   disabled={!hasModels}
                   value={modelId ?? ''}
                   onValueChange={handleModelChange}
                 >
-                  <Select.Trigger
+                  <SelectTrigger
                     aria-label={OVERLAY_COPY.modelSelectLabel}
                     className={cn(styles.selectChip, !hasModels && styles.selectChipDisabled)}
                   >
@@ -545,32 +551,32 @@ const ChatPanel = memo<ChatPanelProps>(
                     ) : (
                       <span className={styles.modelIconBoxFallback} />
                     )}
-                    <Select.Value className={styles.chipLabel}>
+                    <SelectValue className={styles.chipLabel}>
                       {currentModel?.displayName ??
                         currentModel?.id ??
                         OVERLAY_COPY.modelSelectPlaceholder}
-                    </Select.Value>
+                    </SelectValue>
                     <ChevronDownIcon className={styles.chevron} size={12} strokeWidth={2} />
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Positioner
+                  </SelectTrigger>
+                  <SelectPortal>
+                    <SelectPositioner
                       align="start"
                       className={styles.popupPositioner}
                       sideOffset={6}
                     >
-                      <Select.Popup className={styles.popup}>
+                      <SelectPopup className={styles.popup}>
                         {models?.map((item) => (
-                          <Select.Item className={styles.popupItem} key={item.id} value={item.id}>
-                            <Select.ItemIndicator className={styles.popupItemIndicator}>
+                          <SelectItem className={styles.popupItem} key={item.id} value={item.id}>
+                            <SelectItemIndicator className={styles.popupItemIndicator}>
                               <CheckIcon size={12} strokeWidth={2.4} />
-                            </Select.ItemIndicator>
-                            <Select.ItemText>{item.displayName ?? item.id}</Select.ItemText>
-                          </Select.Item>
+                            </SelectItemIndicator>
+                            <SelectItemText>{item.displayName ?? item.id}</SelectItemText>
+                          </SelectItem>
                         ))}
-                      </Select.Popup>
-                    </Select.Positioner>
-                  </Select.Portal>
-                </Select.Root>
+                      </SelectPopup>
+                    </SelectPositioner>
+                  </SelectPortal>
+                </SelectRoot>
               )}
             </div>
 

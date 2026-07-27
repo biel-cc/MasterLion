@@ -107,7 +107,7 @@ describe('AgentSignalNightlyReviewModel', () => {
             chatConfig: chatConfigForSelfIteration(blockedEnabled),
             id: `nightly-lobe-ai-${caseName}`,
             slug: INBOX_SESSION_ID,
-            title: 'Lobe AI',
+            title: 'Masterino',
             userId: enabledUserId,
             virtual: true,
           },
@@ -155,7 +155,7 @@ describe('AgentSignalNightlyReviewModel', () => {
      * @example
      * expect(result.map((item) => item.agentId)).toEqual(['nightly-lobe-ai-disabled']).
      */
-    it('includes Lobe AI when the agent switch is disabled and excludes non-Lobe disabled agents', async () => {
+    it('includes Masterino when the agent switch is disabled and excludes non-Lobe disabled agents', async () => {
       const { blockedAgent, enabledAgent, lobeAiAgent } = await seedNightlyCapabilityTargets(
         'disabled',
         false,
@@ -176,7 +176,7 @@ describe('AgentSignalNightlyReviewModel', () => {
      * @example
      * expect(result.map((item) => item.agentId)).toEqual(['nightly-lobe-ai-implicit']).
      */
-    it('includes Lobe AI when the agent switch is missing and excludes non-Lobe implicit agents', async () => {
+    it('includes Masterino when the agent switch is missing and excludes non-Lobe implicit agents', async () => {
       const { blockedAgent, enabledAgent, lobeAiAgent } =
         await seedNightlyCapabilityTargets('implicit');
 

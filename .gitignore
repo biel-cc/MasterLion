@@ -67,6 +67,8 @@ public/_spa-auth/
 public/spa/
 es/
 lib/
+!apps/admin/src/lib/
+!apps/admin/src/lib/*.ts
 .next/
 logs/
 test-output/

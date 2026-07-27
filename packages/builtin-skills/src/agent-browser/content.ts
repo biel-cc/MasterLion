@@ -4,7 +4,7 @@
 export const systemPrompt = `<agent_browser_guides>
 # Browser Automation with agent-browser
 
-The CLI uses Chrome/Chromium via CDP directly. **LobeHub desktop** bundles \`agent-browser\` in native mode. Otherwise install via \`npm i -g agent-browser\`, \`brew install agent-browser\`, or \`cargo install agent-browser\`. Run \`agent-browser install\` to download Chrome. Existing Chrome, Brave, Playwright, and Puppeteer installations are detected automatically. Run \`agent-browser upgrade\` to update to the latest version.
+The CLI uses Chrome/Chromium via CDP directly. **Masterino desktop** bundles \`agent-browser\` in native mode. Otherwise install via \`npm i -g agent-browser\`, \`brew install agent-browser\`, or \`cargo install agent-browser\`. Run \`agent-browser install\` to download Chrome. Existing Chrome, Brave, Playwright, and Puppeteer installations are detected automatically. Run \`agent-browser upgrade\` to update to the latest version.
 
 ## Core Workflow
 
