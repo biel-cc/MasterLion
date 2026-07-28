@@ -65,10 +65,8 @@ COPY --from=workspace-manifests /manifests/ ./
 
 # 1. 直接使用 Node 自带 corepack，按 packageManager 固定 pnpm 版本。
 # 2. --frozen-lockfile 保证可复现，--prefer-offline 优先复用缓存。
-# 【新增】corepack-cache 挂载：避免每次构建重新下载 pnpm 本体。
+# pnpm 与依赖都固化在 manifest 驱动的镜像层中，避免跨构建缓存挂载产生不完整链接。
 RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
-    --mount=type=cache,id=masterino-pnpm-store,target=/pnpm/store,sharing=locked \
-    --mount=type=cache,id=masterino-corepack-cache,target=/root/.cache/node/corepack,sharing=locked \
     set -e && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         export SENTRYCLI_CDNURL="https://npmmirror.com/mirrors/sentry-cli"; \
@@ -77,13 +75,18 @@ RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
         export FFMPEG_BINARIES_URL="https://npmmirror.com/mirrors/ffmpeg-static"; \
     fi && \
     export COREPACK_NPM_REGISTRY="$(npm config get registry | sed 's/\/$//')" && \
+    export PNPM_SPEC="$(node -p 'require("./package.json").packageManager.split("+")[0]')" && \
     corepack enable && \
-    corepack prepare "$(node -p 'require("./package.json").packageManager')" --activate && \
+    for attempt in 1 2 3; do \
+        if corepack prepare "$PNPM_SPEC" --activate; then break; fi; \
+        if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+        sleep "$((attempt * 5))"; \
+    done && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         pnpm config set registry "https://registry.npmmirror.com/"; \
     fi && \
-    pnpm config set store-dir /pnpm/store && \
-    pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline && \
+    pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline --prod=false && \
+    test -x node_modules/.bin/tsx && \
     mkdir -p /deps && \
     echo '{"name":"deps","private":true}' > /deps/package.json && \
     pnpm add --dir /deps pg drizzle-orm --prefer-offline
