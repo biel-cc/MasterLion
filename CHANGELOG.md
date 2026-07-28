@@ -2,6 +2,31 @@
 
 # Changelog
 
+## [Version 1.0.12](https://github.com/chaaak6/Masterino/compare/v1.0.11...v1.0.12)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### ✨ Features
+
+- **misc**: complete Masterion platform and security integration.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's improved
+
+- **misc**: complete Masterion platform and security integration, closes [#54](https://github.com/chaaak6/Masterino/issues/54) ([2660ca6](https://github.com/chaaak6/Masterino/commit/2660ca6))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.0.11](https://github.com/chaaak6/Masterino/compare/v1.0.10...v1.0.11)
 
 <sup>Released on **2026-07-25**</sup>

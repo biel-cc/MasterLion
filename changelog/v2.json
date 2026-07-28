@@ -2443,6 +2443,15 @@
   },
   {
     "children": {
+      "features": [
+        "complete Masterion platform and security integration."
+      ]
+    },
+    "date": "2026-07-28",
+    "version": "1.0.12"
+  },
+  {
+    "children": {
       "fixes": [
         "stabilize Aihub i18n translation requests."
       ]
