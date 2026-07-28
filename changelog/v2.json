@@ -2443,6 +2443,15 @@
   },
   {
     "children": {
+      "fixes": [
+        "allow Aihub media models."
+      ]
+    },
+    "date": "2026-07-28",
+    "version": "1.0.13"
+  },
+  {
+    "children": {
       "features": [
         "complete Masterion platform and security integration."
       ]
