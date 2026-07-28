@@ -2,7 +2,7 @@ import { and, eq, type SQL } from 'drizzle-orm';
 
 import type { MessengerAccountLinkItem, NewMessengerAccountLink } from '../schemas';
 import { messengerAccountLinks } from '../schemas';
-import type { MasterinoDatabase } from '../type';
+import type { LobeChatDatabase } from '../type';
 
 /**
  * Tenant id for global-token platforms (Telegram today, Discord later) —
@@ -43,9 +43,9 @@ export class MessengerAccountLinkRelinkRequiredError extends Error {
 
 export class MessengerAccountLinkModel {
   private userId: string;
-  private db: MasterinoDatabase;
+  private db: LobeChatDatabase;
 
-  constructor(db: MasterinoDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string) {
     this.userId = userId;
     this.db = db;
   }
@@ -246,7 +246,7 @@ export class MessengerAccountLinkModel {
    * the multi-tenant router pass the resolved `team_id` / `enterprise_id`.
    */
   static findByPlatformUser = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     platform: string,
     platformUserId: string,
     tenantId: string = GLOBAL_TENANT_ID,
@@ -268,7 +268,7 @@ export class MessengerAccountLinkModel {
 
   /** Static setter used by IM `/switch` (no user-scope context, but trusted by sender match). */
   static setActiveAgentById = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     linkId: string,
     agentId: string | null,
   ): Promise<MessengerAccountLinkItem | undefined> => {
@@ -289,7 +289,7 @@ export class MessengerAccountLinkModel {
    * scope first.
    */
   static setActiveScope = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     linkId: string,
     workspaceId: string | null,
     agentId: string | null = null,

@@ -1,4 +1,4 @@
-import { type MasterinoDatabase } from '@lobechat/database';
+import { type LobeChatDatabase } from '@lobechat/database';
 import debug from 'debug';
 import { type NextRequest } from 'next/server';
 
@@ -9,7 +9,7 @@ const log = debug('lobe-async:context');
 
 export interface AsyncAuthContext {
   authorizationToken?: string;
-  serverDB?: MasterinoDatabase;
+  serverDB?: LobeChatDatabase;
   userId?: string | null;
 }
 

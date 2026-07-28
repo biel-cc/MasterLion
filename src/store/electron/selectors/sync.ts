@@ -1,4 +1,7 @@
+import { isDesktop, OFFICIAL_URL } from '@lobechat/const';
+
 import { getDesktopCloudServer } from '@/utils/electron/desktopRuntimeConfig';
+
 import { type ElectronState } from '../initialState';
 
 const isSyncActive = (s: ElectronState) => s.dataSyncConfig.active;
@@ -12,7 +15,7 @@ const storageMode = (s: ElectronState) => s.dataSyncConfig.storageMode;
  */
 const remoteServerUrl = (s: ElectronState) =>
   s.dataSyncConfig.storageMode === 'cloud'
-    ? s.dataSyncConfig.remoteServerUrl || getDesktopCloudServer()
+    ? s.dataSyncConfig.remoteServerUrl || (isDesktop ? getDesktopCloudServer() : OFFICIAL_URL)
     : s.dataSyncConfig.remoteServerUrl || '';
 
 /**

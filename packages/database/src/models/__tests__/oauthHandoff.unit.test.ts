@@ -7,6 +7,7 @@ import { OAuthHandoffModel } from '../oauthHandoff';
 describe('OAuthHandoffModel atomic consumption', () => {
   it('returns a handoff only for the delete call that consumed it', async () => {
     const handoff = {
+      accessedAt: new Date(),
       client: 'desktop',
       createdAt: new Date(),
       id: 'handoff-1',

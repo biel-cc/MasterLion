@@ -5,7 +5,6 @@ import {
 } from '@lobehub/market-sdk';
 
 import { lambdaClient } from '@/libs/trpc/client';
-import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 import { discoverService } from '@/services/discover';
 import {
   type AgentForkBatchInput,
@@ -17,6 +16,7 @@ import {
   type AgentGroupForksResponse,
   type SkillSorts,
 } from '@/types/discover';
+import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 interface GetOwnAgentsParams {
   page?: number;

@@ -371,10 +371,11 @@ describe('MarketService', () => {
         identifier: 'twitter',
         meta: {
           avatar: '🐦',
-          description: 'LobeHub Skill: X (Twitter)',
+          description: 'Masterino Skill: X (Twitter)',
           tags: ['lobehub-skill', 'twitter'],
           title: 'X (Twitter)',
         },
+        systemRole: undefined,
         type: 'builtin',
       });
     });
@@ -410,7 +411,7 @@ describe('MarketService', () => {
       const manifests = await service.getLobehubSkillManifests();
       expect(manifests).toHaveLength(1);
       expect(manifests[0].meta).toMatchObject({
-        description: 'LobeHub Skill: Notion',
+        description: 'Masterino Skill: Notion',
         title: 'Notion',
       });
     });

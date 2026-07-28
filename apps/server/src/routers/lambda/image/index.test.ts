@@ -1,4 +1,5 @@
 import { BRANDING_PROVIDER } from '@lobechat/business-const';
+import { ModelProvider } from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AsyncTaskStatus, AsyncTaskType } from '@/types/asyncTask';
@@ -216,15 +217,15 @@ describe('imageRouter', () => {
       expect(mockServerDB.transaction).toHaveBeenCalled();
     });
 
-    it('should validate mapped model id before rejecting deprecated branded image models', async () => {
+    it('should not apply the legacy LobeHub availability gate to Aihub image models', async () => {
+      mockIsLobeHubModelAvailable.mockResolvedValue(false);
       mockResolveBusinessModelMapping.mockResolvedValue({
-        requestedModelId: 'onboarding-image',
-        resolvedModelId: 'gpt-image-1',
+        resolvedModelId: 'gpt-image-2',
       });
 
       const ctx = createMockCtx();
       const input = createDefaultInput({
-        model: 'onboarding-image',
+        model: 'gpt-image-2',
         provider: BRANDING_PROVIDER,
       });
 
@@ -234,25 +235,20 @@ describe('imageRouter', () => {
       expect(result.success).toBe(true);
       expect(mockResolveBusinessModelMapping).toHaveBeenCalledWith(
         BRANDING_PROVIDER,
-        'onboarding-image',
+        'gpt-image-2',
       );
-      expect(mockIsLobeHubModelAvailable).toHaveBeenCalledWith('gpt-image-1', 'image', {
-        getUserEmail: expect.any(Function),
-      });
-      const availabilityOptions = mockIsLobeHubModelAvailable.mock.calls.at(-1)?.[2];
+      expect(mockIsLobeHubModelAvailable).not.toHaveBeenCalled();
       expect(mockFindUserById).not.toHaveBeenCalled();
-      await expect(availabilityOptions!.getUserEmail!()).resolves.toBe('user@example.com');
-      expect(mockFindUserById).toHaveBeenCalledWith(mockServerDB, mockUserId);
       expect(mockCreateAsyncCaller).toHaveBeenCalledWith({ userId: mockUserId });
     });
 
-    it('should reject unavailable branded image models before creating async tasks', async () => {
+    it('should reject unavailable legacy LobeHub image models before creating async tasks', async () => {
       mockIsLobeHubModelAvailable.mockResolvedValue(false);
 
       const ctx = createMockCtx();
       const input = createDefaultInput({
         model: 'restricted-image-model',
-        provider: BRANDING_PROVIDER,
+        provider: ModelProvider.LobeHub,
       });
 
       const caller = imageRouter.createCaller(ctx);
@@ -262,6 +258,9 @@ describe('imageRouter', () => {
         message: 'LobeHubModelDeprecated',
       });
 
+      expect(mockIsLobeHubModelAvailable).toHaveBeenCalledWith('restricted-image-model', 'image', {
+        getUserEmail: expect.any(Function),
+      });
       expect(mockServerDB.transaction).not.toHaveBeenCalled();
       expect(mockCreateAsyncCaller).not.toHaveBeenCalled();
     });

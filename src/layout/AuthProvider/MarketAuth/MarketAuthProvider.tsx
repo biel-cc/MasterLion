@@ -11,8 +11,8 @@ import { MARKET_OIDC_ENDPOINTS } from '@/services/_url';
 import { useServerConfigStore } from '@/store/serverConfig';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { useUserStore } from '@/store/user';
-import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 import { settingsSelectors } from '@/store/user/slices/settings/selectors/settings';
+import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 import ClaimResourcesModal from './ClaimResourcesModal';
 import { MarketAuthError } from './errors';

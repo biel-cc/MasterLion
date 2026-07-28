@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { NewApiService } from './index';
+
 const mocks = vi.hoisted(() => ({
   bindingStore: new Map<string, any>(),
   batchUpdateAiModels: vi.fn(),
@@ -60,8 +62,6 @@ vi.mock('@/database/models/user', () => ({
     findByUsername: mocks.findUserByUsername,
   },
 }));
-
-import { NewApiService } from './index';
 
 const createGateKeeper = () =>
   ({
@@ -311,7 +311,8 @@ describe('NewApiService', () => {
     });
 
     await expect(service.getBindingStatus()).resolves.toMatchObject({
-      errorMessage: 'Aihub read-only database did not return an active API token for the current user',
+      errorMessage:
+        'Aihub read-only database did not return an active API token for the current user',
       isBound: false,
       newApiUserId: 17,
       status: 'error',
@@ -484,7 +485,7 @@ describe('NewApiService', () => {
       isEnabled: vi.fn(() => true),
       listAccessibleModels: vi
         .fn()
-        .mockResolvedValue(['glm-5.2', 'qwen-image-2.0', 'text-embedding-v4']),
+        .mockResolvedValue(['glm-5.2', 'gpt-image-2', 'qwen-image-2.0', 'text-embedding-v4']),
     };
     const service = new NewApiService({
       client: client as any,
@@ -520,6 +521,7 @@ describe('NewApiService', () => {
     );
     expect(synced.models.map((model: any) => model.id)).toEqual([
       'glm-5.2',
+      'gpt-image-2',
       'qwen-image-2.0',
       'text-embedding-v4',
     ]);
@@ -534,6 +536,13 @@ describe('NewApiService', () => {
           }),
           id: 'glm-5.2',
           type: 'chat',
+        }),
+        expect.objectContaining({
+          abilities: expect.objectContaining({
+            functionCall: false,
+          }),
+          id: 'gpt-image-2',
+          type: 'image',
         }),
         expect.objectContaining({
           abilities: expect.objectContaining({
@@ -556,6 +565,7 @@ describe('NewApiService', () => {
           id: 'glm-5.2',
           type: 'chat',
         }),
+        expect.objectContaining({ id: 'gpt-image-2', type: 'image' }),
         expect.objectContaining({ id: 'qwen-image-2.0', type: 'image' }),
         expect.objectContaining({ id: 'text-embedding-v4', type: 'embedding' }),
       ]),
@@ -930,7 +940,7 @@ describe('NewApiService', () => {
             },
           ],
           total: 3,
-      }),
+        }),
       isEnabled: vi.fn(() => true),
       listAccessibleModels: vi.fn().mockResolvedValue(['gpt-4o-mini', 'glm5.1', 'deepseek-chat']),
       listManagedTokens: vi.fn().mockResolvedValue([
