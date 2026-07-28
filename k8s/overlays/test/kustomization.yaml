@@ -7,7 +7,6 @@ resources:
   - storageclass.yaml
   - configmap.yaml
 patches:
-  - path: deployment-config-patch.yaml
   - path: storage-patch.yaml
 replicas:
   - name: masterino
