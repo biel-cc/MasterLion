@@ -35,6 +35,7 @@ export const SuccessState = memo<SuccessStateProps>(
       >
         <ImageItem
           alt={prompt}
+          crossOrigin={'anonymous'}
           style={{ height: '100%', width: '100%' }}
           // Thumbnail quality is too bad
           url={generation.asset!.url}
