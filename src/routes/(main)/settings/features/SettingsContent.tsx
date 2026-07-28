@@ -27,6 +27,7 @@ const CONVERGED_SETTINGS_TABS = new Set<string>([
   SettingsTabs.Hotkey,
   SettingsTabs.Provider,
   SettingsTabs.ServiceModel,
+  SettingsTabs.Memory,
   SettingsTabs.Proxy,
   SettingsTabs.Security,
   SettingsTabs.About,
