@@ -2,6 +2,31 @@
 
 # Changelog
 
+### [Version 1.0.15](https://github.com/chaaak6/Masterino/compare/v1.0.14...v1.0.15)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: restore downloads from image preview.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: restore downloads from image preview ([6a43531](https://github.com/chaaak6/Masterino/commit/6a43531))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.0.14](https://github.com/chaaak6/Masterino/compare/v1.0.13...v1.0.14)
 
 <sup>Released on **2026-07-28**</sup>

@@ -2442,6 +2442,15 @@
     "version": "2.0.0-next.1"
   },
   {
+    "children": {
+      "fixes": [
+        "restore downloads from image preview."
+      ]
+    },
+    "date": "2026-07-28",
+    "version": "1.0.15"
+  },
+  {
     "children": {},
     "date": "2026-07-28",
     "version": "1.0.14"
