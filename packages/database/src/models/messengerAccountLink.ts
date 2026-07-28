@@ -2,10 +2,10 @@ import { and, eq, type SQL } from 'drizzle-orm';
 
 import type { MessengerAccountLinkItem, NewMessengerAccountLink } from '../schemas';
 import { messengerAccountLinks } from '../schemas';
-import type { MasterinoDatabase } from '../type';
+import type { LobeChatDatabase } from '../type';
 
 /**
- * Tenant id for global-token platforms (Telegram today, Discord later) —
+ * Tenant id for global-token platforms (Telegram today, Discord later) ?
  * they have one bot serving every chat, so there's no scoping. Per-tenant
  * platforms (Slack, future Feishu / MS Teams) pass the actual tenant id.
  */
@@ -14,7 +14,7 @@ const GLOBAL_TENANT_ID = '';
 /**
  * Thrown by `upsertForPlatform` when the IM identity is already bound to a
  * different Masterino user. Callers (e.g. the messenger router) should surface
- * a friendly 409 — never let the underlying DB unique-index error escape.
+ * a friendly 409 ? never let the underlying DB unique-index error escape.
  */
 export class MessengerAccountLinkConflictError extends Error {
   readonly code = 'MESSENGER_ACCOUNT_LINK_CONFLICT' as const;
@@ -43,15 +43,15 @@ export class MessengerAccountLinkRelinkRequiredError extends Error {
 
 export class MessengerAccountLinkModel {
   private userId: string;
-  private db: MasterinoDatabase;
+  private db: LobeChatDatabase;
 
-  constructor(db: MasterinoDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string) {
     this.userId = userId;
     this.db = db;
   }
 
   // A given IM identity maps to exactly one link per `(userId, platform,
-  // tenantId)` — the unique index already enforces this — so ownership is
+  // tenantId)` ? the unique index already enforces this ? so ownership is
   // purely by `userId`. `workspaceId` on the row is the *active scope* (derived
   // from the active agent), NOT part of the link's identity, so it must not
   // scope lookups; otherwise switching scope would orphan the existing link.
@@ -61,7 +61,7 @@ export class MessengerAccountLinkModel {
 
   /**
    * Insert or update the user's link for `(platform, tenantId)`. Used by the
-   * verify-im confirm flow — if the user re-asserts the same IM identity they
+   * verify-im confirm flow ? if the user re-asserts the same IM identity they
    * keep the same row, but switching to a different IM identity in the same
    * `(platform, tenant)` requires an explicit unlink first.
    *
@@ -70,7 +70,7 @@ export class MessengerAccountLinkModel {
    * back to the original `(user, platform)` semantic.
    *
    * Resolution order is `(platform, tenant, platformUserId)` first, then
-   * `(user, platform, tenant)` — so we never let the
+   * `(user, platform, tenant)` ? so we never let the
    * `messenger_account_links_platform_tenant_user_unique` constraint surface
    * as an opaque DB error when the IM identity is already owned by another
    * Masterino user; we throw `MessengerAccountLinkConflictError` instead.
@@ -188,7 +188,7 @@ export class MessengerAccountLinkModel {
 
   /**
    * Find the user's link for a given platform. Without `tenantId` returns the
-   * single link if there is exactly one, or undefined otherwise — useful for
+   * single link if there is exactly one, or undefined otherwise ? useful for
    * Telegram where the user only ever has one. With `tenantId` returns the
    * specific row (Slack workspace A vs B).
    */
@@ -238,7 +238,7 @@ export class MessengerAccountLinkModel {
 
   /**
    * Resolve the link row for an inbound IM message. Returns the row regardless
-   * of whether `activeAgentId` is set — the router decides how to handle the
+   * of whether `activeAgentId` is set ? the router decides how to handle the
    * "no active agent" case.
    *
    * `tenantId` defaults to the empty string (global-bot semantics) so existing
@@ -246,7 +246,7 @@ export class MessengerAccountLinkModel {
    * the multi-tenant router pass the resolved `team_id` / `enterprise_id`.
    */
   static findByPlatformUser = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     platform: string,
     platformUserId: string,
     tenantId: string = GLOBAL_TENANT_ID,
@@ -268,7 +268,7 @@ export class MessengerAccountLinkModel {
 
   /** Static setter used by IM `/switch` (no user-scope context, but trusted by sender match). */
   static setActiveAgentById = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     linkId: string,
     agentId: string | null,
   ): Promise<MessengerAccountLinkItem | undefined> => {
@@ -282,14 +282,14 @@ export class MessengerAccountLinkModel {
 
   /**
    * Static scope switch used by IM `/switch`. Moves the link to a new active
-   * scope (personal → `null`, or a workspace id) and sets the active agent to
-   * `agentId` — callers pass the scope's default agent (inbox/Masterino) so
+   * scope (personal ? `null`, or a workspace id) and sets the active agent to
+   * `agentId` ? callers pass the scope's default agent (inbox/Masterino) so
    * switching never leaves the session agent-less; pass `null` only when the
    * target scope has no agents. Caller must authorize access to the target
    * scope first.
    */
   static setActiveScope = async (
-    db: MasterinoDatabase,
+    db: LobeChatDatabase,
     linkId: string,
     workspaceId: string | null,
     agentId: string | null = null,
