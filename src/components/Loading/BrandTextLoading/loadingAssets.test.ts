@@ -21,15 +21,11 @@ describe('Masterino loading assets', () => {
     expect(new Set(getDurations(readAsset(path)))).toEqual(new Set([loadingDuration]));
   });
 
-  it('keeps the desktop splash embedded SVG in sync with the faster cycle', () => {
+  it('keeps the desktop splash branded and animated', () => {
     const html = readAsset('apps/desktop/resources/splash.html');
-    const encodedSvg = html.match(/src="data:image\/svg\+xml;base64,([^"]+)"/)?.[1];
 
-    expect(encodedSvg).toBeTruthy();
-
-    const decodedSvg = Buffer.from(encodedSvg!, 'base64').toString('utf8');
-
-    expect(new Set(getDurations(decodedSvg))).toEqual(new Set([loadingDuration]));
+    expect(html).toContain('<div class="wordmark">Masterino</div>');
+    expect(html).toContain('animation: loading 1.25s ease-in-out infinite;');
   });
 
   it('renders the app loading wordmark large enough for the home screen', () => {

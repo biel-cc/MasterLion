@@ -328,8 +328,8 @@ describe('MarketService', () => {
       const service = new MarketService();
       (service as any).market.connect.listConnections = vi.fn().mockResolvedValue({
         connections: [
-          { icon: '🐦', providerId: 'twitter', providerName: 'Twitter' },
-          { icon: '📋', providerId: 'linear', providerName: 'Linear' },
+          { icon: '??', providerId: 'twitter', providerName: 'Twitter' },
+          { icon: '??', providerId: 'linear', providerName: 'Linear' },
         ],
       });
       (service as any).market.skills.listTools = vi
@@ -370,11 +370,12 @@ describe('MarketService', () => {
         ],
         identifier: 'twitter',
         meta: {
-          avatar: '🐦',
-          description: 'LobeHub Skill: X (Twitter)',
+          avatar: '??',
+          description: 'Masterino Skill: X (Twitter)',
           tags: ['lobehub-skill', 'twitter'],
           title: 'X (Twitter)',
         },
+        systemRole: undefined,
         type: 'builtin',
       });
     });
@@ -383,8 +384,8 @@ describe('MarketService', () => {
       const service = new MarketService();
       (service as any).market.connect.listConnections = vi.fn().mockResolvedValue({
         connections: [
-          { icon: '🔗' }, // no providerId
-          { icon: '📋', providerId: 'linear', providerName: 'Linear' },
+          { icon: '??' }, // no providerId
+          { icon: '??', providerId: 'linear', providerName: 'Linear' },
         ],
       });
       (service as any).market.skills.listTools = vi.fn().mockResolvedValue({
@@ -410,7 +411,7 @@ describe('MarketService', () => {
       const manifests = await service.getLobehubSkillManifests();
       expect(manifests).toHaveLength(1);
       expect(manifests[0].meta).toMatchObject({
-        description: 'LobeHub Skill: Notion',
+        description: 'Masterino Skill: Notion',
         title: 'Notion',
       });
     });
@@ -418,7 +419,7 @@ describe('MarketService', () => {
     it('should skip connections where listTools returns empty', async () => {
       const service = new MarketService();
       (service as any).market.connect.listConnections = vi.fn().mockResolvedValue({
-        connections: [{ icon: '🔗', providerId: 'emptyProvider', providerName: 'Empty' }],
+        connections: [{ icon: '??', providerId: 'emptyProvider', providerName: 'Empty' }],
       });
       (service as any).market.skills.listTools = vi.fn().mockResolvedValue({ tools: [] });
 
@@ -436,7 +437,7 @@ describe('MarketService', () => {
       });
 
       const manifests = await service.getLobehubSkillManifests();
-      expect(manifests[0].meta.avatar).toBe('🔗');
+      expect(manifests[0].meta.avatar).toBe('??');
     });
 
     it('should return empty array when listConnections throws', async () => {

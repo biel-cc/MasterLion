@@ -11,8 +11,8 @@ import { MARKET_OIDC_ENDPOINTS } from '@/services/_url';
 import { useServerConfigStore } from '@/store/serverConfig';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { useUserStore } from '@/store/user';
-import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 import { settingsSelectors } from '@/store/user/slices/settings/selectors/settings';
+import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 import ClaimResourcesModal from './ClaimResourcesModal';
 import { MarketAuthError } from './errors';
@@ -718,7 +718,7 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
       if (isDesktop) {
         const refreshed = await refreshToken();
         if (!refreshed) {
-          // Silent refresh failed — the Market OAuth token is genuinely expired.
+          // Silent refresh failed ? the Market OAuth token is genuinely expired.
           // Show the Market auth modal so the user can re-authorize.
           await handleUnauthorized(event.scene);
         }

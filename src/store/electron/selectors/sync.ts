@@ -1,4 +1,5 @@
 import { getDesktopCloudServer } from '@/utils/electron/desktopRuntimeConfig';
+
 import { type ElectronState } from '../initialState';
 
 const isSyncActive = (s: ElectronState) => s.dataSyncConfig.active;

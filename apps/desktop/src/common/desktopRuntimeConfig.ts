@@ -54,17 +54,22 @@ export const parseDesktopRuntimeConfig = (
   } catch (error) {
     throw new Error(
       `Invalid JSON in ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
 
   const cloudServer = resolveDesktopCloudServer(config.cloudServer);
-  if (config.cloudServerAliases !== undefined && !Array.isArray(config.cloudServerAliases)) {
+  const rawCloudServerAliases = config.cloudServerAliases;
+  if (rawCloudServerAliases !== undefined && !Array.isArray(rawCloudServerAliases)) {
     throw new Error(`cloudServerAliases in ${sourcePath} must be an array`);
   }
+  const cloudServerAliasValues = Array.isArray(rawCloudServerAliases)
+    ? rawCloudServerAliases
+    : [];
 
   const cloudServerAliases = [
     ...new Set(
-      (config.cloudServerAliases ?? [])
+      cloudServerAliasValues
         .map((value) => resolveDesktopCloudServer(value))
         .filter((value) => value !== cloudServer),
     ),
