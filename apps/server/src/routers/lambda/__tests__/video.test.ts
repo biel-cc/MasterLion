@@ -1,4 +1,5 @@
 import { BRANDING_PROVIDER } from '@lobechat/business-const';
+import { ModelProvider } from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AsyncTaskModel } from '@/database/models/asyncTask';
@@ -182,10 +183,10 @@ describe('videoRouter', () => {
       expect(mockAfter).not.toHaveBeenCalled();
     });
 
-    it('should validate mapped model id before rejecting deprecated branded video models', async () => {
+    it('should not apply the legacy LobeHub availability gate to Aihub video models', async () => {
       setupMocks();
+      mockIsLobeHubModelAvailable.mockResolvedValue(false);
       mockResolveBusinessModelMapping.mockResolvedValue({
-        requestedModelId: 'onboarding-video',
         resolvedModelId: 'dreamina-seedance-2-0-260128',
       });
       mockCreateVideo.mockResolvedValue({ inferenceId: 'inf-mapped', useWebhook: true });
@@ -202,22 +203,15 @@ describe('videoRouter', () => {
         BRANDING_PROVIDER,
         'onboarding-video',
       );
-      expect(mockIsLobeHubModelAvailable).toHaveBeenCalledWith(
-        'dreamina-seedance-2-0-260128',
-        'video',
-        { getUserEmail: expect.any(Function) },
-      );
-      const availabilityOptions = mockIsLobeHubModelAvailable.mock.calls.at(-1)?.[2];
+      expect(mockIsLobeHubModelAvailable).not.toHaveBeenCalled();
       expect(mockFindUserById).not.toHaveBeenCalled();
-      await expect(availabilityOptions!.getUserEmail!()).resolves.toBe('user@example.com');
-      expect(mockFindUserById).toHaveBeenCalledWith(mockServerDB, mockCtx.userId);
       expect(mockCreateVideo).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'dreamina-seedance-2-0-260128' }),
         expect.any(Object),
       );
     });
 
-    it('should reject unavailable branded video models before creating async tasks', async () => {
+    it('should reject unavailable legacy LobeHub video models before creating async tasks', async () => {
       setupMocks();
       mockIsLobeHubModelAvailable.mockResolvedValue(false);
 
@@ -227,13 +221,16 @@ describe('videoRouter', () => {
         caller.createVideo({
           ...defaultInput,
           model: 'restricted-video-model',
-          provider: BRANDING_PROVIDER,
+          provider: ModelProvider.LobeHub,
         }),
       ).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: 'LobeHubModelDeprecated',
       });
 
+      expect(mockIsLobeHubModelAvailable).toHaveBeenCalledWith('restricted-video-model', 'video', {
+        getUserEmail: expect.any(Function),
+      });
       expect(mockTransaction).not.toHaveBeenCalled();
       expect(mockCreateVideo).not.toHaveBeenCalled();
     });
@@ -270,7 +267,7 @@ describe('videoRouter', () => {
         inferenceId: 'inf-3',
         status: AsyncTaskStatus.Processing,
       });
-      // No special videoUrl branch — falls through to polling
+      // No special videoUrl branch ? falls through to polling
       expect(mockAfter).toHaveBeenCalled();
       expect(mockProcessBackgroundVideoPolling).toHaveBeenCalled();
     });

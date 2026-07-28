@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 
-import { BRANDING_PROVIDER } from '@lobechat/business-const';
 import { isLobeHubModelAvailable } from '@lobechat/business-model-bank/model-config';
 import {
   buildMappedBusinessModelFields,
@@ -10,6 +9,7 @@ import { ChatErrorType, RequestTrigger } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
 import { and, eq } from 'drizzle-orm';
+import { ModelProvider } from 'model-bank';
 import { after } from 'next/server';
 import { z } from 'zod';
 
@@ -85,11 +85,11 @@ export const videoRouter = router({
 
       const { resolvedModelId } = await resolveBusinessModelMapping(provider, model);
 
-      // Reject lobehub model ids that are no longer in the model bank so callers get a
-      // clear error instead of an opaque downstream failure when the resolved channel
-      // model is no longer in the model bank.
+      // The legacy LobeHub Cloud provider has its own commercial model catalogue.
+      // Masterino's branded provider is NewAPI/Aihub, whose accessible model list is
+      // already synchronized from Aihub group abilities and token model_limits.
       if (
-        provider === BRANDING_PROVIDER &&
+        provider === ModelProvider.LobeHub &&
         !(await isLobeHubModelAvailable(resolvedModelId, 'video', {
           getUserEmail: async () => (await UserModel.findById(serverDB, userId))?.email,
         }))
