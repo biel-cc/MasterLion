@@ -17,6 +17,7 @@ env:
   AUTH_SECRET: e2e-test-secret-key-for-better-auth-32chars!
   AUTH_EMAIL_VERIFICATION: '0'
   MARKET_BASE_URL: http://localhost:3220
+  NEXT_PUBLIC_MARKET_BASE_URL: http://localhost:3220
   MARKET_TRUSTED_CLIENT_ID: masterino-e2e
   MARKET_TRUSTED_CLIENT_SECRET: lobehub-market_tcs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   # Mock S3 env vars to prevent initialization errors
