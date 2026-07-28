@@ -305,6 +305,9 @@ export default {
   'creds.form.keyRequired': 'Identifier is required',
   'creds.form.name': 'Display Name',
   'creds.form.nameRequired': 'Display name is required',
+  'creds.form.replaceSecret': 'Replace credential values',
+  'creds.form.replaceSecretDescription':
+    'Stored values cannot be revealed. Leave this section empty to keep them, or enter a complete replacement set.',
   'creds.form.save': 'Save',
   'creds.form.selectConnection': 'Select OAuth Connection',
   'creds.form.selectConnectionPlaceholder': 'Choose a connected account',
@@ -334,6 +337,9 @@ export default {
   'creds.view.error': 'Failed to load credential',
   'creds.view.noValues': 'No Values',
   'creds.view.oauthNote': 'OAuth credentials are managed by the connected service.',
+  'creds.view.serverOnly': 'Values are protected',
+  'creds.view.serverOnlyDescription':
+    'Credential plaintext is never sent to the browser. It is decrypted and injected only during approved server-side execution.',
   'creds.view.title': 'View Credential: {{name}}',
   'creds.view.values': 'Credential Values',
   'creds.view.warning': 'These values are sensitive. Do not share them with others.',
@@ -961,7 +967,7 @@ When I am ___, I need ___
   'startConversation': 'Start Conversation',
   'storage.actions.transfer.button': 'Move to...',
   'storage.actions.transfer.desc':
-    'Move agents and their data to another Workspace or your personal account. The originals leave the current space. LobeAI cannot be moved; copy it instead.',
+    'Move agents and their data to another Workspace or your personal account. The originals leave the current space. Masterino cannot be moved; copy it instead.',
   'storage.actions.transfer.title': 'Move Agents',
   'storage.actions.transferAgentGroups.button': 'Move to...',
   'storage.actions.transferAgentGroups.desc':
@@ -1615,7 +1621,7 @@ When I am ___, I need ___
   'workspace.general.copyLobeAI.modal.copyOptions.title': 'Copy options',
   'workspace.general.copyLobeAI.modal.copyOptions.unsupported': 'Unavailable',
   'workspace.general.copyLobeAI.modal.create': 'Copy {{count}} agent(s)',
-  'workspace.general.copyLobeAI.modal.defaultInboxTitle': 'LobeAI',
+  'workspace.general.copyLobeAI.modal.defaultInboxTitle': 'Masterino',
   'workspace.general.copyLobeAI.modal.failed': 'Failed to copy agents',
   'workspace.general.copyLobeAI.modal.includeHistory': 'Copy topics and messages',
   'workspace.general.copyLobeAI.modal.includeHistoryDesc':
@@ -2035,20 +2041,20 @@ When I am ___, I need ___
   'workspace.onboarding.finish': 'Finish',
   'workspace.onboarding.skipConfirm.title': 'Skip workspace setup?',
   'workspace.onboarding.skipConfirm.description':
-    'You can always customize LobeAI and add agents later in Workspace settings.',
+    'You can always customize Masterino and add agents later in Workspace settings.',
   'workspace.onboarding.skipConfirm.ok': 'Skip',
   'workspace.onboarding.skipConfirm.cancel': 'Continue setup',
   'workspace.onboarding.toast.saved': 'Saved',
   'workspace.onboarding.toast.failed': 'Could not save. Please try again.',
-  'workspace.onboarding.step1.heading': 'Personalize LobeAI',
+  'workspace.onboarding.step1.heading': 'Personalize Masterino',
   'workspace.onboarding.step1.subtitle':
     'Give your workspace assistant an identity your team will recognize.',
   'workspace.onboarding.step1.avatarLabel': 'Avatar',
   'workspace.onboarding.step1.avatarHint': 'Pick an emoji or upload an image.',
   'workspace.onboarding.step1.avatarTooLarge': 'Avatar file must be smaller than 5MB.',
   'workspace.onboarding.step1.avatarUploadFailed': 'Failed to upload avatar',
-  'workspace.onboarding.step1.nameLabel': "LobeAI's name",
-  'workspace.onboarding.step1.namePlaceholder': 'e.g. LobeAI',
+  'workspace.onboarding.step1.nameLabel': "Masterino's name",
+  'workspace.onboarding.step1.namePlaceholder': 'e.g. Masterino',
   'workspace.onboarding.step1.suggestion.title': 'Need ideas? Pick one to start.',
   'workspace.onboarding.step1.suggestion.switch': 'Try another set',
   'workspace.onboarding.step1.guide.name.title': 'Give It a Name',
@@ -2061,7 +2067,7 @@ When I am ___, I need ___
   'workspace.onboarding.step1.guide.growTogether.desc':
     "Every conversation teaches me your team's vibe — the longer we work together, the better.",
   'workspace.onboarding.step1.footer':
-    "Set up your workspace's LobeAI assistant — it learns from every conversation and grows into your team's go-to teammate.",
+    "Set up your workspace's Masterino assistant — it learns from every conversation and grows into your team's go-to teammate.",
   'workspace.onboarding.step1.sentence.1': "Ready? Let me be your team's go-to teammate.",
   'workspace.onboarding.step1.sentence.2': 'What role do you want me to play in this workspace?',
   'workspace.onboarding.step1.sentence.3': 'First, give me a name your team will love :)',
@@ -2162,8 +2168,8 @@ When I am ___, I need ___
   'tools.builtins.lobe-agent-management.description': 'Create, manage, and orchestrate AI agents',
   'tools.builtins.lobe-agent-management.title': 'Agent Management',
   'tools.builtins.lobe-agent.description':
-    'Built-in Lobe Agent capabilities: plan and todo management, sub-agent dispatch, and visual media analysis',
-  'tools.builtins.lobe-agent.title': 'Lobe Agent',
+    'Built-in Masterino Agent capabilities: plan and todo management, sub-agent dispatch, and visual media analysis',
+  'tools.builtins.lobe-agent.title': 'Masterino Agent',
   'tools.builtins.lobe-brief.description':
     'Report progress, deliver results, and request user decisions',
   'tools.builtins.lobe-brief.title': 'Brief Tools',

@@ -170,14 +170,14 @@ export const TOOL_API_DISPLAY_NAMES: Record<string, string> = {
   todo_list: 'workflow.toolDisplayName.updateTodos',
   web_search: 'workflow.toolDisplayName.search',
 
-  // Lobe Agent — Plan & Todos
+  // Masterino Agent — Plan & Todos
   createPlan: 'workflow.toolDisplayName.createPlan',
   createTodos: 'workflow.toolDisplayName.createTodos',
   updatePlan: 'workflow.toolDisplayName.updatePlan',
   updateTodos: 'workflow.toolDisplayName.updateTodos',
   clearTodos: 'workflow.toolDisplayName.clearTodos',
 
-  // Lobe Agent — Sub-Agents
+  // Masterino Agent — Sub-Agents
   callSubAgent: 'workflow.toolDisplayName.callSubAgent',
 
   // Memory

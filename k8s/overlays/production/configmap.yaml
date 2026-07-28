@@ -13,6 +13,7 @@ data:
   INTERNAL_APP_URL: 'http://masterino:3210'
   AUTH_DISABLE_EMAIL_SIGNUP: '1'
   AUTH_DISABLE_EMAIL_PASSWORD: '0'
+  AUTH_SSO_PROVIDERS: 'wecom'
   DATABASE_DRIVER: 'node'
   LOBE_DB_NAME: 'lobechat'
   S3_ENDPOINT: 'https://oss-cn-shenzhen.aliyuncs.com'

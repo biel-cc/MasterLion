@@ -30,6 +30,7 @@ const InterestsStep = memo<InterestsStepProps>(({ onBack, onNext }) => {
   const [customInput, setCustomInput] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
   const isNavigatingRef = useRef(false);
 
   const areas = useMemo(
@@ -55,10 +56,11 @@ const InterestsStep = memo<InterestsStepProps>(({ onBack, onNext }) => {
     }
   }, [customInput, selectedInterests]);
 
-  const handleNext = useCallback(() => {
+  const handleNext = useCallback(async () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
     setIsNavigating(true);
+    setSaveError(undefined);
 
     // Include custom input value if "other" is active and has content
     const finalInterests = [...selectedInterests];
@@ -69,9 +71,16 @@ const InterestsStep = memo<InterestsStepProps>(({ onBack, onNext }) => {
 
     const uniqueInterests = normalizeInterestsForStorage(finalInterests);
 
-    updateInterests(uniqueInterests);
-    onNext();
-  }, [selectedInterests, customInput, showCustomInput, updateInterests, onNext]);
+    try {
+      await updateInterests(uniqueInterests);
+      onNext();
+    } catch (error) {
+      console.error('[InterestsStep] Failed to save interests', error);
+      setSaveError(t('interests.saveError'));
+      isNavigatingRef.current = false;
+      setIsNavigating(false);
+    }
+  }, [selectedInterests, customInput, showCustomInput, updateInterests, onNext, t]);
 
   const handleBack = useCallback(() => {
     if (isNavigatingRef.current) return;
@@ -150,6 +159,7 @@ const InterestsStep = memo<InterestsStepProps>(({ onBack, onNext }) => {
           onPressEnter={handleAddCustom}
         />
       )}
+      {saveError && <Text type={'danger'}>{saveError}</Text>}
       <Flexbox horizontal justify={'space-between'} style={{ marginTop: 32 }}>
         <Button
           disabled={isNavigating}
@@ -160,7 +170,7 @@ const InterestsStep = memo<InterestsStepProps>(({ onBack, onNext }) => {
         >
           {t('back')}
         </Button>
-        <Button disabled={isNavigating} type={'primary'} onClick={handleNext}>
+        <Button disabled={isNavigating} loading={isNavigating} type={'primary'} onClick={() => void handleNext()}>
           {t('next')}
         </Button>
       </Flexbox>

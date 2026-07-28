@@ -17,6 +17,11 @@ vi.mock('@lobechat/electron-client-ipc', () => ({
   useWatchBroadcast: vi.fn(),
 }));
 
+vi.mock('@/utils/electron/desktopRuntimeConfig', () => ({
+  getDesktopCloudServer: () => 'https://masterion.bielcrystal.com',
+  getDesktopCloudServerAliases: () => ['https://mlai-test.bielcrystal.com'],
+}));
+
 vi.mock('@lobehub/ui', () => {
   const Button = ({
     children,
@@ -63,9 +68,9 @@ vi.mock('antd-style', () => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) =>
-      (
-        ({
+    t: (key: string, fallback?: string | { defaultValue?: string }) => {
+      const translated = (
+        {
           'authResult.failed.desc': 'Authorization failed',
           'authResult.failed.title': 'Authorization Failed',
           'authResult.success.desc':
@@ -84,10 +89,13 @@ vi.mock('react-i18next', () => ({
           'screen5.title': 'Sign in to sync across devices',
           'screen5.title2': '',
           'screen5.title3': '',
-        }) as Record<string, string>
-      )[key] ||
-      fallback ||
-      key,
+        } as Record<string, string>
+      )[key];
+
+      if (translated) return translated;
+      if (typeof fallback === 'string') return fallback;
+      return fallback?.defaultValue || key;
+    },
   }),
 }));
 
@@ -170,5 +178,34 @@ describe('Desktop onboarding LoginStep', () => {
     expect(screen.queryByText('Authorization Successful')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in Cloud' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Use self-hosted server' })).toBeInTheDocument();
+  });
+
+  it('treats the configured Cloud origin as Cloud when entered in the self-hosted field', async () => {
+    mockElectronState.dataSyncConfig = { active: false, storageMode: 'cloud' };
+    await renderLoginStep();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use self-hosted server' }));
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), {
+      target: { value: 'https://masterion.bielcrystal.com/' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect to server' }));
+
+    expect(mockElectronState.connectRemoteServer).toHaveBeenCalledWith({ storageMode: 'cloud' });
+  });
+
+  it('treats the configured test environment alias as Cloud', async () => {
+    mockElectronState.dataSyncConfig = { active: false, storageMode: 'cloud' };
+    await renderLoginStep();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use self-hosted server' }));
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), {
+      target: { value: 'https://mlai-test.bielcrystal.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect to server' }));
+
+    expect(mockElectronState.connectRemoteServer).toHaveBeenCalledWith({
+      remoteServerUrl: 'https://mlai-test.bielcrystal.com',
+      storageMode: 'cloud',
+    });
   });
 });

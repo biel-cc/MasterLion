@@ -23,6 +23,10 @@ vi.mock('@lobechat/const', async (importOriginal) => {
   };
 });
 
+vi.mock('@/utils/electron/desktopRuntimeConfig', () => ({
+  getDesktopCloudServer: () => 'https://masterion.bielcrystal.com',
+}));
+
 describe('useUserAvatar', () => {
   it('should return default avatar when user has no avatar', () => {
     act(() => {
@@ -112,7 +116,7 @@ describe('useUserAvatar', () => {
     expect(result.current).toBe(mockAvatar);
   });
 
-  it('should use OFFICIAL_URL when storageMode is cloud in desktop environment', () => {
+  it('should use the preload Cloud server when IPC hydration is pending', () => {
     mockConstEnv.isDesktop = true;
     const mockAvatar = '/api/avatar.png';
 
@@ -125,8 +129,7 @@ describe('useUserAvatar', () => {
 
     const { result } = renderHook(() => useUserAvatar());
 
-    // In cloud mode, selector returns OFFICIAL_URL regardless of remoteServerUrl config
-    expect(result.current).toBe('https://aihub.bielcrystal.com/api/avatar.png');
+    expect(result.current).toBe('https://masterion.bielcrystal.com/api/avatar.png');
   });
 
   it('should return original avatar when storageMode is selfHost but no URL configured', () => {

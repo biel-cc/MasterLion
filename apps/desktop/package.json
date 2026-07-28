@@ -6,12 +6,12 @@
   "homepage": "https://aihub.bielcrystal.com",
   "repository": {
     "type": "git",
-    "url": "https://aihub.bielcrystal.com.git"
+    "url": "https://github.com/chaaak6/MasterLion"
   },
   "author": "Masterino",
   "main": "./dist/main/index.js",
   "scripts": {
-    "build:cli": "cd ../cli && cross-env MINIFY=1 bun run build",
+    "build:cli": "cd ../cli && cross-env MINIFY=1 npm run build",
     "build:main": "cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-vite build",
     "build:run-unpack": "electron .",
     "dev": "electron-vite dev",
@@ -34,6 +34,7 @@
     "package:mac": "npm run build:main && electron-builder --mac --config electron-builder.mjs  --publish never",
     "package:mac:local": "npm run build:main && cross-env UPDATE_CHANNEL=nightly electron-builder --mac --config electron-builder.mjs --publish never --c.mac.notarize=false -c.mac.identity=null",
     "package:win": "npm run build:main && electron-builder --win --config electron-builder.mjs  --publish never",
+    "package:win:test": "cross-env DESKTOP_BUILD_FLAVOR=test npm run package:win",
     "start": "electron-vite preview",
     "stylelint": "stylelint \"src/**/*.{js,jsx,ts,tsx}\" --fix",
     "test": "vitest --run",
@@ -131,5 +132,6 @@
       "react-dom": "19.2.4",
       "vitest": "3.2.6"
     }
-  }
+  },
+  "productName": "Masterino"
 }

@@ -5,10 +5,27 @@ import type { App } from '@/core/App';
 
 import RemoteServerConfigCtr from '../RemoteServerConfigCtr';
 
-const { ipcMainHandleMock, mockFetch } = vi.hoisted(() => ({
-  ipcMainHandleMock: vi.fn(),
-  mockFetch: vi.fn(),
-}));
+const {
+  ipcMainHandleMock,
+  mockFetch,
+  mockFromPartition,
+  mockLoggerError,
+  mockLoggerWarn,
+  mockOnBeforeSendHeaders,
+} = vi.hoisted(() => {
+  const mockOnBeforeSendHeaders = vi.fn();
+
+  return {
+    ipcMainHandleMock: vi.fn(),
+    mockFetch: vi.fn(),
+    mockFromPartition: vi.fn(() => ({
+      webRequest: { onBeforeSendHeaders: mockOnBeforeSendHeaders },
+    })),
+    mockLoggerError: vi.fn(),
+    mockLoggerWarn: vi.fn(),
+    mockOnBeforeSendHeaders,
+  };
+});
 
 vi.mock('@/utils/net-fetch', () => ({
   netFetch: mockFetch,
@@ -18,10 +35,15 @@ vi.mock('@/utils/net-fetch', () => ({
 vi.mock('@/utils/logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
-    error: vi.fn(),
+    error: mockLoggerError,
     info: vi.fn(),
-    warn: vi.fn(),
+    warn: mockLoggerWarn,
   }),
+}));
+
+// Keep controller tests isolated from gateway workspace-package dependencies.
+vi.mock('@/services/gatewayConnectionSrv', () => ({
+  default: class GatewayConnectionService {},
 }));
 
 // Mock electron
@@ -32,13 +54,17 @@ vi.mock('electron', () => ({
   safeStorage: {
     decryptString: vi.fn((buffer: Buffer) => buffer.toString()),
     encryptString: vi.fn((str: string) => Buffer.from(str)),
+    getSelectedStorageBackend: vi.fn(() => 'kwallet6'),
     isEncryptionAvailable: vi.fn(() => true),
+  },
+  session: {
+    fromPartition: mockFromPartition,
   },
 }));
 
 // Mock @/const/env
 vi.mock('@/const/env', () => ({
-  OFFICIAL_CLOUD_SERVER: 'https://aihub.bielcrystal.com',
+  OFFICIAL_CLOUD_SERVER: 'https://masterion.bielcrystal.com',
 }));
 
 // Mock storeManager
@@ -66,9 +92,17 @@ const mockApp = {
 describe('RemoteServerConfigCtr', () => {
   let controller: RemoteServerConfigCtr;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     ipcMainHandleMock.mockClear();
+    const { safeStorage } = await import('electron');
+    const getSelectedStorageBackend = (
+      safeStorage as typeof safeStorage & { getSelectedStorageBackend: () => string }
+    ).getSelectedStorageBackend;
+    vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(true);
+    vi.mocked(getSelectedStorageBackend).mockReturnValue('kwallet6');
+    vi.mocked(safeStorage.encryptString).mockImplementation((value: string) => Buffer.from(value));
+    vi.mocked(safeStorage.decryptString).mockImplementation((buffer: Buffer) => buffer.toString());
     mockStoreManager.get.mockReturnValue({
       active: false,
       storageMode: 'cloud',
@@ -114,6 +148,73 @@ describe('RemoteServerConfigCtr', () => {
         ...newConfig,
       });
     });
+
+    it('should clear tokens before switching to a different server origin', async () => {
+      await controller.saveTokens('server-a-access', 'server-a-refresh', 3600);
+      vi.clearAllMocks();
+      mockStoreManager.get.mockReturnValue({
+        active: true,
+        remoteServerUrl: 'https://server-a.example.com',
+        storageMode: 'selfHost',
+      });
+
+      await controller.setRemoteServerConfig({
+        active: false,
+        remoteServerUrl: 'https://server-b.example.com',
+        storageMode: 'selfHost',
+      });
+
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(mockGatewayConnectionSrv.disconnect).toHaveBeenCalled();
+      expect(mockStoreManager.set).toHaveBeenCalledWith('dataSyncConfig', {
+        active: false,
+        remoteServerUrl: 'https://server-b.example.com',
+        storageMode: 'selfHost',
+      });
+    });
+
+    it('should preserve newly exchanged tokens when activating the same server', async () => {
+      mockStoreManager.get.mockReturnValue({
+        active: false,
+        remoteServerUrl: 'https://server-b.example.com',
+        storageMode: 'selfHost',
+      });
+      await controller.saveTokens('server-b-access', 'server-b-refresh', 3600);
+      vi.clearAllMocks();
+
+      await controller.setRemoteServerConfig({ active: true });
+
+      expect(mockStoreManager.delete).not.toHaveBeenCalled();
+      await expect(controller.getAccessToken()).resolves.toBe('server-b-access');
+    });
+
+    it('should atomically activate only the origin that is still configured', () => {
+      mockStoreManager.get.mockReturnValue({
+        active: false,
+        remoteServerUrl: 'https://server-b.example.com/base',
+        storageMode: 'selfHost',
+      });
+
+      expect(controller.isRemoteServerOriginCurrent('https://server-a.example.com')).toBe(false);
+      expect(controller.activateRemoteServerForOrigin('https://server-a.example.com')).toBe(false);
+      expect(mockStoreManager.set).not.toHaveBeenCalled();
+
+      expect(controller.isRemoteServerOriginCurrent('https://server-b.example.com/oidc')).toBe(
+        true,
+      );
+      expect(controller.activateRemoteServerForOrigin('https://server-b.example.com/oidc')).toBe(
+        true,
+      );
+      expect(mockStoreManager.set).toHaveBeenCalledWith('dataSyncConfig', {
+        active: true,
+        remoteServerUrl: 'https://server-b.example.com/base',
+        storageMode: 'selfHost',
+      });
+      expect(mockApp.browserManager.broadcastToAllWindows).toHaveBeenCalledWith(
+        'remoteServerConfigUpdated',
+        undefined,
+      );
+    });
   });
 
   describe('clearRemoteServerConfig', () => {
@@ -143,6 +244,7 @@ describe('RemoteServerConfigCtr', () => {
         expect.objectContaining({
           accessToken: expect.any(String),
           expiresAt: expect.any(Number),
+          issuerOrigin: 'https://masterion.bielcrystal.com',
           refreshToken: expect.any(String),
         }),
       );
@@ -159,25 +261,106 @@ describe('RemoteServerConfigCtr', () => {
         expect.objectContaining({
           accessToken: expect.any(String),
           expiresAt: undefined,
+          issuerOrigin: 'https://masterion.bielcrystal.com',
           refreshToken: expect.any(String),
         }),
       );
     });
 
-    it('should save unencrypted tokens when encryption is not available', async () => {
+    it('should fail closed and clear old tokens when encryption is not available', async () => {
       const { safeStorage } = await import('electron');
+
+      // Seed old encrypted in-memory and persisted state first.
+      await controller.saveTokens('old-access-token', 'old-refresh-token', 3600);
+      vi.clearAllMocks();
       vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(false);
 
-      await controller.saveTokens('access-token', 'refresh-token', 3600);
+      await expect(
+        controller.saveTokens('new-access-token', 'new-refresh-token', 3600),
+      ).rejects.toThrow('Secure token storage is unavailable');
 
       expect(safeStorage.encryptString).not.toHaveBeenCalled();
-      expect(mockStoreManager.set).toHaveBeenCalledWith(
-        'encryptedTokens',
-        expect.objectContaining({
-          accessToken: 'access-token',
-          refreshToken: 'refresh-token',
-        }),
+      expect(mockStoreManager.set).not.toHaveBeenCalled();
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(mockGatewayConnectionSrv.disconnect).toHaveBeenCalled();
+      expect(controller.getTokenExpiresAt()).toBeUndefined();
+      expect(controller.getLastTokenRefreshAt()).toBeUndefined();
+      await expect(controller.getAccessToken()).resolves.toBeNull();
+    });
+
+    it('should reject Linux basic_text storage as insecure', async () => {
+      const { safeStorage } = await import('electron');
+      const getSelectedStorageBackend = (
+        safeStorage as typeof safeStorage & { getSelectedStorageBackend: () => string }
+      ).getSelectedStorageBackend;
+      const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+      vi.mocked(getSelectedStorageBackend).mockReturnValue('basic_text');
+
+      try {
+        await expect(controller.saveTokens('access-token', 'refresh-token')).rejects.toThrow(
+          'Secure token storage is unavailable',
+        );
+        expect(safeStorage.encryptString).not.toHaveBeenCalled();
+        expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      } finally {
+        platformSpy.mockRestore();
+      }
+    });
+
+    it('should fail closed when the Linux storage backend cannot be verified', async () => {
+      const { safeStorage } = await import('electron');
+      const getSelectedStorageBackend = (
+        safeStorage as typeof safeStorage & { getSelectedStorageBackend: () => string }
+      ).getSelectedStorageBackend;
+      const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+      vi.mocked(getSelectedStorageBackend).mockImplementation(() => {
+        throw new Error('backend unavailable');
+      });
+
+      try {
+        await expect(controller.saveTokens('access-token', 'refresh-token')).rejects.toThrow(
+          'Secure token storage is unavailable',
+        );
+        expect(safeStorage.encryptString).not.toHaveBeenCalled();
+        expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      } finally {
+        platformSpy.mockRestore();
+      }
+    });
+
+    it.each(['win32', 'darwin'] as const)(
+      'should not apply the Linux backend restriction on %s',
+      async (platform) => {
+        const { safeStorage } = await import('electron');
+        const getSelectedStorageBackend = (
+          safeStorage as typeof safeStorage & { getSelectedStorageBackend: () => string }
+        ).getSelectedStorageBackend;
+        const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
+        vi.mocked(getSelectedStorageBackend).mockReturnValue('basic_text');
+
+        try {
+          await expect(controller.saveTokens('access-token', 'refresh-token')).resolves.toBe(
+            undefined,
+          );
+          expect(safeStorage.encryptString).toHaveBeenCalled();
+        } finally {
+          platformSpy.mockRestore();
+        }
+      },
+    );
+
+    it('should clear old tokens when encryption itself fails', async () => {
+      const { safeStorage } = await import('electron');
+      vi.mocked(safeStorage.encryptString).mockImplementation(() => {
+        throw new Error('Keychain failure');
+      });
+
+      await expect(controller.saveTokens('access-token', 'refresh-token')).rejects.toThrow(
+        'Keychain failure',
       );
+
+      expect(mockStoreManager.set).not.toHaveBeenCalled();
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
     });
   });
 
@@ -203,10 +386,11 @@ describe('RemoteServerConfigCtr', () => {
         if (key === 'encryptedTokens') {
           return {
             accessToken: Buffer.from('stored-access-token').toString('base64'),
+            issuerOrigin: 'https://masterion.bielcrystal.com',
             refreshToken: Buffer.from('stored-refresh-token').toString('base64'),
           };
         }
-        return { active: false, storageMode: 'cloud' };
+        return { active: true, storageMode: 'cloud' };
       });
 
       // Create new controller to test loading from store
@@ -230,14 +414,25 @@ describe('RemoteServerConfigCtr', () => {
       expect(result).toBeNull();
     });
 
-    it('should return raw token when encryption is not available', async () => {
+    it('should delete persisted plaintext and return null when encryption is not available', async () => {
       const { safeStorage } = await import('electron');
       vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(false);
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'legacy-plaintext-access-token',
+            refreshToken: 'legacy-plaintext-refresh-token',
+          };
+        }
+        return { active: false, storageMode: 'cloud' };
+      });
 
-      await controller.saveTokens('raw-access-token', 'raw-refresh-token');
-      const result = await controller.getAccessToken();
+      const newController = new RemoteServerConfigCtr(mockApp);
+      const result = await newController.getAccessToken();
 
-      expect(result).toBe('raw-access-token');
+      expect(result).toBeNull();
+      expect(mockStoreManager.get).not.toHaveBeenCalledWith('encryptedTokens');
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
     });
 
     it('should return null on decryption error', async () => {
@@ -251,16 +446,18 @@ describe('RemoteServerConfigCtr', () => {
         if (key === 'encryptedTokens') {
           return {
             accessToken: 'invalid-encrypted-token',
+            issuerOrigin: 'https://masterion.bielcrystal.com',
             refreshToken: 'invalid-encrypted-token',
           };
         }
-        return { active: false, storageMode: 'cloud' };
+        return { active: true, storageMode: 'cloud' };
       });
 
       const newController = new RemoteServerConfigCtr(mockApp);
       const result = await newController.getAccessToken();
 
       expect(result).toBeNull();
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
     });
   });
 
@@ -291,6 +488,27 @@ describe('RemoteServerConfigCtr', () => {
       const result = await newController.getRefreshToken();
 
       expect(result).toBeNull();
+    });
+
+    it('should delete persisted plaintext and return null when encryption is not available', async () => {
+      const { safeStorage } = await import('electron');
+      vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(false);
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'legacy-plaintext-access-token',
+            refreshToken: 'legacy-plaintext-refresh-token',
+          };
+        }
+        return { active: false, storageMode: 'cloud' };
+      });
+
+      const newController = new RemoteServerConfigCtr(mockApp);
+      const result = await newController.getRefreshToken();
+
+      expect(result).toBeNull();
+      expect(mockStoreManager.get).not.toHaveBeenCalledWith('encryptedTokens');
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
     });
   });
 
@@ -559,7 +777,7 @@ describe('RemoteServerConfigCtr', () => {
       await controller.saveTokens('old-access', 'old-refresh');
 
       mockFetch.mockResolvedValue({
-        json: () => Promise.resolve({}), // Missing tokens
+        json: () => Promise.resolve({ access_token: 'sensitive-partial-access-token' }),
         ok: true,
       });
 
@@ -567,7 +785,131 @@ describe('RemoteServerConfigCtr', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Missing tokens');
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        'Refresh response missing access_token or refresh_token',
+        { hasAccessToken: true, hasRefreshToken: false },
+      );
+      expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain(
+        'sensitive-partial-access-token',
+      );
     });
+
+    it('should discard a late server A refresh after switching and logging in to server B', async () => {
+      let currentConfig: DataSyncConfig = {
+        active: true,
+        remoteServerUrl: 'https://server-a.example.com',
+        storageMode: 'selfHost',
+      };
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'dataSyncConfig') return currentConfig;
+        return null;
+      });
+      mockStoreManager.set.mockImplementation((key, value) => {
+        if (key === 'dataSyncConfig') currentConfig = value;
+      });
+
+      await controller.saveTokens('server-a-access', 'server-a-refresh');
+
+      let resolveServerAResponse: (response: unknown) => void;
+      const serverAResponse = new Promise((resolve) => {
+        resolveServerAResponse = resolve;
+      });
+      mockFetch.mockReturnValue(serverAResponse);
+
+      const serverARefresh = controller.refreshAccessToken();
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+
+      await controller.setRemoteServerConfig({
+        active: false,
+        remoteServerUrl: 'https://server-b.example.com',
+        storageMode: 'selfHost',
+      });
+      await controller.saveTokens('server-b-access', 'server-b-refresh');
+      await controller.setRemoteServerConfig({ active: true });
+
+      resolveServerAResponse!({
+        json: () =>
+          Promise.resolve({
+            access_token: 'late-server-a-access',
+            expires_in: 3600,
+            refresh_token: 'late-server-a-refresh',
+          }),
+        ok: true,
+      });
+
+      const result = await serverARefresh;
+
+      expect(result).toEqual({
+        error: 'Token refresh was superseded by a server or credential change',
+        success: false,
+      });
+      await expect(controller.getAccessToken()).resolves.toBe('server-b-access');
+      expect(currentConfig).toEqual({
+        active: true,
+        remoteServerUrl: 'https://server-b.example.com',
+        storageMode: 'selfHost',
+      });
+      expect(JSON.stringify(mockStoreManager.set.mock.calls)).not.toContain('late-server-a-access');
+    });
+
+    it.each([
+      {
+        forbiddenError: 'invalid_grant',
+        ok: false,
+        payload: { error: 'invalid_grant' },
+        status: 400,
+        statusText: 'Bad Request',
+      },
+      {
+        forbiddenError: 'Missing tokens',
+        ok: true,
+        payload: {},
+        status: 200,
+        statusText: 'OK',
+      },
+    ])(
+      'should classify a stale parsed response as superseded instead of $forbiddenError',
+      async ({ forbiddenError, ok, payload, status, statusText }) => {
+        let currentConfig: DataSyncConfig = {
+          active: true,
+          remoteServerUrl: 'https://server-a.example.com',
+          storageMode: 'selfHost',
+        };
+        mockStoreManager.get.mockImplementation((key) => {
+          if (key === 'dataSyncConfig') return currentConfig;
+          return null;
+        });
+        mockStoreManager.set.mockImplementation((key, value) => {
+          if (key === 'dataSyncConfig') currentConfig = value;
+        });
+        await controller.saveTokens('server-a-access', 'server-a-refresh');
+
+        let resolveParsedBody: (body: unknown) => void;
+        const parsedBody = new Promise((resolve) => {
+          resolveParsedBody = resolve;
+        });
+        const parseResponse = vi.fn(() => parsedBody);
+        mockFetch.mockResolvedValue({ json: parseResponse, ok, status, statusText });
+
+        const serverARefresh = controller.refreshAccessToken();
+        await vi.waitFor(() => expect(parseResponse).toHaveBeenCalledOnce());
+
+        await controller.setRemoteServerConfig({
+          active: false,
+          remoteServerUrl: 'https://server-b.example.com',
+          storageMode: 'selfHost',
+        });
+        await controller.saveTokens('server-b-access', 'server-b-refresh');
+        await controller.setRemoteServerConfig({ active: true });
+        resolveParsedBody!(payload);
+
+        const result = await serverARefresh;
+
+        expect(result.error).toBe('Token refresh was superseded by a server or credential change');
+        expect(result.error).not.toContain(forbiddenError);
+        await expect(controller.getAccessToken()).resolves.toBe('server-b-access');
+      },
+    );
 
     it('should handle concurrent refresh requests by returning same result', async () => {
       const { safeStorage } = await import('electron');
@@ -647,19 +989,78 @@ describe('RemoteServerConfigCtr', () => {
       expect(result.error).toContain('Network error');
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+
+    it.each(['fetch', 'success body', 'error body'])(
+      'should time out a stalled refresh %s and allow a later retry',
+      async (stalledPhase) => {
+        vi.useFakeTimers();
+        try {
+          mockStoreManager.get.mockImplementation((key) => {
+            if (key === 'dataSyncConfig') {
+              return {
+                active: true,
+                remoteServerUrl: 'https://server.com',
+                storageMode: 'selfHost',
+              };
+            }
+            return null;
+          });
+          await controller.saveTokens('old-access', 'old-refresh');
+
+          let requestSignal: AbortSignal | undefined;
+          mockFetch.mockImplementation((_url, init) => {
+            requestSignal = init?.signal as AbortSignal | undefined;
+            if (stalledPhase === 'fetch') return new Promise(() => {});
+
+            return Promise.resolve({
+              json: () => new Promise(() => {}),
+              ok: stalledPhase !== 'error body',
+              status: stalledPhase === 'error body' ? 503 : 200,
+              statusText: stalledPhase === 'error body' ? 'Service Unavailable' : 'OK',
+            });
+          });
+
+          const stalledRefresh = controller.refreshAccessToken();
+          await vi.advanceTimersByTimeAsync(30_000);
+
+          await expect(stalledRefresh).resolves.toEqual({
+            error:
+              'Exception occurred during token refresh: Token refresh timed out after 30 seconds',
+            success: false,
+          });
+          expect(requestSignal?.aborted).toBe(true);
+
+          mockFetch.mockResolvedValue({
+            json: () =>
+              Promise.resolve({
+                access_token: 'retry-access',
+                expires_in: 3600,
+                refresh_token: 'retry-refresh',
+              }),
+            ok: true,
+          });
+
+          await expect(controller.refreshAccessToken()).resolves.toEqual({ success: true });
+          expect(mockFetch).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
   });
 
   describe('afterAppReady', () => {
-    it('should load tokens from store', () => {
+    it('should load tokens from store when issuerOrigin matches the active server', () => {
       mockStoreManager.get.mockImplementation((key) => {
         if (key === 'encryptedTokens') {
           return {
             accessToken: 'stored-access',
             expiresAt: Date.now() + 3600000,
+            issuerOrigin: 'https://masterion.bielcrystal.com',
             refreshToken: 'stored-refresh',
           };
         }
-        return { active: false, storageMode: 'cloud' };
+        return { active: true, storageMode: 'cloud' };
       });
 
       const newController = new RemoteServerConfigCtr(mockApp);
@@ -667,6 +1068,54 @@ describe('RemoteServerConfigCtr', () => {
 
       // Verify tokens were loaded by checking getTokenExpiresAt
       expect(newController.getTokenExpiresAt()).toBeDefined();
+      expect(mockStoreManager.delete).not.toHaveBeenCalledWith('encryptedTokens');
+    });
+
+    it('should clear legacy tokens without issuerOrigin and deactivate the config', () => {
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'legacy-access',
+            expiresAt: Date.now() + 3600000,
+            refreshToken: 'legacy-refresh',
+          };
+        }
+        return { active: true, storageMode: 'cloud' };
+      });
+
+      const newController = new RemoteServerConfigCtr(mockApp);
+      newController.afterAppReady();
+
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(mockStoreManager.set).toHaveBeenCalledWith('dataSyncConfig', {
+        active: false,
+        storageMode: 'cloud',
+      });
+      expect(newController.getTokenExpiresAt()).toBeUndefined();
+    });
+
+    it('should clear tokens from a different issuer and deactivate the config', () => {
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'old-aihub-access',
+            expiresAt: Date.now() + 3600000,
+            issuerOrigin: 'https://aihub.bielcrystal.com',
+            refreshToken: 'old-aihub-refresh',
+          };
+        }
+        return { active: true, storageMode: 'cloud' };
+      });
+
+      const newController = new RemoteServerConfigCtr(mockApp);
+      newController.afterAppReady();
+
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(mockStoreManager.set).toHaveBeenCalledWith('dataSyncConfig', {
+        active: false,
+        storageMode: 'cloud',
+      });
+      expect(newController.getTokenExpiresAt()).toBeUndefined();
     });
 
     it('should load lastRefreshAt from store', () => {
@@ -676,8 +1125,31 @@ describe('RemoteServerConfigCtr', () => {
           return {
             accessToken: 'stored-access',
             expiresAt: Date.now() + 3600000,
+            issuerOrigin: 'https://masterion.bielcrystal.com',
             lastRefreshAt: lastRefreshTime,
             refreshToken: 'stored-refresh',
+          };
+        }
+        return { active: true, storageMode: 'cloud' };
+      });
+
+      const newController = new RemoteServerConfigCtr(mockApp);
+      newController.afterAppReady();
+
+      // Verify lastRefreshAt was loaded
+      expect(newController.getLastTokenRefreshAt()).toBe(lastRefreshTime);
+    });
+
+    it('should delete old persisted tokens without loading them when encryption is unavailable', async () => {
+      const { safeStorage } = await import('electron');
+      vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValue(false);
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'legacy-plaintext-access-token',
+            expiresAt: Date.now() + 3600000,
+            lastRefreshAt: Date.now(),
+            refreshToken: 'legacy-plaintext-refresh-token',
           };
         }
         return { active: false, storageMode: 'cloud' };
@@ -686,8 +1158,34 @@ describe('RemoteServerConfigCtr', () => {
       const newController = new RemoteServerConfigCtr(mockApp);
       newController.afterAppReady();
 
-      // Verify lastRefreshAt was loaded
-      expect(newController.getLastTokenRefreshAt()).toBe(lastRefreshTime);
+      expect(mockStoreManager.get).not.toHaveBeenCalledWith('encryptedTokens');
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(newController.getTokenExpiresAt()).toBeUndefined();
+      expect(newController.getLastTokenRefreshAt()).toBeUndefined();
+    });
+
+    it('should delete stored values that cannot be decrypted', async () => {
+      const { safeStorage } = await import('electron');
+      vi.mocked(safeStorage.decryptString).mockImplementation(() => {
+        throw new Error('Invalid encrypted payload');
+      });
+      mockStoreManager.get.mockImplementation((key) => {
+        if (key === 'encryptedTokens') {
+          return {
+            accessToken: 'legacy-plaintext-access-token',
+            expiresAt: Date.now() + 3600000,
+            issuerOrigin: 'https://masterion.bielcrystal.com',
+            refreshToken: 'legacy-plaintext-refresh-token',
+          };
+        }
+        return { active: true, storageMode: 'cloud' };
+      });
+
+      const newController = new RemoteServerConfigCtr(mockApp);
+      newController.afterAppReady();
+
+      expect(mockStoreManager.delete).toHaveBeenCalledWith('encryptedTokens');
+      expect(newController.getTokenExpiresAt()).toBeUndefined();
     });
   });
 
@@ -729,7 +1227,7 @@ describe('RemoteServerConfigCtr', () => {
 
       const result = await controller.getRemoteServerUrl();
 
-      expect(result).toBe('https://aihub.bielcrystal.com');
+      expect(result).toBe('https://masterion.bielcrystal.com');
     });
 
     it('should return custom URL for selfHost mode', async () => {
@@ -853,6 +1351,83 @@ describe('RemoteServerConfigCtr', () => {
       });
 
       expect(result).toBe(true);
+    });
+  });
+
+  describe('setupSubscriptionWebviewSession', () => {
+    const setupRequestHandler = async () => {
+      await controller.setupSubscriptionWebviewSession({ partition: 'persist:subscription' });
+
+      expect(mockFromPartition).toHaveBeenCalledWith('persist:subscription');
+      expect(mockOnBeforeSendHeaders).toHaveBeenCalledWith(
+        { urls: ['http://*/*', 'https://*/*'] },
+        expect.any(Function),
+      );
+
+      return mockOnBeforeSendHeaders.mock.calls[0]![1];
+    };
+
+    it('should remove existing auth headers and fail closed while the config is inactive', async () => {
+      mockStoreManager.get.mockReturnValue({ active: false, storageMode: 'cloud' });
+      const getAccessToken = vi.spyOn(controller, 'getAccessToken');
+      const handler = await setupRequestHandler();
+      const callback = vi.fn();
+
+      await handler(
+        {
+          requestHeaders: { 'oIdC-AuTh': 'renderer-supplied-token', 'X-Test': '1' },
+          url: 'https://masterion.bielcrystal.com/subscription',
+        },
+        callback,
+      );
+
+      expect(getAccessToken).not.toHaveBeenCalled();
+      expect(callback).toHaveBeenCalledWith({ requestHeaders: { 'X-Test': '1' } });
+    });
+
+    it.each([
+      'https://aihub.bielcrystal.com/subscription',
+      'https://sibling.bielcrystal.com/subscription',
+      'https://unrelated.example.com/subscription',
+    ])('should not inject the current token into a different origin: %s', async (url) => {
+      mockStoreManager.get.mockReturnValue({ active: true, storageMode: 'cloud' });
+      const getAccessToken = vi
+        .spyOn(controller, 'getAccessToken')
+        .mockResolvedValue('masterlion-token');
+      const handler = await setupRequestHandler();
+      const callback = vi.fn();
+
+      await handler({ requestHeaders: { 'OIDC-AUTH': 'renderer-supplied-token' }, url }, callback);
+
+      expect(getAccessToken).not.toHaveBeenCalled();
+      expect(callback).toHaveBeenCalledWith({ requestHeaders: {} });
+    });
+
+    it('should replace existing auth headers only for the active matching self-hosted origin', async () => {
+      mockStoreManager.get.mockReturnValue({
+        active: true,
+        remoteServerUrl: 'https://self-hosted.example.com/base',
+        storageMode: 'selfHost',
+      });
+      vi.spyOn(controller, 'getAccessToken').mockResolvedValue('self-hosted-token');
+      const handler = await setupRequestHandler();
+      const callback = vi.fn();
+
+      await handler(
+        {
+          requestHeaders: {
+            'oidc-auth': 'stale-lowercase-token',
+            'OIDC-AUTH': 'stale-uppercase-token',
+            'X-Test': '1',
+          },
+          url: 'https://self-hosted.example.com/subscription?plan=team',
+        },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith({
+        requestHeaders: { 'Oidc-Auth': 'self-hosted-token', 'X-Test': '1' },
+      });
     });
   });
 });

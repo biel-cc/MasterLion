@@ -269,7 +269,7 @@ docker exec masterlion-postgres psql -U postgres -d lobechat -c \
 
 | 环境 | 域名 | 部署目录 | 镜像 |
 |------|------|----------|------|
-| 生产 | masterlion.bielcrystal.com | `/root/masterlion_prd`（k8s） | ACR `latest` |
+| 生产 | masterion.bielcrystal.com | `/root/masterlion_prd`（k8s） | ACR `latest` |
 | 测试 | mlai-test.bielcrystal.com | `/root/MasterLion/docker-compose/deploy` | `masterlion:local`（retag 自 ACR） |
 
 ### 生产 .env 位置

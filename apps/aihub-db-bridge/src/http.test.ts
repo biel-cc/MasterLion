@@ -176,7 +176,7 @@ describe('createBridgeHandler', () => {
     });
 
     const request = new Request('http://bridge.local/v1/tokens/167/reassign', {
-      body: JSON.stringify({ userId: 165, name: 'MasterLion_biel' }),
+      body: JSON.stringify({ userId: 165, name: 'Masterino_biel' }),
       headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
       method: 'POST',
     });
@@ -186,7 +186,7 @@ describe('createBridgeHandler', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ data: { ok: true }, success: true });
     expect(repo.reassignToken).toHaveBeenCalledWith(167, 165);
-    expect(repo.updateTokenName).toHaveBeenCalledWith(167, 'MasterLion_biel');
+    expect(repo.updateTokenName).toHaveBeenCalledWith(167, 'Masterino_biel');
   });
 
   it('returns 400 when reassign body lacks a valid userId', async () => {

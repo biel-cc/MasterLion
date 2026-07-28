@@ -19,7 +19,7 @@ Masterino is a company-internal AI Agent workspace for 小宗狮. It is derived 
 ## Project Structure
 
 ```plaintext
-MasterLion/
+Masterion/
 ├── apps/
 │   ├── desktop/            # Electron desktop app
 │   ├── cli/                # Masterino CLI

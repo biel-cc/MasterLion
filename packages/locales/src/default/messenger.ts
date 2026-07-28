@@ -45,7 +45,7 @@ export default {
   'messenger.slack.connections.disconnectTitle': 'Disconnect workspace',
   'messenger.slack.installBlocked.dismiss': 'Got it',
   'messenger.slack.installBlocked.suggestion':
-    "DM @MasterLion on Slack to link your personal account — you don't need to install again. Or ask the original installer to disconnect this workspace first if you want to take over ownership.",
+    "DM @Masterino on Slack to link your personal account — you don't need to install again. Or ask the original installer to disconnect this workspace first if you want to take over ownership.",
   'messenger.slack.installBlocked.title': 'Workspace already connected',
   'messenger.slack.installBlocked.withName':
     '"{{workspace}}" is already connected to Masterino by another user.',

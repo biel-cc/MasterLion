@@ -7,8 +7,8 @@ metadata:
     masterino.io/environment: test
 provisioner: diskplugin.csi.alibabacloud.com
 parameters:
-  type: cloud_essd
-  fstype: ext4
+  # Prefer ESSD and fall back when the selected ACK node type or zone cannot attach ESSD.
+  type: cloud_essd,cloud_ssd,cloud_efficiency
 reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer

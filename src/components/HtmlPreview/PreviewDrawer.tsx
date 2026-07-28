@@ -54,6 +54,16 @@ const HtmlPreviewDrawer = memo<HtmlPreviewDrawerProps>(({ content, open, onClose
     }
   }, [content, message, t]);
 
+  const onCopy = useCallback(async () => {
+    try {
+      await copyToClipboard(content);
+      message.success(t('HtmlPreview.actions.copySuccess'));
+    } catch (error) {
+      console.error('Failed to copy HTML preview content:', error);
+      message.error(t('HtmlPreview.actions.copyFailed'));
+    }
+  }, [content, message, t]);
+
   const Title = (
     <Flexbox horizontal align={'center'} justify={'space-between'} style={{ width: '100%' }}>
       {t('HtmlPreview.title')}

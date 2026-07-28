@@ -12,8 +12,9 @@ import AgentPickerStep from './index';
 const navigate = vi.fn();
 const finishOnboarding = vi.fn().mockResolvedValue(undefined);
 const installMarketplaceAgents = vi.fn().mockResolvedValue({
+  failures: [],
   installedAgentIds: [],
-  skippedAgentIds: [],
+  skippedAgentIds: ['t1'],
   summaries: [],
 });
 const metrics = vi.hoisted(() => ({
@@ -92,6 +93,12 @@ beforeEach(() => {
   navigate.mockClear();
   finishOnboarding.mockClear();
   installMarketplaceAgents.mockClear();
+  installMarketplaceAgents.mockResolvedValue({
+    failures: [],
+    installedAgentIds: [],
+    skippedAgentIds: ['t1'],
+    summaries: [],
+  });
   metrics.trackOnboardingCompleted.mockClear();
   metrics.trackOnboardingMarketplacePicked.mockClear();
   metrics.trackOnboardingMarketplaceShown.mockClear();
@@ -206,5 +213,23 @@ describe('AgentPickerStep', () => {
       flow: 'agent',
       targetUrl: '/',
     });
+  });
+
+  it('preserves selection and does not finish when an assistant install fails', async () => {
+    installMarketplaceAgents.mockResolvedValueOnce({
+      failures: [{ reason: 'Market unavailable', sourceAgentId: 't1' }],
+      installedAgentIds: [],
+      skippedAgentIds: [],
+      summaries: [],
+    });
+    render(<AgentPickerStep onBack={vi.fn()} />);
+
+    fireEvent.click(screen.getByText('Code Reviewer'));
+    fireEvent.click(screen.getByRole('button', { name: 'agentPicker.continue (1)' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Code Reviewer: Market unavailable');
+    expect(screen.getByRole('button', { name: /agentPicker\.continue \(1\)/ })).toBeEnabled();
+    expect(finishOnboarding).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

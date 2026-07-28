@@ -10,10 +10,7 @@ import { type TrustedClientUserInfo } from '@/libs/trusted-client';
 import { generateTrustedClientToken } from '@/libs/trusted-client';
 import { normalizeLocale } from '@/locales/resources';
 import type { AgentForkBatchResult, AgentForkResponse } from '@/types/discover';
-
-import BUILTIN_ONBOARDING_AGENTS from './builtinOnboardingAgents';
-
-const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 interface MarketUserInfo {
   accountId: number;
@@ -51,7 +48,7 @@ const fetchMarketUserInfo = async (
   const { userInfo, accessToken } = options;
 
   try {
-    const userInfoUrl = `${MARKET_BASE_URL}/lobehub-oidc/userinfo`;
+    const userInfoUrl = `${getInternalMarketBaseUrl()}/lobehub-oidc/userinfo`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -163,7 +160,7 @@ const forkOneAgent = async (
   baseHeaders: Record<string, string>,
 ): Promise<AgentForkBatchResult> => {
   try {
-    const forkUrl = `${MARKET_BASE_URL}/api/v1/agents/${item.sourceIdentifier}/fork`;
+    const forkUrl = `${getInternalMarketBaseUrl()}/api/v1/agents/${item.sourceIdentifier}/fork`;
     // Clone so per-item actAs doesn't leak across the batch.
     const headers = { ...baseHeaders };
     if (item.actAs !== undefined) {
@@ -512,7 +509,7 @@ export const agentRouter = router({
   getOnboardingFull: agentProcedure
     .input(z.object({ locale: z.string().optional() }).optional().default({}))
     .query(async ({ input, ctx }) => {
-      const url = new URL('/api/v1/agents/onboarding-full', MARKET_BASE_URL);
+      const url = new URL('/api/v1/agents/onboarding-full', getInternalMarketBaseUrl());
       url.searchParams.set('_ts', String(Date.now()));
       url.searchParams.set('locale', normalizeLocale(input.locale));
 
@@ -535,8 +532,7 @@ export const agentRouter = router({
       }
 
       if (!headers['x-lobe-trust-token'] && !headers['Authorization']) {
-        log('No Market authentication available for onboarding catalog; returning builtin fallback');
-        return BUILTIN_ONBOARDING_AGENTS as unknown as Record<string, unknown[]>;
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Internal Market authentication is required' });
       }
 
       try {
@@ -550,21 +546,24 @@ export const agentRouter = router({
             response.statusText,
             errorText,
           );
-          log('Falling back to builtin onboarding agents');
-          return BUILTIN_ONBOARDING_AGENTS as unknown as Record<string, unknown[]>;
+          throw new Error(`Internal Market catalog failed: ${response.status} ${errorText}`);
         }
 
         const data = (await response.json()) as Record<string, unknown[]>;
         const totalAgents = Object.values(data).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
         if (totalAgents === 0) {
-          log('Market returned empty onboarding catalog; falling back to builtin agents');
-          return BUILTIN_ONBOARDING_AGENTS as unknown as Record<string, unknown[]>;
+          throw new Error('Internal Market onboarding catalog is empty');
         }
 
         return data;
       } catch (error) {
-        log('Error getting onboarding full: %O; falling back to builtin agents', error);
-        return BUILTIN_ONBOARDING_AGENTS as unknown as Record<string, unknown[]>;
+        log('Error getting onboarding full: %O', error);
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          cause: error,
+          code: 'BAD_GATEWAY',
+          message: error instanceof Error ? error.message : 'Internal Market is unavailable',
+        });
       }
     }),
 
@@ -578,7 +577,7 @@ export const agentRouter = router({
       log('getAgentForkSource input: %O', input);
 
       try {
-        const forkSourceUrl = `${MARKET_BASE_URL}/api/v1/agents/${input.identifier}/fork-source`;
+        const forkSourceUrl = `${getInternalMarketBaseUrl()}/api/v1/agents/${input.identifier}/fork-source`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -636,7 +635,7 @@ export const agentRouter = router({
       log('getAgentForks input: %O', input);
 
       try {
-        const forksUrl = `${MARKET_BASE_URL}/api/v1/agents/${input.identifier}/forks`;
+        const forksUrl = `${getInternalMarketBaseUrl()}/api/v1/agents/${input.identifier}/forks`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',

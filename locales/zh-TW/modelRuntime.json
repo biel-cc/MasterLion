@@ -1,6 +1,6 @@
 {
   "AccountDeactivated": "您的帳戶已被停用或暫停使用。這可能是由於政策、安全性或帳戶審查原因所致。請聯繫提供者支援以獲得協助。",
-  "AgentRuntimeError": "Lobe 語言模型執行時發生錯誤。請根據以下資訊進行故障排除或重試。",
+  "AgentRuntimeError": "Masterino 語言模型執行時發生錯誤。請根據以下資訊進行故障排除或重試。",
   "CapabilityNotSupported": "抱歉，此模型不支援所請求的功能（例如視覺輸入或工具調用）。請切換到支援該功能的模型。",
   "ComfyUIBizError": "請求 ComfyUI 服務時發生錯誤。請根據以下資訊進行故障排除或重試。",
   "ComfyUIEmptyResult": "ComfyUI 未生成任何圖像。請檢查模型配置或重試。",

@@ -7,6 +7,10 @@ if (process.env.NODE_ENV === 'production') {
   Reflect.set(process.env, 'NODE_ENV', 'test');
 }
 
+// Keep tests that import the internal Market-backed OIDC configuration hermetic.
+// Individual configuration tests can still delete or override this value.
+process.env.MARKET_BASE_URL ||= 'http://masterlion-market:3220';
+
 const alias = {
   // Downstream workspaces sometimes pnpm-override @lobechat/business-* packages to
   // internal implementations whose source files import alias paths that only exist
@@ -46,11 +50,11 @@ const alias = {
 
 export default defineConfig({
   define: {
-    '__CI__': process.env.CI === 'true' ? 'true' : 'false',
-    '__DEV__': process.env.NODE_ENV !== 'production' ? 'true' : 'false',
-    '__ELECTRON__': 'false',
-    '__MOBILE__': 'false',
-    '__TEST__': 'true',
+    __CI__: process.env.CI === 'true' ? 'true' : 'false',
+    __DEV__: process.env.NODE_ENV !== 'production' ? 'true' : 'false',
+    __ELECTRON__: 'false',
+    __MOBILE__: 'false',
+    __TEST__: 'true',
   },
   optimizeDeps: {
     exclude: ['crypto', 'util', 'tty'],
@@ -63,8 +67,7 @@ export default defineConfig({
     {
       name: 'raw-md',
       transform(_, id) {
-        if (id.endsWith('.md'))
-          return { code: 'export default ""', map: null };
+        if (id.endsWith('.md')) return { code: 'export default ""', map: null };
       },
     },
     /**

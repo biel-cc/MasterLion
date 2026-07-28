@@ -11,6 +11,7 @@ import type { RendererRequestInterceptor } from './RendererProtocolManager';
 
 interface BackendProxyContext {
   getAccessToken: () => Promise<string | undefined | null>;
+  isAuthActiveForUrl?: (targetUrl: string) => Promise<boolean>;
   rewriteUrl: (rawUrl: string) => Promise<string | null>;
   source?: string;
 }
@@ -18,12 +19,13 @@ interface BackendProxyContext {
 interface BackendProxyRemoteBaseOptions {
   getAccessToken: () => Promise<string | undefined | null>;
   getRemoteBaseUrl: () => Promise<string | undefined | null>;
+  isAuthActiveForUrl?: (targetUrl: string) => Promise<boolean>;
   source?: string;
 }
 
 /**
  * Holds per-session proxy context for routing renderer-originated backend
- * requests (`/trpc`, `/webapi`, `/api/auth`, `/market`) to the remote LobeHub
+ * requests (`/trpc`, `/webapi`, `/api/auth`, `/market`) to the remote Masterino
  * server. The context is consumed by `createAppRequestInterceptor`, which the
  * `app://` protocol manager invokes before its static / Vite fallback.
  */
@@ -100,6 +102,7 @@ export class BackendProxyProtocolManager {
 
     this.register(session, {
       getAccessToken: options.getAccessToken,
+      isAuthActiveForUrl: options.isAuthActiveForUrl,
       rewriteUrl,
       source: options.source,
     });
@@ -107,7 +110,8 @@ export class BackendProxyProtocolManager {
 
   /**
    * Bind a session's proxy context. Subsequent backend-path requests on this
-   * session will be rewritten via `rewriteUrl` and have `Oidc-Auth` injected.
+   * session will be rewritten via `rewriteUrl`. `Oidc-Auth` is injected only
+   * when the context confirms authentication is active for the rewritten URL.
    */
   register(session: Session, context: BackendProxyContext) {
     if (!session) return;
@@ -138,7 +142,7 @@ export class BackendProxyProtocolManager {
   }
 
   /**
-   * Proxy a renderer-originated request through the remote LobeHub backend.
+   * Proxy a renderer-originated request through the remote Masterino backend.
    * Returns `null` if the session has no proxy context registered yet (caller
    * decides how to fall back). Throws on upstream fetch failure to mirror the
    * original `protocol.handle` semantics.
@@ -153,7 +157,10 @@ export class BackendProxyProtocolManager {
     if (!rewrittenUrl) return null;
 
     const headers = new Headers(request.headers);
-    const token = await context.getAccessToken();
+    const authActive = context.isAuthActiveForUrl
+      ? await context.isAuthActiveForUrl(rewrittenUrl)
+      : false;
+    const token = authActive ? await context.getAccessToken() : null;
     if (token) {
       headers.set('Oidc-Auth', token);
     }
@@ -190,7 +197,7 @@ export class BackendProxyProtocolManager {
       responseHeaders.set('Access-Control-Allow-Credentials', 'true');
     }
 
-    if (isDev) {
+    if (isDev && token) {
       responseHeaders.set('x-dev-oidc-auth', token);
     }
 

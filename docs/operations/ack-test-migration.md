@@ -42,8 +42,9 @@ bash ./deploy.sh --env test create-secret
 ```
 
 `KEY_VAULTS_SECRET`、`AUTH_SECRET` 和 `JWKS_KEY` 可继续沿用旧测试环境值。
-`AIHUB_READONLY_DATABASE_URL` 只能存在于 Bridge Secret。测试环境默认关闭第三方联网搜索，
-因此不需要 Bocha API Key。
+`AIHUB_READONLY_DATABASE_URL` 只能存在于 Bridge Secret。测试环境不需要 Bocha API Key；
+联网搜索由集群内的 SearXNG 提供。另需从 `searxng-secret.env.example` 生成
+`searxng-secret.env`，其中只包含随机的 `SEARXNG_SECRET`。
 
 ## 4. 全新数据库部署
 

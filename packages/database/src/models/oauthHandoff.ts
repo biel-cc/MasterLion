@@ -28,32 +28,27 @@ export class OAuthHandoffModel {
 
   /**
    * Fetch and consume OAuth credentials
-   * This method queries the record first, and if found, deletes it immediately to ensure credentials can only be used once
+   * Deletes and returns the record atomically so concurrent pollers cannot
+   * receive the same authorization code.
    * @param id Credential ID
    * @param client Client type
    * @returns Credential data, or null if it doesn't exist or has expired
    */
   fetchAndConsume = async (id: string, client: string): Promise<OAuthHandoffItem | null> => {
-    // First find the record while checking if it's expired (5 minute TTL)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
-    const handoff = await this.db.query.oauthHandoffs.findFirst({
-      where: and(
-        eq(oauthHandoffs.id, id),
-        eq(oauthHandoffs.client, client),
-        // Check if the record was created within the last 5 minutes
-        sql`${oauthHandoffs.createdAt} > ${fiveMinutesAgo}`,
-      ),
-    });
+    const [handoff] = await this.db
+      .delete(oauthHandoffs)
+      .where(
+        and(
+          eq(oauthHandoffs.id, id),
+          eq(oauthHandoffs.client, client),
+          sql`${oauthHandoffs.createdAt} > ${fiveMinutesAgo}`,
+        ),
+      )
+      .returning();
 
-    if (!handoff) {
-      return null;
-    }
-
-    // Immediately delete the record to ensure one-time use
-    await this.db.delete(oauthHandoffs).where(eq(oauthHandoffs.id, id));
-
-    return handoff;
+    return handoff ?? null;
   };
 
   /**

@@ -38,15 +38,14 @@
         color: #1f1f1f;
       }
       #loading-brand svg path {
+        display: none;
+      }
+      #loading-brand svg text {
         fill: currentcolor;
-        fill-opacity: 0;
-        stroke: currentcolor;
-        stroke-dasharray: 1000;
-        stroke-dashoffset: 1000;
-        stroke-width: 0.25em;
-        animation:
-          loading-draw 2s cubic-bezier(0.4, 0, 0.2, 1) infinite,
-          loading-fill 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        font-family: Inter, Arial, sans-serif;
+        font-size: 185px;
+        font-weight: 800;
+        letter-spacing: -5px;
       }
       html[data-theme='dark'] #loading-brand {
         color: #f0f0f0;

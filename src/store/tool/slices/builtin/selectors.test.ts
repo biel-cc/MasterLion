@@ -120,7 +120,7 @@ describe('builtinToolSelectors', () => {
           manifest: {
             api: [],
             identifier: 'lobe-agent',
-            meta: { avatar: '🤖', title: 'Lobe Agent' },
+            meta: { avatar: '🤖', title: 'Masterino Agent' },
             systemRole: '',
           },
           type: 'builtin',

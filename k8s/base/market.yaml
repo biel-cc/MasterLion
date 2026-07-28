@@ -1,0 +1,226 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: masterlion-market-config
+data:
+  MARKET_PORT: "3220"
+  MARKET_PUBLIC_BASE_URL: "https://masterion.bielcrystal.com/market"
+  MARKET_OAUTH_REDIRECT_ORIGINS: "https://masterion.bielcrystal.com"
+  MARKET_OBJECT_STORAGE_ENDPOINT: "http://masterlion-market-oss:9000"
+  MARKET_OBJECT_STORAGE_BUCKET: "masterlion-market"
+  MARKET_OBJECT_STORAGE_REGION: "us-east-1"
+  MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: "1"
+  MARKET_RUNNER_INTERNAL_URL: "http://masterlion-market-runner:3221"
+  CONNECTOR_EGRESS_PROXY_URL: "http://connector-egress-proxy:3128"
+  MARKET_TRUSTED_CLIENT_IDS: "masterlion"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: masterlion-market-migrate
+  labels:
+    app.kubernetes.io/name: masterlion-market-migrate
+    app.kubernetes.io/part-of: masterlion
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterlion-market-migrate
+        app.kubernetes.io/part-of: masterlion
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
+          command: ["node", "dist/migrate.js"]
+          envFrom:
+            - configMapRef:
+                name: masterlion-market-config
+            - secretRef:
+                name: masterlion-market-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterlion-market
+  labels:
+    app.kubernetes.io/name: masterlion-market
+    app.kubernetes.io/part-of: masterlion
+spec:
+  selector:
+    app.kubernetes.io/name: masterlion-market
+  ports:
+    - name: http
+      port: 3220
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterlion-market
+  labels:
+    app.kubernetes.io/name: masterlion-market
+    app.kubernetes.io/part-of: masterlion
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterlion-market
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterlion-market
+        app.kubernetes.io/part-of: masterlion
+    spec:
+      containers:
+        - name: market
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
+          envFrom:
+            - configMapRef:
+                name: masterlion-market-config
+            - secretRef:
+                name: masterlion-market-secret
+          ports:
+            - containerPort: 3220
+              name: http
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: masterlion-market
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterlion-market
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: masterlion-market
+spec:
+  minReplicas: 2
+  maxReplicas: 6
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: masterlion-market
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterlion-market-runner
+  labels:
+    app.kubernetes.io/name: masterlion-market-runner
+    app.kubernetes.io/part-of: masterlion
+spec:
+  selector:
+    app.kubernetes.io/name: masterlion-market-runner
+  ports:
+    - name: http
+      port: 3221
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterlion-market-runner
+  labels:
+    app.kubernetes.io/name: masterlion-market-runner
+    app.kubernetes.io/part-of: masterlion
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterlion-market-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterlion-market-runner
+        app.kubernetes.io/part-of: masterlion
+    spec:
+      containers:
+        - name: runner
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
+          command: ["node", "dist/runner.js"]
+          envFrom:
+            - configMapRef:
+                name: masterlion-market-config
+            - secretRef:
+                name: masterlion-market-secret
+          ports:
+            - containerPort: 3221
+              name: http
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: masterlion-market-runner
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterlion-market-runner
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: masterlion-market-runner
+spec:
+  minReplicas: 2
+  maxReplicas: 6
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: masterlion-market-runner
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: masterlion-market
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  rules:
+    - host: masterion.bielcrystal.com
+      http:
+        paths:
+          - path: /market(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: masterlion-market
+                port:
+                  number: 3220

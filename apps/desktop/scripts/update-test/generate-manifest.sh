@@ -44,7 +44,7 @@ show_help() {
   echo ""
   echo "示例:"
   echo "  $0 --from-release"
-  echo "  $0 -v 2.0.1 -c stable -d LobeHub-2.0.1-arm64.dmg"
+  echo "  $0 -v 2.0.1 -c stable -d Masterino-2.0.1-arm64.dmg"
   echo "  $0 --from-release --all-channels"
   echo "  $0 -v 2.1.0-nightly.1 -c nightly --from-release"
   echo ""
@@ -147,7 +147,7 @@ EOF
   fi
 
   cat >> "$ch_dir/$manifest" << EOF
-path: $ver/${dmg:-LobeHub-$ver-arm64.dmg}
+path: $ver/${dmg:-Masterino-$ver-arm64.dmg}
 sha512: ${dmg_sha512:-placeholder}
 releaseDate: '$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'
 releaseNotes: |

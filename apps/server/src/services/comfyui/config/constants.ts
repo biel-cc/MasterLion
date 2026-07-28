@@ -19,10 +19,10 @@ export const COMFYUI_DEFAULTS = {
  */
 export const FLUX_MODEL_CONFIG = {
   FILENAME_PREFIXES: {
-    DEV: 'LobeChat/%year%-%month%-%day%/FLUX_Dev',
-    KONTEXT: 'LobeChat/%year%-%month%-%day%/FLUX_Kontext',
-    KREA: 'LobeChat/%year%-%month%-%day%/FLUX_Krea',
-    SCHNELL: 'LobeChat/%year%-%month%-%day%/FLUX_Schnell',
+    DEV: 'Masterino/%year%-%month%-%day%/FLUX_Dev',
+    KONTEXT: 'Masterino/%year%-%month%-%day%/FLUX_Kontext',
+    KREA: 'Masterino/%year%-%month%-%day%/FLUX_Krea',
+    SCHNELL: 'Masterino/%year%-%month%-%day%/FLUX_Schnell',
   },
 } as const;
 
@@ -32,10 +32,10 @@ export const FLUX_MODEL_CONFIG = {
  */
 export const SD_MODEL_CONFIG = {
   FILENAME_PREFIXES: {
-    CUSTOM: 'LobeChat/%year%-%month%-%day%/CustomSD',
-    SD15: 'LobeChat/%year%-%month%-%day%/SD15',
-    SD35: 'LobeChat/%year%-%month%-%day%/SD35',
-    SDXL: 'LobeChat/%year%-%month%-%day%/SDXL',
+    CUSTOM: 'Masterino/%year%-%month%-%day%/CustomSD',
+    SD15: 'Masterino/%year%-%month%-%day%/SD15',
+    SD35: 'Masterino/%year%-%month%-%day%/SD35',
+    SDXL: 'Masterino/%year%-%month%-%day%/SDXL',
   },
 } as const;
 

@@ -1,4 +1,4 @@
-import { type LobeChatDatabase } from '@lobechat/database';
+import { type MasterinoDatabase } from '@lobechat/database';
 import debug from 'debug';
 import { type NextRequest } from 'next/server';
 
@@ -9,7 +9,7 @@ const log = debug('lobe-async:context');
 
 export interface AsyncAuthContext {
   authorizationToken?: string;
-  serverDB?: LobeChatDatabase;
+  serverDB?: MasterinoDatabase;
   userId?: string | null;
 }
 
@@ -36,7 +36,7 @@ export const createAsyncRouteContext = async (request: NextRequest): Promise<Asy
   const lobeChatAuthorization = request.headers.get(LOBE_CHAT_AUTH_HEADER);
 
   log('Authorization header present: %s', !!authorization);
-  log('LobeChat auth header present: %s', !!lobeChatAuthorization);
+  log('Masterino auth header present: %s', !!lobeChatAuthorization);
 
   if (!authorization) {
     log('No authorization header found');
@@ -44,15 +44,15 @@ export const createAsyncRouteContext = async (request: NextRequest): Promise<Asy
   }
 
   if (!lobeChatAuthorization) {
-    log('No LobeChat authorization header found');
-    throw new Error('No LobeChat authorization header found');
+    log('No Masterino authorization header found');
+    throw new Error('No Masterino authorization header found');
   }
 
   try {
     log('Initializing KeyVaultsGateKeeper');
     const gateKeeper = await KeyVaultsGateKeeper.initWithEnvKey();
 
-    log('Decrypting LobeChat authorization');
+    log('Decrypting Masterino authorization');
     const { plaintext } = await gateKeeper.decrypt(lobeChatAuthorization);
 
     log('Parsing decrypted authorization data');

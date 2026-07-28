@@ -6,6 +6,7 @@ import Browser, { type BrowserWindowOpts } from '../Browser';
 // Use vi.hoisted to define mocks before hoisting
 const {
   mockAppModule,
+  mockBackendProxyRegister,
   mockBrowserWindow,
   mockNativeTheme,
   mockIpcMain,
@@ -63,6 +64,7 @@ const {
       setBadgeCount: vi.fn(),
     },
     MockBrowserWindow: vi.fn().mockImplementation(() => mockBrowserWindow),
+    mockBackendProxyRegister: vi.fn(),
     mockBrowserWindow,
     mockEnv: {
       externalNavigationHosts: '',
@@ -107,6 +109,12 @@ vi.mock('electron', () => ({
   nativeTheme: mockNativeTheme,
   screen: mockScreen,
   shell: mockShell,
+}));
+
+vi.mock('@/core/infrastructure/BackendProxyProtocolManager', () => ({
+  backendProxyProtocolManager: {
+    registerWithRemoteBaseUrl: mockBackendProxyRegister,
+  },
 }));
 
 // Mock logger
@@ -163,6 +171,8 @@ describe('Browser', () => {
   let mockRemoteServerConfigCtr: {
     getAccessToken: ReturnType<typeof vi.fn>;
     getRemoteServerConfig: ReturnType<typeof vi.fn>;
+    getRemoteServerUrl: ReturnType<typeof vi.fn>;
+    isRemoteServerConfigured: ReturnType<typeof vi.fn>;
   };
   let autoLoadUrlSpy: ReturnType<typeof vi.spyOn> | undefined;
 
@@ -201,8 +211,12 @@ describe('Browser', () => {
     mockRemoteServerConfigCtr = {
       getAccessToken: vi.fn().mockResolvedValue(null),
       getRemoteServerConfig: vi.fn().mockResolvedValue({
+        active: true,
         remoteServerUrl: 'http://localhost:3000',
+        storageMode: 'selfHost',
       }),
+      getRemoteServerUrl: vi.fn().mockResolvedValue('http://localhost:3000'),
+      isRemoteServerConfigured: vi.fn().mockResolvedValue(true),
     };
 
     // Ensure Browser can register protocol handlers on the session
@@ -248,6 +262,23 @@ describe('Browser', () => {
 
     it('should create BrowserWindow on construction', () => {
       expect(MockBrowserWindow).toHaveBeenCalled();
+    });
+
+    it('should only enable proxy authentication for an active matching server origin', async () => {
+      const [, options] = mockBackendProxyRegister.mock.calls[0]!;
+
+      mockRemoteServerConfigCtr.isRemoteServerConfigured.mockResolvedValue(false);
+      await expect(options.isAuthActiveForUrl('http://localhost:3000/trpc/hello')).resolves.toBe(
+        false,
+      );
+
+      mockRemoteServerConfigCtr.isRemoteServerConfigured.mockResolvedValue(true);
+      await expect(options.isAuthActiveForUrl('http://localhost:3000/trpc/hello')).resolves.toBe(
+        true,
+      );
+      await expect(
+        options.isAuthActiveForUrl('https://server-b.example.com/trpc/hello'),
+      ).resolves.toBe(false);
     });
   });
 

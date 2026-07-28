@@ -39,7 +39,7 @@ export const defaultClients: ClientMetadata[] = [
     // Only supports authorization code flow
     grant_types: ['authorization_code', 'refresh_token'],
 
-    logo_uri: masterLionLogoUrl,
+    logo_uri: masterionLogoUrl,
 
     post_logout_redirect_uris: [
       // Dynamically construct web page callback URL
@@ -67,7 +67,7 @@ export const defaultClients: ClientMetadata[] = [
     client_name: 'Masterino Mobile',
     // Supports authorization code flow and refresh token
     grant_types: ['authorization_code', 'refresh_token'],
-    logo_uri: masterLionLogoUrl,
+    logo_uri: masterionLogoUrl,
     // Mobile does not need post_logout_redirect_uris as logout is typically handled within the app
     post_logout_redirect_uris: [],
     // Mobile uses custom URL Scheme
@@ -81,7 +81,7 @@ export const defaultClients: ClientMetadata[] = [
     client_id: 'lobehub-cli',
     client_name: 'Masterino CLI',
     grant_types: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
-    logo_uri: masterLionLogoUrl,
+    logo_uri: masterionLogoUrl,
     response_types: [],
     token_endpoint_auth_method: 'none',
   },

@@ -8,8 +8,7 @@ import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { marketSDK, marketUserInfo, serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { type TrustedClientUserInfo } from '@/libs/trusted-client';
 import { generateTrustedClientToken } from '@/libs/trusted-client';
-
-const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 interface MarketUserInfo {
   accountId: number;
@@ -43,7 +42,7 @@ const fetchMarketUserInfo = async (
   const { userInfo, accessToken } = options;
 
   try {
-    const userInfoUrl = `${MARKET_BASE_URL}/lobehub-oidc/userinfo`;
+    const userInfoUrl = `${getInternalMarketBaseUrl()}/lobehub-oidc/userinfo`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -238,7 +237,7 @@ export const agentGroupRouter = router({
       log('deprecateAgentGroup input: %O', input);
 
       try {
-        const deprecateUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.identifier}/deprecate`;
+        const deprecateUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.identifier}/deprecate`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -307,7 +306,7 @@ export const agentGroupRouter = router({
 
       try {
         // Call Market API directly to fork agent group
-        const forkUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.sourceIdentifier}/fork`;
+        const forkUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.sourceIdentifier}/fork`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -400,7 +399,7 @@ export const agentGroupRouter = router({
       log('getAgentGroupForkSource input: %O', input);
 
       try {
-        const forkSourceUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.identifier}/fork-source`;
+        const forkSourceUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.identifier}/fork-source`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -458,7 +457,7 @@ export const agentGroupRouter = router({
       log('getAgentGroupForks input: %O', input);
 
       try {
-        const forksUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.identifier}/forks`;
+        const forksUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.identifier}/forks`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -541,7 +540,7 @@ export const agentGroupRouter = router({
         if (input.status) params.append('status', input.status);
         if (input.visibility) params.append('visibility', input.visibility);
 
-        const listUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/list?${params.toString()}`;
+        const listUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/list?${params.toString()}`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -628,7 +627,7 @@ export const agentGroupRouter = router({
       log('publishAgentGroup input: %O', input);
 
       try {
-        const publishUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.identifier}/publish`;
+        const publishUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.identifier}/publish`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
@@ -786,7 +785,7 @@ export const agentGroupRouter = router({
       log('unpublishAgentGroup input: %O', input);
 
       try {
-        const unpublishUrl = `${MARKET_BASE_URL}/api/v1/agent-groups/${input.identifier}/unpublish`;
+        const unpublishUrl = `${getInternalMarketBaseUrl()}/api/v1/agent-groups/${input.identifier}/unpublish`;
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',

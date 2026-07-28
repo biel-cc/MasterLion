@@ -19,8 +19,76 @@ import RemoteServerConfigCtr from './RemoteServerConfigCtr';
 
 const logger = createLogger('controllers:AuthCtr');
 
-const MAX_POLL_TIME = 2 * 60 * 1000; // 2 minutes (reduced from 5 minutes for better UX)
+const MAX_POLL_TIME = 5 * 60 * 1000; // 5 minutes, aligned with the server handoff TTL
 const POLL_INTERVAL = 3000; // 3 seconds
+const REMOTE_CONFIG_TIMEOUT = 10 * 1000; // 10 seconds
+const HANDOFF_REQUEST_TIMEOUT = 15 * 1000; // 15 seconds per polling request
+const TOKEN_EXCHANGE_TIMEOUT = 30 * 1000; // 30 seconds for the complete token exchange
+
+type AuthorizationAttempt = {
+  abortController: AbortController;
+  codeVerifier: string;
+  id: number;
+  remoteUrl: string;
+  state: string;
+};
+
+type TokenExchangeResult = {
+  error?: string;
+  success: boolean;
+  superseded?: boolean;
+};
+
+type AuthorizationCommitBarrierResult = {
+  rollbackError?: string;
+};
+
+class AuthorizationSupersededError extends Error {
+  constructor() {
+    super('Authorization request was cancelled or superseded');
+    this.name = 'AuthorizationSupersededError';
+  }
+}
+
+class HandoffPollingError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'HandoffPollingError';
+  }
+}
+
+class AuthorizationRollbackError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'AuthorizationRollbackError';
+  }
+}
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const formatHttpResponseError = (response: Response, rawBody = ''): string => {
+  const status = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+  const trimmedBody = rawBody.trim();
+  if (!trimmedBody) return status;
+
+  let detail = trimmedBody;
+  try {
+    const body = JSON.parse(trimmedBody) as Record<string, unknown>;
+    const structuredDetail = body.error_description ?? body.error ?? body.message;
+    if (typeof structuredDetail === 'string' && structuredDetail.trim()) {
+      detail = structuredDetail.trim();
+    }
+  } catch {
+    // Keep a plain-text response as the server-provided error detail.
+  }
+
+  // Avoid surfacing an entire proxy HTML error page while retaining its useful reason.
+  return `${status}: ${detail.slice(0, 500)}`;
+};
 
 // Refresh the access token only once it is within this window of its expiry. Kept
 // small (minutes) on purpose: a buffer that is large relative to the server's
@@ -41,18 +109,17 @@ export default class AuthCtr extends ControllerModule {
     return this.app.getController(RemoteServerConfigCtr);
   }
 
-  /**
-   * Current PKCE parameters
-   */
-  private codeVerifier: string | null = null;
   private authRequestState: string | null = null;
+  private authorizationAbortController: AbortController | null = null;
+  private authorizationAttemptId = 0;
+  private authorizationCommitPromise: Promise<AuthorizationCommitBarrierResult> | null = null;
+  private authorizationInProgress = false;
 
   /**
    * Polling related parameters
    */
 
   private pollingInterval: NodeJS.Timeout | null = null;
-  private cachedRemoteUrl: string | null = null;
 
   /**
    * Auto-refresh timer
@@ -70,32 +137,300 @@ export default class AuthCtr extends ControllerModule {
     return callbackUrl.toString();
   }
 
+  private isAuthorizationAttemptCurrent(attemptId: number): boolean {
+    return this.authorizationInProgress && this.authorizationAttemptId === attemptId;
+  }
+
+  private isAuthorizationAttemptActive(attempt: AuthorizationAttempt): boolean {
+    return (
+      this.isAuthorizationAttemptCurrent(attempt.id) &&
+      this.authorizationAbortController === attempt.abortController &&
+      !attempt.abortController.signal.aborted &&
+      this.authRequestState === attempt.state
+    );
+  }
+
+  private ensureAuthorizationAttemptCurrent(
+    attemptId: number,
+    abortController: AbortController,
+  ): void {
+    if (
+      !this.isAuthorizationAttemptCurrent(attemptId) ||
+      this.authorizationAbortController !== abortController ||
+      abortController.signal.aborted
+    ) {
+      throw new AuthorizationSupersededError();
+    }
+  }
+
+  /**
+   * Tie an asynchronous operation to one authorization generation. This also
+   * makes cancellation effective when a mocked or platform fetch ignores the
+   * AbortSignal itself.
+   */
+  private waitForAuthorizationOperation<T>(
+    operation: Promise<T>,
+    attemptId: number,
+    abortController: AbortController,
+    timeout?: {
+      abortController?: AbortController;
+      message: string;
+      milliseconds: number;
+    },
+  ): Promise<T> {
+    if (
+      !this.isAuthorizationAttemptCurrent(attemptId) ||
+      this.authorizationAbortController !== abortController ||
+      abortController.signal.aborted
+    ) {
+      return Promise.reject(new AuthorizationSupersededError());
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let timeoutId: NodeJS.Timeout | undefined;
+
+      const cleanup = () => {
+        abortController.signal.removeEventListener('abort', handleAbort);
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const handleAbort = () => finish(() => reject(new AuthorizationSupersededError()));
+
+      abortController.signal.addEventListener('abort', handleAbort, { once: true });
+      if (timeout) {
+        timeoutId = setTimeout(() => {
+          finish(() => reject(new Error(timeout.message)));
+          // Abort only the scoped network operation when one was provided. A
+          // retryable handoff timeout must not cancel the whole authorization
+          // attempt, while preflight keeps its existing fail-closed behavior.
+          (timeout.abortController ?? abortController).abort();
+        }, timeout.milliseconds);
+      }
+
+      operation.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+    });
+  }
+
+  /**
+   * Create a child AbortController for one network request. Cancelling the
+   * authorization still aborts it, but timing out this request does not mark the
+   * complete authorization attempt as superseded.
+   */
+  private createAuthorizationOperationAbortController(
+    authorizationAbortController: AbortController,
+  ): { abortController: AbortController; cleanup: () => void } {
+    const abortController = new AbortController();
+    const handleAuthorizationAbort = () => abortController.abort();
+
+    if (authorizationAbortController.signal.aborted) {
+      abortController.abort();
+    } else {
+      authorizationAbortController.signal.addEventListener('abort', handleAuthorizationAbort, {
+        once: true,
+      });
+    }
+
+    return {
+      abortController,
+      cleanup: () =>
+        authorizationAbortController.signal.removeEventListener('abort', handleAuthorizationAbort),
+    };
+  }
+
+  private getRemainingOperationTimeout(
+    deadline: number,
+    message: string,
+    abortController: AbortController,
+  ) {
+    return {
+      abortController,
+      message,
+      milliseconds: Math.max(1, deadline - Date.now()),
+    };
+  }
+
+  /**
+   * Verify that the desktop connection origin matches the server's canonical
+   * APP_URL before opening the browser. Cloud mode permits a temporary 404 for
+   * rolling upgrades, while self-hosted mode must expose the endpoint so a
+   * mismatched APP_URL cannot silently break the OAuth callback.
+   */
+  private async validateRemoteServerOrigin(
+    remoteUrl: string,
+    storageMode: DataSyncConfig['storageMode'],
+    attemptId: number,
+    abortController: AbortController,
+  ): Promise<void> {
+    const remoteOrigin = new URL(remoteUrl).origin;
+    const configUrl = new URL('/api/desktop/auth-config', remoteUrl);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const timeoutMessage = `Timed out after ${REMOTE_CONFIG_TIMEOUT / 1000} seconds while verifying the remote server OIDC configuration`;
+    const deadline = Date.now() + REMOTE_CONFIG_TIMEOUT;
+    const remainingTimeout = () => ({
+      message: timeoutMessage,
+      milliseconds: Math.max(1, deadline - Date.now()),
+    });
+    appendVercelCookie(headers);
+
+    let response: Response;
+    try {
+      response = await this.waitForAuthorizationOperation(
+        netFetch(configUrl.toString(), {
+          headers,
+          method: 'GET',
+          signal: abortController.signal,
+        }),
+        attemptId,
+        abortController,
+        remainingTimeout(),
+      );
+    } catch (error) {
+      if (error instanceof AuthorizationSupersededError) throw error;
+      if (getErrorMessage(error).startsWith('Timed out after')) throw error;
+      throw new Error(
+        `Unable to verify the remote server OIDC configuration: ${getErrorMessage(error)}`,
+        { cause: error },
+      );
+    }
+
+    this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
+
+    if (response.status === 404) {
+      if (storageMode === 'selfHost') {
+        throw new Error(
+          'The self-hosted server does not expose /api/desktop/auth-config, so its APP_URL cannot be verified. Update the server before signing in.',
+        );
+      }
+      logger.warn(
+        'Desktop auth configuration endpoint is unavailable; continuing for compatibility',
+      );
+      return;
+    }
+
+    if (!response.ok) {
+      const responseBody = await this.waitForAuthorizationOperation(
+        response.text(),
+        attemptId,
+        abortController,
+        remainingTimeout(),
+      );
+      this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
+      throw new Error(
+        `Remote server OIDC configuration check failed: ${formatHttpResponseError(response, responseBody)}`,
+      );
+    }
+
+    let data: { appUrl?: unknown };
+    try {
+      data = (await this.waitForAuthorizationOperation(
+        response.json(),
+        attemptId,
+        abortController,
+        remainingTimeout(),
+      )) as { appUrl?: unknown };
+    } catch (error) {
+      if (error instanceof AuthorizationSupersededError) throw error;
+      if (getErrorMessage(error) === timeoutMessage) throw error;
+      throw new Error(
+        `Remote server returned invalid desktop auth configuration: ${getErrorMessage(error)}`,
+        { cause: error },
+      );
+    }
+    this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
+
+    if (typeof data.appUrl !== 'string' || !data.appUrl.trim()) {
+      throw new Error('Remote server desktop auth configuration is missing APP_URL');
+    }
+
+    let appOrigin: string;
+    try {
+      appOrigin = new URL(data.appUrl).origin;
+    } catch {
+      throw new Error('Remote server desktop auth configuration contains an invalid APP_URL');
+    }
+
+    if (appOrigin !== remoteOrigin) {
+      throw new Error(
+        `Remote server URL mismatch: connected to ${remoteOrigin}, but the server APP_URL is ${appOrigin}. Use ${appOrigin} or update the server APP_URL.`,
+      );
+    }
+  }
+
   /**
    * Request OAuth authorization
    */
   @IpcMethod()
   async requestAuthorization(config: DataSyncConfig) {
-    // Clear any old authorization state
+    const pendingCommit = this.authorizationCommitPromise;
     this.clearAuthorizationState();
+    const attemptId = this.authorizationAttemptId;
+    const abortController = new AbortController();
+    this.authorizationAbortController = abortController;
+    this.authorizationInProgress = true;
 
-    const remoteUrl = await this.remoteServerConfigCtr.getRemoteServerUrl(config);
-
-    // Cache remote server URL for subsequent polling
-    this.cachedRemoteUrl = remoteUrl;
-
-    logger.info(
-      `Requesting OAuth authorization, storageMode:${config.storageMode} server URL: ${remoteUrl}`,
-    );
     try {
+      // A superseded attempt may already be committing tokens. Let it finish
+      // (and roll itself back) before this attempt can reach its own exchange.
+      if (pendingCommit) {
+        const commitBarrier = await this.waitForAuthorizationOperation(
+          pendingCommit,
+          attemptId,
+          abortController,
+        );
+        if (commitBarrier.rollbackError) {
+          throw new Error(
+            `Unable to safely start authorization because cleanup from the previous token commit failed: ${commitBarrier.rollbackError}`,
+          );
+        }
+      }
+
+      const remoteUrl = await this.waitForAuthorizationOperation(
+        this.remoteServerConfigCtr.getRemoteServerUrl(config),
+        attemptId,
+        abortController,
+      );
+      this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
+      if (!remoteUrl) throw new Error('Remote server URL is required');
+
+      logger.info(`Requesting OAuth authorization, storageMode:${config.storageMode}`);
+      await this.validateRemoteServerOrigin(
+        remoteUrl,
+        config.storageMode,
+        attemptId,
+        abortController,
+      );
+      this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
+
       // Generate PKCE parameters
       logger.debug('Generating PKCE parameters');
       const codeVerifier = this.generateCodeVerifier();
-      const codeChallenge = await this.generateCodeChallenge(codeVerifier);
-      this.codeVerifier = codeVerifier;
+      const codeChallenge = await this.waitForAuthorizationOperation(
+        this.generateCodeChallenge(codeVerifier),
+        attemptId,
+        abortController,
+      );
+      this.ensureAuthorizationAttemptCurrent(attemptId, abortController);
 
       // Generate state parameter to prevent CSRF attacks
-      this.authRequestState = crypto.randomBytes(16).toString('hex');
-      logger.debug(`Generated state parameter: ${this.authRequestState}`);
+      const state = crypto.randomBytes(16).toString('hex');
+      this.authRequestState = state;
+      const attempt: AuthorizationAttempt = {
+        abortController,
+        codeVerifier,
+        id: attemptId,
+        remoteUrl,
+        state,
+      };
+      logger.debug('Generated authorization state');
 
       // Construct authorization URL with new redirect_uri
       const authUrl = new URL('/oidc/auth', remoteUrl);
@@ -114,13 +449,20 @@ export default class AuthCtr extends ControllerModule {
         resource: 'urn:lobehub:chat',
         response_type: 'code',
         scope: 'profile email offline_access',
-        state: this.authRequestState,
+        state,
       });
 
-      logger.info(`Constructed authorization URL: ${authUrl.toString()}`);
+      logger.info(`Constructed authorization request for ${authUrl.origin}${authUrl.pathname}`);
 
       // Open authorization URL in the default browser
-      await shell.openExternal(authUrl.toString());
+      await this.waitForAuthorizationOperation(
+        shell.openExternal(authUrl.toString()),
+        attemptId,
+        abortController,
+      );
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        throw new AuthorizationSupersededError();
+      }
       logger.debug('Opening authorization URL in default browser');
 
       this.broadcastAuthorizationProgress({
@@ -130,12 +472,16 @@ export default class AuthCtr extends ControllerModule {
       });
 
       // Start polling for credentials
-      this.startPolling();
+      this.startPolling(attempt);
 
       return { success: true };
     } catch (error) {
+      if (!this.isAuthorizationAttemptCurrent(attemptId)) {
+        return { error: 'Authorization request was cancelled or superseded', success: false };
+      }
       logger.error('Authorization request failed:', error);
-      return { error: error.message, success: false };
+      this.clearAuthorizationState();
+      return { error: getErrorMessage(error), success: false };
     }
   }
 
@@ -144,7 +490,7 @@ export default class AuthCtr extends ControllerModule {
    */
   @IpcMethod()
   async cancelAuthorization() {
-    if (this.authRequestState) {
+    if (this.authorizationInProgress) {
       logger.info('User cancelled authorization');
       this.clearAuthorizationState();
       this.broadcastAuthorizationProgress({
@@ -170,7 +516,7 @@ export default class AuthCtr extends ControllerModule {
       return { error: errorMessage, success: false };
     }
 
-    logger.info(`Requesting market authorization via: ${authUrl}`);
+    logger.info('Requesting market authorization in the system browser');
     try {
       await shell.openExternal(authUrl);
       logger.debug('Opening market authorization URL in default browser');
@@ -185,15 +531,12 @@ export default class AuthCtr extends ControllerModule {
   /**
    * Start polling mechanism to get credentials
    */
-  private startPolling() {
-    if (!this.authRequestState) {
-      logger.error('No handoff ID available for polling');
-      return;
-    }
-
+  private startPolling(attempt: AuthorizationAttempt) {
     logger.info('Starting credential polling');
 
     const startTime = Date.now();
+    let isPollingRequestInFlight = false;
+    let lastPollingError: string | null = null;
 
     // Broadcast initial state
     this.broadcastAuthorizationProgress({
@@ -203,6 +546,9 @@ export default class AuthCtr extends ControllerModule {
     });
 
     this.pollingInterval = setInterval(async () => {
+      // Ignore a late callback from an authorization attempt that was cancelled or replaced.
+      if (!this.isAuthorizationAttemptActive(attempt)) return;
+
       const elapsed = Date.now() - startTime;
 
       // Broadcast progress on every tick
@@ -212,17 +558,27 @@ export default class AuthCtr extends ControllerModule {
         phase: 'waiting_for_auth',
       });
 
-      try {
-        // Check if polling has timed out
-        if (elapsed > MAX_POLL_TIME) {
-          logger.warn('Credential polling timed out');
-          this.clearAuthorizationState();
-          this.broadcastAuthorizationFailed('Authorization timed out');
-          return;
-        }
+      // Check the overall deadline even while an earlier network request is still pending.
+      if (elapsed >= MAX_POLL_TIME) {
+        const timeoutError = lastPollingError
+          ? `Authorization timed out. Last polling error: ${lastPollingError}`
+          : 'Authorization timed out';
+        logger.warn(timeoutError);
+        this.clearAuthorizationState();
+        this.broadcastAuthorizationFailed(timeoutError);
+        return;
+      }
 
+      // Do not overlap handoff requests when a network call takes longer than the interval.
+      if (isPollingRequestInFlight) return;
+      isPollingRequestInFlight = true;
+
+      try {
         // Poll for credentials
-        const result = await this.pollForCredentials();
+        const result = await this.pollForCredentials(attempt);
+
+        // A newer authorization attempt may have started while the request was in flight.
+        if (!this.isAuthorizationAttemptActive(attempt)) return;
 
         if (result) {
           logger.info('Successfully received credentials from polling');
@@ -236,29 +592,43 @@ export default class AuthCtr extends ControllerModule {
           });
 
           // Validate state parameter
-          if (result.state !== this.authRequestState) {
-            logger.error(
-              `Invalid state parameter: expected ${this.authRequestState}, received ${result.state}`,
-            );
+          if (result.state !== attempt.state) {
+            logger.error('Invalid state parameter');
+            this.clearAuthorizationState();
             this.broadcastAuthorizationFailed('Invalid state parameter');
             return;
           }
 
           // Exchange code for tokens
-          const exchangeResult = await this.exchangeCodeForToken(result.code, this.codeVerifier!);
+          const exchangeResult = await this.exchangeCodeForToken(result.code, attempt);
+
+          if (exchangeResult.superseded || !this.isAuthorizationAttemptActive(attempt)) return;
 
           if (exchangeResult.success) {
             logger.info('Authorization successful');
+            this.clearAuthorizationState();
             this.broadcastAuthorizationSuccessful();
           } else {
             logger.warn(`Authorization failed: ${exchangeResult.error || 'Unknown error'}`);
+            this.clearAuthorizationState();
             this.broadcastAuthorizationFailed(exchangeResult.error || 'Unknown error');
           }
         }
       } catch (error) {
-        logger.error('Error during credential polling:', error);
+        if (!this.isAuthorizationAttemptActive(attempt)) return;
+
+        const errorMessage = getErrorMessage(error);
+        if (error instanceof HandoffPollingError && error.retryable) {
+          lastPollingError = errorMessage;
+          logger.warn(`Retryable handoff polling error: ${errorMessage}`);
+          return;
+        }
+
+        logger.error('Non-retryable error during credential polling:', error);
         this.clearAuthorizationState();
-        this.broadcastAuthorizationFailed('Polling error: ' + error.message);
+        this.broadcastAuthorizationFailed(errorMessage);
+      } finally {
+        isPollingRequestInFlight = false;
       }
     }, POLL_INTERVAL);
   }
@@ -279,10 +649,12 @@ export default class AuthCtr extends ControllerModule {
    */
   private clearAuthorizationState() {
     logger.debug('Clearing authorization state');
+    this.authorizationInProgress = false;
+    this.authorizationAttemptId += 1;
+    this.authorizationAbortController?.abort();
+    this.authorizationAbortController = null;
     this.stopPolling();
-    this.codeVerifier = null;
     this.authRequestState = null;
-    this.cachedRemoteUrl = null;
   }
 
   /**
@@ -351,58 +723,129 @@ export default class AuthCtr extends ControllerModule {
    * Poll for credentials
    * Sends HTTP request directly to remote server
    */
-  private async pollForCredentials(): Promise<{ code: string; state: string } | null> {
-    if (!this.authRequestState || !this.cachedRemoteUrl) {
-      return null;
-    }
+  private async pollForCredentials(
+    attempt: AuthorizationAttempt,
+  ): Promise<{ code: string; state: string } | null> {
+    // Construct request URL
+    const url = new URL('/oidc/handoff', attempt.remoteUrl);
+    url.searchParams.set('id', attempt.state);
+    url.searchParams.set('client', 'desktop');
+
+    logger.debug(`Polling for credentials at ${url.origin}${url.pathname}`);
+
+    // Use Electron net.fetch to respect system CA store (self-signed/private CA certs)
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    appendVercelCookie(headers);
+    const deadline = Date.now() + HANDOFF_REQUEST_TIMEOUT;
+    const requestTimeoutMessage = `Timed out after ${HANDOFF_REQUEST_TIMEOUT / 1000} seconds while polling authorization handoff`;
+    const operation = this.createAuthorizationOperationAbortController(attempt.abortController);
 
     try {
-      // Use cached remote server URL
-      const remoteUrl = this.cachedRemoteUrl;
+      let response: Response;
+      try {
+        response = await this.waitForAuthorizationOperation(
+          netFetch(url.toString(), {
+            headers,
+            method: 'GET',
+            signal: operation.abortController.signal,
+          }),
+          attempt.id,
+          attempt.abortController,
+          this.getRemainingOperationTimeout(
+            deadline,
+            requestTimeoutMessage,
+            operation.abortController,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof AuthorizationSupersededError) throw error;
+        const errorMessage = getErrorMessage(error);
+        throw new HandoffPollingError(
+          errorMessage === requestTimeoutMessage
+            ? errorMessage
+            : `Network error while polling authorization: ${errorMessage}`,
+          true,
+        );
+      }
 
-      // Construct request URL
-      const url = new URL('/oidc/handoff', remoteUrl);
-      url.searchParams.set('id', this.authRequestState);
-      url.searchParams.set('client', 'desktop');
-
-      logger.debug(`Polling for credentials: ${url.toString()}`);
-
-      // Use Electron net.fetch to respect system CA store (self-signed/private CA certs)
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      appendVercelCookie(headers);
-      const response = await netFetch(url.toString(), { headers, method: 'GET' });
-
-      // Check response status
       if (response.status === 404) {
-        // Credentials not ready yet, this is normal
+        // Credentials are not ready yet. This is the only normal pending response.
         return null;
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const httpReason = formatHttpResponseError(response);
+        const retryable = response.status === 429 || response.status >= 500;
+        const bodyTimeoutMessage = `${httpReason}: timed out after ${HANDOFF_REQUEST_TIMEOUT / 1000} seconds while reading the handoff error response`;
+        let responseBody: string;
+        try {
+          responseBody = await this.waitForAuthorizationOperation(
+            response.text(),
+            attempt.id,
+            attempt.abortController,
+            this.getRemainingOperationTimeout(
+              deadline,
+              bodyTimeoutMessage,
+              operation.abortController,
+            ),
+          );
+        } catch (error) {
+          if (error instanceof AuthorizationSupersededError) throw error;
+          const errorMessage = getErrorMessage(error);
+          throw new HandoffPollingError(
+            errorMessage === bodyTimeoutMessage
+              ? errorMessage
+              : `${httpReason}: failed to read the handoff error response: ${errorMessage}`,
+            retryable,
+          );
+        }
+
+        throw new HandoffPollingError(formatHttpResponseError(response, responseBody), retryable);
       }
 
-      // Parse response data
-      const data = (await response.json()) as {
-        data: {
-          id: string;
-          payload: { code: string; state: string };
+      let data: {
+        data?: {
+          id?: string;
+          payload?: { code?: string; state?: string };
         };
-        success: boolean;
+        success?: boolean;
       };
-
-      if (data.success && data.data?.payload) {
-        logger.debug('Successfully retrieved credentials from handoff');
-        return {
-          code: data.data.payload.code,
-          state: data.data.payload.state,
-        };
+      const successBodyTimeoutMessage = `Timed out after ${HANDOFF_REQUEST_TIMEOUT / 1000} seconds while reading the successful HTTP ${response.status} handoff response`;
+      try {
+        data = (await this.waitForAuthorizationOperation(
+          response.json(),
+          attempt.id,
+          attempt.abortController,
+          this.getRemainingOperationTimeout(
+            deadline,
+            successBodyTimeoutMessage,
+            operation.abortController,
+          ),
+        )) as typeof data;
+      } catch (error) {
+        if (error instanceof AuthorizationSupersededError) throw error;
+        const errorMessage = getErrorMessage(error);
+        throw new HandoffPollingError(
+          errorMessage === successBodyTimeoutMessage
+            ? errorMessage
+            : `Invalid handoff response: ${errorMessage}`,
+          false,
+        );
       }
 
-      return null;
-    } catch (error) {
-      logger.debug('Polling attempt failed (this is normal):', error.message);
-      return null;
+      const code = data.data?.payload?.code;
+      const state = data.data?.payload?.state;
+      if (data.success && code && state) {
+        logger.debug('Successfully retrieved credentials from handoff');
+        return { code, state };
+      }
+
+      throw new HandoffPollingError(
+        'Invalid handoff response: expected a successful payload containing code and state',
+        false,
+      );
+    } finally {
+      operation.cleanup();
     }
   }
 
@@ -462,12 +905,18 @@ export default class AuthCtr extends ControllerModule {
   /**
    * Exchange authorization code for token
    */
-  private async exchangeCodeForToken(code: string, codeVerifier: string) {
-    if (!this.cachedRemoteUrl) {
-      throw new Error('No cached remote URL available for token exchange');
+  private async exchangeCodeForToken(
+    code: string,
+    attempt: AuthorizationAttempt,
+  ): Promise<TokenExchangeResult> {
+    if (!this.isAuthorizationAttemptActive(attempt)) {
+      return { success: false, superseded: true };
     }
 
-    const remoteUrl = this.cachedRemoteUrl;
+    const { remoteUrl } = attempt;
+    const deadline = Date.now() + TOKEN_EXCHANGE_TIMEOUT;
+    const timeoutMessage = `Timed out after ${TOKEN_EXCHANGE_TIMEOUT / 1000} seconds while exchanging authorization code for token`;
+    const operation = this.createAuthorizationOperationAbortController(attempt.abortController);
     logger.info('Starting to exchange authorization code for token');
     try {
       const tokenUrl = new URL('/oidc/token', remoteUrl);
@@ -477,7 +926,7 @@ export default class AuthCtr extends ControllerModule {
       const body = querystring.stringify({
         client_id: 'lobehub-desktop',
         code,
-        code_verifier: codeVerifier,
+        code_verifier: attempt.codeVerifier,
         grant_type: 'authorization_code',
         redirect_uri: this.constructRedirectUri(remoteUrl),
       });
@@ -488,16 +937,42 @@ export default class AuthCtr extends ControllerModule {
         'Content-Type': 'application/x-www-form-urlencoded',
       };
       appendVercelCookie(tokenHeaders);
-      const response = await netFetch(tokenUrl.toString(), {
-        body,
-        headers: tokenHeaders,
-        method: 'POST',
-      });
+      const response = await this.waitForAuthorizationOperation(
+        netFetch(tokenUrl.toString(), {
+          body,
+          headers: tokenHeaders,
+          method: 'POST',
+          signal: operation.abortController.signal,
+        }),
+        attempt.id,
+        attempt.abortController,
+        this.getRemainingOperationTimeout(deadline, timeoutMessage, operation.abortController),
+      );
+
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        return { success: false, superseded: true };
+      }
 
       if (!response.ok) {
-        // Try parsing the error response
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = `Failed to get token: ${response.status} ${response.statusText} ${errorData.error_description || errorData.error || ''}`;
+        const httpReason = formatHttpResponseError(response);
+        let responseBody: string;
+        try {
+          responseBody = await this.waitForAuthorizationOperation(
+            response.text(),
+            attempt.id,
+            attempt.abortController,
+            this.getRemainingOperationTimeout(deadline, timeoutMessage, operation.abortController),
+          );
+        } catch (error) {
+          if (error instanceof AuthorizationSupersededError) throw error;
+          if (getErrorMessage(error) === timeoutMessage) throw error;
+          throw new Error(
+            `Failed to get token: ${httpReason}; failed to read the error response: ${getErrorMessage(error)}`,
+            { cause: error },
+          );
+        }
+
+        const errorMessage = `Failed to get token: ${formatHttpResponseError(response, responseBody)}`;
         logger.error(errorMessage);
         throw new Error(errorMessage);
       }
@@ -506,13 +981,38 @@ export default class AuthCtr extends ControllerModule {
 
       // Parse response
       try {
-        data = await response.clone().json();
-      } catch {
+        data = await this.waitForAuthorizationOperation(
+          response.clone().json(),
+          attempt.id,
+          attempt.abortController,
+          this.getRemainingOperationTimeout(deadline, timeoutMessage, operation.abortController),
+        );
+      } catch (error) {
+        if (error instanceof AuthorizationSupersededError) throw error;
+        if (getErrorMessage(error) === timeoutMessage) throw error;
         const status = response.status;
+        let responseDetail: string;
+        try {
+          responseDetail = await this.waitForAuthorizationOperation(
+            response.text(),
+            attempt.id,
+            attempt.abortController,
+            this.getRemainingOperationTimeout(deadline, timeoutMessage, operation.abortController),
+          );
+        } catch (detailError) {
+          if (detailError instanceof AuthorizationSupersededError) throw detailError;
+          if (getErrorMessage(detailError) === timeoutMessage) throw detailError;
+          responseDetail = `Unable to read response body: ${getErrorMessage(detailError)}`;
+        }
 
         throw new Error(
-          `Parse JSON failed, please check your server, response status: ${status}, detail:\n\n ${await response.text()} `,
+          `Parse JSON failed, please check your server, response status: ${status}, detail:\n\n ${responseDetail} `,
+          { cause: error },
         );
+      }
+
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        return { success: false, superseded: true };
       }
 
       logger.debug('Successfully received token exchange response');
@@ -523,29 +1023,125 @@ export default class AuthCtr extends ControllerModule {
         throw new Error('Invalid token response: missing required fields');
       }
 
-      // Save tokens
+      const commit = this.commitAuthorizationTokens(data, attempt);
+      const commitCompletion = commit.then(
+        () => ({}),
+        (error): AuthorizationCommitBarrierResult => ({
+          rollbackError:
+            error instanceof AuthorizationRollbackError ? getErrorMessage(error) : undefined,
+        }),
+      );
+      this.authorizationCommitPromise = commitCompletion;
+
+      try {
+        return await commit;
+      } finally {
+        if (this.authorizationCommitPromise === commitCompletion) {
+          this.authorizationCommitPromise = null;
+        }
+      }
+    } catch (error) {
+      if (error instanceof AuthorizationRollbackError) {
+        logger.error('Authorization token rollback failed:', error);
+        return { error: getErrorMessage(error), success: false };
+      }
+      if (
+        error instanceof AuthorizationSupersededError ||
+        !this.isAuthorizationAttemptActive(attempt)
+      ) {
+        return { success: false, superseded: true };
+      }
+      logger.error('Exchanging authorization code failed:', error);
+      return { error: getErrorMessage(error), success: false };
+    } finally {
+      operation.cleanup();
+    }
+  }
+
+  private async commitAuthorizationTokens(
+    data: { access_token: string; expires_in?: number; refresh_token: string },
+    attempt: AuthorizationAttempt,
+  ): Promise<TokenExchangeResult> {
+    let persistenceStarted = false;
+    let rollbackAttempted = false;
+    const rollback = async () => {
+      rollbackAttempted = true;
+      await this.rollbackAuthorizationCommit();
+    };
+
+    try {
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        return { success: false, superseded: true };
+      }
+
+      const isOriginCurrent = this.remoteServerConfigCtr.isRemoteServerOriginCurrent(
+        attempt.remoteUrl,
+      );
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        return { success: false, superseded: true };
+      }
+      if (!isOriginCurrent) {
+        return {
+          error: 'Remote server changed before exchanged tokens could be saved',
+          success: false,
+        };
+      }
+
       logger.debug('Starting to save exchanged tokens');
+      persistenceStarted = true;
       await this.remoteServerConfigCtr.saveTokens(
         data.access_token,
         data.refresh_token,
         data.expires_in,
       );
+
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        await rollback();
+        return { success: false, superseded: true };
+      }
       logger.info('Successfully saved exchanged tokens');
 
-      // Set server to active state
-      logger.debug(`Setting remote server to active state: ${remoteUrl}`);
-      await this.remoteServerConfigCtr.setRemoteServerConfig({ active: true });
+      logger.debug('Setting authorized remote server to active state');
+      const activated = this.remoteServerConfigCtr.activateRemoteServerForOrigin(attempt.remoteUrl);
 
-      // Start auto-refresh timer
+      if (!activated) {
+        await rollback();
+        return {
+          error: 'Remote server changed before exchanged tokens could be activated',
+          success: false,
+        };
+      }
+
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        await rollback();
+        return { success: false, superseded: true };
+      }
+
       this.startAutoRefresh();
-
-      // Connect to device gateway after successful login
       this.connectGateway();
 
       return { success: true };
     } catch (error) {
-      logger.error('Exchanging authorization code failed:', error);
-      return { error: error.message, success: false };
+      if (persistenceStarted && !rollbackAttempted) await rollback();
+      if (error instanceof AuthorizationRollbackError) throw error;
+      if (!this.isAuthorizationAttemptActive(attempt)) {
+        return { success: false, superseded: true };
+      }
+      throw error;
+    }
+  }
+
+  private async rollbackAuthorizationCommit(): Promise<void> {
+    logger.warn('Rolling back tokens from a cancelled or failed authorization commit');
+    try {
+      await this.remoteServerConfigCtr.clearTokens();
+      await this.remoteServerConfigCtr.setRemoteServerConfig({ active: false });
+    } catch (error) {
+      logger.error('Failed to roll back authorization tokens:', error);
+      throw new AuthorizationRollbackError(
+        `Failed to roll back authorization tokens: ${getErrorMessage(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -684,7 +1280,7 @@ export default class AuthCtr extends ControllerModule {
    */
   cleanup() {
     logger.debug('Cleaning up AuthCtr timers');
-    this.stopPolling();
+    this.clearAuthorizationState();
     this.stopAutoRefresh();
   }
 

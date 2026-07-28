@@ -90,6 +90,7 @@ const AgentPickerStep = memo<AgentPickerStepProps>(({ onBack }) => {
   }, []);
 
   const [pending, setPending] = useState<'continue' | 'skip'>();
+  const [installFailures, setInstallFailures] = useState<Array<{ reason: string; sourceAgentId: string }>>([]);
   const pendingRef = useRef(false);
 
   const shownRef = useRef(false);
@@ -129,16 +130,34 @@ const AgentPickerStep = memo<AgentPickerStepProps>(({ onBack }) => {
     if (pendingRef.current || selected.size === 0) return;
     pendingRef.current = true;
     setPending('continue');
+    setInstallFailures([]);
 
     const selectedTemplateIds = [...selected];
     trackOnboardingMarketplacePicked({ categoryHints, requestId, selectedTemplateIds });
     try {
-      await installMarketplaceAgents(selectedTemplateIds);
+      const result = await installMarketplaceAgents(selectedTemplateIds);
+      const coveredCount = result.installedAgentIds.length + result.skippedAgentIds.length;
+      if (coveredCount !== selectedTemplateIds.length || result.failures.length > 0) {
+        setInstallFailures(result.failures.length > 0 ? result.failures : selectedTemplateIds
+          .filter((id) => !result.skippedAgentIds.includes(id))
+          .slice(result.installedAgentIds.length)
+          .map((sourceAgentId) => ({ reason: t('agentPicker.installUnknownError'), sourceAgentId })));
+        pendingRef.current = false;
+        setPending(undefined);
+        return;
+      }
     } catch (installError) {
       console.error('[AgentPickerStep] install failed', installError);
+      setInstallFailures(selectedTemplateIds.map((sourceAgentId) => ({
+        reason: installError instanceof Error ? installError.message : t('agentPicker.installUnknownError'),
+        sourceAgentId,
+      })));
+      pendingRef.current = false;
+      setPending(undefined);
+      return;
     }
     await finish('continue', selectedTemplateIds.length);
-  }, [categoryHints, finish, requestId, selected]);
+  }, [categoryHints, finish, requestId, selected, t]);
 
   const handleBack = useCallback(() => {
     if (pendingRef.current) return;
@@ -186,6 +205,16 @@ const AgentPickerStep = memo<AgentPickerStepProps>(({ onBack }) => {
             </div>
           </div>
         </>
+      )}
+
+      {installFailures.length > 0 && (
+        <Flexbox gap={4} role={'alert'}>
+          <Text type={'danger'}>{t('agentPicker.installFailed')}</Text>
+          {installFailures.map((failure) => {
+            const title = allTemplates.find((template) => template.id === failure.sourceAgentId)?.title || failure.sourceAgentId;
+            return <Text fontSize={12} key={failure.sourceAgentId} type={'secondary'}>{`${title}: ${failure.reason}`}</Text>;
+          })}
+        </Flexbox>
       )}
 
       <div className={styles.footer}>

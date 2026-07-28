@@ -36,6 +36,7 @@ const PanelContent: FC<{ closePopover: () => void }> = ({ closePopover }) => {
 
       try {
         const { remoteServerService } = await import('@/services/electron/remoteServer');
+        await remoteServerService.cancelAuthorization();
         await remoteServerService.clearRemoteServerConfig();
       } catch (error) {
         console.error(error);

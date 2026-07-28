@@ -50,7 +50,7 @@ const InboxEntry = memo(() => {
     inboxAgentId ? operationSelectors.isAgentRunning(inboxAgentId) : () => false,
   );
 
-  const title = inboxMeta.title || 'Lobe AI';
+  const title = inboxMeta.title || 'Masterino';
   const avatar = inboxMeta.avatar || DEFAULT_INBOX_AVATAR;
   const url = SESSION_CHAT_URL(inboxAgentId, false);
 

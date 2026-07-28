@@ -18,6 +18,10 @@ import { remoteServerService } from '@/services/electron/remoteServer';
 import { electronSystemService } from '@/services/electron/system';
 import { useElectronStore } from '@/store/electron';
 import { setDesktopAutoOidcFirstOpenHandled } from '@/utils/electron/autoOidc';
+import {
+  getDesktopCloudServer,
+  getDesktopCloudServerAliases,
+} from '@/utils/electron/desktopRuntimeConfig';
 
 import LobeMessage from '../components/LobeMessage';
 
@@ -31,6 +35,21 @@ type LoginMethod = 'cloud' | 'selfhost';
 
 // Login status type
 type LoginStatus = 'idle' | 'loading' | 'success' | 'error';
+
+const resolveDesktopCloudEndpoint = (endpoint: string) => {
+  try {
+    const endpointOrigin = new URL(endpoint).origin;
+    const cloudOrigin = new URL(getDesktopCloudServer()).origin;
+    const aliasOrigins = getDesktopCloudServerAliases().map((alias) => new URL(alias).origin);
+
+    if (endpointOrigin === cloudOrigin) return { isDefault: true, origin: cloudOrigin };
+    if (aliasOrigins.includes(endpointOrigin)) return { isDefault: false, origin: endpointOrigin };
+
+    return null;
+  } catch {
+    return null;
+  }
+};
 
 const authorizationPhaseI18nKeyMap: Record<AuthorizationPhase, string> = {
   browser_opened: 'screen5.auth.phase.browserOpened',
@@ -172,6 +191,25 @@ const LoginStep = memo<LoginStepProps>(({ onBack, onNext }) => {
 
     const url = endpoint.trim();
     if (!url) return;
+
+    // The official/test Cloud origin can be pasted into the self-hosted field.
+    // Treat it as Cloud so rolling deployments may temporarily omit
+    // /api/desktop/auth-config without being rejected as an unverifiable custom server.
+    const cloudEndpoint = resolveDesktopCloudEndpoint(url);
+    if (cloudEndpoint) {
+      setRemoteError(null);
+      clearRemoteServerSyncError();
+      setPendingLoginMethod('cloud');
+      setIsSuccessDismissed(false);
+      setCloudLoginStatus('loading');
+      setSelfhostLoginStatus('idle');
+      setDesktopAutoOidcFirstOpenHandled();
+      await connectRemoteServer({
+        ...(cloudEndpoint.isDefault ? {} : { remoteServerUrl: cloudEndpoint.origin }),
+        storageMode: 'cloud',
+      });
+      return;
+    }
 
     setRemoteError(null);
     clearRemoteServerSyncError();

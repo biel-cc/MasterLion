@@ -2,6 +2,7 @@ import { electronAPI } from '@electron-toolkit/preload';
 import type { ScreenCaptureSession } from '@lobechat/electron-client-ipc';
 import { contextBridge, ipcRenderer } from 'electron';
 
+import { loadDesktopRuntimeConfig } from '../common/desktopRuntimeConfig';
 import { invoke } from './invoke';
 import { onStreamInvoke } from './streamer';
 
@@ -47,12 +48,16 @@ export const setupElectronApi = () => {
   const os = require('node:os');
   const osInfo = os.release();
   const darwinMajorVersion = Number(osInfo.split('.')[0]);
+  const desktopRuntimeConfig = loadDesktopRuntimeConfig();
 
   contextBridge.exposeInMainWorld('lobeEnv', {
     chromeVersion: process.versions.chrome,
+    cloudServer: desktopRuntimeConfig.cloudServer,
+    cloudServerAliases: desktopRuntimeConfig.cloudServerAliases,
     darwinMajorVersion,
     electronVersion: process.versions.electron,
     isMacTahoe: process.platform === 'darwin' && darwinMajorVersion >= 25,
+    marketBaseUrl: desktopRuntimeConfig.marketBaseUrl,
     nodeVersion: process.versions.node,
     platform: process.platform,
   });

@@ -5,6 +5,10 @@ describe('getServerConfig', () => {
   beforeEach(() => {
     // Reset modules to clear the cached config
     vi.resetModules();
+    vi.unstubAllEnvs();
+    delete process.env.MARKET_BASE_URL;
+    delete process.env.MARKET_TRUSTED_CLIENT_ID;
+    delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
   });
 
   describe('index url', () => {
@@ -12,10 +16,10 @@ describe('getServerConfig', () => {
       const { getAppConfig } = await import('../app');
       const config = getAppConfig();
       expect(config.AGENTS_INDEX_URL).toBe(
-        'https://registry.npmmirror.com/@lobehub/agents-index/v1/files/public',
+        'http://localhost:3220/indexes/agents',
       );
       expect(config.PLUGINS_INDEX_URL).toBe(
-        'https://registry.npmmirror.com/@lobehub/plugins-index/v1/files/public',
+        'http://localhost:3220/indexes/plugins',
       );
     });
 
@@ -35,12 +39,20 @@ describe('getServerConfig', () => {
       const { getAppConfig } = await import('../app');
       const config = getAppConfig();
       expect(config.AGENTS_INDEX_URL).toBe(
-        'https://registry.npmmirror.com/@lobehub/agents-index/v1/files/public',
+        'http://localhost:3220/indexes/agents',
       );
       expect(config.PLUGINS_INDEX_URL).toBe(
-        'https://registry.npmmirror.com/@lobehub/plugins-index/v1/files/public',
+        'http://localhost:3220/indexes/plugins',
       );
     });
+  });
+
+  it('fails fast in production when internal Market identity is missing', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    delete process.env.MARKET_BASE_URL;
+    delete process.env.MARKET_TRUSTED_CLIENT_ID;
+    delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
+    await expect(import('../app')).rejects.toThrow('Internal Market configuration is required');
   });
 
   describe('INTERNAL_APP_URL', () => {

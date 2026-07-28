@@ -417,9 +417,9 @@ export class UpdaterManager {
       );
 
       autoUpdater.setFeedURL({
-        owner: 'lobehub',
+        owner: 'chaaak6',
         provider: 'github',
-        repo: 'lobehub',
+        repo: 'MasterLion',
       });
 
       autoUpdater.allowPrerelease = this.currentChannel !== 'stable';

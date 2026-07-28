@@ -95,7 +95,7 @@ export const registerDynamicClient = async (params: {
 }): Promise<OAuthClientInformationFull> => {
   return registerClient(params.authorizationServerUrl, {
     clientMetadata: {
-      client_name: params.clientName ?? 'LobeHub',
+      client_name: params.clientName ?? 'Masterino',
       grant_types: ['authorization_code', 'refresh_token'],
       redirect_uris: [params.redirectUri],
       response_types: ['code'],

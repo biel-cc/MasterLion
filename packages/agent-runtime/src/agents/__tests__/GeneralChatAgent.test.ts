@@ -502,7 +502,7 @@ describe('GeneralChatAgent', () => {
   });
 
   describe('tool_result phase', () => {
-    describe('Lobe Agent sub-agents (execSubAgent state)', () => {
+    describe('Masterino Agent sub-agents (execSubAgent state)', () => {
       it('should return exec_sub_agent for single sub-agent (execSubAgent)', async () => {
         const agent = new GeneralChatAgent({
           agentConfig: { maxSteps: 100 },

@@ -18,7 +18,7 @@ export enum LobeSessionType {
 export type GroupMemberWithAgent = NewChatGroupAgent & AgentItem;
 
 /**
- * Lobe Agent Session
+ * Masterino Agent Session
  */
 export interface LobeAgentSession {
   config: LobeAgentConfig;
