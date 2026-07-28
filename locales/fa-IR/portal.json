@@ -4,6 +4,7 @@
   "Plugins": "مهارت‌ها",
   "artifacts.display.code": "کد",
   "artifacts.display.preview": "پیش‌نمایش",
+  "artifacts.persistence.failed": "ذخیره HTML در اسناد فضا ناموفق بود",
   "artifacts.svg.copyAsImage": "کپی به‌صورت تصویر",
   "artifacts.svg.copyFail": "کپی ناموفق بود: {{error}}. دوباره تلاش کنید.",
   "artifacts.svg.copySuccess": "تصویر با موفقیت کپی شد",

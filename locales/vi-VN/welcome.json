@@ -122,9 +122,7 @@
     {
       "avatar": "📊",
       "backgroundColor": "#E8F8F5",
-      "plugins": [
-        "steam"
-      ],
+      "plugins": ["steam"],
       "systemRole": "Bạn giỏi xử lý và diễn giải dữ liệu, khám phá các mẫu và xu hướng thông qua biểu đồ và phân tích thống kê.",
       "title": "Chuyên Gia Phân Tích Dữ Liệu"
     },

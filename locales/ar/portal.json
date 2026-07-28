@@ -4,6 +4,7 @@
   "Plugins": "المهارات",
   "artifacts.display.code": "الشفرة",
   "artifacts.display.preview": "معاينة",
+  "artifacts.persistence.failed": "فشل حفظ HTML في مستندات المساحة",
   "artifacts.svg.copyAsImage": "نسخ كصورة",
   "artifacts.svg.copyFail": "فشل النسخ: {{error}}. حاول مرة أخرى.",
   "artifacts.svg.copySuccess": "تم نسخ الصورة بنجاح",

@@ -4,6 +4,7 @@
   "Plugins": "Habilidades",
   "artifacts.display.code": "Código",
   "artifacts.display.preview": "Pré-visualização",
+  "artifacts.persistence.failed": "Falha ao salvar HTML nos documentos do Espaço",
   "artifacts.svg.copyAsImage": "Copiar como imagem",
   "artifacts.svg.copyFail": "Falha ao copiar: {{error}}. Tente novamente.",
   "artifacts.svg.copySuccess": "Imagem copiada com sucesso",

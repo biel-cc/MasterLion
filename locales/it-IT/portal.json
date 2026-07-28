@@ -4,6 +4,7 @@
   "Plugins": "Competenze",
   "artifacts.display.code": "Codice",
   "artifacts.display.preview": "Anteprima",
+  "artifacts.persistence.failed": "Impossibile salvare l'HTML nei documenti dello Spazio",
   "artifacts.svg.copyAsImage": "Copia come immagine",
   "artifacts.svg.copyFail": "Copia non riuscita: {{error}}. Riprova.",
   "artifacts.svg.copySuccess": "Immagine copiata con successo",
