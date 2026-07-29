@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import type { ImgHTMLAttributes, ReactNode } from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import type { ImgHTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AsyncTaskStatus } from '@/types/asyncTask';
@@ -13,14 +13,25 @@ vi.mock('@lobehub/ui', async () => {
   const React = await import('react');
 
   return {
-    ActionIcon: () => null,
+    ActionIcon: ({
+      onClick,
+      title,
+    }: {
+      onClick?: MouseEventHandler<HTMLButtonElement>;
+      title?: string;
+    }) => React.createElement('button', { 'aria-label': title, onClick }),
     Block: ({ children }: { children?: ReactNode }) => React.createElement('div', null, children),
-    Image: ({ alt, crossOrigin, src }: ImgHTMLAttributes<HTMLImageElement>) => {
-      mockImage({ alt, crossOrigin, src });
+    Image: ({
+      alt,
+      preview,
+      src,
+    }: ImgHTMLAttributes<HTMLImageElement> & {
+      preview?: { actionsRender?: (originalNode: ReactNode) => ReactNode };
+    }) => {
+      mockImage({ alt, preview, src });
 
       return React.createElement('img', {
         alt,
-        crossOrigin,
         'data-testid': 'generated-image',
         src,
       });
@@ -47,6 +58,10 @@ vi.mock('@/hooks/usePlatform', () => ({
   usePlatform: () => ({ isSafari: false }),
 }));
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
 vi.mock('./ActionButtons', () => ({
   ActionButtons: () => null,
 }));
@@ -71,7 +86,7 @@ describe('SuccessState', () => {
     provider: 'lobehub',
   };
 
-  it('loads generated images anonymously so preview downloads can reuse a CORS-safe response', () => {
+  it('does not require CORS mode to render generated images', () => {
     const generation: Generation = {
       asset: {
         type: 'image',
@@ -97,12 +112,46 @@ describe('SuccessState', () => {
       />,
     );
 
-    expect(screen.getByTestId('generated-image')).toHaveAttribute('crossorigin', 'anonymous');
+    expect(screen.getByTestId('generated-image')).not.toHaveAttribute('crossorigin');
     expect(mockImage).toHaveBeenCalledWith(
       expect.objectContaining({
-        crossOrigin: 'anonymous',
         src: 'https://assets.example.com/generated.png',
       }),
     );
+  });
+
+  it('uses the generation download handler in the full-screen preview', () => {
+    const onDownload = vi.fn();
+    const generation: Generation = {
+      asset: {
+        type: 'image',
+        url: 'https://assets.example.com/generated.png',
+      },
+      asyncTaskId: 'task-id',
+      createdAt: new Date(),
+      id: 'generation-id',
+      task: {
+        id: 'task-id',
+        status: AsyncTaskStatus.Success,
+      },
+    };
+
+    render(
+      <SuccessState
+        aspectRatio="1 / 1"
+        generation={generation}
+        generationBatch={generationBatch}
+        prompt="test prompt"
+        onDelete={vi.fn()}
+        onDownload={onDownload}
+      />,
+    );
+
+    const preview = mockImage.mock.lastCall?.[0].preview;
+    render(preview.actionsRender(<span>default preview actions</span>));
+    fireEvent.click(screen.getByRole('button', { name: 'generation.actions.download' }));
+
+    expect(onDownload).toHaveBeenCalledOnce();
+    expect(screen.getByText('default preview actions')).toBeInTheDocument();
   });
 });

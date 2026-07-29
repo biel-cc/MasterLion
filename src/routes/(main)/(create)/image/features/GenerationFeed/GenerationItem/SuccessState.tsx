@@ -1,7 +1,9 @@
 'use client';
 
-import { Block } from '@lobehub/ui';
+import { ActionIcon, Block } from '@lobehub/ui';
+import { Download } from 'lucide-react';
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import ImageItem from '@/components/ImageItem';
 
@@ -22,6 +24,8 @@ export const SuccessState = memo<SuccessStateProps>(
     onCopySeed,
     seedTooltip,
   }) => {
+    const { t } = useTranslation('image');
+
     return (
       <Block
         align={'center'}
@@ -35,11 +39,23 @@ export const SuccessState = memo<SuccessStateProps>(
       >
         <ImageItem
           alt={prompt}
-          crossOrigin={'anonymous'}
           style={{ height: '100%', width: '100%' }}
           // Thumbnail quality is too bad
           url={generation.asset!.url}
           preview={{
+            actionsRender: (originalNode) => (
+              <>
+                {originalNode}
+                <ActionIcon
+                  icon={Download}
+                  title={t('generation.actions.download')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDownload();
+                  }}
+                />
+              </>
+            ),
             src: generation.asset!.url,
           }}
         />
