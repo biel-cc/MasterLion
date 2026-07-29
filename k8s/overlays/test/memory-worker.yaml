@@ -34,6 +34,8 @@ spec:
                 name: masterino-secret
             - configMapRef:
                 name: masterino-config
+            - configMapRef:
+                name: masterino-memory-config
           env:
             - name: MEMORY_QUEUE_WORKER_ENABLED
               value: '1'

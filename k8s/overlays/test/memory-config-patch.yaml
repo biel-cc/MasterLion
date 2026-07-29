@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino
+spec:
+  template:
+    spec:
+      containers:
+        - name: masterino
+          envFrom:
+            - secretRef:
+                name: masterino-secret
+            - configMapRef:
+                name: masterino-config
+            - configMapRef:
+                name: masterino-memory-config

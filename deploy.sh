@@ -226,8 +226,8 @@ case "$COMMAND" in
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
       printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
-      printf '%s\n' "$rendered" | grep -Eq 'name: masterino-config-[a-z0-9]{10}$' \
-        || fail "test ConfigMap must use a content hash so configuration changes roll Pods"
+      printf '%s\n' "$rendered" | grep -Eq 'name: masterino-memory-config-[a-z0-9]{10}$' \
+        || fail "test memory ConfigMap must use a content hash so configuration changes roll Pods"
       memory_config_invariants=(
         'FEATURE_FLAGS: +memory'
         'MEMORY_USER_MEMORY_GATEKEEPER_PROVIDER: newapi'
@@ -323,8 +323,10 @@ case "$COMMAND" in
         echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
       fi
     fi
-    render_manifests "$deploy_overlay" | "${KUBE[@]}" apply --server-side --dry-run=server -f - >/dev/null
-    render_manifests "$deploy_overlay" | "${KUBE[@]}" apply --server-side -f -
+    render_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - >/dev/null
+    render_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=kubectl -f -
     ;;
   start)
     verify_target mutation
@@ -451,7 +453,8 @@ case "$COMMAND" in
     [[ "$service" == "memory-worker" ]] && deployment="masterino-memory-worker"
     container="$service"
     [[ "$service" == "memory-worker" ]] && container="masterino-memory-worker"
-    "${KUBE[@]}" set image -n "$NAMESPACE" "deployment/$deployment" "$container=$image"
+    "${KUBE[@]}" set image --field-manager=kubectl -n "$NAMESPACE" \
+      "deployment/$deployment" "$container=$image"
     "${KUBE[@]}" rollout status -n "$NAMESPACE" "deployment/$deployment" --timeout=10m
     ;;
   info)
