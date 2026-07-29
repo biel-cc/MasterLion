@@ -23,6 +23,13 @@ each user must then enable Memory in personal settings. Production intentionally
 flag and remains disabled until a separate production rollout is approved. Workspace memory stays
 hidden.
 
+`overlays/test/config.properties` is the canonical non-secret runtime configuration for the test
+application and memory worker. Kustomize generates `masterino-config-<content-hash>` from this
+file, so a configuration change updates the Pod template and rolls both workloads automatically.
+Do not maintain these values with ad hoc `kubectl set env` commands: the next declarative deploy
+would replace them. `deploy.sh --env test validate` fails if the memory flag, model selection,
+concurrency, worker enablement, or the content-hashed ConfigMap is removed.
+
 Before deploying the test rollout:
 
 1. Copy `overlays/test/secret.env.example` to the ignored `secret.env`. No QStash or other

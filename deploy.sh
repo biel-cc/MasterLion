@@ -226,7 +226,32 @@ case "$COMMAND" in
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
       printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
-      printf '%s\n' "$rendered" | grep -q 'name: MEMORY_QUEUE_WORKER_ENABLED'
+      printf '%s\n' "$rendered" | grep -Eq 'name: masterino-config-[a-z0-9]{10}$' \
+        || fail "test ConfigMap must use a content hash so configuration changes roll Pods"
+      memory_config_invariants=(
+        'FEATURE_FLAGS: +memory'
+        'MEMORY_USER_MEMORY_GATEKEEPER_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_GATEKEEPER_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_LAYER_EXTRACTOR_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_LAYER_EXTRACTOR_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_PERSONA_WRITER_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_PERSONA_WRITER_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_EMBEDDING_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_EMBEDDING_MODEL: text-embedding-3-large'
+        'MEMORY_USER_MEMORY_CONCURRENCY: "1"'
+      )
+      for invariant in "${memory_config_invariants[@]}"; do
+        printf '%s\n' "$rendered" | grep -Fq "$invariant" \
+          || fail "test memory configuration is missing required value: $invariant"
+      done
+      printf '%s\n' "$rendered" \
+        | grep -A1 -F 'name: MEMORY_QUEUE_WORKER_ENABLED' \
+        | grep -Fq 'value: "1"' \
+        || fail "test memory worker must remain enabled"
+      printf '%s\n' "$rendered" \
+        | grep -A1 -F 'name: MEMORY_QUEUE_SCHEDULER_ENABLED' \
+        | grep -Fq 'value: "0"' \
+        || fail "test memory scheduler must remain paused until acceptance completes"
       printf '%s\n' "$rendered" | grep -q 'replicas: 1'
       if printf '%s\n' "$rendered" | grep -q 'kind: Ingress'; then
         fail "test staging manifests unexpectedly contain an Ingress"

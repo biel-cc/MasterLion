@@ -5,8 +5,16 @@ resources:
   - ../../base
   - namespace.yaml
   - storageclass.yaml
-  - configmap.yaml
   - memory-worker.yaml
+configMapGenerator:
+  - name: masterino-config
+    envs:
+      - config.properties
+generatorOptions:
+  disableNameSuffixHash: false
+  labels:
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: test
 patches:
   - path: storage-patch.yaml
 replicas:
