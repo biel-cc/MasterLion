@@ -3,10 +3,10 @@
 import { type UserCredSummary } from '@lobechat/types';
 import { Button, Flexbox } from '@lobehub/ui';
 import { useMutation } from '@tanstack/react-query';
-import { Form, Input, Spin } from 'antd';
+import { Alert, Form, Input } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import { Minus, Plus } from 'lucide-react';
-import { type FC, useEffect, useState } from 'react';
+import { type FC } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { usePermission } from '@/hooks/usePermission';
@@ -43,49 +43,7 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, onCancel, onSuccess }) => {
   const { t } = useTranslation('setting');
   const { allowed: canManageCredentials } = usePermission('manage_provider_key');
   const [form] = Form.useForm<FormValues>();
-  const [isLoading, setIsLoading] = useState(true);
   const credsApi = useCredsApi();
-
-  // Fetch decrypted values on mount
-  useEffect(() => {
-    const fetchDecryptedValues = async () => {
-      if (!canManageCredentials) {
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const result = await credsApi.client.get.query({
-          decrypt: true,
-          id: cred.id,
-        });
-
-        // Convert values object to array of key-value pairs
-        const values = (result as any).plaintext || {};
-        const kvPairs = Object.entries(values).map(([key, value]) => ({
-          key,
-          value: value as string,
-        }));
-
-        form.setFieldsValue({
-          description: cred.description,
-          kvPairs: kvPairs.length > 0 ? kvPairs : [{ key: '', value: '' }],
-          name: cred.name,
-        });
-      } catch {
-        // If decryption fails, just show empty values
-        form.setFieldsValue({
-          description: cred.description,
-          kvPairs: [{ key: '', value: '' }],
-          name: cred.name,
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchDecryptedValues();
-  }, [canManageCredentials, cred.id, cred.name, cred.description, credsApi, form]);
 
   const updateMutation = useMutation({
     mutationFn: async (values: FormValues) => {
@@ -106,7 +64,7 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, onCancel, onSuccess }) => {
         description: values.description,
         id: cred.id,
         name: values.name,
-        values: valuesObj,
+        values: Object.keys(valuesObj).length > 0 ? valuesObj : undefined,
       });
     },
     onSuccess: () => {
@@ -120,16 +78,24 @@ const EditKVForm: FC<EditKVFormProps> = ({ cred, onCancel, onSuccess }) => {
     updateMutation.mutate(values);
   };
 
-  if (isLoading) {
-    return (
-      <Flexbox align="center" justify="center" style={{ padding: 48 }}>
-        <Spin />
-      </Flexbox>
-    );
-  }
-
   return (
-    <Form<FormValues> form={form} layout="vertical" onFinish={handleSubmit}>
+    <Form<FormValues>
+      form={form}
+      initialValues={{
+        description: cred.description,
+        kvPairs: [{ key: '', value: '' }],
+        name: cred.name,
+      }}
+      layout="vertical"
+      onFinish={handleSubmit}
+    >
+      <Alert
+        showIcon
+        description={t('creds.form.replaceSecretDescription')}
+        message={t('creds.form.replaceSecret')}
+        style={{ marginBottom: 16 }}
+        type={'info'}
+      />
       <Form.Item
         label={t('creds.form.name')}
         name="name"

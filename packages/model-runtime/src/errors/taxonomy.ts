@@ -38,7 +38,7 @@ export type ErrorAttribution = 'user' | 'provider' | 'harness' | 'system';
  *
  *   digit 1  — category bucket (this map; 1 = auth … 9 = config)
  *   digit 2  — **tier**: `0` = open-source / self-host runtime,
- *              `9` = LobeHub Cloud-only (see `CLOUD_TIER_DIGIT`)
+ *              `9` = Masterino Cloud-only (see `CLOUD_TIER_DIGIT`)
  *   digits 3-4 — sequence within the (category, tier) bucket
  *
  * So `E2001` is the OSS quota code `InsufficientQuota`, while `E2902` is the
@@ -65,7 +65,7 @@ export const CATEGORY_NUMERIC_PREFIX: Record<ErrorCategory, number> = {
 
 /**
  * The `numericId`'s second digit marks the tier. Cloud-only codes (emitted
- * solely by the managed LobeHub Cloud gateway, e.g. `InsufficientBudgetForModel`)
+ * solely by the managed Masterino Cloud gateway, e.g. `InsufficientBudgetForModel`)
  * use `9`; everything in the open-source runtime uses `0`.
  */
 export const CLOUD_TIER_DIGIT = 9;

@@ -27,20 +27,20 @@ https://api.telegram.org/bot{token}/{method}
 
 所有业务接口均使用 `POST` 方法，请求体为 JSON：
 
-| Header         | 值                 | 是否必需 | 说明                |
-| -------------- | ------------------ | -------- | ------------------- |
-| `Content-Type` | `application/json` | 是       | 所有接口都发 JSON。 |
+| Header         | 值                  | 是否必需 | 说明           |
+| -------------- | ------------------ | ---- | ------------ |
+| `Content-Type` | `application/json` | 是    | 所有接口都发 JSON。 |
 
 ### 2.3 通用响应格式
 
 所有 API 响应都是 JSON 对象，包含以下公共字段：
 
-| 字段          | 类型      | 说明                                    |
-| ------------- | --------- | --------------------------------------- |
+| 字段            | 类型        | 说明                          |
+| ------------- | --------- | --------------------------- |
 | `ok`          | `boolean` | `true` 表示请求成功，`false` 表示失败。 |
-| `result`      | `any`     | 成功时返回的业务数据；类型因方法而异。  |
-| `description` | `string?` | 失败时返回的错误描述。                  |
-| `error_code`  | `number?` | 失败时返回的错误码（HTTP 状态码）。     |
+| `result`      | `any`     | 成功时返回的业务数据；类型因方法而异。         |
+| `description` | `string?` | 失败时返回的错误描述。                 |
+| `error_code`  | `number?` | 失败时返回的错误码（HTTP 状态码）。        |
 
 **成功响应示例**
 
@@ -74,15 +74,15 @@ Telegram API 的错误有两层：
 
 常见错误码：
 
-| error_code | 典型 description                                     | 说明                               |
-| ---------- | ---------------------------------------------------- | ---------------------------------- |
-| `400`      | `Bad Request: message text is empty`                 | 参数错误。                         |
-| `400`      | `Bad Request: message is not modified`               | 编辑消息时新内容与旧内容完全相同。 |
-| `400`      | `Bad Request: message to delete not found`           | 要删除的消息不存在或已被删除。     |
-| `400`      | `Bad Request: message can't be deleted for everyone` | 消息超过 48 小时删除限制。         |
-| `403`      | `Forbidden: bot was blocked by the user`             | 用户已屏蔽 Bot。                   |
-| `403`      | `Forbidden: bot is not a member of the supergroup`   | Bot 不在群组中。                   |
-| `429`      | `Too Many Requests: retry after X`                   | 速率限制，需等待 X 秒后重试。      |
+| error\_code | 典型 description                                       | 说明                |
+| ----------- | ---------------------------------------------------- | ----------------- |
+| `400`       | `Bad Request: message text is empty`                 | 参数错误。             |
+| `400`       | `Bad Request: message is not modified`               | 编辑消息时新内容与旧内容完全相同。 |
+| `400`       | `Bad Request: message to delete not found`           | 要删除的消息不存在或已被删除。   |
+| `400`       | `Bad Request: message can't be deleted for everyone` | 消息超过 48 小时删除限制。   |
+| `403`       | `Forbidden: bot was blocked by the user`             | 用户已屏蔽 Bot。        |
+| `403`       | `Forbidden: bot is not a member of the supergroup`   | Bot 不在群组中。        |
+| `429`       | `Too Many Requests: retry after X`                   | 速率限制，需等待 X 秒后重试。  |
 
 **工程建议**
 
@@ -114,19 +114,19 @@ Telegram API 的错误有两层：
 
 **参数说明**
 
-| 参数                   | 类型                      | 是否必需 | 说明                                                            |
-| ---------------------- | ------------------------- | -------- | --------------------------------------------------------------- |
-| `chat_id`              | `Integer` 或 `String`     | 是       | 目标聊天的唯一标识符，或频道用户名（格式 `@channelusername`）。 |
-| `text`                 | `String`                  | 是       | 消息正文；实体解析后长度 1–4096 字符。                          |
-| `parse_mode`           | `String`                  | 否       | 格式化模式：`HTML`、`MarkdownV2` 或 `Markdown`（旧版）。        |
-| `entities`             | `Array<MessageEntity>`    | 否       | 自定义格式化实体列表；与 `parse_mode` 二选一。                  |
-| `message_thread_id`    | `Integer`                 | 否       | 论坛话题（Forum Topic）的线程 ID；用于向指定话题发送消息。      |
-| `reply_parameters`     | `ReplyParameters`         | 否       | 回复配置；可指定 `message_id` 来回复特定消息。                  |
-| `reply_markup`         | `InlineKeyboardMarkup` 等 | 否       | 内联键盘或自定义键盘。                                          |
-| `link_preview_options` | `LinkPreviewOptions`      | 否       | 控制链接预览的生成行为。                                        |
-| `message_effect_id`    | `String`                  | 否       | 消息特效的唯一标识符。                                          |
-| `disable_notification` | `Boolean`                 | 否       | 静默发送，不触发通知声音。                                      |
-| `protect_content`      | `Boolean`                 | 否       | 保护消息内容不被转发和保存。                                    |
+| 参数                     | 类型                       | 是否必需 | 说明                                          |
+| ---------------------- | ------------------------ | ---- | ------------------------------------------- |
+| `chat_id`              | `Integer` 或 `String`     | 是    | 目标聊天的唯一标识符，或频道用户名（格式 `@channelusername`）。   |
+| `text`                 | `String`                 | 是    | 消息正文；实体解析后长度 1–4096 字符。                     |
+| `parse_mode`           | `String`                 | 否    | 格式化模式：`HTML`、`MarkdownV2` 或 `Markdown`（旧版）。 |
+| `entities`             | `Array<MessageEntity>`   | 否    | 自定义格式化实体列表；与 `parse_mode` 二选一。              |
+| `message_thread_id`    | `Integer`                | 否    | 论坛话题（Forum Topic）的线程 ID；用于向指定话题发送消息。        |
+| `reply_parameters`     | `ReplyParameters`        | 否    | 回复配置；可指定 `message_id` 来回复特定消息。              |
+| `reply_markup`         | `InlineKeyboardMarkup` 等 | 否    | 内联键盘或自定义键盘。                                 |
+| `link_preview_options` | `LinkPreviewOptions`     | 否    | 控制链接预览的生成行为。                                |
+| `message_effect_id`    | `String`                 | 否    | 消息特效的唯一标识符。                                 |
+| `disable_notification` | `Boolean`                | 否    | 静默发送，不触发通知声音。                               |
+| `protect_content`      | `Boolean`                | 否    | 保护消息内容不被转发和保存。                              |
 
 **Response Body**
 
@@ -176,13 +176,13 @@ Telegram 单条消息的文本长度上限为 **4096 字符**（实体解析后�
 - 本仓库 `TelegramApi` 实现使用 `truncateText` 方法：超过 4096 字符取前 4093 字符 + `...`。
 - 如果需要发送更长内容，应分片为多条消息发送。
 
-### 3.3 parse_mode 说明
+### 3.3 parse\_mode 说明
 
-| 值           | 说明                                                        |
-| ------------ | ----------------------------------------------------------- |
-| `HTML`       | 支持 `<b>`, `<i>`, `<code>`, `<pre>`, `<a>` 等标签。        |
+| 值            | 说明                                                      |
+| ------------ | ------------------------------------------------------- |
+| `HTML`       | 支持 `<b>`, `<i>`, `<code>`, `<pre>`, `<a>` 等标签。          |
 | `MarkdownV2` | 支持 `*bold*`, `_italic_`, `` `code` ``, `[link](url)` 等。 |
-| `Markdown`   | 旧版 Markdown，兼容性较差，不推荐使用。                     |
+| `Markdown`   | 旧版 Markdown，兼容性较差，不推荐使用。                                |
 
 **工程建议**
 
@@ -215,16 +215,16 @@ Telegram 单条消息的文本长度上限为 **4096 字符**（实体解析后�
 
 **参数说明**
 
-| 参数                   | 类型                   | 是否必需      | 说明                                                       |
-| ---------------------- | ---------------------- | ------------- | ---------------------------------------------------------- |
-| `chat_id`              | `Integer` 或 `String`  | 条件必需 (\*) | 目标聊天标识符。                                           |
-| `message_id`           | `Integer`              | 条件必需 (\*) | 要编辑的消息 ID。                                          |
+| 参数                     | 类型                     | 是否必需      | 说明                                         |
+| ---------------------- | ---------------------- | --------- | ------------------------------------------ |
+| `chat_id`              | `Integer` 或 `String`   | 条件必需 (\*) | 目标聊天标识符。                                   |
+| `message_id`           | `Integer`              | 条件必需 (\*) | 要编辑的消息 ID。                                 |
 | `inline_message_id`    | `String`               | 条件必需 (\*) | 内联消息的唯一标识符；与 `chat_id` + `message_id` 二选一。 |
-| `text`                 | `String`               | 是            | 新的消息文本；实体解析后长度 1–4096 字符。                 |
-| `parse_mode`           | `String`               | 否            | 格式化模式：`HTML`、`MarkdownV2` 或 `Markdown`。           |
-| `entities`             | `Array<MessageEntity>` | 否            | 自定义格式化实体列表。                                     |
-| `link_preview_options` | `LinkPreviewOptions`   | 否            | 控制链接预览行为。                                         |
-| `reply_markup`         | `InlineKeyboardMarkup` | 否            | 内联键盘标记。                                             |
+| `text`                 | `String`               | 是         | 新的消息文本；实体解析后长度 1–4096 字符。                  |
+| `parse_mode`           | `String`               | 否         | 格式化模式：`HTML`、`MarkdownV2` 或 `Markdown`。    |
+| `entities`             | `Array<MessageEntity>` | 否         | 自定义格式化实体列表。                                |
+| `link_preview_options` | `LinkPreviewOptions`   | 否         | 控制链接预览行为。                                  |
+| `reply_markup`         | `InlineKeyboardMarkup` | 否         | 内联键盘标记。                                    |
 
 (\*) 必须提供 `chat_id` + `message_id` 或 `inline_message_id` 其中一组。
 
@@ -301,10 +301,10 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/editMessa
 
 **参数说明**
 
-| 参数         | 类型                  | 是否必需 | 说明              |
-| ------------ | --------------------- | -------- | ----------------- |
-| `chat_id`    | `Integer` 或 `String` | 是       | 目标聊天标识符。  |
-| `message_id` | `Integer`             | 是       | 要删除的消息 ID。 |
+| 参数           | 类型                   | 是否必需 | 说明         |
+| ------------ | -------------------- | ---- | ---------- |
+| `chat_id`    | `Integer` 或 `String` | 是    | 目标聊天标识符。   |
+| `message_id` | `Integer`            | 是    | 要删除的消息 ID。 |
 
 **Response Body**
 
@@ -333,15 +333,15 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/deleteMes
 
 Telegram 对消息删除有严格的时间和权限限制：
 
-| 场景                         | 限制                                       |
-| ---------------------------- | ------------------------------------------ |
-| 私聊中 Bot 发送的消息        | 可随时删除。                               |
-| 私聊中用户发送的消息         | Bot 可随时删除。                           |
-| 群组中 Bot 发送的消息        | 可随时删除。                               |
-| 群组中其他人的消息           | Bot 需要管理员权限且消息在 **48 小时内**。 |
-| 超级群组 / 频道中的消息      | Bot 需具备 `can_delete_messages` 权限。    |
-| 骰子消息（私聊）             | 发送 **24 小时后**才能删除。               |
-| 超级群 / 频道 / 话题创建消息 | 不可删除。                                 |
+| 场景                | 限制                                |
+| ----------------- | --------------------------------- |
+| 私聊中 Bot 发送的消息     | 可随时删除。                            |
+| 私聊中用户发送的消息        | Bot 可随时删除。                        |
+| 群组中 Bot 发送的消息     | 可随时删除。                            |
+| 群组中其他人的消息         | Bot 需要管理员权限且消息在 **48 小时内**。       |
+| 超级群组 / 频道中的消息     | Bot 需具备 `can_delete_messages` 权限。 |
+| 骰子消息（私聊）          | 发送 **24 小时后**才能删除。                |
+| 超级群 / 频道 / 话题创建消息 | 不可删除。                             |
 
 **工程建议**
 
@@ -387,12 +387,12 @@ Telegram 对消息删除有严格的时间和权限限制：
 
 **参数说明**
 
-| 参数         | 类型                  | 是否必需 | 说明                                                 |
-| ------------ | --------------------- | -------- | ---------------------------------------------------- |
-| `chat_id`    | `Integer` 或 `String` | 是       | 目标聊天标识符。                                     |
-| `message_id` | `Integer`             | 是       | 目标消息 ID。                                        |
-| `reaction`   | `Array<ReactionType>` | 是       | Reaction 列表；传空数组 `[]` 表示移除所有 Reaction。 |
-| `is_big`     | `Boolean`             | 否       | 是否使用大动画效果；默认 `false`。                   |
+| 参数           | 类型                    | 是否必需 | 说明                                     |
+| ------------ | --------------------- | ---- | -------------------------------------- |
+| `chat_id`    | `Integer` 或 `String`  | 是    | 目标聊天标识符。                               |
+| `message_id` | `Integer`             | 是    | 目标消息 ID。                               |
+| `reaction`   | `Array<ReactionType>` | 是    | Reaction 列表；传空数组 `[]` 表示移除所有 Reaction。 |
+| `is_big`     | `Boolean`             | 否    | 是否使用大动画效果；默认 `false`。                  |
 
 ### 6.2 ReactionType 结构
 
@@ -400,9 +400,9 @@ Telegram 支持三种 Reaction 类型：
 
 **ReactionTypeEmoji（标准表情）**
 
-| 字段    | 类型     | 说明                                                     |
-| ------- | -------- | -------------------------------------------------------- |
-| `type`  | `String` | 固定值 `"emoji"`。                                       |
+| 字段      | 类型       | 说明                                         |
+| ------- | -------- | ------------------------------------------ |
+| `type`  | `String` | 固定值 `"emoji"`。                             |
 | `emoji` | `String` | Unicode 表情字符，必须是 Telegram 允许的 Reaction 表情。 |
 
 ```json
@@ -411,10 +411,10 @@ Telegram 支持三种 Reaction 类型：
 
 **ReactionTypeCustomEmoji（自定义表情）**
 
-| 字段              | 类型     | 说明                      |
-| ----------------- | -------- | ------------------------- |
+| 字段                | 类型       | 说明                    |
+| ----------------- | -------- | --------------------- |
 | `type`            | `String` | 固定值 `"custom_emoji"`。 |
-| `custom_emoji_id` | `String` | 自定义表情的唯一标识符。  |
+| `custom_emoji_id` | `String` | 自定义表情的唯一标识符。          |
 
 ```json
 { "custom_emoji_id": "5368324170671202286", "type": "custom_emoji" }
@@ -422,8 +422,8 @@ Telegram 支持三种 Reaction 类型：
 
 **ReactionTypePaid（付费 Reaction）**
 
-| 字段   | 类型     | 说明              |
-| ------ | -------- | ----------------- |
+| 字段     | 类型       | 说明            |
+| ------ | -------- | ------------- |
 | `type` | `String` | 固定值 `"paid"`。 |
 
 ```json
@@ -498,12 +498,12 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/setMessag
 
 **参数说明**
 
-| 参数                     | 类型                  | 是否必需 | 说明                                                 |
-| ------------------------ | --------------------- | -------- | ---------------------------------------------------- |
-| `chat_id`                | `Integer` 或 `String` | 是       | 目标聊天标识符。                                     |
-| `message_id`             | `Integer`             | 是       | 要置顶的消息 ID。                                    |
-| `disable_notification`   | `Boolean`             | 否       | 是否静默置顶（不向所有成员发送通知）；默认 `false`。 |
-| `business_connection_id` | `String`              | 否       | 商业连接标识符，用于代表商业账号管理置顶消息。       |
+| 参数                       | 类型                   | 是否必需 | 说明                             |
+| ------------------------ | -------------------- | ---- | ------------------------------ |
+| `chat_id`                | `Integer` 或 `String` | 是    | 目标聊天标识符。                       |
+| `message_id`             | `Integer`            | 是    | 要置顶的消息 ID。                     |
+| `disable_notification`   | `Boolean`            | 否    | 是否静默置顶（不向所有成员发送通知）；默认 `false`。 |
+| `business_connection_id` | `String`             | 否    | 商业连接标识符，用于代表商业账号管理置顶消息。        |
 
 **Response Body**
 
@@ -558,11 +558,11 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/pinChatMe
 
 **参数说明**
 
-| 参数                     | 类型                  | 是否必需 | 说明                                                |
-| ------------------------ | --------------------- | -------- | --------------------------------------------------- |
-| `chat_id`                | `Integer` 或 `String` | 是       | 目标聊天标识符。                                    |
-| `message_id`             | `Integer`             | 否       | 要取消置顶的消息 ID；不指定时取消最近一条置顶消息。 |
-| `business_connection_id` | `String`              | 否       | 商业连接标识符。                                    |
+| 参数                       | 类型                   | 是否必需 | 说明                          |
+| ------------------------ | -------------------- | ---- | --------------------------- |
+| `chat_id`                | `Integer` 或 `String` | 是    | 目标聊天标识符。                    |
+| `message_id`             | `Integer`            | 否    | 要取消置顶的消息 ID；不指定时取消最近一条置顶消息。 |
+| `business_connection_id` | `String`             | 否    | 商业连接标识符。                    |
 
 **Response Body**
 
@@ -614,9 +614,9 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/unpinChat
 
 **参数说明**
 
-| 参数      | 类型                  | 是否必需 | 说明             |
-| --------- | --------------------- | -------- | ---------------- |
-| `chat_id` | `Integer` 或 `String` | 是       | 目标聊天标识符。 |
+| 参数        | 类型                   | 是否必需 | 说明       |
+| --------- | -------------------- | ---- | -------- |
+| `chat_id` | `Integer` 或 `String` | 是    | 目标聊天标识符。 |
 
 **Response Body**
 
@@ -650,21 +650,21 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/unpinChat
 
 ### 9.2 ChatFullInfo 主要字段
 
-| 字段                  | 类型               | 说明                                                      |
-| --------------------- | ------------------ | --------------------------------------------------------- |
-| `id`                  | `Integer`          | 聊天唯一标识符。                                          |
+| 字段                    | 类型                 | 说明                                               |
+| --------------------- | ------------------ | ------------------------------------------------ |
+| `id`                  | `Integer`          | 聊天唯一标识符。                                         |
 | `type`                | `String`           | 聊天类型：`private`、`group`、`supergroup` 或 `channel`。 |
-| `title`               | `String?`          | 群组、超级群组或频道的标题。                              |
-| `username`            | `String?`          | 私聊、超级群组或频道的用户名。                            |
-| `first_name`          | `String?`          | 私聊对方的名。                                            |
-| `last_name`           | `String?`          | 私聊对方的姓。                                            |
-| `description`         | `String?`          | 群组、超级群组或频道的描述。                              |
-| `invite_link`         | `String?`          | 聊天邀请链接。                                            |
-| `permissions`         | `ChatPermissions?` | 群组或超级群组的默认权限。                                |
-| `linked_chat_id`      | `Integer?`         | 关联聊天的 ID（如频道关联的讨论组）。                     |
-| `has_visible_history` | `Boolean?`         | 新成员是否可以看到加入前的历史消息。                      |
-| `max_reaction_count`  | `Integer`          | 允许在聊天消息上设置的最大 Reaction 数量。                |
-| `has_forum`           | `Boolean?`         | 超级群组是否启用了论坛话题功能（`true` 表示已启用）。     |
+| `title`               | `String?`          | 群组、超级群组或频道的标题。                                   |
+| `username`            | `String?`          | 私聊、超级群组或频道的用户名。                                  |
+| `first_name`          | `String?`          | 私聊对方的名。                                          |
+| `last_name`           | `String?`          | 私聊对方的姓。                                          |
+| `description`         | `String?`          | 群组、超级群组或频道的描述。                                   |
+| `invite_link`         | `String?`          | 聊天邀请链接。                                          |
+| `permissions`         | `ChatPermissions?` | 群组或超级群组的默认权限。                                    |
+| `linked_chat_id`      | `Integer?`         | 关联聊天的 ID（如频道关联的讨论组）。                             |
+| `has_visible_history` | `Boolean?`         | 新成员是否可以看到加入前的历史消息。                               |
+| `max_reaction_count`  | `Integer`          | 允许在聊天消息上设置的最大 Reaction 数量。                       |
+| `has_forum`           | `Boolean?`         | 超级群组是否启用了论坛话题功能（`true` 表示已启用）。                   |
 
 **curl 示例**
 
@@ -706,10 +706,10 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/getChat' 
 
 **参数说明**
 
-| 参数      | 类型                  | 是否必需 | 说明                   |
-| --------- | --------------------- | -------- | ---------------------- |
-| `chat_id` | `Integer` 或 `String` | 是       | 目标聊天标识符。       |
-| `user_id` | `Integer`             | 是       | 目标用户的唯一标识符。 |
+| 参数        | 类型                   | 是否必需 | 说明          |
+| --------- | -------------------- | ---- | ----------- |
+| `chat_id` | `Integer` 或 `String` | 是    | 目标聊天标识符。    |
+| `user_id` | `Integer`            | 是    | 目标用户的唯一标识符。 |
 
 **Response Body**
 
@@ -742,13 +742,13 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/getChat' 
 
 ### 10.2 ChatMember 状态
 
-| status          | 说明                             |
-| --------------- | -------------------------------- |
-| `creator`       | 群主；拥有所有管理员权限。       |
-| `administrator` | 管理员；拥有部分额外权限。       |
-| `member`        | 普通成员；无额外权限或限制。     |
-| `restricted`    | 受限成员；被施加了某些限制。     |
-| `left`          | 已离开聊天但可以自行重新加入。   |
+| status          | 说明               |
+| --------------- | ---------------- |
+| `creator`       | 群主；拥有所有管理员权限。    |
+| `administrator` | 管理员；拥有部分额外权限。    |
+| `member`        | 普通成员；无额外权限或限制。   |
+| `restricted`    | 受限成员；被施加了某些限制。   |
+| `left`          | 已离开聊天但可以自行重新加入。  |
 | `kicked`        | 被封禁；不能返回聊天或查看消息。 |
 
 **curl 示例**
@@ -792,12 +792,12 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/getChatMe
 
 **参数说明**
 
-| 参数                   | 类型                  | 是否必需 | 说明                                                                                                                                                            |
-| ---------------------- | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chat_id`              | `Integer` 或 `String` | 是       | 目标超级群组的标识符。                                                                                                                                          |
-| `name`                 | `String`              | 是       | 话题名称；长度 1–128 字符。                                                                                                                                     |
-| `icon_color`           | `Integer`             | 否       | 话题图标颜色（RGB）；必须是预定义值之一：`7322096`（蓝色）、`16766590`（黄色）、`13338331`（紫色）、`9367192`（绿色）、`16749490`（粉色）、`16478047`（红色）。 |
-| `icon_custom_emoji_id` | `String`              | 否       | 话题图标的自定义表情 ID。                                                                                                                                       |
+| 参数                     | 类型                   | 是否必需 | 说明                                                                                                             |
+| ---------------------- | -------------------- | ---- | -------------------------------------------------------------------------------------------------------------- |
+| `chat_id`              | `Integer` 或 `String` | 是    | 目标超级群组的标识符。                                                                                                    |
+| `name`                 | `String`             | 是    | 话题名称；长度 1–128 字符。                                                                                              |
+| `icon_color`           | `Integer`            | 否    | 话题图标颜色（RGB）；必须是预定义值之一：`7322096`（蓝色）、`16766590`（黄色）、`13338331`（紫色）、`9367192`（绿色）、`16749490`（粉色）、`16478047`（红色）。 |
+| `icon_custom_emoji_id` | `String`             | 否    | 话题图标的自定义表情 ID。                                                                                                 |
 
 **Response Body**
 
@@ -816,11 +816,11 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/getChatMe
 
 ### 11.2 ForumTopic 字段
 
-| 字段                   | 类型      | 说明                      |
-| ---------------------- | --------- | ------------------------- |
+| 字段                     | 类型        | 说明             |
+| ---------------------- | --------- | -------------- |
 | `message_thread_id`    | `Integer` | 论坛话题的唯一标识符。    |
-| `name`                 | `String`  | 话题名称。                |
-| `icon_color`           | `Integer` | 话题图标颜色。            |
+| `name`                 | `String`  | 话题名称。          |
+| `icon_color`           | `Integer` | 话题图标颜色。        |
 | `icon_custom_emoji_id` | `String?` | 话题图标的自定义表情 ID。 |
 
 **curl 示例**
@@ -884,9 +884,9 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/createFor
 
 除 `sendMessage` 的所有参数外（见第 3 节），关键区别在于：
 
-| 参数                | 类型      | 是否必需 | 说明                                                  |
-| ------------------- | --------- | -------- | ----------------------------------------------------- |
-| `message_thread_id` | `Integer` | 是 (\*)  | 论坛话题的线程 ID（即 `createForumTopic` 返回的值）。 |
+| 参数                  | 类型        | 是否必需   | 说明                                     |
+| ------------------- | --------- | ------ | -------------------------------------- |
+| `message_thread_id` | `Integer` | 是 (\*) | 论坛话题的线程 ID（即 `createForumTopic` 返回的值）。 |
 
 (\*) 在论坛模式群组中，向特定话题发送消息时必需。
 
@@ -912,7 +912,7 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/sendMessa
 
 - 本仓库 `TelegramApi.sendMessageToTopic` 封装了此调用，自动传入 `message_thread_id`。
 - **重要：`parse_mode` 必须与普通 `sendMessage` 一样传入**（如 `parse_mode: 'HTML'`）。此参数在话题模式下容易遗漏，曾在 code review 中发现原实现缺失了 `parse_mode: 'HTML'`，导致话题消息中 HTML 标签被原样显示而非渲染为富文本。
-- 如果群组开启了论坛模式但未指定 `message_thread_id`，消息将发送到 "General" 话题（thread_id 通常为 1）。
+- 如果群组开启了论坛模式但未指定 `message_thread_id`，消息将发送到 "General" 话题（thread\_id 通常为 1）。
 - `message_thread_id` 也可用于 `sendChatAction` 等其他方法，指定动作所在的话题。
 
 ## 13. sendPoll — 发送投票
@@ -941,34 +941,34 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/sendMessa
 
 **参数说明**
 
-| 参数                      | 类型                      | 是否必需 | 说明                                                                 |
-| ------------------------- | ------------------------- | -------- | -------------------------------------------------------------------- |
-| `chat_id`                 | `Integer` 或 `String`     | 是       | 目标聊天标识符。                                                     |
-| `question`                | `String`                  | 是       | 投票问题；长度 1–300 字符。                                          |
-| `options`                 | `Array<InputPollOption>`  | 是       | 投票选项列表；2–10 个选项。                                          |
-| `is_anonymous`            | `Boolean`                 | 否       | 是否匿名投票；默认 `true`。                                          |
-| `type`                    | `String`                  | 否       | 投票类型：`regular`（普通）或 `quiz`（测验）；默认 `regular`。       |
-| `allows_multiple_answers` | `Boolean`                 | 否       | 是否允许多选；默认 `false`。仅 `regular` 类型可用。                  |
-| `correct_option_id`       | `Integer`                 | 条件必需 | 测验模式的正确答案索引（从 0 开始）；`quiz` 类型必需。               |
-| `explanation`             | `String`                  | 否       | 用户选错后显示的解释文本；0–200 字符。                               |
-| `explanation_parse_mode`  | `String`                  | 否       | 解释文本的格式化模式。                                               |
-| `explanation_entities`    | `Array<MessageEntity>`    | 否       | 解释文本的格式化实体。                                               |
-| `open_period`             | `Integer`                 | 否       | 投票创建后的活跃时间（秒）；5–600。与 `close_date` 互斥。            |
-| `close_date`              | `Integer`                 | 否       | 投票自动关闭的 Unix 时间戳；距当前 5–600 秒。与 `open_period` 互斥。 |
-| `is_closed`               | `Boolean`                 | 否       | 是否立即关闭投票。                                                   |
-| `message_thread_id`       | `Integer`                 | 否       | 论坛话题线程 ID。                                                    |
-| `disable_notification`    | `Boolean`                 | 否       | 静默发送。                                                           |
-| `protect_content`         | `Boolean`                 | 否       | 保护投票内容不被转发。                                               |
-| `reply_parameters`        | `ReplyParameters`         | 否       | 回复配置。                                                           |
-| `reply_markup`            | `InlineKeyboardMarkup` 等 | 否       | 内联键盘或自定义键盘。                                               |
+| 参数                        | 类型                       | 是否必需 | 说明                                               |
+| ------------------------- | ------------------------ | ---- | ------------------------------------------------ |
+| `chat_id`                 | `Integer` 或 `String`     | 是    | 目标聊天标识符。                                         |
+| `question`                | `String`                 | 是    | 投票问题；长度 1–300 字符。                                |
+| `options`                 | `Array<InputPollOption>` | 是    | 投票选项列表；2–10 个选项。                                 |
+| `is_anonymous`            | `Boolean`                | 否    | 是否匿名投票；默认 `true`。                                |
+| `type`                    | `String`                 | 否    | 投票类型：`regular`（普通）或 `quiz`（测验）；默认 `regular`。     |
+| `allows_multiple_answers` | `Boolean`                | 否    | 是否允许多选；默认 `false`。仅 `regular` 类型可用。              |
+| `correct_option_id`       | `Integer`                | 条件必需 | 测验模式的正确答案索引（从 0 开始）；`quiz` 类型必需。                 |
+| `explanation`             | `String`                 | 否    | 用户选错后显示的解释文本；0–200 字符。                           |
+| `explanation_parse_mode`  | `String`                 | 否    | 解释文本的格式化模式。                                      |
+| `explanation_entities`    | `Array<MessageEntity>`   | 否    | 解释文本的格式化实体。                                      |
+| `open_period`             | `Integer`                | 否    | 投票创建后的活跃时间（秒）；5–600。与 `close_date` 互斥。           |
+| `close_date`              | `Integer`                | 否    | 投票自动关闭的 Unix 时间戳；距当前 5–600 秒。与 `open_period` 互斥。 |
+| `is_closed`               | `Boolean`                | 否    | 是否立即关闭投票。                                        |
+| `message_thread_id`       | `Integer`                | 否    | 论坛话题线程 ID。                                       |
+| `disable_notification`    | `Boolean`                | 否    | 静默发送。                                            |
+| `protect_content`         | `Boolean`                | 否    | 保护投票内容不被转发。                                      |
+| `reply_parameters`        | `ReplyParameters`        | 否    | 回复配置。                                            |
+| `reply_markup`            | `InlineKeyboardMarkup` 等 | 否    | 内联键盘或自定义键盘。                                      |
 
 ### 13.2 InputPollOption 结构
 
-| 字段              | 类型                   | 是否必需 | 说明                                               |
-| ----------------- | ---------------------- | -------- | -------------------------------------------------- |
-| `text`            | `String`               | 是       | 选项文本；长度 1–100 字符。                        |
-| `text_parse_mode` | `String`               | 否       | 选项文本的格式化模式（当前仅支持自定义表情实体）。 |
-| `text_entities`   | `Array<MessageEntity>` | 否       | 选项文本的格式化实体（当前仅支持自定义表情实体）。 |
+| 字段                | 类型                     | 是否必需 | 说明                        |
+| ----------------- | ---------------------- | ---- | ------------------------- |
+| `text`            | `String`               | 是    | 选项文本；长度 1–100 字符。         |
+| `text_parse_mode` | `String`               | 否    | 选项文本的格式化模式（当前仅支持自定义表情实体）。 |
+| `text_entities`   | `Array<MessageEntity>` | 否    | 选项文本的格式化实体（当前仅支持自定义表情实体）。 |
 
 **Response Body**
 
@@ -1050,25 +1050,25 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/sendPoll'
 
 **参数说明**
 
-| 参数                | 类型                  | 是否必需 | 说明                 |
-| ------------------- | --------------------- | -------- | -------------------- |
-| `chat_id`           | `Integer` 或 `String` | 是       | 目标聊天标识符。     |
-| `action`            | `String`              | 是       | 动作类型（见下表）。 |
-| `message_thread_id` | `Integer`             | 否       | 论坛话题线程 ID。    |
+| 参数                  | 类型                   | 是否必需 | 说明         |
+| ------------------- | -------------------- | ---- | ---------- |
+| `chat_id`           | `Integer` 或 `String` | 是    | 目标聊天标识符。   |
+| `action`            | `String`             | 是    | 动作类型（见下表）。 |
+| `message_thread_id` | `Integer`            | 否    | 论坛话题线程 ID。 |
 
 ### 14.2 支持的 action 值
 
-| action              | 对应场景                     |
-| ------------------- | ---------------------------- |
-| `typing`            | 即将发送文本消息。           |
-| `upload_photo`      | 即将发送照片。               |
-| `record_video`      | 即将发送视频（录制中）。     |
-| `upload_video`      | 即将发送视频（上传中）。     |
-| `record_voice`      | 即将发送语音（录制中）。     |
-| `upload_voice`      | 即将发送语音（上传中）。     |
-| `upload_document`   | 即将发送文件。               |
-| `choose_sticker`    | 即将发送贴纸。               |
-| `find_location`     | 即将发送位置。               |
+| action              | 对应场景           |
+| ------------------- | -------------- |
+| `typing`            | 即将发送文本消息。      |
+| `upload_photo`      | 即将发送照片。        |
+| `record_video`      | 即将发送视频（录制中）。   |
+| `upload_video`      | 即将发送视频（上传中）。   |
+| `record_voice`      | 即将发送语音（录制中）。   |
+| `upload_voice`      | 即将发送语音（上传中）。   |
+| `upload_document`   | 即将发送文件。        |
+| `choose_sticker`    | 即将发送贴纸。        |
+| `find_location`     | 即将发送位置。        |
 | `record_video_note` | 即将发送视频笔记（录制中）。 |
 | `upload_video_note` | 即将发送视频笔记（上传中）。 |
 
@@ -1106,12 +1106,12 @@ curl 'https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrsTUVwxyz/sendChatA
 
 Telegram Bot API 有以下速率限制：
 
-| 维度             | 限制                                                       |
-| ---------------- | ---------------------------------------------------------- |
+| 维度       | 限制                                 |
+| -------- | ---------------------------------- |
 | 同一聊天发送消息 | 每秒不超过 1 条消息（突发最多约 30 条 / 秒，但会被限流）。 |
-| 群组发送消息     | 每分钟不超过 20 条消息。                                   |
-| 全局发送消息     | 每秒不超过 30 条消息。                                     |
-| 批量通知         | 同一条消息不能在 1 秒内发送给超过 30 个不同聊天。          |
+| 群组发送消息   | 每分钟不超过 20 条消息。                     |
+| 全局发送消息   | 每秒不超过 30 条消息。                      |
+| 批量通知     | 同一条消息不能在 1 秒内发送给超过 30 个不同聊天。       |
 
 收到 `429 Too Many Requests` 时，响应中会包含 `retry_after` 参数：
 
@@ -1138,22 +1138,22 @@ Telegram Bot API 有以下速率限制：
 
 以下列出 `sendMessage` 等方法返回的 `Message` 对象中最常用的字段：
 
-| 字段                | 类型       | 说明                          |
-| ------------------- | ---------- | ----------------------------- |
-| `message_id`        | `Integer`  | 消息在聊天中的唯一标识符。    |
-| `from`              | `User?`    | 发送者信息。                  |
-| `chat`              | `Chat`     | 消息所属聊天。                |
+| 字段                  | 类型         | 说明                |
+| ------------------- | ---------- | ----------------- |
+| `message_id`        | `Integer`  | 消息在聊天中的唯一标识符。     |
+| `from`              | `User?`    | 发送者信息。            |
+| `chat`              | `Chat`     | 消息所属聊天。           |
 | `date`              | `Integer`  | 消息发送时间（Unix 时间戳）。 |
 | `edit_date`         | `Integer?` | 最近编辑时间（Unix 时间戳）。 |
-| `text`              | `String?`  | 文本消息内容。                |
-| `entities`          | `Array?`   | 消息中的格式化实体。          |
-| `reply_to_message`  | `Message?` | 被回复的消息。                |
+| `text`              | `String?`  | 文本消息内容。           |
+| `entities`          | `Array?`   | 消息中的格式化实体。        |
+| `reply_to_message`  | `Message?` | 被回复的消息。           |
 | `message_thread_id` | `Integer?` | 消息所属论坛话题的线程 ID。   |
 | `poll`              | `Poll?`    | 投票信息（仅投票消息）。      |
 
 ### 16.2 本仓库 TelegramApi 方法映射表
 
-| TelegramApi 方法        | Telegram API 方法    | 关键参数                                                  |
+| TelegramApi 方法          | Telegram API 方法      | 关键参数                                                      |
 | ----------------------- | -------------------- | --------------------------------------------------------- |
 | `sendMessage`           | `sendMessage`        | `chat_id`, `text`, `parse_mode=HTML`                      |
 | `editMessageText`       | `editMessageText`    | `chat_id`, `message_id`, `text`, `parse_mode=HTML`        |
@@ -1172,19 +1172,19 @@ Telegram Bot API 有以下速率限制：
 
 ### 16.3 与微信 iLink 协议的关键差异
 
-| 维度         | Telegram Bot API                           | 微信 iLink API                         |
-| ------------ | ------------------------------------------ | -------------------------------------- |
-| 认证方式     | Bot Token 直接放入 URL 路径。              | Bearer Token 放入 `Authorization` 头。 |
-| 消息路由     | 通过 `chat_id` + `message_id` 定位。       | 依赖 `context_token` 做会话路由。      |
-| 消息接收     | Webhook 或 `getUpdates` 长轮询。           | `getupdates` 长轮询。                  |
-| 消息编辑     | 原生支持 `editMessageText`。               | 无原生编辑能力；需新发消息替代。       |
-| 消息删除     | 原生支持 `deleteMessage`，有 48 小时限制。 | 无原生删除能力。                       |
-| Reaction     | 原生支持 `setMessageReaction`。            | 不支持。                               |
-| 消息格式     | HTML / MarkdownV2。                        | 纯文本 + 媒体 item_list 结构。         |
-| 文本长度上限 | 4096 字符。                                | 约 2000 字符（社区经验值）。           |
-| 论坛 / 话题  | 原生支持 Forum Topics。                    | 不支持。                               |
-| 投票         | 原生支持 `sendPoll`。                      | 不支持。                               |
-| 速率限制     | 每聊天～1 msg/s，全局 30 msg/s。           | 未公开文档化。                         |
+| 维度       | Telegram Bot API                | 微信 iLink API                       |
+| -------- | ------------------------------- | ---------------------------------- |
+| 认证方式     | Bot Token 直接放入 URL 路径。          | Bearer Token 放入 `Authorization` 头。 |
+| 消息路由     | 通过 `chat_id` + `message_id` 定位。 | 依赖 `context_token` 做会话路由。          |
+| 消息接收     | Webhook 或 `getUpdates` 长轮询。     | `getupdates` 长轮询。                  |
+| 消息编辑     | 原生支持 `editMessageText`。         | 无原生编辑能力；需新发消息替代。                   |
+| 消息删除     | 原生支持 `deleteMessage`，有 48 小时限制。 | 无原生删除能力。                           |
+| Reaction | 原生支持 `setMessageReaction`。      | 不支持。                               |
+| 消息格式     | HTML / MarkdownV2。              | 纯文本 + 媒体 item\_list 结构。            |
+| 文本长度上限   | 4096 字符。                        | 约 2000 字符（社区经验值）。                  |
+| 论坛 / 话题  | 原生支持 Forum Topics。              | 不支持。                               |
+| 投票       | 原生支持 `sendPoll`。                | 不支持。                               |
+| 速率限制     | 每聊天～1 msg/s，全局 30 msg/s。        | 未公开文档化。                            |
 
 ## 17. 实测验证记录
 
@@ -1194,7 +1194,7 @@ Telegram Bot API 有以下速率限制：
 
 通过 `getMe` 接口验证 Bot Token 有效性：
 
-- **Bot 用户名**：@MasterLion_Test_Bot
+- **Bot 用户名**：@Masterino\_Test\_Bot
 - **Bot ID**：8654315085
 - **验证结果**：Token 有效，Bot 身份确认。
 
@@ -1212,15 +1212,15 @@ Conflict: can't use getUpdates method while webhook is active
 
 以下 API 实现通过 code review 对照本协议规范进行了逐项验证：
 
-| API 方法             | 验证状态   | 备注                                                                  |
-| -------------------- | ---------- | --------------------------------------------------------------------- |
-| `sendMessage`        | 通过       | 参数、parse_mode、截断逻辑均符合规范。                                |
-| `editMessageText`    | 通过       | 包含 "message is not modified" 静默处理。                             |
-| `deleteMessage`      | 通过       | 参数正确。                                                            |
-| `setMessageReaction` | 通过       | 添加 / 移除 Reaction 两种模式均正确。                                 |
-| `pinChatMessage`     | 通过       | 默认 `disable_notification=true`。                                    |
-| `unpinChatMessage`   | 通过       | 始终传递 `message_id`。                                               |
-| `sendMessageToTopic` | 修复后通过 | 原实现缺少 `parse_mode: 'HTML'`，已修复。                             |
+| API 方法               | 验证状态  | 备注                                                      |
+| -------------------- | ----- | ------------------------------------------------------- |
+| `sendMessage`        | 通过    | 参数、parse\_mode、截断逻辑均符合规范。                               |
+| `editMessageText`    | 通过    | 包含 "message is not modified" 静默处理。                      |
+| `deleteMessage`      | 通过    | 参数正确。                                                   |
+| `setMessageReaction` | 通过    | 添加 / 移除 Reaction 两种模式均正确。                               |
+| `pinChatMessage`     | 通过    | 默认 `disable_notification=true`。                         |
+| `unpinChatMessage`   | 通过    | 始终传递 `message_id`。                                      |
+| `sendMessageToTopic` | 修复后通过 | 原实现缺少 `parse_mode: 'HTML'`，已修复。                         |
 | `createForumTopic`   | 修复后通过 | 原 `createThread` 返回裸 topicId，已修复为复合格式 `chatId:topicId`。 |
 
 ### 17.4 关键 Bug 修复摘要

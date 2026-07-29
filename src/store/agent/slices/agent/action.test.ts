@@ -178,7 +178,7 @@ describe('AgentSlice Actions', () => {
 
       vi.mocked(agentService.getAgentConfigById).mockResolvedValue({
         id: 'inbox-agent',
-        title: 'Lobe AI',
+        title: 'Masterino',
       } as any);
 
       const { result } = renderHook(() => useAgentStore(), { wrapper: withSWR });

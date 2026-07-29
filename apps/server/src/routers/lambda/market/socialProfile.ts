@@ -4,10 +4,9 @@ import { z } from 'zod';
 
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { marketSDK, marketUserInfo, serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 const log = debug('lambda-router:market:socialProfile');
-
-const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
 
 // Authenticated procedure for social profile operations
 const socialProfileAuthProcedure = authedProcedure
@@ -59,7 +58,7 @@ export const socialProfileRouter = router({
         // Claim each skill one by one
         for (const skillId of input.skillIds || []) {
           try {
-            const response = await fetch(`${MARKET_BASE_URL}/api/v1/user/claims`, {
+            const response = await fetch(`${getInternalMarketBaseUrl()}/api/v1/user/claims`, {
               body: JSON.stringify({
                 assetId: Number(skillId),
                 assetType: 'skill',
@@ -85,7 +84,7 @@ export const socialProfileRouter = router({
         // Claim each plugin one by one
         for (const pluginId of input.pluginIds || []) {
           try {
-            const response = await fetch(`${MARKET_BASE_URL}/api/v1/user/claims`, {
+            const response = await fetch(`${getInternalMarketBaseUrl()}/api/v1/user/claims`, {
               body: JSON.stringify({
                 assetId: Number(pluginId),
                 assetType: 'plugin',
@@ -138,7 +137,7 @@ export const socialProfileRouter = router({
       // @ts-ignore - headers is protected but we need it for custom API calls
       const headers = ctx.marketSDK.headers as Record<string, string>;
 
-      const response = await fetch(`${MARKET_BASE_URL}/api/v1/user/claims/scan`, {
+      const response = await fetch(`${getInternalMarketBaseUrl()}/api/v1/user/claims/scan`, {
         headers,
         method: 'GET',
       });
@@ -192,7 +191,7 @@ export const socialProfileRouter = router({
         // @ts-ignore - headers is protected but we need it for custom API calls
         const headers = ctx.marketSDK.headers as Record<string, string>;
 
-        const response = await fetch(`${MARKET_BASE_URL}/api/v1/user/claims/submit-repo`, {
+        const response = await fetch(`${getInternalMarketBaseUrl()}/api/v1/user/claims/submit-repo`, {
           body: JSON.stringify({
             branch: input.branch,
             gitUrl: input.gitUrl,

@@ -17,8 +17,10 @@ describe('interestsToCategoryHints', () => {
     ]);
   });
 
-  it('drops interests without a mapped category', () => {
-    expect(interestsToCategoryHints(['health', 'hobbies', 'parenting'])).toEqual([]);
+  it('maps every predefined interest and deduplicates shared categories', () => {
+    expect(interestsToCategoryHints(['health', 'hobbies', 'parenting'])).toEqual([
+      MarketplaceCategory.PersonalLife,
+    ]);
   });
 
   it('drops free-form custom interests', () => {

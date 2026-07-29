@@ -4,7 +4,7 @@ import CreatePlan from './CreatePlan';
 import TodoListRender from './TodoList';
 
 /**
- * Lobe Agent Tool Render Components Registry
+ * Masterino Agent Tool Render Components Registry
  *
  * Sub-agent dispatch operations render a card showing the dispatched
  * task(s). Plan operations render the PlanCard UI. Todo operations

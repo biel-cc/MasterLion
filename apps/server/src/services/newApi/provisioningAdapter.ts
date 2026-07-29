@@ -31,7 +31,7 @@ export type ProvisioningPolicy = {
 export type ProvisionEnterpriseUserInput = {
   email?: string;
   employeeNumber?: string;
-  masterLionUsername?: string;
+  masterionUsername?: string;
   name?: string;
   policy: ProvisioningPolicy;
   userId: string;
@@ -251,7 +251,7 @@ export class NewApiProvisioningAdapter {
       targetUser.id,
       managedTokenName,
       policy,
-      input.masterLionUsername,
+      input.masterionUsername,
     );
 
     // Link the Aihub user to the OAuth provider (e.g. BIEL IAM) so that when
@@ -454,7 +454,7 @@ export class NewApiProvisioningAdapter {
     newApiUserId: number,
     managedTokenName: string,
     policy: AihubProvisioningPolicy,
-    masterLionUsername?: string,
+    masterionUsername?: string,
   ) {
     // 1. Try the bridge (direct DB read) to find an existing managed token for the target user.
     //    The Aihub API only lists the authenticated user's own tokens, so admin can't see
@@ -512,8 +512,8 @@ export class NewApiProvisioningAdapter {
       //    functional state (the token key still works for API calls).
       if (this.bridgeClient?.isEnabled()) {
         const desiredName =
-          masterLionUsername && `MasterLion_${masterLionUsername}` !== managedTokenName
-            ? `MasterLion_${masterLionUsername}`
+          masterionUsername && `Masterino_${masterionUsername}` !== managedTokenName
+            ? `Masterino_${masterionUsername}`
             : undefined;
         const reassigned = await this.bridgeClient.reassignToken(
           createdToken.id,

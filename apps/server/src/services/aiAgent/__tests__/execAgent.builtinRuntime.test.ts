@@ -395,7 +395,7 @@ describe('AiAgentService.execAgent - builtin agent runtime config', () => {
     );
   });
 
-  it('should inject self-feedback intent tool for Lobe AI when user gate is enabled', async () => {
+  it('should inject self-feedback intent tool for Masterino when user gate is enabled', async () => {
     mockGetAgentConfig.mockResolvedValue({
       chatConfig: {},
       id: 'agent-inbox',

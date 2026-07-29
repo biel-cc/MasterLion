@@ -5,7 +5,11 @@ import type {
 
 // eager: true — all locale JSON inlined at build time, synchronous access at runtime
 const defaultModules = import.meta.glob<{ default: Record<string, unknown> }>(
-  '/packages/locales/src/default/*.ts',
+  [
+    '/packages/locales/src/default/*.ts',
+    '!/packages/locales/src/default/*.test.ts',
+    '!/packages/locales/src/default/*.spec.ts',
+  ],
   { eager: true },
 );
 const localeModules = import.meta.glob<{ default: Record<string, unknown> }>('/locales/*/*.json', {

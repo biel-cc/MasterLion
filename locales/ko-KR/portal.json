@@ -4,6 +4,7 @@
   "Plugins": "기능",
   "artifacts.display.code": "코드",
   "artifacts.display.preview": "미리보기",
+  "artifacts.persistence.failed": "HTML을 Space 문서에 저장하지 못했습니다.",
   "artifacts.svg.copyAsImage": "이미지로 복사",
   "artifacts.svg.copyFail": "복사 실패, 오류 원인:{{error}}",
   "artifacts.svg.copySuccess": "이미지 복사 성공",

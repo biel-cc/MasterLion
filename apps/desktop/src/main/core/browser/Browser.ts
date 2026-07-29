@@ -617,7 +617,7 @@ export default class Browser {
    * Bind this window's session to the backend proxy. The `app://` request
    * interceptor (wired in `App.ts`) consumes this context to route
    * `/trpc`, `/webapi`, `/api/auth`, and `/market` requests to the remote
-   * LobeHub server.
+   * Masterino server.
    */
   private setupRemoteServerRequestHook(browserWindow: BrowserWindow): void {
     const session = browserWindow.webContents.session;
@@ -632,6 +632,19 @@ export default class Browser {
         const config = await remoteServerConfigCtr.getRemoteServerConfig();
         const remoteServerUrl = await remoteServerConfigCtr.getRemoteServerUrl(config);
         return remoteServerUrl || null;
+      },
+      isAuthActiveForUrl: async (targetUrl) => {
+        const config = await remoteServerConfigCtr.getRemoteServerConfig();
+        if (!(await remoteServerConfigCtr.isRemoteServerConfigured(config))) return false;
+
+        const configuredUrl = await remoteServerConfigCtr.getRemoteServerUrl(config);
+        if (!configuredUrl) return false;
+
+        try {
+          return new URL(configuredUrl).origin === new URL(targetUrl).origin;
+        } catch {
+          return false;
+        }
       },
       source: this.identifier,
     });

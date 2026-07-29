@@ -4,6 +4,7 @@
   "Plugins": "Yetenekler",
   "artifacts.display.code": "Kod",
   "artifacts.display.preview": "Önizleme",
+  "artifacts.persistence.failed": "HTML, Space belgelerine kaydedilemedi",
   "artifacts.svg.copyAsImage": "Görsel olarak kopyala",
   "artifacts.svg.copyFail": "Kopyalama başarısız: {{error}}. Lütfen tekrar deneyin.",
   "artifacts.svg.copySuccess": "Görsel başarıyla kopyalandı",

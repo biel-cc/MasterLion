@@ -150,7 +150,8 @@ export const credsRouter = router({
       }
     }),
 
-  // Get single credential (optionally with decrypted values)
+  // Browser-facing credential reads are always masked. Plaintext is only resolved by
+  // server-side execution services and is never returned through tRPC.
   get: credsManageProcedure
     .input(
       z.object({
@@ -162,9 +163,7 @@ export const credsRouter = router({
       log('get input: %O', input);
 
       try {
-        const result = await ctx.marketService.market.creds.get(input.id, {
-          decrypt: input.decrypt,
-        });
+        const result = await ctx.marketService.market.creds.get(input.id, { decrypt: false });
         log('get success: id=%d', input.id);
         return result;
       } catch (error) {
@@ -177,7 +176,7 @@ export const credsRouter = router({
       }
     }),
 
-  // Get single credential by key (optionally with decrypted values)
+  // Browser-facing lookup by key follows the same masked-only rule.
   getByKey: credsManageProcedure
     .input(
       z.object({
@@ -200,10 +199,7 @@ export const credsRouter = router({
           });
         }
 
-        // Then get the full credential with optional decryption
-        const result = await ctx.marketService.market.creds.get(cred.id, {
-          decrypt: input.decrypt,
-        });
+        const result = await ctx.marketService.market.creds.get(cred.id, { decrypt: false });
         log('getByKey success: key=%s, id=%d', input.key, cred.id);
         return result;
       } catch (error) {

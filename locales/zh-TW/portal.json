@@ -4,6 +4,7 @@
   "Plugins": "外掛",
   "artifacts.display.code": "程式碼",
   "artifacts.display.preview": "預覽",
+  "artifacts.persistence.failed": "無法將 HTML 儲存至空間文件",
   "artifacts.svg.copyAsImage": "複製為圖片",
   "artifacts.svg.copyFail": "複製失敗，錯誤原因:{{error}}",
   "artifacts.svg.copySuccess": "圖片複製成功",

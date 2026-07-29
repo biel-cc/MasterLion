@@ -114,7 +114,7 @@
   "builtins.lobe-agent.apiName.updateTodos": "更新待办",
   "builtins.lobe-agent.subAgent.stats.tokens": "{{count}} tokens",
   "builtins.lobe-agent.subAgent.stats.tools": "{{count}} 个工具",
-  "builtins.lobe-agent.title": "Lobe Agent",
+  "builtins.lobe-agent.title": "Masterino Agent",
   "builtins.lobe-claude-code.agent.instruction": "指令",
   "builtins.lobe-claude-code.agent.result": "结果",
   "builtins.lobe-claude-code.askUserQuestion.noAnswer": "未收到回答——模型在没有用户输入的情况下继续。",

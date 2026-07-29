@@ -213,7 +213,7 @@ Use it only for refs/URLs you cannot inspect directly, or when the active model 
 </visual_analysis>
 `;
 
-export const systemPrompt = `Use Lobe Agent capabilities only when the active model needs built-in assistance. Prefer the active model's native capabilities whenever they are sufficient. Follow each tool's description and schema, and use tool results to answer the user directly.
+export const systemPrompt = `Use Masterino Agent capabilities only when the active model needs built-in assistance. Prefer the active model's native capabilities whenever they are sufficient. Follow each tool's description and schema, and use tool results to answer the user directly.
 ${visualAnalysisSection}
 ${planTodoSection}
 ${subAgentSection}`;

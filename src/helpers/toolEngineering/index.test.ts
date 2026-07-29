@@ -109,7 +109,7 @@ vi.mock('@/store/tool', () => ({
           ],
           identifier: 'lobe-agent',
           meta: {
-            title: 'Lobe Agent',
+            title: 'Masterino Agent',
             avatar: 'V',
           },
           type: 'builtin',

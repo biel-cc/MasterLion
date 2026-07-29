@@ -192,7 +192,7 @@ const defaultFormatAgentContext = (context: AgentBuilderContext): string => {
   }
 
   return `<current_agent_context>
-<instruction>This is the current agent's configuration context. Use this information when the user asks about or wants to modify agent settings. Use togglePlugin to enable/disable tools, or installPlugin to install new tools (including builtin tools, Composio servers, and LobehubSkill providers).</instruction>
+<instruction>This is the current agent's configuration context. Use this information when the user asks about or wants to modify agent settings. Use togglePlugin to enable/disable tools, or installPlugin to install new tools (including builtin tools, Composio servers, and Masterino Skill providers).</instruction>
 ${parts.join('\n')}
 </current_agent_context>`;
 };

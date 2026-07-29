@@ -1,6 +1,6 @@
 {
   "AccountDeactivated": "Hesabınız devre dışı bırakıldı veya askıya alındı. Bu durum politika, güvenlik veya hesap inceleme nedenlerinden kaynaklanıyor olabilir. Yardım için lütfen sağlayıcı desteğiyle iletişime geçin.",
-  "AgentRuntimeError": "Lobe dil modeli çalışma zamanı yürütme hatası. Lütfen aşağıdaki bilgilere dayanarak sorun giderin veya yeniden deneyin.",
+  "AgentRuntimeError": "Masterino dil modeli çalışma zamanı yürütme hatası. Lütfen aşağıdaki bilgilere dayanarak sorun giderin veya yeniden deneyin.",
   "CapabilityNotSupported": "Üzgünüz, bu model istenen özelliği (örneğin, görsel girdi veya araç çağırma) desteklemiyor. Lütfen bu özelliği destekleyen bir modele geçin.",
   "ComfyUIBizError": "ComfyUI hizmeti istenirken bir hata oluştu. Lütfen aşağıdaki bilgileri kullanarak sorun giderin veya yeniden deneyin.",
   "ComfyUIEmptyResult": "ComfyUI tarafından hiçbir görüntü oluşturulmadı. Lütfen model yapılandırmasını kontrol edin veya yeniden deneyin.",

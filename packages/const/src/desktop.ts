@@ -4,6 +4,8 @@ import { DESKTOP_HOTKEYS_REGISTRATION } from './desktopGlobalShortcuts';
 
 export const DESKTOP_USER_ID = 'DEFAULT_DESKTOP_USER';
 
+export const DESKTOP_CLOUD_SERVER = process.env.NEXT_PUBLIC_DESKTOP_CLOUD_SERVER?.trim() || '';
+
 export const DEFAULT_DESKTOP_HOTKEY_CONFIG: DesktopHotkeyConfig =
   DESKTOP_HOTKEYS_REGISTRATION.reduce((acc: DesktopHotkeyConfig, item) => {
     acc[item.id] = item.keys;

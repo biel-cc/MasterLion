@@ -59,7 +59,7 @@ vi.mock('model-bank', async (importOriginal) => {
       },
       {
         id: 'lobehub-onboarding-v1',
-        displayName: 'LobeHub Onboarding',
+        displayName: 'Masterino Onboarding',
         description: 'Runtime-only onboarding alias model',
         providerId: 'lobehub',
         contextWindowTokens: 1_000_000,
@@ -239,6 +239,26 @@ describe('DiscoverService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('MARKET_BASE_URL', 'http://masterlion-market:3220');
+    const internalProviders = [
+      { config: { models: ['gpt-4'] }, description: 'OpenAI provider', identifier: 'openai', name: 'OpenAI' },
+      { config: { models: ['claude-3-opus'] }, description: 'Anthropic provider', identifier: 'anthropic', name: 'Anthropic' },
+    ];
+    const internalModels = [
+      { category: 'openai', config: { abilities: { files: true, functionCall: true, vision: true }, contextWindowTokens: 8192, displayName: 'GPT-4', id: 'gpt-4', providerId: 'openai', providers: ['openai'], releasedAt: '2023-03-01T00:00:00Z' }, description: 'OpenAI GPT-4 model', identifier: 'gpt-4', name: 'GPT-4' },
+      { category: 'anthropic', config: { abilities: { reasoning: true, vision: true }, contextWindowTokens: 200000, displayName: 'Claude 3 Opus', id: 'claude-3-opus', providerId: 'anthropic', providers: ['anthropic'], releasedAt: '2024-02-01T00:00:00Z' }, description: 'Anthropic Claude 3 Opus model', identifier: 'claude-3-opus', name: 'Claude 3 Opus' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes('/api/v1/providers/')) {
+        const identifier = decodeURIComponent(url.split('/').at(-1) || '');
+        const item = internalProviders.find((provider) => provider.identifier === identifier);
+        return new Response(JSON.stringify(item || { error: 'not_found' }), { status: item ? 200 : 404 });
+      }
+      if (url.includes('/api/v1/providers')) return new Response(JSON.stringify({ items: internalProviders }));
+      if (url.includes('/api/v1/models')) return new Response(JSON.stringify({ items: internalModels }));
+      return new Response('{}');
+    }));
 
     // Setup AssistantStore mock
     mockAssistantStore = {

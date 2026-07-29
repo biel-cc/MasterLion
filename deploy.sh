@@ -32,8 +32,8 @@ Commands:
   render                     Render manifests with immutable image digests.
   validate                   Client-side validation of rendered manifests.
   bootstrap                  Create the namespace and test StorageClass.
-  create-secret [app-env] [bridge-env]
-                              Create/update isolated app and bridge Secrets.
+  create-secret [app-env] [bridge-env] [searxng-env]
+                              Create/update isolated app, bridge and SearXNG Secrets.
   deploy                     Server dry-run and apply the selected overlay.
   start                      Scale Masterino to one replica for private validation.
   cutover                    Move the test Ingress from the old namespace to Masterino.
@@ -156,6 +156,7 @@ if [[ "$ENVIRONMENT" == "production" ]]; then
 fi
 
 required_bridge_secret_keys=(AIHUB_BRIDGE_TOKEN AIHUB_READONLY_DATABASE_URL)
+required_searxng_secret_keys=(SEARXNG_SECRET)
 
 check_secret() {
   local key value
@@ -175,6 +176,14 @@ check_secret() {
   bridge_token="$("${KUBE[@]}" get secret masterino-bridge-secret -n "$NAMESPACE" -o jsonpath='{.data.AIHUB_BRIDGE_TOKEN}')"
   [[ "$app_token" == "$bridge_token" ]] || fail \
     "AIHUB_BRIDGE_TOKEN differs between application and bridge Secrets"
+  if [[ "$ENVIRONMENT" == "test" ]]; then
+    "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" >/dev/null 2>&1 || fail \
+      "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
+    for key in "${required_searxng_secret_keys[@]}"; do
+      value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
+    done
+  fi
 }
 
 service_resource() {
@@ -220,9 +229,6 @@ case "$COMMAND" in
     rendered="$(render_manifests)"
     printf '%s\n' "$rendered" | grep -q "image: ${MASTERLION_IMAGE}@${MASTERLION_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
-    if printf '%s\n' "$rendered" | grep -qi 'searxng'; then
-      fail "rendered manifests unexpectedly contain SearXNG"
-    fi
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
       printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
@@ -284,9 +290,14 @@ case "$COMMAND" in
     verify_target mutation
     secret_file="${1:-$OVERLAY_DIR/secret.env}"
     bridge_secret_file="${2:-$OVERLAY_DIR/bridge-secret.env}"
+    searxng_secret_file="${3:-$OVERLAY_DIR/searxng-secret.env}"
     [[ -f "$secret_file" ]] || fail "secret env file does not exist: $secret_file"
     [[ -f "$bridge_secret_file" ]] || fail "bridge secret env file does not exist: $bridge_secret_file"
-    if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file"; then
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
+    fi
+    if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file" || \
+      { [[ "$ENVIRONMENT" == "test" ]] && grep -q 'CHANGE_ME' "$searxng_secret_file"; }; then
       fail "a secret env file still contains CHANGE_ME placeholders"
     fi
     for key in "${required_secret_keys[@]}"; do
@@ -295,6 +306,11 @@ case "$COMMAND" in
     for key in "${required_bridge_secret_keys[@]}"; do
       grep -Eq "^${key}=.+" "$bridge_secret_file" || fail "bridge secret env file is missing key: $key"
     done
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      for key in "${required_searxng_secret_keys[@]}"; do
+        grep -Eq "^${key}=.+" "$searxng_secret_file" || fail "SearXNG secret env file is missing key: $key"
+      done
+    fi
     s3_key="$(sed -n 's/^S3_ACCESS_KEY=//p' "$secret_file")"
     s3_key_id="$(sed -n 's/^S3_ACCESS_KEY_ID=//p' "$secret_file")"
     [[ "$s3_key" == "$s3_key_id" ]] || fail "S3_ACCESS_KEY and S3_ACCESS_KEY_ID must match"
@@ -306,6 +322,10 @@ case "$COMMAND" in
       --from-env-file="$secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     "${KUBE[@]}" create secret generic masterino-bridge-secret -n "$NAMESPACE" \
       --from-env-file="$bridge_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      "${KUBE[@]}" create secret generic masterlion-searxng-secret -n "$NAMESPACE" \
+        --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+    fi
     check_secret
     ;;
   deploy)

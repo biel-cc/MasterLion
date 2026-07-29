@@ -51,6 +51,7 @@ describe('agentGroupRouter.forkAgentGroup', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('MARKET_BASE_URL', 'http://masterlion-market:3220');
     mockMarketSDK.headers = {};
     fetchSpy = vi.spyOn(globalThis, 'fetch' as never);
     fetchSpy.mockResolvedValue(

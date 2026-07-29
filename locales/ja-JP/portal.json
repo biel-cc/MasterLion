@@ -4,6 +4,7 @@
   "Plugins": "プラグイン",
   "artifacts.display.code": "コード",
   "artifacts.display.preview": "プレビュー",
+  "artifacts.persistence.failed": "HTMLをSpaceドキュメントに保存できませんでした",
   "artifacts.svg.copyAsImage": "画像としてコピー",
   "artifacts.svg.copyFail": "コピーに失敗しました。エラーの理由: {{error}}",
   "artifacts.svg.copySuccess": "画像のコピーに成功しました",

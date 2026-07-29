@@ -1359,7 +1359,7 @@
 
 #### 💄 Styles
 
-- **misc**: Add ENABLED_OPENAI env, add fetch error notification, improve openai fetch client switch, improve redirect when login.
+- **misc**: Add ENABLED\_OPENAI env, add fetch error notification, improve openai fetch client switch, improve redirect when login.
 
 <br/>
 
@@ -1376,7 +1376,7 @@
 
 #### Styles
 
-- **misc**: Add ENABLED_OPENAI env ([35f6230](https://github.com/lobehub/lobe-chat/commit/35f6230))
+- **misc**: Add ENABLED\_OPENAI env ([35f6230](https://github.com/lobehub/lobe-chat/commit/35f6230))
 - **misc**: Add fetch error notification ([0186b4b](https://github.com/lobehub/lobe-chat/commit/0186b4b))
 - **misc**: Improve openai fetch client switch ([3cad470](https://github.com/lobehub/lobe-chat/commit/3cad470))
 - **misc**: Improve redirect when login ([cb26655](https://github.com/lobehub/lobe-chat/commit/cb26655))
@@ -1445,7 +1445,7 @@
 
 #### 💄 Styles
 
-- **misc**: Add two feature flags: check_updates 、welcome_suggest.
+- **misc**: Add two feature flags: check\_updates 、welcome\_suggest.
 
 <br/>
 
@@ -1454,7 +1454,7 @@
 
 #### Styles
 
-- **misc**: Add two feature flags: check_updates 、welcome_suggest, closes [#2555](https://github.com/lobehub/lobe-chat/issues/2555) ([84c69c9](https://github.com/lobehub/lobe-chat/commit/84c69c9))
+- **misc**: Add two feature flags: check\_updates 、welcome\_suggest, closes [#2555](https://github.com/lobehub/lobe-chat/issues/2555) ([84c69c9](https://github.com/lobehub/lobe-chat/commit/84c69c9))
 
 </details>
 
@@ -3377,7 +3377,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Fix display error when using DEFAULT_AGENT_CONFIG env.
+- **misc**: Fix display error when using DEFAULT\_AGENT\_CONFIG env.
 
 <br/>
 
@@ -3386,7 +3386,7 @@
 
 #### What's fixed
 
-- **misc**: Fix display error when using DEFAULT_AGENT_CONFIG env ([e46215c](https://github.com/lobehub/lobe-chat/commit/e46215c))
+- **misc**: Fix display error when using DEFAULT\_AGENT\_CONFIG env ([e46215c](https://github.com/lobehub/lobe-chat/commit/e46215c))
 
 </details>
 
@@ -8550,7 +8550,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Fix CUSTOM_MODEL `-` operator not working.
+- **misc**: Fix CUSTOM\_MODEL `-` operator not working.
 
 <br />
 
@@ -8559,7 +8559,7 @@
 
 #### What's fixed
 
-- **misc**: Fix CUSTOM_MODEL `-` operator not working, closes [#791](https://github.com/lobehub/lobe-chat/issues/791) ([26b968f](https://github.com/lobehub/lobe-chat/commit/26b968f))
+- **misc**: Fix CUSTOM\_MODEL `-` operator not working, closes [#791](https://github.com/lobehub/lobe-chat/issues/791) ([26b968f](https://github.com/lobehub/lobe-chat/commit/26b968f))
 
 </details>
 
@@ -9109,7 +9109,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Wrong locale language in en_US.
+- **misc**: Wrong locale language in en\_US.
 
 <br />
 
@@ -9118,7 +9118,7 @@
 
 #### What's fixed
 
-- **misc**: Wrong locale language in en_US, closes [#660](https://github.com/lobehub/lobe-chat/issues/660) ([e1c31ee](https://github.com/lobehub/lobe-chat/commit/e1c31ee))
+- **misc**: Wrong locale language in en\_US, closes [#660](https://github.com/lobehub/lobe-chat/issues/660) ([e1c31ee](https://github.com/lobehub/lobe-chat/commit/e1c31ee))
 
 </details>
 
@@ -11866,7 +11866,7 @@
 
 #### ✨ Features
 
-- **misc**: Add ja_JP, ko_KR and update workflow.
+- **misc**: Add ja\_JP, ko\_KR and update workflow.
 
 <br />
 
@@ -11875,7 +11875,7 @@
 
 #### What's improved
 
-- **misc**: Add ja_JP, ko_KR and update workflow ([57512a0](https://github.com/lobehub/lobe-chat/commit/57512a0))
+- **misc**: Add ja\_JP, ko\_KR and update workflow ([57512a0](https://github.com/lobehub/lobe-chat/commit/57512a0))
 
 </details>
 
@@ -16544,7 +16544,7 @@
 
 #### ✨ Features
 
-- **misc**: Add styles and modify layout of FolderPanel, SliderWithInput, SessionList, EditPage, ChatLayout, and SettingLayout components, Introduce FOLDER_WIDTH constant and update components.
+- **misc**: Add styles and modify layout of FolderPanel, SliderWithInput, SessionList, EditPage, ChatLayout, and SettingLayout components, Introduce FOLDER\_WIDTH constant and update components.
 
 <br />
 
@@ -16554,7 +16554,7 @@
 #### What's improved
 
 - **misc**: Add styles and modify layout of FolderPanel, SliderWithInput, SessionList, EditPage, ChatLayout, and SettingLayout components ([7f19a09](https://github.com/lobehub/lobe-chat/commit/7f19a09))
-- **misc**: Introduce FOLDER_WIDTH constant and update components ([c511964](https://github.com/lobehub/lobe-chat/commit/c511964))
+- **misc**: Introduce FOLDER\_WIDTH constant and update components ([c511964](https://github.com/lobehub/lobe-chat/commit/c511964))
 
 </details>
 

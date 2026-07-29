@@ -1,4 +1,6 @@
-import { OFFICIAL_URL } from '@lobechat/const';
+import { isDesktop, OFFICIAL_URL } from '@lobechat/const';
+
+import { getDesktopCloudServer } from '@/utils/electron/desktopRuntimeConfig';
 
 import { type ElectronState } from '../initialState';
 
@@ -8,11 +10,13 @@ const storageMode = (s: ElectronState) => s.dataSyncConfig.storageMode;
 
 /**
  * Returns the effective remote server URL based on storage mode:
- * - Cloud mode: returns OFFICIAL_URL
+ * - Cloud mode: returns the value loaded from desktop-config.json
  * - SelfHost mode: returns the configured remoteServerUrl
  */
 const remoteServerUrl = (s: ElectronState) =>
-  s.dataSyncConfig.storageMode === 'cloud' ? OFFICIAL_URL : s.dataSyncConfig.remoteServerUrl || '';
+  s.dataSyncConfig.storageMode === 'cloud'
+    ? s.dataSyncConfig.remoteServerUrl || (isDesktop ? getDesktopCloudServer() : OFFICIAL_URL)
+    : s.dataSyncConfig.remoteServerUrl || '';
 
 /**
  * Returns the raw remoteServerUrl from config without transformation.

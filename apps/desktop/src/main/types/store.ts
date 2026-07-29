@@ -11,6 +11,7 @@ export interface ElectronMainStore {
   encryptedTokens: {
     accessToken?: string;
     expiresAt?: number;
+    issuerOrigin?: string;
     lastRefreshAt?: number;
     refreshToken?: string;
   };

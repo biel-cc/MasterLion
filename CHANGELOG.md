@@ -2,6 +2,106 @@
 
 # Changelog
 
+### [Version 1.0.15](https://github.com/chaaak6/Masterino/compare/v1.0.14...v1.0.15)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: restore downloads from image preview.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: restore downloads from image preview ([6a43531](https://github.com/chaaak6/Masterino/commit/6a43531))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.0.14](https://github.com/chaaak6/Masterino/compare/v1.0.13...v1.0.14)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### 🐛 Bug Fixes
+
+- **docker**: make dependency layer reproducible.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **docker**: make dependency layer reproducible, closes [#56](https://github.com/chaaak6/Masterino/issues/56) ([6249aa9](https://github.com/chaaak6/Masterino/commit/6249aa9))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.0.13](https://github.com/chaaak6/Masterino/compare/v1.0.12...v1.0.13)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: allow Aihub media models.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: allow Aihub media models, closes [#55](https://github.com/chaaak6/Masterino/issues/55) ([e243666](https://github.com/chaaak6/Masterino/commit/e243666))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+## [Version 1.0.12](https://github.com/chaaak6/Masterino/compare/v1.0.11...v1.0.12)
+
+<sup>Released on **2026-07-28**</sup>
+
+#### ✨ Features
+
+- **misc**: complete Masterion platform and security integration.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's improved
+
+- **misc**: complete Masterion platform and security integration, closes [#54](https://github.com/chaaak6/Masterino/issues/54) ([2660ca6](https://github.com/chaaak6/Masterino/commit/2660ca6))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.0.11](https://github.com/chaaak6/Masterino/compare/v1.0.10...v1.0.11)
 
 <sup>Released on **2026-07-25**</sup>

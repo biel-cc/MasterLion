@@ -10,6 +10,7 @@ import { trpc, trpcClient } from './lib/trpc';
 import AuditPage from './pages/AuditPage';
 import KnowledgePage from './pages/KnowledgePage';
 import McpPage from './pages/McpPage';
+import MarketPage from './pages/MarketPage';
 import OverviewPage from './pages/OverviewPage';
 import RolesPage from './pages/RolesPage';
 import SkillsPage from './pages/SkillsPage';
@@ -65,6 +66,10 @@ const router = createBrowserRouter([
       {
         element: <McpPage />,
         path: 'mcp',
+      },
+      {
+        element: <MarketPage />,
+        path: 'market',
       },
     ],
     element: (

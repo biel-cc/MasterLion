@@ -13,6 +13,8 @@ data:
   OPENAPI_CORS_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com'
   AUTH_DISABLE_EMAIL_SIGNUP: '1'
   AUTH_DISABLE_EMAIL_PASSWORD: '0'
+  # The test ACK does not provision the internal Market stack.
+  MARKET_ALLOW_EXTERNAL_FALLBACK: '1'
   INTERNAL_APP_URL: 'http://masterino:3210'
   DATABASE_DRIVER: 'node'
   LOBE_DB_NAME: 'lobechat'

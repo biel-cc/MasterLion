@@ -57,7 +57,7 @@ export const generateMetadata = async (props: DynamicLayoutProps) => {
       card: 'summary_large_image',
       description: t('chat.description', { appName: BRANDING_NAME }),
       images: [ogImageUrl],
-      site: '@MasterLion',
+      site: '@Masterino',
       title: t('chat.title', { appName: BRANDING_NAME }),
     },
   };

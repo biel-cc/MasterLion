@@ -25,7 +25,7 @@ import { gridStyles } from '../style';
 import WantMoreSkills from '../WantMoreSkills';
 import Item from './Item';
 
-interface MasterLionListProps {
+interface MasterinoListProps {
   keywords: string;
 }
 
@@ -41,7 +41,7 @@ const getBuiltinToolsOnly = (s: ToolStoreState): LobeToolMeta[] => {
     }));
 };
 
-export const MasterLionList = memo<MasterLionListProps>(({ keywords }) => {
+export const MasterinoList = memo<MasterinoListProps>(({ keywords }) => {
   const { t } = useTranslation('setting');
   const isLobehubSkillEnabled = useServerConfigStore(serverConfigSelectors.enableLobehubSkill);
   const isComposioEnabled = useServerConfigStore(serverConfigSelectors.enableComposio);
@@ -216,6 +216,6 @@ export const MasterLionList = memo<MasterLionListProps>(({ keywords }) => {
   );
 });
 
-MasterLionList.displayName = 'MasterLionList';
+MasterinoList.displayName = 'MasterinoList';
 
-export default MasterLionList;
+export default MasterinoList;

@@ -61,6 +61,16 @@ const installTestStorage = () => {
   }
 };
 
+const installTestDesktopRuntimeConfig = () => {
+  if (typeof globalThis.window === 'undefined') return;
+
+  window.lobeEnv = {
+    cloudServer: 'https://masterion.bielcrystal.com',
+    cloudServerAliases: ['https://mlai-test.bielcrystal.com'],
+    marketBaseUrl: 'https://masterion.bielcrystal.com/market',
+  };
+};
+
 // Enable Immer MapSet plugin so store code using Map/Set in produce() works in tests
 enablePatches();
 enableMapSet();
@@ -97,7 +107,11 @@ if (typeof globalThis.window === 'undefined') {
 }
 
 installTestStorage();
-beforeEach(installTestStorage);
+installTestDesktopRuntimeConfig();
+beforeEach(() => {
+  installTestStorage();
+  installTestDesktopRuntimeConfig();
+});
 
 // remove antd hash on test
 theme.defaultConfig.hashed = false;

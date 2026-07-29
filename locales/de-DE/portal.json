@@ -4,6 +4,7 @@
   "Plugins": "Fähigkeiten",
   "artifacts.display.code": "Code",
   "artifacts.display.preview": "Vorschau",
+  "artifacts.persistence.failed": "Fehler beim Speichern von HTML in Space-Dokumente",
   "artifacts.svg.copyAsImage": "Als Bild kopieren",
   "artifacts.svg.copyFail": "Kopieren fehlgeschlagen: {{error}}. Bitte erneut versuchen.",
   "artifacts.svg.copySuccess": "Bild erfolgreich kopiert",

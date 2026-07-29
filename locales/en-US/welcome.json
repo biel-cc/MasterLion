@@ -122,9 +122,7 @@
     {
       "avatar": "📊",
       "backgroundColor": "#E8F8F5",
-      "plugins": [
-        "steam"
-      ],
+      "plugins": ["steam"],
       "systemRole": "You're skilled at processing and interpreting data, revealing patterns and trends through charts and statistical analysis.",
       "title": "Data Analyst"
     },

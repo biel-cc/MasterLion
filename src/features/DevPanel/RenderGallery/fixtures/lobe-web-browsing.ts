@@ -14,9 +14,9 @@ export default defineFixtures({
           {
             crawler: 'firecrawl',
             data: {
-              content: 'LobeHub ships desktop and web experiences for AI collaboration.',
+              content: 'Masterino ships desktop and web experiences for AI collaboration.',
               description: 'Product homepage',
-              title: 'LobeHub',
+              title: 'Masterino',
               url: 'https://aihub.bielcrystal.com',
             },
             originalUrl: 'https://aihub.bielcrystal.com',
@@ -26,7 +26,7 @@ export default defineFixtures({
             data: {
               content: 'Developer documentation for routing, tooling, and local testing.',
               description: 'Docs homepage',
-              title: 'LobeHub Docs',
+              title: 'Masterino Docs',
               url: 'https://docs.lobehub.com',
             },
             originalUrl: 'https://docs.lobehub.com',
@@ -43,7 +43,7 @@ export default defineFixtures({
             data: {
               content: 'Recent product updates and engineering notes.',
               description: 'Blog landing page',
-              title: 'LobeHub Blog',
+              title: 'Masterino Blog',
               url: 'https://aihub.bielcrystal.com/blog',
             },
             originalUrl: 'https://aihub.bielcrystal.com/blog',
@@ -54,12 +54,12 @@ export default defineFixtures({
     search: variants([
       {
         args: {
-          query: 'LobeHub devtools preview route',
+          query: 'Masterino devtools preview route',
           searchEngines: ['google', 'bing'],
         },
         label: 'With results',
         pluginState: {
-          query: 'LobeHub devtools preview route',
+          query: 'Masterino devtools preview route',
           results: [
             {
               content: 'Documentation and implementation notes about local preview tooling.',

@@ -216,7 +216,7 @@ export class ImageService {
       }
 
       // Upload to ComfyUI - use timestamp + 4-char random ID to prevent conflicts
-      const fileName = `LobeChat_img2img_${Date.now()}_${nanoid(4)}.png`;
+      const fileName = `Masterino_img2img_${Date.now()}_${nanoid(4)}.png`;
       const uploadedFileName = await this.clientService.uploadImage(buffer, fileName);
 
       log('Uploaded to ComfyUI as:', uploadedFileName);

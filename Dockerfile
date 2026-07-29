@@ -65,9 +65,8 @@ COPY --from=workspace-manifests /manifests/ ./
 
 # 1. 直接使用 Node 自带 corepack，按 packageManager 固定 pnpm 版本。
 # 2. --frozen-lockfile 保证可复现，--prefer-offline 优先复用缓存。
-# 【新增】corepack-cache 挂载：避免每次构建重新下载 pnpm 本体。
+# pnpm 与依赖都固化在 manifest 驱动的镜像层中，避免跨构建缓存挂载产生不完整链接。
 RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
-    --mount=type=cache,id=masterino-pnpm-store,target=/pnpm/store,sharing=locked \
     set -e && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         export SENTRYCLI_CDNURL="https://npmmirror.com/mirrors/sentry-cli"; \
@@ -75,13 +74,19 @@ RUN --mount=type=cache,id=masterino-npm-cache,target=/root/.npm,sharing=locked \
         echo 'canvas_binary_host_mirror=https://npmmirror.com/mirrors/canvas' >> .npmrc; \
         export FFMPEG_BINARIES_URL="https://npmmirror.com/mirrors/ffmpeg-static"; \
     fi && \
-    PNPM_VERSION="$(node -p 'require("./package.json").packageManager.match(/^pnpm@([^+]+)/)[1]')" && \
-    npm install --global "pnpm@${PNPM_VERSION}" && \
+    export COREPACK_NPM_REGISTRY="$(npm config get registry | sed 's/\/$//')" && \
+    export PNPM_SPEC="$(node -p 'require("./package.json").packageManager.split("+")[0]')" && \
+    corepack enable && \
+    for attempt in 1 2 3; do \
+        if corepack prepare "$PNPM_SPEC" --activate; then break; fi; \
+        if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+        sleep "$((attempt * 5))"; \
+    done && \
     if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
         pnpm config set registry "https://registry.npmmirror.com/"; \
     fi && \
-    pnpm config set store-dir /pnpm/store && \
     pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline --prod=false && \
+    test -x node_modules/.bin/tsx && \
     mkdir -p /deps && \
     echo '{"name":"deps","private":true}' > /deps/package.json && \
     pnpm add --dir /deps pg drizzle-orm --prefer-offline
@@ -91,6 +96,7 @@ COPY . .
 # ARG/ENV 只影响预构建 / Next.js 构建，放在 COPY . . 之后，避免打掉依赖安装缓存。
 ARG NEXT_PUBLIC_BASE_PATH
 ARG NEXT_PUBLIC_SENTRY_DSN
+ARG NEXT_PUBLIC_MARKET_BASE_URL="https://masterion.bielcrystal.com/market"
 ARG NEXT_PUBLIC_ANALYTICS_POSTHOG
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ARG NEXT_PUBLIC_POSTHOG_KEY
@@ -105,6 +111,9 @@ ENV NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH}" \
     ENABLED_CSP="${ENABLED_CSP}"
 
 ENV APP_URL="http://app.com" \
+    MARKET_BASE_URL="http://masterlion-market:3220" \
+    MARKET_TRUSTED_CLIENT_ID="masterlion" \
+    MARKET_TRUSTED_CLIENT_SECRET="lobehub-market_tcs_0000000000000000000000000000000000000000000000000000000000000000" \
     DATABASE_DRIVER="node" \
     DATABASE_URL="postgres://postgres:password@localhost:5432/postgres" \
     KEY_VAULTS_SECRET="use-for-build" \

@@ -22,6 +22,7 @@ const getSourcePath = () => {
 };
 
 export interface InstallMarketplaceAgentsResult {
+  failures: Array<{ reason: string; sourceAgentId: string }>;
   installedAgentIds: string[];
   skippedAgentIds: string[];
   summaries: InstallMarketplaceAgentSummary[];
@@ -31,7 +32,7 @@ export const installMarketplaceAgents = async (
   sourceAgentIds: string[],
 ): Promise<InstallMarketplaceAgentsResult> => {
   if (sourceAgentIds.length === 0) {
-    return { installedAgentIds: [], skippedAgentIds: [], summaries: [] };
+    return { failures: [], installedAgentIds: [], skippedAgentIds: [], summaries: [] };
   }
 
   const createAgent = useAgentStore.getState().createAgent;
@@ -62,15 +63,18 @@ export const installMarketplaceAgents = async (
     sourceId: string;
   };
   const prepared: Prepared[] = [];
+  const failures: Array<{ reason: string; sourceAgentId: string }> = [];
   detailResults.forEach((result, i) => {
     const sourceId = pendingSourceIds[i];
     if (result.status !== 'fulfilled') {
       console.warn('Failed to fetch marketplace agent detail:', sourceId, result.reason);
+      failures.push({ reason: result.reason instanceof Error ? result.reason.message : 'Failed to load assistant details', sourceAgentId: sourceId });
       return;
     }
     const detail = result.value;
     if (!detail?.config) {
       console.warn('Marketplace agent config is missing:', sourceId);
+      failures.push({ reason: 'Assistant configuration is missing', sourceAgentId: sourceId });
       return;
     }
     prepared.push({
@@ -136,6 +140,10 @@ export const installMarketplaceAgents = async (
       installedBySource.set(r.value.sourceId, r.value.agentId);
     } else {
       console.warn('Failed to install marketplace agent:', prepared[i]?.sourceId, r.reason);
+      failures.push({
+        reason: r.reason instanceof Error ? r.reason.message : 'Installation failed',
+        sourceAgentId: prepared[i]?.sourceId || 'unknown',
+      });
     }
   });
 
@@ -164,5 +172,5 @@ export const installMarketplaceAgents = async (
     await refreshAgentList();
   }
 
-  return { installedAgentIds, skippedAgentIds, summaries };
+  return { failures, installedAgentIds, skippedAgentIds, summaries };
 };

@@ -158,7 +158,7 @@ const InstallPluginIntervention = memo<BuiltinInterventionProps<InstallPluginPar
                   {lobehubSkillProviderInfo?.label || identifier}
                 </span>
                 <span style={{ color: 'var(--lobe-text-tertiary)', fontSize: 12 }}>
-                  LobeHub Skill
+                  Masterino Skill
                 </span>
               </Flexbox>
               <span style={{ color: 'var(--lobe-text-secondary)', fontSize: 12 }}>

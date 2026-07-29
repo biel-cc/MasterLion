@@ -245,7 +245,7 @@ describe('GitHub', () => {
         'https://github.com/lobehub/lobe-chat/archive/refs/heads/main.zip',
         {
           headers: {
-            'User-Agent': 'LobeHub',
+            'User-Agent': 'Masterino',
           },
         },
       );
@@ -336,7 +336,7 @@ describe('GitHub', () => {
         'https://raw.githubusercontent.com/lobehub/lobe-chat/main/README.md',
         {
           headers: {
-            'User-Agent': 'LobeHub',
+            'User-Agent': 'Masterino',
           },
         },
       );

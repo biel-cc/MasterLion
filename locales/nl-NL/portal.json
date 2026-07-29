@@ -4,6 +4,7 @@
   "Plugins": "Vaardigheden",
   "artifacts.display.code": "Code",
   "artifacts.display.preview": "Voorbeeld",
+  "artifacts.persistence.failed": "Het opslaan van HTML naar Space-documenten is mislukt.",
   "artifacts.svg.copyAsImage": "Kopiëren als afbeelding",
   "artifacts.svg.copyFail": "Kopiëren mislukt: {{error}}. Probeer het opnieuw.",
   "artifacts.svg.copySuccess": "Afbeelding succesvol gekopieerd",

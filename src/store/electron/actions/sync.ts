@@ -8,6 +8,7 @@ import { electronKeys } from '@/libs/swr/keys';
 import { remoteServerService } from '@/services/electron/remoteServer';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
+import { getDesktopCloudServer } from '@/utils/electron/desktopRuntimeConfig';
 
 import { type ElectronStore } from '../store';
 
@@ -16,6 +17,22 @@ import { type ElectronStore } from '../store';
  */
 
 type Setter = StoreSetter<ElectronStore>;
+
+const getRemoteServerOrigin = (config: DataSyncConfig): string | null => {
+  const remoteServerUrl =
+    config.storageMode === 'cloud'
+      ? config.remoteServerUrl?.trim() || getDesktopCloudServer()
+      : config.remoteServerUrl?.trim();
+
+  if (!remoteServerUrl) return null;
+
+  try {
+    return new URL(remoteServerUrl).origin;
+  } catch {
+    return remoteServerUrl;
+  }
+};
+
 export const remoteSyncSlice = (set: Setter, get: () => ElectronStore, _api?: unknown) =>
   new ElectronRemoteServerActionImpl(set, get, _api);
 
@@ -42,8 +59,17 @@ export class ElectronRemoteServerActionImpl {
       // Get current configuration
       const config = await remoteServerService.getRemoteServerConfig();
 
-      // If already active, need to clear first
+      // Clear credentials before changing origins so a token issued by the old
+      // server can never be observed while the new server is awaiting login.
       if (!isEqual(config, values)) {
+        // Invalidate an in-flight authorization before the config mutation. Otherwise
+        // the previous server could finish its token commit between the clear/set IPCs.
+        await remoteServerService.cancelAuthorization();
+
+        if (getRemoteServerOrigin(config) !== getRemoteServerOrigin(values)) {
+          await remoteServerService.clearRemoteServerConfig();
+        }
+
         await remoteServerService.setRemoteServerConfig({ ...values, active: false });
       }
 
@@ -73,6 +99,9 @@ export class ElectronRemoteServerActionImpl {
     this.#set({ isConnectingServer: false });
     this.#get().clearRemoteServerSyncError();
     try {
+      // Stop polling/token commit before clearing same-origin cloud config. Origin
+      // checks alone cannot distinguish a cancelled attempt from a valid retry.
+      await remoteServerService.cancelAuthorization();
       // Must use clearRemoteServerConfig (not only set active: false): main process
       // clears encrypted OIDC access/refresh tokens; otherwise sign-out still leaves auth state.
       await remoteServerService.clearRemoteServerConfig();

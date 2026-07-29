@@ -122,9 +122,7 @@
     {
       "avatar": "📊",
       "backgroundColor": "#E8F8F5",
-      "plugins": [
-        "steam"
-      ],
+      "plugins": ["steam"],
       "systemRole": "あなたはデータの処理と解釈に長けており、グラフや統計分析を通じてデータの背後にある法則や傾向を明らかにします。",
       "title": "データアナリスト"
     },

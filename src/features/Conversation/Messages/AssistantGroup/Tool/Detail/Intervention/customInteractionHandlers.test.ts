@@ -28,6 +28,7 @@ describe('customInteractionHandlers', () => {
 
   it('persists submitted marketplace picks to onboardingSession metadata', async () => {
     vi.mocked(installMarketplaceAgents).mockResolvedValue({
+      failures: [],
       installedAgentIds: ['agent-1'],
       skippedAgentIds: ['template-existing'],
       summaries: [

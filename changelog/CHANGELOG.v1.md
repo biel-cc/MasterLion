@@ -1323,7 +1323,7 @@
 
 #### 🐛 Bug Fixes
 
-- **provider**: Add deepseek-v3.1-terminus to THINKING_MODELS.
+- **provider**: Add deepseek-v3.1-terminus to THINKING\_MODELS.
 
 <br/>
 
@@ -1332,7 +1332,7 @@
 
 #### What's fixed
 
-- **provider**: Add deepseek-v3.1-terminus to THINKING_MODELS, closes [#9653](https://github.com/lobehub/lobe-chat/issues/9653) [#9648](https://github.com/lobehub/lobe-chat/issues/9648) ([e9b5c69](https://github.com/lobehub/lobe-chat/commit/e9b5c69))
+- **provider**: Add deepseek-v3.1-terminus to THINKING\_MODELS, closes [#9653](https://github.com/lobehub/lobe-chat/issues/9653) [#9648](https://github.com/lobehub/lobe-chat/issues/9648) ([e9b5c69](https://github.com/lobehub/lobe-chat/commit/e9b5c69))
 
 </details>
 
@@ -2635,7 +2635,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Update Responses search tool to web_search.
+- **misc**: Update Responses search tool to web\_search.
 
 <br/>
 
@@ -2644,7 +2644,7 @@
 
 #### What's fixed
 
-- **misc**: Update Responses search tool to web_search, closes [#9354](https://github.com/lobehub/lobe-chat/issues/9354) ([58d34ff](https://github.com/lobehub/lobe-chat/commit/58d34ff))
+- **misc**: Update Responses search tool to web\_search, closes [#9354](https://github.com/lobehub/lobe-chat/issues/9354) ([58d34ff](https://github.com/lobehub/lobe-chat/commit/58d34ff))
 
 </details>
 
@@ -4916,7 +4916,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Support Grok thinking models in AiHubMix, The 'stream_options' parameter is only allowed when 'stream' is enabled.
+- **misc**: Support Grok thinking models in AiHubMix, The 'stream\_options' parameter is only allowed when 'stream' is enabled.
 
 <br/>
 
@@ -4926,7 +4926,7 @@
 #### What's fixed
 
 - **misc**: Support Grok thinking models in AiHubMix, closes [#8713](https://github.com/lobehub/lobe-chat/issues/8713) ([ffa9b1b](https://github.com/lobehub/lobe-chat/commit/ffa9b1b))
-- **misc**: The 'stream_options' parameter is only allowed when 'stream' is enabled, closes [#8778](https://github.com/lobehub/lobe-chat/issues/8778) ([fcc32d5](https://github.com/lobehub/lobe-chat/commit/fcc32d5))
+- **misc**: The 'stream\_options' parameter is only allowed when 'stream' is enabled, closes [#8778](https://github.com/lobehub/lobe-chat/issues/8778) ([fcc32d5](https://github.com/lobehub/lobe-chat/commit/fcc32d5))
 
 </details>
 
@@ -5143,7 +5143,7 @@
 
 #### ✨ Features
 
-- **feature-flags**: Add ai_image flag to control AI painting UI.
+- **feature-flags**: Add ai\_image flag to control AI painting UI.
 
 <br/>
 
@@ -5152,7 +5152,7 @@
 
 #### What's improved
 
-- **feature-flags**: Add ai_image flag to control AI painting UI, closes [#8797](https://github.com/lobehub/lobe-chat/issues/8797) ([a1c66c8](https://github.com/lobehub/lobe-chat/commit/a1c66c8))
+- **feature-flags**: Add ai\_image flag to control AI painting UI, closes [#8797](https://github.com/lobehub/lobe-chat/issues/8797) ([a1c66c8](https://github.com/lobehub/lobe-chat/commit/a1c66c8))
 
 </details>
 
@@ -9236,7 +9236,7 @@
 
 #### 💄 Styles
 
-- **misc**: Enhanced reasoning_effort Slider Component, Update Hunyuan models & deepseek-r1-0528.
+- **misc**: Enhanced reasoning\_effort Slider Component, Update Hunyuan models & deepseek-r1-0528.
 
 <br/>
 
@@ -9245,7 +9245,7 @@
 
 #### Styles
 
-- **misc**: Enhanced reasoning_effort Slider Component, closes [#7998](https://github.com/lobehub/lobe-chat/issues/7998) ([750b26a](https://github.com/lobehub/lobe-chat/commit/750b26a))
+- **misc**: Enhanced reasoning\_effort Slider Component, closes [#7998](https://github.com/lobehub/lobe-chat/issues/7998) ([750b26a](https://github.com/lobehub/lobe-chat/commit/750b26a))
 - **misc**: Update Hunyuan models & deepseek-r1-0528, closes [#7993](https://github.com/lobehub/lobe-chat/issues/7993) ([2eb198c](https://github.com/lobehub/lobe-chat/commit/2eb198c))
 
 </details>
@@ -9856,7 +9856,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: 'top_p' is not supported with o4-mini, pin zustand version to avoid type error.
+- **misc**: 'top\_p' is not supported with o4-mini, pin zustand version to avoid type error.
 
 <br/>
 
@@ -9865,7 +9865,7 @@
 
 #### What's fixed
 
-- **misc**: 'top_p' is not supported with o4-mini, closes [#7747](https://github.com/lobehub/lobe-chat/issues/7747) ([4e04399](https://github.com/lobehub/lobe-chat/commit/4e04399))
+- **misc**: 'top\_p' is not supported with o4-mini, closes [#7747](https://github.com/lobehub/lobe-chat/issues/7747) ([4e04399](https://github.com/lobehub/lobe-chat/commit/4e04399))
 - **misc**: Pin zustand version to avoid type error, closes [#7929](https://github.com/lobehub/lobe-chat/issues/7929) ([4f6e286](https://github.com/lobehub/lobe-chat/commit/4f6e286))
 
 </details>
@@ -13209,7 +13209,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Set max_completion_tokens to undefined for Azure OpenAI.
+- **misc**: Set max\_completion\_tokens to undefined for Azure OpenAI.
 
 <br/>
 
@@ -13218,7 +13218,7 @@
 
 #### What's fixed
 
-- **misc**: Set max_completion_tokens to undefined for Azure OpenAI, closes [#7114](https://github.com/lobehub/lobe-chat/issues/7114) ([30b66b9](https://github.com/lobehub/lobe-chat/commit/30b66b9))
+- **misc**: Set max\_completion\_tokens to undefined for Azure OpenAI, closes [#7114](https://github.com/lobehub/lobe-chat/issues/7114) ([30b66b9](https://github.com/lobehub/lobe-chat/commit/30b66b9))
 
 </details>
 
@@ -15840,7 +15840,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Match o1 series models more robust in Azure OpenAI provider, set max_completion_tokens to null for Azure OpenAI.
+- **misc**: Match o1 series models more robust in Azure OpenAI provider, set max\_completion\_tokens to null for Azure OpenAI.
 
 <br/>
 
@@ -15850,7 +15850,7 @@
 #### What's fixed
 
 - **misc**: Match o1 series models more robust in Azure OpenAI provider, closes [#6193](https://github.com/lobehub/lobe-chat/issues/6193) ([f444e66](https://github.com/lobehub/lobe-chat/commit/f444e66))
-- **misc**: Set max_completion_tokens to null for Azure OpenAI, closes [#6198](https://github.com/lobehub/lobe-chat/issues/6198) ([e9e8da4](https://github.com/lobehub/lobe-chat/commit/e9e8da4))
+- **misc**: Set max\_completion\_tokens to null for Azure OpenAI, closes [#6198](https://github.com/lobehub/lobe-chat/issues/6198) ([e9e8da4](https://github.com/lobehub/lobe-chat/commit/e9e8da4))
 
 </details>
 
@@ -19766,7 +19766,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Fix custom max_token not saved from customModelCards.
+- **misc**: Fix custom max\_token not saved from customModelCards.
 
 <br/>
 
@@ -19775,7 +19775,7 @@
 
 #### What's fixed
 
-- **misc**: Fix custom max_token not saved from customModelCards, closes [#5226](https://github.com/lobehub/lobe-chat/issues/5226) ([ab6d17c](https://github.com/lobehub/lobe-chat/commit/ab6d17c))
+- **misc**: Fix custom max\_token not saved from customModelCards, closes [#5226](https://github.com/lobehub/lobe-chat/issues/5226) ([ab6d17c](https://github.com/lobehub/lobe-chat/commit/ab6d17c))
 
 </details>
 
@@ -22308,7 +22308,7 @@
 
 #### ♻ Code Refactoring
 
-- **misc**: `genServerLLMConfig` function, get \*\_MODEL_LIST from env.
+- **misc**: `genServerLLMConfig` function, get \*\_MODEL\_LIST from env.
 
 <br/>
 
@@ -22317,7 +22317,7 @@
 
 #### Code refactoring
 
-- **misc**: `genServerLLMConfig` function, get \*\_MODEL_LIST from env, closes [#4694](https://github.com/lobehub/lobe-chat/issues/4694) ([d84f369](https://github.com/lobehub/lobe-chat/commit/d84f369))
+- **misc**: `genServerLLMConfig` function, get \*\_MODEL\_LIST from env, closes [#4694](https://github.com/lobehub/lobe-chat/issues/4694) ([d84f369](https://github.com/lobehub/lobe-chat/commit/d84f369))
 
 </details>
 
@@ -23033,7 +23033,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: Fix duplicate key value violates unique constraint "slug_user_id_unique" when create inbox session.
+- **misc**: Fix duplicate key value violates unique constraint "slug\_user\_id\_unique" when create inbox session.
 
 <br/>
 
@@ -23042,7 +23042,7 @@
 
 #### What's fixed
 
-- **misc**: Fix duplicate key value violates unique constraint "slug_user_id_unique" when create inbox session, closes [#4596](https://github.com/lobehub/lobe-chat/issues/4596) ([c5af96e](https://github.com/lobehub/lobe-chat/commit/c5af96e))
+- **misc**: Fix duplicate key value violates unique constraint "slug\_user\_id\_unique" when create inbox session, closes [#4596](https://github.com/lobehub/lobe-chat/issues/4596) ([c5af96e](https://github.com/lobehub/lobe-chat/commit/c5af96e))
 
 </details>
 
@@ -30582,7 +30582,7 @@
 
 #### 🐛 Bug Fixes
 
-- **misc**: -check_updates cannot be set by FEATURE_FLAGS.
+- **misc**: -check\_updates cannot be set by FEATURE\_FLAGS.
 
 <br/>
 
@@ -30591,7 +30591,7 @@
 
 #### What's fixed
 
-- **misc**: -check_updates cannot be set by FEATURE_FLAGS, closes [#3038](https://github.com/lobehub/lobe-chat/issues/3038) ([bdadfee](https://github.com/lobehub/lobe-chat/commit/bdadfee))
+- **misc**: -check\_updates cannot be set by FEATURE\_FLAGS, closes [#3038](https://github.com/lobehub/lobe-chat/issues/3038) ([bdadfee](https://github.com/lobehub/lobe-chat/commit/bdadfee))
 
 </details>
 

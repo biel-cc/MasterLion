@@ -65,6 +65,7 @@ describe('BackendProxyProtocolManager', () => {
     manager.registerWithRemoteBaseUrl(session, {
       getAccessToken: async () => 'token-123',
       getRemoteBaseUrl: async () => 'https://remote.example.com',
+      isAuthActiveForUrl: async () => true,
       source: 'main',
     });
 
@@ -96,6 +97,35 @@ describe('BackendProxyProtocolManager', () => {
     expect(response!.headers.get('Access-Control-Allow-Origin')).toBe('app://renderer');
     expect(response!.headers.get('Access-Control-Allow-Credentials')).toBe('true');
     expect(await response!.text()).toBe('ok');
+  });
+
+  it('does not inject a previous server token while the target login is inactive', async () => {
+    const manager = new BackendProxyProtocolManager();
+    const session = {} as any;
+    const getAccessToken = vi.fn().mockResolvedValue('server-a-token');
+    const isAuthActiveForUrl = vi.fn().mockResolvedValue(false);
+    const fetchMock = vi.fn<FetchMock>(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    manager.registerWithRemoteBaseUrl(session, {
+      getAccessToken,
+      getRemoteBaseUrl: async () => 'https://server-b.example.com',
+      isAuthActiveForUrl,
+    });
+
+    await manager.proxy(
+      {
+        headers: new Headers(),
+        method: 'GET',
+        url: 'app://renderer/trpc/hello',
+      } as any,
+      session,
+    );
+
+    expect(getAccessToken).not.toHaveBeenCalled();
+    expect(isAuthActiveForUrl).toHaveBeenCalledWith('https://server-b.example.com/trpc/hello');
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(new Headers(init?.headers).has('Oidc-Auth')).toBe(false);
   });
 
   it('forwards body and sets duplex for non-GET requests', async () => {
@@ -292,6 +322,7 @@ describe('BackendProxyProtocolManager', () => {
     manager.registerWithRemoteBaseUrl(session, {
       getAccessToken: async () => 'fake-token',
       getRemoteBaseUrl: async () => 'https://remote.example.com',
+      isAuthActiveForUrl: async () => true,
     });
 
     const response = await manager.proxy(

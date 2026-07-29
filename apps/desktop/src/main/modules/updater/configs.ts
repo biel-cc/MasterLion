@@ -24,5 +24,5 @@ export const updaterConfig = {
     autoDownloadUpdate: true,
     checkUpdateInterval: 60 * 60 * 1000, // 1 hour
   },
-  enableAppUpdate: !isDev,
+  enableAppUpdate: !isDev && !getDesktopEnv().DISABLE_APP_UPDATE,
 };

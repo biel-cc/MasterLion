@@ -64,7 +64,6 @@ import dayjs from 'dayjs';
 import debug from 'debug';
 import { cloneDeep, countBy, isString, merge, uniq, uniqBy } from 'es-toolkit/compat';
 import matter from 'gray-matter';
-import { isAiModelVisible } from 'model-bank';
 import urlJoin from 'url-join';
 
 import { type TrustedClientUserInfo } from '@/libs/trusted-client';
@@ -72,13 +71,9 @@ import { normalizeLocale } from '@/locales/resources';
 import { AssistantStore } from '@/server/modules/AssistantStore';
 import { PluginStore } from '@/server/modules/PluginStore';
 import { MarketService } from '@/server/services/market';
+import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 const log = debug('lobe-server:discover');
-
-const loadBuiltinModels = async () => {
-  const { loadModels } = await import('@/business/client/model-bank/loadModels');
-  return loadModels();
-};
 
 export interface DiscoverServiceOptions {
   /** Access token from OIDC flow (legacy) */
@@ -107,6 +102,15 @@ export class DiscoverService {
     );
   }
 
+  private fetchInternalCatalog = async <T>(path: string): Promise<T> => {
+    const response = await fetch(`${getInternalMarketBaseUrl()}${path}`, {
+      headers: (this.market as unknown as { headers: Record<string, string> }).headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Internal Market catalog request failed: ${response.status}`);
+    return response.json() as Promise<T>;
+  };
+
   async registerClient({ userAgent }: { userAgent?: string }) {
     const getDeviceId = async (): Promise<string> => {
       // 1. Use VERCEL_PROJECT_ID in Vercel environment
@@ -131,7 +135,7 @@ export class DiscoverService {
     const deviceId = await getDeviceId();
 
     const { client_id, client_secret } = await this.market.registerClient({
-      clientName: `LobeHub ${isDesktop ? 'Desktop' : 'Web'}`,
+      clientName: `Masterino ${isDesktop ? 'Desktop' : 'Web'}`,
       clientType: isDesktop ? 'desktop' : 'web',
       deviceId,
       platform: isDesktop ? process.platform : userAgent,
@@ -1147,7 +1151,7 @@ export class DiscoverService {
     if (builtinTool) {
       log('getPluginDetail: found builtin tool for identifier=%s', identifier);
       const plugin: DiscoverPluginDetail = {
-        author: 'LobeHub',
+        author: 'Masterino',
         avatar: builtinTool.manifest.meta.avatar || '',
         category: undefined,
         createdAt: '',
@@ -1177,7 +1181,7 @@ export class DiscoverService {
         avatar: typeof composioTool.icon === 'string' ? composioTool.icon : '',
         category: undefined,
         createdAt: '',
-        description: `LobeHub Mcp Server: ${composioTool.label}`,
+        description: `Masterino Mcp Server: ${composioTool.label}`,
         homepage: 'https://composio.dev',
         identifier: composioTool.identifier,
         manifest: undefined,
@@ -1302,23 +1306,16 @@ export class DiscoverService {
 
   private _getProviderList = async (): Promise<DiscoverProviderItem[]> => {
     log('_getProviderList: fetching provider list');
-    const [builtinModels, { DEFAULT_MODEL_PROVIDER_LIST }] = await Promise.all([
-      loadBuiltinModels(),
-      import('model-bank/modelProviders'),
-    ]);
-    const result = DEFAULT_MODEL_PROVIDER_LIST.map((item) => {
-      const models = uniq(
-        builtinModels
-          .filter((m) => m.providerId === item.id && isAiModelVisible(m))
-          .map((m) => m.id),
-      );
-      const provider = {
+    const response = await this.fetchInternalCatalog<{ items: any[] }>('/api/v1/providers?pageSize=100');
+    const result = response.items.map((item) => {
+      const models = item.config?.models || item.manifest?.models || [];
+      return merge(cloneDeep(DEFAULT_DISCOVER_PROVIDER_ITEM), {
         ...item,
-        identifier: item.id,
+        id: item.identifier,
+        identifier: item.identifier,
         modelCount: models.length,
         models,
-      };
-      return merge(cloneDeep(DEFAULT_DISCOVER_PROVIDER_ITEM), provider);
+      });
     });
     log('_getProviderList: returning %d providers', result.length);
     return result;
@@ -1330,8 +1327,7 @@ export class DiscoverService {
     withReadme?: boolean;
   }): Promise<DiscoverProviderDetail | undefined> => {
     log('getProviderDetail: params=%O', params);
-    const { identifier, locale, withReadme } = params;
-    const builtinModels = await loadBuiltinModels();
+    const { identifier, withReadme } = params;
     const all = await this._getProviderList();
     const provider = all.find((item) => item.identifier === identifier);
     if (!provider) {
@@ -1344,42 +1340,13 @@ export class DiscoverService {
       pageSize: 7,
     });
 
-    let readme;
-
-    if (withReadme) {
-      log('getProviderDetail: fetching readme for provider=%s', identifier);
-      try {
-        const normalizedLocale = normalizeLocale(locale);
-        const readmeUrl = urlJoin(
-          'https://raw.githubusercontent.com/lobehub/lobe-chat/refs/heads/main/docs/usage/providers',
-          normalizedLocale === 'zh-CN' ? `${identifier}.zh-CN.mdx` : `${identifier}.mdx`,
-        );
-        log('getProviderDetail: readme URL=%s', readmeUrl);
-        const res = await fetch(readmeUrl, {
-          next: {
-            tags: [CacheTag.Discover, CacheTag.Providers],
-          },
-        });
-
-        const data = await res.text();
-        const { content } = matter(data);
-        readme = content.trimEnd();
-        log('getProviderDetail: readme loaded successfully, length=%d', readme.length);
-      } catch (error) {
-        log(
-          'getProviderDetail: failed to load readme for provider=%s, error: %O',
-          identifier,
-          error,
-        );
-      }
-    }
+    const detail = await this.fetchInternalCatalog<any>(`/api/v1/providers/${encodeURIComponent(identifier)}`);
+    const readme = withReadme ? detail.config?.readme || detail.manifest?.readme : undefined;
 
     const result = {
       ...provider,
-      models: uniqBy(
-        builtinModels.filter((m) => m.providerId === provider.id && isAiModelVisible(m)),
-        (item) => item.id,
-      ),
+      ...detail,
+      models: detail.config?.models || detail.manifest?.models || provider.models || [],
       readme,
       related: list.items.filter((item) => item.identifier !== provider.identifier).slice(0, 6),
     };
@@ -1467,31 +1434,20 @@ export class DiscoverService {
 
   private _getRawModelList = async (): Promise<DiscoverModelItem[]> => {
     log('_getRawModelList: fetching raw model list');
-    const builtinModels = await loadBuiltinModels();
-    const visibleModels = builtinModels.filter(isAiModelVisible);
-    const result = visibleModels.map((item) => {
-      const identifier = (item.id.split('/').at(-1) || item.id).toLowerCase();
-      const providers = uniq(
-        visibleModels
-          .filter(
-            (m) =>
-              m.id.toLowerCase() === identifier ||
-              m.id.includes(`/${identifier}`) ||
-              m.displayName?.toLowerCase() === item.displayName?.toLowerCase(),
-          )
-          .map((m) => m.providerId),
-      );
-      const model = {
+    const response = await this.fetchInternalCatalog<{ items: any[] }>('/api/v1/models?pageSize=100');
+    const result = response.items.map((item) => {
+      const config = item.config || {};
+      const providers = config.providers || item.manifest?.providers || [];
+      return {
         ...item,
-        category: item.providerId,
-        identifier,
+        ...config,
+        abilities: config.abilities || {},
+        category: item.category || config.providerId,
+        displayName: config.displayName || item.name,
+        id: config.id || item.identifier,
+        identifier: item.identifier,
         providerCount: providers.length,
         providers,
-      };
-      // Use simple merge instead of DEFAULT_DISCOVER_MODEL_ITEM to avoid type conflicts
-      return {
-        ...model,
-        abilities: model.abilities || {},
       } as DiscoverModelItem;
     });
     log('_getRawModelList: returning %d raw models', result.length);
@@ -1563,8 +1519,7 @@ export class DiscoverService {
   getModelCategories = async (params: CategoryListQuery = {}): Promise<CategoryItem[]> => {
     log('getModelCategories: params=%O', params);
     const { q } = params;
-    const builtinModels = await loadBuiltinModels();
-    let list = builtinModels.filter(isAiModelVisible);
+    let list = await this._getRawModelList();
     if (q) {
       const originalCount = list.length;
       list = list.filter((item) => {
@@ -1597,10 +1552,6 @@ export class DiscoverService {
     identifier: string;
   }): Promise<DiscoverModelDetail | undefined> => {
     log('getModelDetail: params=%O', params);
-    const [builtinModels, { DEFAULT_MODEL_PROVIDER_LIST }] = await Promise.all([
-      loadBuiltinModels(),
-      import('model-bank/modelProviders'),
-    ]);
     const { identifier } = params;
     const all = await this._getModelList();
     let model = all.find((item) => item.identifier.toLowerCase() === identifier.toLowerCase());
@@ -1616,7 +1567,7 @@ export class DiscoverService {
       return;
     }
 
-    const providers = DEFAULT_MODEL_PROVIDER_LIST.filter((item) =>
+    const providers = (await this._getProviderList()).filter((item) =>
       model.providers?.includes(item.id),
     );
     log('getModelDetail: found %d providers for model %s', providers.length, model.identifier);
@@ -1629,18 +1580,7 @@ export class DiscoverService {
 
     const result = {
       ...model,
-      providers: providers.map((item) => ({
-        ...item,
-        model: builtinModels.find((m) => {
-          if (!isAiModelVisible(m)) return false;
-          if (m.providerId !== item.id) return false;
-          return (
-            m.id.toLowerCase() === model.identifier.toLowerCase() ||
-            m.id.toLowerCase().includes(`/${model.identifier.toLowerCase()}`) ||
-            m.displayName?.toLowerCase() === model.displayName?.toLowerCase()
-          );
-        }),
-      })),
+      providers: providers.map((item) => ({ ...item, model })),
       related: list.items
         .filter(
           (item) => item.identifier !== model.identifier && item.displayName !== model?.displayName,

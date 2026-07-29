@@ -1,6 +1,6 @@
 {
   "AccountDeactivated": "Votre compte a été désactivé ou suspendu. Cela peut être dû à des raisons de politique, de sécurité ou de révision de compte. Veuillez contacter le support du fournisseur pour obtenir de l'aide.",
-  "AgentRuntimeError": "Erreur d'exécution du modèle de langage Lobe. Veuillez résoudre le problème ou réessayer en fonction des informations suivantes.",
+  "AgentRuntimeError": "Erreur d'exécution du modèle de langage Masterino. Veuillez résoudre le problème ou réessayer en fonction des informations suivantes.",
   "CapabilityNotSupported": "Désolé, ce modèle ne prend pas en charge la fonctionnalité demandée (comme l'entrée visuelle ou l'appel d'outils). Veuillez passer à un modèle qui la prend en charge.",
   "ComfyUIBizError": "Une erreur s'est produite lors de la demande au service ComfyUI. Veuillez résoudre le problème en utilisant les informations ci-dessous ou réessayer.",
   "ComfyUIEmptyResult": "Aucune image n'a été générée par ComfyUI. Veuillez vérifier la configuration du modèle ou réessayer.",

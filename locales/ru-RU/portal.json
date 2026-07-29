@@ -4,6 +4,7 @@
   "Plugins": "Навыки",
   "artifacts.display.code": "Код",
   "artifacts.display.preview": "Предпросмотр",
+  "artifacts.persistence.failed": "Не удалось сохранить HTML в документы Space",
   "artifacts.svg.copyAsImage": "Копировать как изображение",
   "artifacts.svg.copyFail": "Не удалось скопировать: {{error}}. Попробуйте снова.",
   "artifacts.svg.copySuccess": "Изображение успешно скопировано",

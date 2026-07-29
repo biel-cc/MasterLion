@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AssistantStore } from './index';
 
-const baseURL = 'https://registry.npmmirror.com/@lobehub/agents-index/v1/files/public';
+const baseURL = 'http://localhost:3220/indexes/agents';
 
 vi.mock('@lobechat/edge-config', () => {
   const EdgeConfigMock = vi.fn();
