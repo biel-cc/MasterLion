@@ -39,7 +39,6 @@ interface ImageItemProps {
   alt?: string;
   alwaysShowClose?: boolean;
   className?: string;
-  crossOrigin?: ImageProps['crossOrigin'];
   editable?: boolean;
   loading?: boolean;
   onClick?: () => void;
@@ -50,18 +49,7 @@ interface ImageItemProps {
 }
 
 const ImageItem = memo<ImageItemProps>(
-  ({
-    className,
-    style,
-    editable,
-    alt,
-    onRemove,
-    url,
-    loading,
-    alwaysShowClose,
-    preview,
-    crossOrigin,
-  }) => {
+  ({ className, style, editable, alt, onRemove, url, loading, alwaysShowClose, preview }) => {
     const IMAGE_SIZE = editable ? MIN_IMAGE_SIZE : '100%';
     const { isSafari } = usePlatform();
 
@@ -70,7 +58,6 @@ const ImageItem = memo<ImageItemProps>(
         alt={alt || ''}
         alwaysShowActions={alwaysShowClose}
         classNames={{ wrapper: cx(styles.image, editable && styles.editableImage, className) }}
-        crossOrigin={crossOrigin}
         height={isSafari ? 'auto' : '100%'}
         isLoading={loading}
         preview={preview}
