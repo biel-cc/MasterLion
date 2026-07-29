@@ -1,19 +1,6 @@
 import { type LobeToolManifest } from '@lobechat/context-engine';
 import { type LobeChatDatabase } from '@lobechat/database';
-import {
-  type ChatToolPayload,
-  type ClientSecretPayload,
-  type ExecSubAgentParams,
-} from '@lobechat/types';
-
-export interface ToolExecutionMemoryEmbeddingRuntime {
-  /** Embedding model id used by the memory search runtime. */
-  model: string;
-  /** Provider credentials/config supplied by the trusted server caller. */
-  payload: ClientSecretPayload;
-  /** Model provider used to initialize the embedding runtime. */
-  provider: string;
-}
+import { type ChatToolPayload, type ExecSubAgentParams } from '@lobechat/types';
 
 export interface ServerSubAgentRunParams {
   /** Target agent id; defaults to the parent agent when omitted. */
@@ -139,12 +126,6 @@ export interface ToolExecutionContext {
   groupId?: string | null;
   /** Whether this tool call is executing inside an isolated sub-agent run. */
   isSubAgent?: boolean;
-  /**
-   * Optional server-owned embedding runtime for memory search.
-   *
-   * Use when the acting user is synthetic and should not read user key vaults.
-   */
-  memoryEmbeddingRuntime?: ToolExecutionMemoryEmbeddingRuntime;
   /** Memory tool permission from agent chat config */
   memoryToolPermission?: 'read-only' | 'read-write';
   /** Source user message ID used by Agent Signal procedure suppression. */

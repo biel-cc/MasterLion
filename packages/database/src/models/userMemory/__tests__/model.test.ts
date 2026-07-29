@@ -19,10 +19,13 @@ import {
   userMemoriesExperiences,
   userMemoriesIdentities,
   userMemoriesPreferences,
+  userPersonaDocumentHistories,
+  userPersonaDocuments,
   users,
 } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
 import { UserMemoryModel } from '../model';
+import { UserPersonaModel } from '../persona';
 
 const userId = 'memory-model-test-user';
 const otherUserId = 'other-memory-model-user';
@@ -37,6 +40,8 @@ beforeEach(async () => {
   await serverDB.delete(userMemoriesIdentities);
   await serverDB.delete(userMemoriesPreferences);
   await serverDB.delete(userMemories);
+  await serverDB.delete(userPersonaDocumentHistories);
+  await serverDB.delete(userPersonaDocuments);
   await serverDB.delete(users);
 
   await serverDB.insert(users).values([{ id: userId }, { id: otherUserId }]);
@@ -1501,7 +1506,7 @@ describe('UserMemoryModel', () => {
   // ========== removeExperienceEntry ==========
   describe('removeExperienceEntry', () => {
     it('should delete experience and associated base memory', async () => {
-      const { experience, memory } = await createExperiencePair({});
+      const { experience } = await createExperiencePair({});
 
       const success = await memoryModel.removeExperienceEntry(experience.id);
 
@@ -1842,18 +1847,51 @@ describe('UserMemoryModel', () => {
       await createExperiencePair();
       await createPreferencePair();
       await createIdentityPair({ user: otherUserId });
+      await new UserPersonaModel(serverDB, userId).upsertPersona({
+        diffPersona: '- current user persona',
+        persona: '# Current user',
+      });
+      await new UserPersonaModel(serverDB, otherUserId).upsertPersona({
+        diffPersona: '- other user persona',
+        persona: '# Other user',
+      });
 
       await memoryModel.deleteAll();
 
-      const currentUserMemories = await serverDB.query.userMemories.findMany({
-        where: eq(userMemories.userId, userId),
-      });
-      const otherUserMemories = await serverDB.query.userMemories.findMany({
-        where: eq(userMemories.userId, otherUserId),
-      });
+      const [
+        currentUserMemories,
+        otherUserMemories,
+        currentUserPersonas,
+        otherUserPersonas,
+        currentUserPersonaHistory,
+        otherUserPersonaHistory,
+      ] = await Promise.all([
+        serverDB.query.userMemories.findMany({
+          where: eq(userMemories.userId, userId),
+        }),
+        serverDB.query.userMemories.findMany({
+          where: eq(userMemories.userId, otherUserId),
+        }),
+        serverDB.query.userPersonaDocuments.findMany({
+          where: eq(userPersonaDocuments.userId, userId),
+        }),
+        serverDB.query.userPersonaDocuments.findMany({
+          where: eq(userPersonaDocuments.userId, otherUserId),
+        }),
+        serverDB.query.userPersonaDocumentHistories.findMany({
+          where: eq(userPersonaDocumentHistories.userId, userId),
+        }),
+        serverDB.query.userPersonaDocumentHistories.findMany({
+          where: eq(userPersonaDocumentHistories.userId, otherUserId),
+        }),
+      ]);
 
       expect(currentUserMemories).toHaveLength(0);
       expect(otherUserMemories).toHaveLength(1);
+      expect(currentUserPersonas).toHaveLength(0);
+      expect(currentUserPersonaHistory).toHaveLength(0);
+      expect(otherUserPersonas).toHaveLength(1);
+      expect(otherUserPersonaHistory).toHaveLength(1);
     });
   });
 
@@ -2038,7 +2076,7 @@ describe('UserMemoryModel', () => {
   // ========== updateIdentityEntry with capturedAt ==========
   describe('updateIdentityEntry - capturedAt', () => {
     it('should update capturedAt on identity', async () => {
-      const { identity, memory } = await createIdentityPair({});
+      const { identity } = await createIdentityPair({});
       const capturedDate = new Date('2025-06-15T12:00:00Z');
 
       const result = await memoryModel.updateIdentityEntry({

@@ -9,6 +9,29 @@ vi.mock('@/store/tool', () => ({
     connectors: [],
     builtinTools: [
       {
+        identifier: 'lobe-user-memory',
+        manifest: {
+          api: [
+            {
+              description: 'Search personal memory',
+              name: 'searchUserMemory',
+              parameters: {
+                properties: { queries: { items: { type: 'string' }, type: 'array' } },
+                required: ['queries'],
+                type: 'object',
+              },
+            },
+          ],
+          identifier: 'lobe-user-memory',
+          meta: {
+            avatar: 'M',
+            title: 'Memory',
+          },
+          type: 'builtin',
+        } as unknown as ToolManifest,
+        type: 'builtin' as const,
+      },
+      {
         identifier: 'search',
         manifest: {
           api: [
@@ -118,6 +141,15 @@ vi.mock('../isCanUseFC', () => ({
 }));
 
 let mockCurrentAgentPlugins: string[] = [];
+let mockAgentMemoryEnabled: boolean | undefined = true;
+let mockEnableMemory = true;
+let mockFeatureFlagsAvailable = true;
+let mockMemoryConsent = false;
+let mockActiveWorkspaceId: string | null = null;
+
+vi.mock('@/business/client/hooks/useActiveWorkspaceId', () => ({
+  getActiveWorkspaceId: () => mockActiveWorkspaceId,
+}));
 
 vi.mock('@/store/agent', () => ({
   getAgentStoreState: () => ({}),
@@ -129,7 +161,7 @@ vi.mock('@/store/agent/selectors', () => ({
     hasEnabledKnowledgeBases: () => false,
   },
   agentChatConfigSelectors: {
-    currentChatConfig: () => ({}),
+    currentChatConfig: () => ({ memory: { enabled: mockAgentMemoryEnabled } }),
     isCloudSandboxEnabled: () => false,
     isLocalSystemEnabled: () => false,
     isMemoryToolEnabled: () => false,
@@ -142,8 +174,16 @@ vi.mock('@/store/user', () => ({
 
 vi.mock('@/store/user/selectors', () => ({
   settingsSelectors: {
-    memoryEnabled: () => false,
+    memoryEnabled: () => mockMemoryConsent,
   },
+}));
+
+vi.mock('@/store/serverConfig', () => ({
+  getServerConfigStoreState: () => ({
+    ...(mockFeatureFlagsAvailable
+      ? { featureFlags: { enableMemory: mockEnableMemory } }
+      : { featureFlags: undefined }),
+  }),
 }));
 
 let mockUseApplicationBuiltinSearchTool = true;
@@ -162,6 +202,11 @@ describe('toolEngineering', () => {
     mockInstalledPluginManifestList = () => [];
     mockUseApplicationBuiltinSearchTool = true;
     mockCurrentAgentPlugins = [];
+    mockAgentMemoryEnabled = true;
+    mockEnableMemory = true;
+    mockFeatureFlagsAvailable = true;
+    mockMemoryConsent = false;
+    mockActiveWorkspaceId = null;
   });
 
   describe('createToolsEngine', () => {
@@ -285,6 +330,71 @@ describe('toolEngineering', () => {
   });
 
   describe('isExplicitActivation bypass', () => {
+    it('should enable memory after consent in personal scope', () => {
+      mockCurrentAgentPlugins = ['lobe-user-memory'];
+      mockMemoryConsent = true;
+
+      const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
+      const result = toolsEngine.generateToolsDetailed({
+        model: 'gpt-4',
+        provider: 'openai',
+        skipDefaultTools: true,
+        toolIds: ['lobe-user-memory'],
+      });
+
+      expect(result.enabledToolIds).toContain('lobe-user-memory');
+    });
+
+    it('should not bypass memory consent with explicit activation', () => {
+      mockCurrentAgentPlugins = ['lobe-user-memory'];
+      mockMemoryConsent = false;
+
+      const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
+      const result = toolsEngine.generateToolsDetailed({
+        context: { isExplicitActivation: true },
+        model: 'gpt-4',
+        provider: 'openai',
+        skipDefaultTools: true,
+        toolIds: ['lobe-user-memory'],
+      });
+
+      expect(result.enabledToolIds).not.toContain('lobe-user-memory');
+    });
+
+    it('should keep memory unavailable while feature flags are not loaded', () => {
+      mockCurrentAgentPlugins = ['lobe-user-memory'];
+      mockMemoryConsent = true;
+      mockFeatureFlagsAvailable = false;
+
+      const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
+      const result = toolsEngine.generateToolsDetailed({
+        context: { isExplicitActivation: true },
+        model: 'gpt-4',
+        provider: 'openai',
+        skipDefaultTools: true,
+        toolIds: ['lobe-user-memory'],
+      });
+
+      expect(result.enabledToolIds).not.toContain('lobe-user-memory');
+    });
+
+    it('should keep memory unavailable in workspace scope', () => {
+      mockCurrentAgentPlugins = ['lobe-user-memory'];
+      mockMemoryConsent = true;
+      mockActiveWorkspaceId = 'workspace-1';
+
+      const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
+      const result = toolsEngine.generateToolsDetailed({
+        context: { isExplicitActivation: true },
+        model: 'gpt-4',
+        provider: 'openai',
+        skipDefaultTools: true,
+        toolIds: ['lobe-user-memory'],
+      });
+
+      expect(result.enabledToolIds).not.toContain('lobe-user-memory');
+    });
+
     it('should disable web browsing when useApplicationBuiltinSearchTool is false', () => {
       mockUseApplicationBuiltinSearchTool = false;
 

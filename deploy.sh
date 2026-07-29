@@ -189,6 +189,7 @@ check_secret() {
 service_resource() {
   case "$1" in
     masterino) echo "deployment/masterino" ;;
+    memory-worker) echo "deployment/masterino-memory-worker" ;;
     aihub-db-bridge) echo "deployment/masterino-aihub-db-bridge" ;;
     postgres) echo "statefulset/masterino-postgres" ;;
     redis) echo "statefulset/masterino-redis" ;;
@@ -230,6 +231,33 @@ case "$COMMAND" in
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
+      printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
+      printf '%s\n' "$rendered" | grep -Eq 'name: masterino-memory-config-[a-z0-9]{10}$' \
+        || fail "test memory ConfigMap must use a content hash so configuration changes roll Pods"
+      memory_config_invariants=(
+        'FEATURE_FLAGS: +memory'
+        'MEMORY_USER_MEMORY_GATEKEEPER_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_GATEKEEPER_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_LAYER_EXTRACTOR_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_LAYER_EXTRACTOR_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_PERSONA_WRITER_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_PERSONA_WRITER_MODEL: glm-5.2'
+        'MEMORY_USER_MEMORY_EMBEDDING_PROVIDER: newapi'
+        'MEMORY_USER_MEMORY_EMBEDDING_MODEL: text-embedding-3-large'
+        'MEMORY_USER_MEMORY_CONCURRENCY: "1"'
+      )
+      for invariant in "${memory_config_invariants[@]}"; do
+        printf '%s\n' "$rendered" | grep -Fq "$invariant" \
+          || fail "test memory configuration is missing required value: $invariant"
+      done
+      printf '%s\n' "$rendered" \
+        | grep -A1 -F 'name: MEMORY_QUEUE_WORKER_ENABLED' \
+        | grep -Fq 'value: "1"' \
+        || fail "test memory worker must remain enabled"
+      printf '%s\n' "$rendered" \
+        | grep -A1 -F 'name: MEMORY_QUEUE_SCHEDULER_ENABLED' \
+        | grep -Fq 'value: "0"' \
+        || fail "test memory scheduler must remain paused until acceptance completes"
       printf '%s\n' "$rendered" | grep -q 'replicas: 1'
       if printf '%s\n' "$rendered" | grep -q 'kind: Ingress'; then
         fail "test staging manifests unexpectedly contain an Ingress"
@@ -315,8 +343,10 @@ case "$COMMAND" in
         echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
       fi
     fi
-    render_manifests "$deploy_overlay" | "${KUBE[@]}" apply --server-side --dry-run=server -f - >/dev/null
-    render_manifests "$deploy_overlay" | "${KUBE[@]}" apply --server-side -f -
+    render_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - >/dev/null
+    render_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=kubectl -f -
     ;;
   start)
     verify_target mutation
@@ -328,6 +358,10 @@ case "$COMMAND" in
     fi
     "${KUBE[@]}" scale deployment/masterino -n "$NAMESPACE" --replicas=1
     "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      "${KUBE[@]}" scale deployment/masterino-memory-worker -n "$NAMESPACE" --replicas=1
+      "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
+    fi
     ;;
   cutover)
     [[ "$ENVIRONMENT" == "test" ]] || fail "cutover is only used for the test environment"
@@ -336,6 +370,8 @@ case "$COMMAND" in
       "set CONFIRM_CUTOVER=$NAMESPACE after private validation succeeds"
     available="$("${KUBE[@]}" get deployment masterino -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}')"
     [[ "$available" == "1" ]] || fail "Masterino must have one available replica before cutover"
+    worker_available="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}')"
+    [[ "$worker_available" == "1" ]] || fail "Memory worker must have one available replica before cutover"
     source_replicas="$("${KUBE[@]}" get deployment masterlion -n "$SOURCE_NAMESPACE" -o jsonpath='{.spec.replicas}')"
     [[ "$source_replicas" == "0" ]] || fail \
       "the old Masterino deployment must be scaled to zero before final data sync and cutover"
@@ -364,11 +400,15 @@ case "$COMMAND" in
     "${KUBE[@]}" rollout status deployment/masterlion -n "$SOURCE_NAMESPACE" --timeout=10m
     "${KUBE[@]}" apply -f "$ROLLBACK_INGRESS"
     "${KUBE[@]}" scale deployment/masterino -n "$NAMESPACE" --replicas=0
+    "${KUBE[@]}" scale deployment/masterino-memory-worker -n "$NAMESPACE" --replicas=0
     "${KUBE[@]}" annotate namespace "$NAMESPACE" masterino.io/cutover-complete=false --overwrite
     ;;
   stop)
     verify_target mutation
     "${KUBE[@]}" scale deployment/masterino -n "$NAMESPACE" --replicas=0
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      "${KUBE[@]}" scale deployment/masterino-memory-worker -n "$NAMESPACE" --replicas=0
+    fi
     ;;
   status)
     verify_target read
@@ -383,6 +423,12 @@ case "$COMMAND" in
     if [[ "$replicas" != "0" ]]; then
       "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
     fi
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      worker_replicas="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')"
+      if [[ "$worker_replicas" != "0" ]]; then
+        "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
+      fi
+    fi
     ;;
   logs)
     verify_target read
@@ -390,6 +436,9 @@ case "$COMMAND" in
     case "$service" in
       masterino|aihub-db-bridge)
         "${KUBE[@]}" logs -n "$NAMESPACE" -l "app.kubernetes.io/name=$service" --tail=100 -f
+        ;;
+      memory-worker)
+        "${KUBE[@]}" logs -n "$NAMESPACE" -l "app.kubernetes.io/name=masterino-memory-worker" --tail=100 -f
         ;;
       postgres)
         "${KUBE[@]}" logs -n "$NAMESPACE" masterino-postgres-0 --tail=100 -f
@@ -416,12 +465,16 @@ case "$COMMAND" in
     verify_target mutation
     service="${1:-}"
     image="${2:-}"
-    [[ "$service" == "masterino" || "$service" == "aihub-db-bridge" ]] || fail \
-      "update-image supports masterino or aihub-db-bridge"
+    [[ "$service" == "masterino" || "$service" == "memory-worker" || "$service" == "aihub-db-bridge" ]] || fail \
+      "update-image supports masterino, memory-worker, or aihub-db-bridge"
     [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || fail "image must be pinned as image@sha256:digest"
     deployment="$service"
     [[ "$service" == "aihub-db-bridge" ]] && deployment="masterino-aihub-db-bridge"
-    "${KUBE[@]}" set image -n "$NAMESPACE" "deployment/$deployment" "$service=$image"
+    [[ "$service" == "memory-worker" ]] && deployment="masterino-memory-worker"
+    container="$service"
+    [[ "$service" == "memory-worker" ]] && container="masterino-memory-worker"
+    "${KUBE[@]}" set image --field-manager=kubectl -n "$NAMESPACE" \
+      "deployment/$deployment" "$container=$image"
     "${KUBE[@]}" rollout status -n "$NAMESPACE" "deployment/$deployment" --timeout=10m
     ;;
   info)

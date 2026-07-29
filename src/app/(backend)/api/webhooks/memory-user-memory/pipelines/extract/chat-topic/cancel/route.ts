@@ -5,7 +5,6 @@ import {
   AsyncTaskType,
   type UserMemoryExtractionMetadata,
 } from '@lobechat/types';
-import { Client as WorkflowClient } from '@upstash/workflow';
 import { and, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -14,6 +13,7 @@ import { AsyncTaskModel, initUserMemoryExtractionMetadata } from '@/database/mod
 import { asyncTasks } from '@/database/schemas';
 import { getServerDB } from '@/database/server';
 import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
+import { MemoryExtractionQueueService } from '@/server/services/memory/userMemory/queue/service';
 
 const cancelPayloadSchema = z.object({
   // Optional human-readable cancellation reason.
@@ -22,23 +22,10 @@ const cancelPayloadSchema = z.object({
   taskId: z.string().uuid(),
   // Optional ownership guard; when provided, must match task owner.
   userId: z.string().optional(),
-  // Optional single workflow run id associated with the task.
-  workflowRunId: z.string().optional(),
-  // Optional additional workflow run ids for bulk cancellation.
-  workflowRunIds: z.array(z.string()).optional(),
+  // Optional queue ids supplied by an operator. Cooperative cancellation is keyed by taskId.
+  jobId: z.string().optional(),
+  jobIds: z.array(z.string()).optional(),
 });
-
-const getWorkflowClient = () => {
-  const token = process.env.QSTASH_TOKEN;
-  if (!token) throw new Error('QSTASH_TOKEN is required to cancel workflow runs');
-
-  const config: ConstructorParameters<typeof WorkflowClient>[0] = { token };
-  if (process.env.QSTASH_URL) {
-    (config as Record<string, unknown>).url = process.env.QSTASH_URL;
-  }
-
-  return new WorkflowClient(config);
-};
 
 export const POST = async (req: Request) => {
   const { webhook } = parseMemoryExtractionConfig();
@@ -84,22 +71,23 @@ export const POST = async (req: Request) => {
       task.metadata as UserMemoryExtractionMetadata | undefined,
     );
 
-    const workflowRunIds = Array.from(
+    const jobIds = Array.from(
       new Set([
-        ...(metadata.control?.upstash?.workflowRunIds || []),
-        ...(payload.workflowRunId ? [payload.workflowRunId] : []),
-        ...(payload.workflowRunIds || []),
+        ...(metadata.control?.queue?.jobIds || []),
+        ...(payload.jobId ? [payload.jobId] : []),
+        ...(payload.jobIds || []),
       ]),
     );
 
     const nextMetadata: UserMemoryExtractionMetadata = {
       ...metadata,
       control: {
+        ...metadata.control,
         cancelReason: payload.reason || metadata.control?.cancelReason,
         cancelRequestedAt: metadata.control?.cancelRequestedAt || new Date().toISOString(),
         cancelledBy: 'webhook',
-        upstash: {
-          workflowRunIds,
+        queue: {
+          jobIds,
         },
       },
     };
@@ -114,23 +102,12 @@ export const POST = async (req: Request) => {
       status: AsyncTaskStatus.Error,
     });
 
-    let cancelledWorkflowRuns = 0;
-    if (workflowRunIds.length > 0) {
-      try {
-        const result = await getWorkflowClient().cancel({ ids: workflowRunIds });
-        cancelledWorkflowRuns = result.cancelled || 0;
-      } catch (error) {
-        console.error(
-          '[memory-user-memory/pipelines/extract/chat-topic/cancel] failed to cancel workflow runs',
-          error,
-        );
-      }
-    }
+    const { removedJobs } = await MemoryExtractionQueueService.cancelTask(task.id);
 
     return NextResponse.json(
       {
-        cancelledWorkflowRuns,
         message: 'Memory extraction cancellation has been requested.',
+        removedJobs,
         status: AsyncTaskStatus.Error,
         taskId: task.id,
       },

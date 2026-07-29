@@ -126,7 +126,16 @@ export interface UserMemoryExtractionMetadata {
      */
     cancelledBy?: 'system' | 'user' | 'webhook';
     /**
-     * Provider-specific cancellation metadata.
+     * Internal queue metadata for cancellation and diagnostics.
+     */
+    queue?: {
+      /**
+       * Known BullMQ job ids associated with this task.
+       */
+      jobIds?: string[];
+    };
+    /**
+     * Legacy Upstash cancellation metadata retained for old task records.
      */
     upstash?: {
       /**

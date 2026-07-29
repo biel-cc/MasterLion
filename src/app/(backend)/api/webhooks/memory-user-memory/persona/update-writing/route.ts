@@ -3,14 +3,14 @@ import { z } from 'zod';
 
 import { getServerDB } from '@/database/server';
 import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
-import { MemoryExtractionWorkflowService } from '@/server/services/memory/userMemory/extract';
+import { isPersonalMemoryEnabled } from '@/server/services/memory/userMemory/access';
 import {
   buildUserPersonaJobInput,
   UserPersonaService,
 } from '@/server/services/memory/userMemory/persona/service';
+import { MemoryExtractionQueueService } from '@/server/services/memory/userMemory/queue/service';
 
 const userPersonaWebhookSchema = z.object({
-  baseUrl: z.string().url().optional(),
   mode: z.enum(['workflow', 'direct']).optional(),
   userId: z.string().optional(),
   userIds: z.array(z.string()).optional(),
@@ -18,17 +18,10 @@ const userPersonaWebhookSchema = z.object({
 
 type UserPersonaWebhookPayload = z.infer<typeof userPersonaWebhookSchema>;
 
-const normalizeUserPersonaPayload = (
-  payload: UserPersonaWebhookPayload,
-  fallbackBaseUrl?: string,
-) => {
+const normalizeUserPersonaPayload = (payload: UserPersonaWebhookPayload) => {
   const parsed = userPersonaWebhookSchema.parse(payload);
-  const baseUrl = parsed.baseUrl || fallbackBaseUrl;
-
-  if (!baseUrl) throw new Error('Missing baseUrl for workflow trigger');
 
   return {
-    baseUrl,
     mode: parsed.mode ?? 'workflow',
     userIds: Array.from(
       new Set([...(parsed.userIds || []), ...(parsed.userId ? [parsed.userId] : [])]),
@@ -37,7 +30,7 @@ const normalizeUserPersonaPayload = (
 };
 
 export const POST = async (req: Request) => {
-  const { upstashWorkflowExtraHeaders, webhook } = parseMemoryExtractionConfig();
+  const { webhook } = parseMemoryExtractionConfig();
 
   if (webhook.headers && Object.keys(webhook.headers).length > 0) {
     for (const [key, value] of Object.entries(webhook.headers)) {
@@ -53,38 +46,47 @@ export const POST = async (req: Request) => {
 
   try {
     const json = await req.json();
-    const origin = new URL(req.url).origin;
-    const params = normalizeUserPersonaPayload(json, webhook.baseUrl || origin);
+    const params = normalizeUserPersonaPayload(json);
 
     if (params.userIds.length === 0) {
       return NextResponse.json({ error: 'userId or userIds is required' }, { status: 400 });
     }
 
+    const db = await getServerDB();
+    const enabledChecks = await Promise.all(
+      params.userIds.map(async (userId) => ({
+        enabled: await isPersonalMemoryEnabled({ db, userId }),
+        userId,
+      })),
+    );
+    const enabledUserIds = enabledChecks.filter((item) => item.enabled).map((item) => item.userId);
+
+    if (enabledUserIds.length === 0) {
+      return NextResponse.json(
+        { message: 'No users with Memory enabled; persona update skipped.', results: [] },
+        { status: 200 },
+      );
+    }
+
     if (params.mode === 'workflow') {
       const results = await Promise.all(
-        params.userIds.map(async (userId) => {
-          const { workflowRunId } = await MemoryExtractionWorkflowService.triggerPersonaUpdate(
-            userId,
-            params.baseUrl,
-            { extraHeaders: upstashWorkflowExtraHeaders },
-          );
+        enabledUserIds.map(async (userId) => {
+          const { jobId } = await MemoryExtractionQueueService.triggerPersonaUpdate(userId);
 
-          return { userId, workflowRunId };
+          return { jobId, userId };
         }),
       );
 
       return NextResponse.json(
-        { message: 'User persona update scheduled via workflow.', results },
+        { message: 'User persona update scheduled on the internal queue.', results },
         { status: 202 },
       );
     }
 
-    const db = await getServerDB();
-
     const service = new UserPersonaService(db);
     const results = [];
 
-    for (const userId of params.userIds) {
+    for (const userId of enabledUserIds) {
       const context = await buildUserPersonaJobInput(db, userId);
       const result = await service.composeWriting({ ...context, userId });
       results.push({ userId, ...result });

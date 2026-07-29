@@ -13,6 +13,7 @@ export async function register() {
     process.env.NEXT_RUNTIME === 'nodejs' &&
     process.env.DATABASE_URL &&
     !process.env.VERCEL_ENV &&
+    process.env.GATEWAY_MANAGER_DISABLED !== '1' &&
     (!isDev || process.env.ENABLE_BOT_IN_DEV === '1')
   ) {
     const { GatewayService } = await import('@/server/services/gateway');
@@ -20,6 +21,19 @@ export async function register() {
     service.ensureRunning().catch((err) => {
       console.error('[Instrumentation] Failed to auto-start GatewayManager:', err);
     });
+  }
+
+  if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.MEMORY_QUEUE_WORKER_ENABLED === '1') {
+    const { closeMemoryQueueWorker, startMemoryQueueWorker } =
+      await import('@/server/services/memory/userMemory/queue/worker');
+
+    await startMemoryQueueWorker();
+
+    const closeWorker = () => {
+      void closeMemoryQueueWorker();
+    };
+    process.once('SIGINT', closeWorker);
+    process.once('SIGTERM', closeWorker);
   }
 
   // Note: messenger system bot connections (Discord/Telegram) are managed

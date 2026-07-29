@@ -1,26 +1,25 @@
 import { MemorySourceType } from '@lobechat/types';
-import { type WorkflowContext } from '@upstash/workflow';
 
 import { AsyncTaskModel } from '@/database/models/asyncTask';
 import { type ListTopicsForMemoryExtractorCursor } from '@/database/models/topic';
 import { getServerDB } from '@/database/server';
-import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
-import { type MemoryExtractionPayloadInput } from '@/server/services/memory/userMemory/extract';
+import { isPersonalMemoryEnabled } from '@/server/services/memory/userMemory/access';
+import { forEachBatchSequential } from '@/server/services/memory/userMemory/topicBatching';
+
 import {
   buildWorkflowPayloadInput,
   MemoryExtractionExecutor,
-  MemoryExtractionWorkflowService,
+  type MemoryExtractionPayloadInput,
   normalizeMemoryExtractionPayload,
-} from '@/server/services/memory/userMemory/extract';
-import { forEachBatchSequential } from '@/server/services/memory/userMemory/topicBatching';
+} from '../../extract';
+import { type MemoryQueueContext } from '../context';
+import { MemoryExtractionQueueService } from '../service';
 
 const TOPIC_PAGE_SIZE = 50;
 const TOPIC_BATCH_SIZE = 4;
 
-const { upstashWorkflowExtraHeaders } = parseMemoryExtractionConfig();
-
 export const processUserTopicsHandler = async (
-  context: WorkflowContext<MemoryExtractionPayloadInput>,
+  context: MemoryQueueContext<MemoryExtractionPayloadInput>,
 ) => {
   const params = normalizeMemoryExtractionPayload(context.requestPayload || {});
   if (!params.userIds.length) {
@@ -29,29 +28,38 @@ export const processUserTopicsHandler = async (
   if (!params.sources.includes(MemorySourceType.ChatTopic)) {
     return { message: 'No supported sources requested, skip topic processing.' };
   }
+  if (params.workspaceId) {
+    return { message: 'Workspace memory extraction is disabled.' };
+  }
 
   const executor = await MemoryExtractionExecutor.create();
 
   const scheduleNextPage = async (userId: string, cursorCreatedAt: Date, cursorId: string) => {
-    await MemoryExtractionWorkflowService.triggerProcessUserTopics(
-      {
-        ...buildWorkflowPayloadInput({
-          ...params,
-          topicCursor: {
-            createdAt: cursorCreatedAt.toISOString(),
-            id: cursorId,
-            userId,
-          },
-          topicIds: [],
+    await MemoryExtractionQueueService.triggerProcessUserTopics({
+      ...buildWorkflowPayloadInput({
+        ...params,
+        topicCursor: {
+          createdAt: cursorCreatedAt.toISOString(),
+          id: cursorId,
           userId,
-          userIds: [userId],
-        }),
-      },
-      { extraHeaders: upstashWorkflowExtraHeaders },
-    );
+        },
+        topicIds: [],
+        userId,
+        userIds: [userId],
+      }),
+    });
   };
 
   for (const userId of params.userIds) {
+    const memoryEnabled = await context.run(
+      `memory:user-memory:extract:users:${userId}:consent-check`,
+      async () => {
+        const db = await getServerDB();
+        return isPersonalMemoryEnabled({ db, userId });
+      },
+    );
+    if (!memoryEnabled) continue;
+
     if (params.asyncTaskId) {
       // NOTICE: Cooperative cascading cancellation for the workflow tree.
       // A cancelled root task should stop at user-topic pagination and avoid enqueuing topic batches.
@@ -121,26 +129,17 @@ export const processUserTopicsHandler = async (
 
     const cursor = 'cursor' in topicBatch ? topicBatch.cursor : undefined;
 
-    // TODO: follow the new pattern of process-topic
-    // remove the batch sequential, replace it with context.invoke(...) pattern
     await forEachBatchSequential(ids, TOPIC_BATCH_SIZE, async (topicIds, batchIndex) => {
-      // NOTICE: We trigger via QStash instead of context.invoke because invoke only swaps the last path
-      // segment with the workflowId. If we invoked directly from /process-user-topics, child workflow
-      // URLs would inherit that base and lose the desired /process-topics/workflows prefix.
       await context.run(
         `memory:user-memory:extract:users:${userId}:process-topics-batch:${batchIndex}`,
         () =>
-          MemoryExtractionWorkflowService.triggerProcessTopics(
+          MemoryExtractionQueueService.triggerProcessTopics(userId, {
+            ...buildWorkflowPayloadInput(params),
+            topicCursor: undefined,
+            topicIds,
             userId,
-            {
-              ...buildWorkflowPayloadInput(params),
-              topicCursor: undefined,
-              topicIds,
-              userId,
-              userIds: [userId],
-            },
-            { extraHeaders: upstashWorkflowExtraHeaders },
-          ),
+            userIds: [userId],
+          }),
       );
     });
 
@@ -148,9 +147,7 @@ export const processUserTopicsHandler = async (
       await context.run(
         `memory:user-memory:extract:users:${userId}:topics:${cursor.id}:schedule-next-batch`,
         () => {
-          // NOTICE: Upstash Workflow only supports serializable data into plain JSON,
-          // this causes the Date object to be converted into string when passed as parameter from
-          // context to child workflow. So we need to convert it back to Date object here.
+          // Redis queue payloads are plain JSON, so cursor dates need to be restored.
           const createdAt = new Date(cursor.createdAt);
           if (Number.isNaN(createdAt.getTime())) {
             throw new Error('Invalid cursor date when scheduling next topic page');

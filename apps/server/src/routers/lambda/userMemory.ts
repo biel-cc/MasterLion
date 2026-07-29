@@ -15,6 +15,7 @@ import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPer
 import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { AsyncTaskModel, initUserMemoryExtractionMetadata } from '@/database/models/asyncTask';
 import { TopicModel } from '@/database/models/topic';
+import { UserModel } from '@/database/models/user';
 import {
   UserMemoryActivityModel,
   UserMemoryContextModel,
@@ -24,18 +25,23 @@ import {
   UserMemoryPreferenceModel,
 } from '@/database/models/userMemory';
 import { UserPersonaModel } from '@/database/models/userMemory/persona';
-import { appEnv } from '@/envs/app';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
-import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
+import { getServerFeatureFlagsStateFromRuntimeConfig } from '@/server/featureFlags';
 import {
   buildWorkflowPayloadInput,
-  MemoryExtractionWorkflowService,
   normalizeMemoryExtractionPayload,
 } from '@/server/services/memory/userMemory/extract';
+import { MemoryExtractionQueueService } from '@/server/services/memory/userMemory/queue/service';
 
 const userMemoryProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
+  if (ctx.workspaceId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Memory is only available in personal space',
+    });
+  }
   const wsId = ctx.workspaceId ?? undefined;
 
   return opts.next({
@@ -223,6 +229,23 @@ export const userMemoryRouter = router({
   requestMemoryFromChatTopic: userMemoryWriteProcedure
     .input(userMemoryExtractionInputSchema)
     .mutation(async ({ ctx, input }) => {
+      const featureFlags = await getServerFeatureFlagsStateFromRuntimeConfig(ctx.userId);
+      if (featureFlags.enableMemory !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Memory is not available for this user',
+        });
+      }
+
+      const settings = await new UserModel(ctx.serverDB, ctx.userId).getUserSettings();
+      const memorySettings = settings?.memory as { enabled?: boolean } | undefined;
+      if (memorySettings?.enabled !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Enable Memory in personal settings before starting extraction',
+        });
+      }
+
       if (input.fromDate && input.toDate && input.fromDate > input.toDate) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -275,15 +298,11 @@ export const userMemoryRouter = router({
         };
       }
 
-      const { webhook, upstashWorkflowExtraHeaders } = parseMemoryExtractionConfig();
-      const baseUrl = webhook.baseUrl || appEnv.INTERNAL_APP_URL || appEnv.APP_URL;
-
       try {
-        const { workflowRunId } = await MemoryExtractionWorkflowService.triggerProcessUsers(
+        const { jobId } = await MemoryExtractionQueueService.triggerProcessUsers(
           buildWorkflowPayloadInput(
             normalizeMemoryExtractionPayload({
               asyncTaskId: taskId,
-              baseUrl,
               forceAll: false,
               forceTopics: false,
               fromDate: input.fromDate,
@@ -294,15 +313,14 @@ export const userMemoryRouter = router({
               userInitiated: true,
             }),
           ),
-          { extraHeaders: upstashWorkflowExtraHeaders },
         );
 
         await ctx.asyncTaskModel.update(taskId, {
           metadata: {
             ...metadata,
             control: {
-              upstash: {
-                workflowRunIds: workflowRunId ? [workflowRunId] : [],
+              queue: {
+                jobIds: jobId ? [jobId] : [],
               },
             },
           } as UserMemoryExtractionMetadata,
@@ -311,14 +329,14 @@ export const userMemoryRouter = router({
         await ctx.asyncTaskModel.update(taskId, {
           error: new AsyncTaskError(
             AsyncTaskErrorType.TaskTriggerError,
-            'Failed to schedule memory extraction workflow',
+            'Failed to schedule memory extraction queue job',
           ),
           status: AsyncTaskStatus.Error,
         });
         throw new TRPCError({
           cause: error,
           code: 'INTERNAL_SERVER_ERROR',
-          message: 'Failed to trigger user memory extraction',
+          message: 'Failed to enqueue user memory extraction',
         });
       }
 

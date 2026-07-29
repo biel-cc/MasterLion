@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import path from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
@@ -14,7 +14,7 @@ import { serverDBEnv } from '@/config/db';
 import * as schema from '../schemas';
 import type { LobeChatDatabase } from '../type';
 
-const migrationsFolder = join(__dirname, '../../migrations');
+const migrationsFolder = path.join(__dirname, '../../migrations');
 
 const isServerDBMode = process.env.TEST_SERVER_DB === '1';
 
@@ -46,7 +46,9 @@ export const getTestDB = async (): Promise<LobeChatDatabase> => {
   const pglite = new PGlite({ extensions: { vector } });
   testClientDB = pgliteDrizzle({ client: pglite, schema });
 
-  // Custom migration that skips pg_search-related SQL for PGlite compatibility
+  // Apply compatible statements individually so pg_search migrations do not hide
+  // unrelated schema changes. PGlite tests do not rely on production HNSW indexes,
+  // whose extension behavior is covered by deployment migration checks instead.
   const migrations = readMigrationFiles({ migrationsFolder });
 
   await testClientDB.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
@@ -59,12 +61,14 @@ export const getTestDB = async (): Promise<LobeChatDatabase> => {
   `);
 
   for (const migration of migrations) {
-    const skipSql = migration.sql.some(
-      (s) => s.toLowerCase().includes('pg_search') || s.toLowerCase().includes('bm25'),
-    );
+    for (const stmt of migration.sql) {
+      const normalizedStatement = stmt.toLowerCase();
+      const isUnsupportedStatement =
+        normalizedStatement.includes('pg_search') ||
+        normalizedStatement.includes('bm25') ||
+        normalizedStatement.includes('using hnsw');
 
-    if (!skipSql) {
-      for (const stmt of migration.sql) {
+      if (!isUnsupportedStatement) {
         await testClientDB.execute(sql.raw(stmt));
       }
     }

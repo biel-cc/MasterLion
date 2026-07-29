@@ -9,11 +9,15 @@ const mockFindActiveByType = vi.fn();
 const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
 const mockFindById = vi.fn();
+const { mockGetServerFeatureFlags, mockGetUserSettings } = vi.hoisted(() => ({
+  mockGetServerFeatureFlags: vi.fn(),
+  mockGetUserSettings: vi.fn(),
+}));
 
 const mockCountTopicsForMemoryExtractor = vi.fn();
 const mockDeleteAll = vi.fn();
-const { mockTriggerProcessUsers } = vi.hoisted(() => ({
-  mockTriggerProcessUsers: vi.fn(),
+const { mockEnqueueProcessUsers } = vi.hoisted(() => ({
+  mockEnqueueProcessUsers: vi.fn(),
 }));
 
 vi.mock('@/database/models/asyncTask', () => ({
@@ -32,6 +36,14 @@ vi.mock('@/database/models/topic', () => ({
   })),
 }));
 
+vi.mock('@/database/models/user', () => ({
+  UserModel: vi.fn(() => ({ getUserSettings: mockGetUserSettings })),
+}));
+
+vi.mock('@/server/featureFlags', () => ({
+  getServerFeatureFlagsStateFromRuntimeConfig: mockGetServerFeatureFlags,
+}));
+
 vi.mock('@/database/models/userMemory', () => ({
   UserMemoryActivityModel: vi.fn(() => ({})),
   UserMemoryContextModel: vi.fn(() => ({})),
@@ -43,26 +55,15 @@ vi.mock('@/database/models/userMemory', () => ({
   UserMemoryPreferenceModel: vi.fn(() => ({})),
 }));
 
-vi.mock('@/envs/app', () => ({
-  appEnv: {
-    APP_URL: 'https://example.com',
-    INTERNAL_APP_URL: 'https://internal.example.com',
-  },
-}));
-
-vi.mock('@/server/globalConfig/parseMemoryExtractionConfig', () => ({
-  parseMemoryExtractionConfig: vi.fn(() => ({
-    webhook: { baseUrl: 'https://internal.example.com' },
-    upstashWorkflowExtraHeaders: { 'x-test': 'ok' },
-  })),
-}));
-
 vi.mock('@/server/services/memory/userMemory/extract', () => ({
-  MemoryExtractionWorkflowService: {
-    triggerProcessUsers: mockTriggerProcessUsers,
-  },
   buildWorkflowPayloadInput: (payload: any) => payload,
   normalizeMemoryExtractionPayload: (payload: any) => payload,
+}));
+
+vi.mock('@/server/services/memory/userMemory/queue/service', () => ({
+  MemoryExtractionQueueService: {
+    triggerProcessUsers: mockEnqueueProcessUsers,
+  },
 }));
 
 const createCaller = (ctxOverrides: Partial<any> = {}) => {
@@ -78,7 +79,37 @@ const createCaller = (ctxOverrides: Partial<any> = {}) => {
 describe('userMemoryRouter.requestMemoryFromChatTopic', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockTriggerProcessUsers.mockResolvedValue({ workflowRunId: 'workflow-run-1' });
+    mockGetServerFeatureFlags.mockResolvedValue({ enableMemory: true });
+    mockGetUserSettings.mockResolvedValue({ memory: { enabled: true } });
+    mockEnqueueProcessUsers.mockResolvedValue({ jobId: 'queue-job-1' });
+  });
+
+  it('rejects extraction when the runtime rollout is disabled', async () => {
+    mockGetServerFeatureFlags.mockResolvedValue({ enableMemory: false });
+
+    await expect(createCaller().requestMemoryFromChatTopic({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects extraction until the user explicitly enables memory', async () => {
+    mockGetUserSettings.mockResolvedValue({ memory: { enabled: false } });
+
+    await expect(createCaller().requestMemoryFromChatTopic({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects extraction from workspace scope', async () => {
+    await expect(
+      createCaller({ workspaceId: 'workspace-1' }).requestMemoryFromChatTopic({}),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Memory is only available in personal space',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('dedupes when an active task exists', async () => {
@@ -98,7 +129,7 @@ describe('userMemoryRouter.requestMemoryFromChatTopic', () => {
       status: AsyncTaskStatus.Pending,
     });
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockTriggerProcessUsers).not.toHaveBeenCalled();
+    expect(mockEnqueueProcessUsers).not.toHaveBeenCalled();
   });
 
   it('creates task and triggers workflow with user context and dates', async () => {
@@ -124,23 +155,21 @@ describe('userMemoryRouter.requestMemoryFromChatTopic', () => {
       status: AsyncTaskStatus.Pending,
       type: AsyncTaskType.UserMemoryExtractionWithChatTopic,
     });
-    expect(mockTriggerProcessUsers).toHaveBeenCalledWith(
+    expect(mockEnqueueProcessUsers).toHaveBeenCalledWith(
       expect.objectContaining({
         asyncTaskId: 'new-task',
-        baseUrl: 'https://internal.example.com',
         fromDate: new Date('2024-01-01'),
         sources: [MemorySourceType.ChatTopic],
         toDate: new Date('2024-02-01'),
         userIds: ['user-1'],
         userInitiated: true,
       }),
-      { extraHeaders: { 'x-test': 'ok' } },
     );
     expect(mockUpdate).toHaveBeenCalledWith('new-task', {
       metadata: expect.objectContaining({
         control: {
-          upstash: {
-            workflowRunIds: ['workflow-run-1'],
+          queue: {
+            jobIds: ['queue-job-1'],
           },
         },
       }),
@@ -149,6 +178,21 @@ describe('userMemoryRouter.requestMemoryFromChatTopic', () => {
       deduped: false,
       id: 'new-task',
       status: AsyncTaskStatus.Pending,
+    });
+  });
+
+  it('marks the task failed when the internal queue is unavailable', async () => {
+    mockFindActiveByType.mockResolvedValue(undefined);
+    mockCreate.mockResolvedValue('failed-task');
+    mockCountTopicsForMemoryExtractor.mockResolvedValue(1);
+    mockEnqueueProcessUsers.mockRejectedValue(new Error('REDIS_URL is not configured'));
+
+    await expect(createCaller().requestMemoryFromChatTopic({})).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+    expect(mockUpdate).toHaveBeenCalledWith('failed-task', {
+      error: expect.objectContaining({ name: AsyncTaskErrorType.TaskTriggerError }),
+      status: AsyncTaskStatus.Error,
     });
   });
 
@@ -170,7 +214,7 @@ describe('userMemoryRouter.requestMemoryFromChatTopic', () => {
       },
       status: AsyncTaskStatus.Success,
     });
-    expect(mockTriggerProcessUsers).not.toHaveBeenCalled();
+    expect(mockEnqueueProcessUsers).not.toHaveBeenCalled();
   });
 
   it('throws on invalid date range', async () => {

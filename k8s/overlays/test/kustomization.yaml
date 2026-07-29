@@ -6,8 +6,21 @@ resources:
   - namespace.yaml
   - storageclass.yaml
   - configmap.yaml
+  - memory-worker.yaml
+configMapGenerator:
+  - name: masterino-memory-config
+    envs:
+      - memory.properties
+generatorOptions:
+  disableNameSuffixHash: false
+  labels:
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: test
 patches:
+  - path: memory-config-patch.yaml
   - path: storage-patch.yaml
 replicas:
   - name: masterino
+    count: 1
+  - name: masterino-memory-worker
     count: 1

@@ -189,6 +189,13 @@ export const initUserMemoryExtractionMetadata = (
         cancelReason: metadata.control.cancelReason,
         cancelRequestedAt: metadata.control.cancelRequestedAt,
         cancelledBy: metadata.control.cancelledBy,
+        ...(metadata.control.queue
+          ? {
+              queue: {
+                jobIds: metadata.control.queue.jobIds || [],
+              },
+            }
+          : {}),
         upstash: metadata.control.upstash
           ? {
               workflowRunIds: metadata.control.upstash.workflowRunIds || [],
