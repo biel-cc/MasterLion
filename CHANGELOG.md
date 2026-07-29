@@ -2,6 +2,39 @@
 
 # Changelog
 
+## [Version 1.0.16](https://github.com/chaaak6/Masterino/compare/v1.0.15...v1.0.16)
+
+<sup>Released on **2026-07-29**</sup>
+
+#### ✨ Features
+
+- **misc**: enable opt-in personal memory.
+
+#### 💄 Styles
+
+- **misc**: update i18n.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's improved
+
+- **misc**: enable opt-in personal memory ([5826a47](https://github.com/chaaak6/Masterino/commit/5826a47))
+
+#### Styles
+
+- **misc**: update i18n, closes [#53](https://github.com/chaaak6/Masterino/issues/53) ([9dcd37b](https://github.com/chaaak6/Masterino/commit/9dcd37b))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.0.15](https://github.com/chaaak6/Masterino/compare/v1.0.14...v1.0.15)
 
 <sup>Released on **2026-07-28**</sup>

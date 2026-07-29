@@ -2443,6 +2443,18 @@
   },
   {
     "children": {
+      "features": [
+        "enable opt-in personal memory."
+      ],
+      "improvements": [
+        "update i18n."
+      ]
+    },
+    "date": "2026-07-29",
+    "version": "1.0.16"
+  },
+  {
+    "children": {
       "fixes": [
         "restore downloads from image preview."
       ]
