@@ -174,7 +174,7 @@ export const createAgentToolsEngine = (
   const kbEnabled = agentSelectors.hasEnabledKnowledgeBases(agentState);
   const memoryEnabled =
     !getActiveWorkspaceId() &&
-    getServerConfigStoreState()?.featureFlags.enableMemory === true &&
+    getServerConfigStoreState()?.featureFlags?.enableMemory === true &&
     settingsSelectors.memoryEnabled(useUserStore.getState()) &&
     agentChatConfigSelectors.currentChatConfig(agentState).memory?.enabled !== false;
   const webBrowsingEnabled = searchConfig.useApplicationBuiltinSearchTool;

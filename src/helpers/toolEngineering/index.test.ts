@@ -143,6 +143,7 @@ vi.mock('../isCanUseFC', () => ({
 let mockCurrentAgentPlugins: string[] = [];
 let mockAgentMemoryEnabled: boolean | undefined = true;
 let mockEnableMemory = true;
+let mockFeatureFlagsAvailable = true;
 let mockMemoryConsent = false;
 let mockActiveWorkspaceId: string | null = null;
 
@@ -178,7 +179,11 @@ vi.mock('@/store/user/selectors', () => ({
 }));
 
 vi.mock('@/store/serverConfig', () => ({
-  getServerConfigStoreState: () => ({ featureFlags: { enableMemory: mockEnableMemory } }),
+  getServerConfigStoreState: () => ({
+    ...(mockFeatureFlagsAvailable
+      ? { featureFlags: { enableMemory: mockEnableMemory } }
+      : { featureFlags: undefined }),
+  }),
 }));
 
 let mockUseApplicationBuiltinSearchTool = true;
@@ -199,6 +204,7 @@ describe('toolEngineering', () => {
     mockCurrentAgentPlugins = [];
     mockAgentMemoryEnabled = true;
     mockEnableMemory = true;
+    mockFeatureFlagsAvailable = true;
     mockMemoryConsent = false;
     mockActiveWorkspaceId = null;
   });
@@ -342,6 +348,23 @@ describe('toolEngineering', () => {
     it('should not bypass memory consent with explicit activation', () => {
       mockCurrentAgentPlugins = ['lobe-user-memory'];
       mockMemoryConsent = false;
+
+      const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
+      const result = toolsEngine.generateToolsDetailed({
+        context: { isExplicitActivation: true },
+        model: 'gpt-4',
+        provider: 'openai',
+        skipDefaultTools: true,
+        toolIds: ['lobe-user-memory'],
+      });
+
+      expect(result.enabledToolIds).not.toContain('lobe-user-memory');
+    });
+
+    it('should keep memory unavailable while feature flags are not loaded', () => {
+      mockCurrentAgentPlugins = ['lobe-user-memory'];
+      mockMemoryConsent = true;
+      mockFeatureFlagsAvailable = false;
 
       const toolsEngine = createAgentToolsEngine({ model: 'gpt-4', provider: 'openai' });
       const result = toolsEngine.generateToolsDetailed({
