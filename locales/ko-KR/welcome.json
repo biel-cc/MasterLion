@@ -122,9 +122,7 @@
     {
       "avatar": "📊",
       "backgroundColor": "#E8F8F5",
-      "plugins": [
-        "steam"
-      ],
+      "plugins": ["steam"],
       "systemRole": "당신은 데이터를 처리하고 해석하는 데 능숙하며, 차트와 통계 분석을 통해 데이터 속 패턴과 트렌드를 밝혀냅니다.",
       "title": "데이터 분석가"
     },

@@ -122,9 +122,7 @@
     {
       "avatar": "📊",
       "backgroundColor": "#E8F8F5",
-      "plugins": [
-        "steam"
-      ],
+      "plugins": ["steam"],
       "systemRole": "Eres experto en procesar e interpretar datos, revelando patrones y tendencias mediante gráficos y análisis estadísticos.",
       "title": "Analista de Datos"
     },

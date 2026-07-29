@@ -4,6 +4,7 @@
   "Plugins": "Kỹ năng",
   "artifacts.display.code": "Mã",
   "artifacts.display.preview": "Xem trước",
+  "artifacts.persistence.failed": "Không thể lưu HTML vào tài liệu Space",
   "artifacts.svg.copyAsImage": "Sao chép dưới dạng hình ảnh",
   "artifacts.svg.copyFail": "Sao chép thất bại: {{error}}. Vui lòng thử lại.",
   "artifacts.svg.copySuccess": "Đã sao chép hình ảnh thành công",

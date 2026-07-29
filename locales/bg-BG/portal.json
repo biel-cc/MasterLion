@@ -4,6 +4,7 @@
   "Plugins": "Умения",
   "artifacts.display.code": "Код",
   "artifacts.display.preview": "Преглед",
+  "artifacts.persistence.failed": "Неуспешно записване на HTML в документи на Space",
   "artifacts.svg.copyAsImage": "Копирай като изображение",
   "artifacts.svg.copyFail": "Копирането неуспешно: {{error}}. Опитайте отново.",
   "artifacts.svg.copySuccess": "Изображението е копирано успешно",
