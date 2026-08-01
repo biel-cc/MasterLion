@@ -20,7 +20,7 @@ import {
   verifyImportSignature,
 } from './crypto.js';
 import { MarketObjectStorage } from './objectStorage.js';
-import type { type Account, MarketRepository } from './repository.js';
+import type { Account, MarketRepository } from './repository.js';
 import { CredentialVault } from './vault.js';
 
 interface AppEnv extends AuthEnv {
