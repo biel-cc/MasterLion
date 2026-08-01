@@ -11,6 +11,8 @@ data:
   ENABLED_CSP: '1'
   OPENAPI_CORS_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com'
   INTERNAL_APP_URL: 'http://masterino:3210'
+  MARKET_BASE_URL: 'http://masterino-market:3220'
+  MARKET_TRUSTED_CLIENT_ID: 'masterino'
   AUTH_DISABLE_EMAIL_SIGNUP: '1'
   AUTH_DISABLE_EMAIL_PASSWORD: '0'
   AUTH_SSO_PROVIDERS: 'wecom'

@@ -1,0 +1,131 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: masterlion
+resources:
+  - ../../base
+  - configmap.yaml
+  - aliases.yaml
+  - pdb.yaml
+images:
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
+    digest: sha256:387dfc65c67d01821a4c2e24a46079e19ef85d8a19adfa116880ee184f2a9825
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge
+    digest: sha256:9c5c1dfd20db00bbb145ff21a763acf51fa291e93dcc115bd3db466718c50ff4
+patches:
+  - target:
+      kind: StatefulSet
+      name: masterino-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: masterino-postgres
+  - target:
+      kind: Service
+      name: masterino-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: masterino-postgres
+  - target:
+      kind: StatefulSet
+      name: masterino-redis
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: masterino-redis
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: acr-credential-secret-aggregation
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          alibabacloud.com/nodepool-id: npb74caa73461b49c986f40c22580f91c1
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          seccompProfile:
+            type: RuntimeDefault
+  - target:
+      kind: Service
+      name: masterino-aihub-db-bridge
+    patch: |-
+      - op: replace
+        path: /spec/selector/app.kubernetes.io~1name
+        value: masterino-aihub-db-bridge
+  - target:
+      kind: Deployment
+      name: masterino-aihub-db-bridge
+    patch: |-
+      - op: replace
+        path: /spec/selector/matchLabels/app.kubernetes.io~1name
+        value: masterino-aihub-db-bridge
+      - op: replace
+        path: /spec/template/metadata/labels/app.kubernetes.io~1name
+        value: masterino-aihub-db-bridge
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+  - target:
+      kind: Deployment
+      name: masterino
+    patch: |-
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: '4'
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 8Gi
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_JIT_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: masterino-secret
+              key: ONLYBOXES_JIT_SIGNING_KEY
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: onlyboxes-ca
+            mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+            subPath: onlyboxes-internal-ca.crt
+            readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: onlyboxes-ca
+            configMap:
+              name: masterino-onlyboxes-ca
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: masterino

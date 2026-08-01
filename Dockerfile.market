@@ -5,12 +5,12 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY apps/market/package.json apps/market/package.json
-RUN pnpm install --frozen-lockfile --filter @masterlion/market... --prod=false
+RUN pnpm install --frozen-lockfile --filter @masterino/market... --prod=false
 COPY apps/market apps/market
-RUN pnpm --filter @masterlion/market build && \
+RUN pnpm --filter @masterino/market build && \
     mkdir -p apps/market/dist/migrations && \
     cp apps/market/src/migrations/*.sql apps/market/dist/migrations/ && \
-    pnpm --filter @masterlion/market deploy --prod /out
+    pnpm --filter @masterino/market deploy --prod /out
 
 FROM node:${NODEJS_VERSION}-slim AS runtime
 ENV NODE_ENV=production

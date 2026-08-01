@@ -1,11 +1,11 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: masterlion-market-api-no-public-egress
+  name: masterino-market-api-no-public-egress
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market
+      app.kubernetes.io/name: masterino-market
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -31,13 +31,13 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: masterlion-market-oss
+              app.kubernetes.io/name: masterino-market-oss
       ports:
         - { protocol: TCP, port: 9000 }
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: masterlion-market-runner
+              app.kubernetes.io/name: masterino-market-runner
       ports:
         - { protocol: TCP, port: 3221 }
     - to:
@@ -51,17 +51,17 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: masterlion-market-runner-proxy-only-egress
+  name: masterino-market-runner-proxy-only-egress
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market-runner
+      app.kubernetes.io/name: masterino-market-runner
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: masterlion-market
+              app.kubernetes.io/name: masterino-market
       ports:
         - { protocol: TCP, port: 3221 }
   egress:

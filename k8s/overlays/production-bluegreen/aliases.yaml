@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterino-searxng
+  labels:
+    app.kubernetes.io/name: masterino-searxng
+    app.kubernetes.io/part-of: masterino
+spec:
+  selector:
+    app.kubernetes.io/name: searxng
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterino-wecom-verification
+  labels:
+    app.kubernetes.io/name: masterino-wecom-verification
+    app.kubernetes.io/part-of: masterino
+spec:
+  selector:
+    app.kubernetes.io/name: masterlion-wecom-verification
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

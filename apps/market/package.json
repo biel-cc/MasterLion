@@ -1,6 +1,6 @@
 {
-  "name": "@masterlion/market",
-  "version": "0.0.1",
+  "name": "@masterino/market",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
