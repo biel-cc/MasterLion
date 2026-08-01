@@ -39,8 +39,7 @@ spec:
             - name: MEMORY_QUEUE_WORKER_ENABLED
               value: '1'
             - name: MEMORY_QUEUE_SCHEDULER_ENABLED
-              # Enable only after manual extraction acceptance succeeds.
-              value: '0'
+              value: '1'
             - name: GATEWAY_MANAGER_DISABLED
               value: '1'
             - name: AIHUB_READONLY_DATABASE_URL

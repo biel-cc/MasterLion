@@ -69,7 +69,7 @@ const memoryWorkerEnv = Object.fromEntries(
   memoryWorker.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
 );
 assert.equal(memoryWorkerEnv.MEMORY_QUEUE_WORKER_ENABLED, '1');
-assert.equal(memoryWorkerEnv.MEMORY_QUEUE_SCHEDULER_ENABLED, '0');
+assert.equal(memoryWorkerEnv.MEMORY_QUEUE_SCHEDULER_ENABLED, '1');
 assert.equal(memoryWorkerEnv.AIHUB_READONLY_DATABASE_URL, '');
 assert.match(searxng.spec.template.spec.containers[0].image, /searxng@sha256:663c20b2/);
 assert.equal(

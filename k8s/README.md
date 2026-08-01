@@ -23,12 +23,13 @@ The guarded deploy script selects `test-migration` until the database is restore
 application up without taking public traffic. `cutover` is a separate, explicit action that installs
 the public Ingress after the old Ingress has been removed.
 
-## Test memory rollout
+## Personal memory rollout
 
-Personal memory is opt-in at two levels: the test overlay enables the runtime `+memory` flag, and
-each user must then enable Memory in personal settings. Production intentionally has no `+memory`
-flag and remains disabled until a separate production rollout is approved. Workspace memory stays
-hidden.
+Personal memory is opt-in at two levels: the test and production blue-green overlays enable the
+runtime `+memory` flag, and each user must then enable Memory in personal settings. Workspace
+memory stays hidden. The production worker and hourly scheduler are enabled, but extraction still
+fails closed unless the individual user has opted in and their Aihub managed token authorizes the
+configured chat and embedding models.
 
 `overlays/test/memory.properties` is the canonical non-secret memory configuration for the test
 application and memory worker. Kustomize generates `masterino-memory-config-<content-hash>` from
@@ -70,16 +71,14 @@ Memory extraction runs through the in-cluster `masterino-memory-worker` Deployme
 and the persistent `masterino-redis` StatefulSet. Redis uses AOF and `noeviction`; BullMQ keys are
 isolated under the `${REDIS_PREFIX}:memory-queue` prefix.
 
-After manual extraction succeeds, change `MEMORY_QUEUE_SCHEDULER_ENABLED` to `1` in
-`overlays/test/memory-worker.yaml`, redeploy the same immutable application image, and verify that
-the worker registers the `memory-user-memory-hourly` scheduler. No public webhook or external
-schedule is involved.
+After manual extraction succeeds in a new environment, change
+`MEMORY_QUEUE_SCHEDULER_ENABLED` to `1`, redeploy the same immutable application image, and verify
+that the worker registers the `memory-user-memory-hourly` scheduler. Production already has this
+setting enabled. No public webhook or external schedule is involved.
 
 Monitor queue retries, failed jobs, worker restarts, application errors, Aihub requests, and quota
-usage. Disabling Memory
-stops recall and new extraction but does not delete saved data; users can delete individual items
-or clear all memory. A future production rollout must add its own worker Deployment and an explicit
-production `+memory` flag; production remains disabled in this change.
+usage. Disabling Memory stops recall and new extraction but does not delete saved data; users can
+delete individual items or clear all memory.
 
 Application image tags in the base are render-time markers. `deploy.sh` requires immutable
 `sha256:` digests and replaces the markers in memory before applying resources.
