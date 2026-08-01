@@ -17,6 +17,13 @@ logs/
 .codex/
 .agents/
 .superpowers/
+.sync-cache/
+.release*/
+
+# Never send local production credentials to the Docker daemon or remote BuildKit cache.
+deploy/.env*.prod
+k8s/*secret*.yaml
+k8s/**/*secret*.yaml
 
 .git/
 docker-compose/dev/data/
