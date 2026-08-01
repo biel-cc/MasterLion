@@ -1,5 +1,6 @@
 ARG NODEJS_VERSION="24"
-FROM node:${NODEJS_VERSION}-slim AS builder
+ARG BASE_REGISTRY="docker.io/library"
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS builder
 ENV CI=true
 WORKDIR /app
 RUN corepack enable
@@ -13,7 +14,7 @@ RUN pnpm --filter @masterino/market build && \
     cp apps/market/src/migrations/*.sql apps/market/dist/migrations/ && \
     pnpm --config.inject-workspace-packages=true --filter @masterino/market --prod deploy /out
 
-FROM node:${NODEJS_VERSION}-slim AS runtime
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /out ./
