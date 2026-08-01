@@ -7,6 +7,7 @@ resources:
   - aliases.yaml
   - memory-worker.yaml
   - pdb.yaml
+  - searxng.yaml
   - wecom-verification.yaml
 configMapGenerator:
   - name: masterino-memory-config

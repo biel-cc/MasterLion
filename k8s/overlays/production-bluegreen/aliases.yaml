@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: masterino
 spec:
   selector:
-    app.kubernetes.io/name: searxng
+    app.kubernetes.io/name: masterino-searxng
   ports:
     - name: http
       port: 8080

@@ -32,10 +32,12 @@ assert.equal(
 const app = find(validation, 'Deployment', 'masterino');
 const bridge = find(validation, 'Deployment', 'masterino-aihub-db-bridge');
 const memoryWorker = find(validation, 'Deployment', 'masterino-memory-worker');
+const searxng = find(validation, 'Deployment', 'masterino-searxng');
 const wecomVerification = find(validation, 'Deployment', 'masterino-wecom-verification');
 assert(app, 'Masterino Deployment is missing');
 assert(bridge, 'Masterino Aihub bridge Deployment is missing');
 assert(memoryWorker, 'Masterino memory worker Deployment is missing');
+assert(searxng, 'Masterino SearXNG Deployment is missing');
 assert(wecomVerification, 'Masterino WeCom verification Deployment is missing');
 assert.equal(app.spec.replicas, 1);
 assert.match(app.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
@@ -69,6 +71,16 @@ const memoryWorkerEnv = Object.fromEntries(
 assert.equal(memoryWorkerEnv.MEMORY_QUEUE_WORKER_ENABLED, '1');
 assert.equal(memoryWorkerEnv.MEMORY_QUEUE_SCHEDULER_ENABLED, '0');
 assert.equal(memoryWorkerEnv.AIHUB_READONLY_DATABASE_URL, '');
+assert.match(searxng.spec.template.spec.containers[0].image, /searxng@sha256:663c20b2/);
+assert.equal(
+  searxng.spec.template.spec.containers[0].env.find(({ name }) => name === 'SEARXNG_SECRET')
+    .valueFrom.secretKeyRef.name,
+  'masterino-secret',
+);
+assert.equal(
+  find(validation, 'Service', 'masterino-searxng').spec.selector['app.kubernetes.io/name'],
+  'masterino-searxng',
+);
 assert.equal(
   find(validation, 'Service', 'masterino-wecom-verification').spec.selector[
     'app.kubernetes.io/name'
