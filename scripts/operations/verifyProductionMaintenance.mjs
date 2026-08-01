@@ -43,6 +43,13 @@ const serverSource = extractBlockScalar(configMap, 'server.js');
 const maintenancePage = extractBlockScalar(configMap, 'index.html');
 assert.match(maintenancePage, /Masterino/);
 assert.match(maintenancePage, /系统维护中/);
+assert.match(source, /runAsGroup:\s*1001/);
+assert.match(source, /runAsNonRoot:\s*true/);
+assert.match(source, /runAsUser:\s*1001/);
+assert.match(
+  source,
+  /name:\s*PORT[\t\v\f\r \xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*\n\s*value:\s*['"]8080['"]/,
+);
 assert.deepEqual(kinds, ['ConfigMap', 'Deployment', 'Ingress', 'PodDisruptionBudget', 'Service']);
 
 const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'masterino-maintenance-'));
