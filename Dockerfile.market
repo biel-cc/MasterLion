@@ -4,6 +4,7 @@ ENV CI=true
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY patches patches
 COPY apps/market/package.json apps/market/package.json
 RUN pnpm install --frozen-lockfile --filter @masterino/market... --prod=false
 COPY apps/market apps/market
