@@ -9,7 +9,8 @@ hostname, then performs a guarded application and data cutover. It treats the cu
 - Source repository: `https://github.com/chaaak6/Masterino`
 - Synced source commit: `18277c3698d991f653e2de421cf9a8a7f4aa3671` (`v1.0.16`)
 - Release target: `v1.1.0`
-- Production ACK cluster ID: `c5c81a41c33164f578f4e43a77fda5fc3`, region `cn-shenzhen`
+- Production ACK cluster ID: `c23ea84b986c446d5b3fa9227962e77f4` (`biel-ai`), region
+  `cn-shenzhen`
 - Current namespace: `masterlion`; target namespace: `masterino`
 - Existing hostnames: `masterion.bielcrystal.com` and `masterlion.bielcrystal.com`
 - Existing NLB CNAME target:

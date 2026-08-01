@@ -3,14 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_ACK_CLUSTER_ID="c23ea84b986c446d5b3fa9227962e77f4"
-PRODUCTION_ACK_CLUSTER_ID="c5c81a41c33164f578f4e43a77fda5fc3"
+PRODUCTION_ACK_CLUSTER_ID="c23ea84b986c446d5b3fa9227962e77f4"
 EXPECTED_ACK_REGION="cn-shenzhen"
 DEFAULT_TEST_CONTEXT="ack-c23ea84b-masterlion-test"
 MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
 IMAGE_TAG_MARKER="v1.1.0"
 TLS_SECRET_NAME="20261122bielcrystal.com"
-ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 
 usage() {
