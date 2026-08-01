@@ -22,7 +22,7 @@ metadata:
     app.kubernetes.io/part-of: masterino
 spec:
   selector:
-    app.kubernetes.io/name: masterlion-wecom-verification
+    app.kubernetes.io/name: masterino-wecom-verification
   ports:
     - name: http
       port: 8080

@@ -31,8 +31,12 @@ assert.equal(
 
 const app = find(validation, 'Deployment', 'masterino');
 const bridge = find(validation, 'Deployment', 'masterino-aihub-db-bridge');
+const memoryWorker = find(validation, 'Deployment', 'masterino-memory-worker');
+const wecomVerification = find(validation, 'Deployment', 'masterino-wecom-verification');
 assert(app, 'Masterino Deployment is missing');
 assert(bridge, 'Masterino Aihub bridge Deployment is missing');
+assert(memoryWorker, 'Masterino memory worker Deployment is missing');
+assert(wecomVerification, 'Masterino WeCom verification Deployment is missing');
 assert.equal(app.spec.replicas, 1);
 assert.match(app.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
 assert.match(bridge.spec.template.spec.containers[0].image, /sha256:9c5c1dfd/);
@@ -45,6 +49,37 @@ assert.equal(
   'masterino-aihub-db-bridge',
 );
 assert.equal(app.spec.template.spec.volumes[0].configMap.name, 'masterino-onlyboxes-ca');
+const memoryConfigRef = app.spec.template.spec.containers[0].envFrom.find((source) =>
+  source.configMapRef?.name?.startsWith('masterino-memory-config-'),
+);
+assert(memoryConfigRef, 'Masterino app is not wired to the content-hashed memory ConfigMap');
+const memoryConfig = validation.find(
+  (resource) =>
+    resource.kind === 'ConfigMap' &&
+    resource.metadata?.name?.startsWith('masterino-memory-config-'),
+);
+assert(memoryConfig, 'Masterino memory ConfigMap is missing');
+assert.equal(memoryConfig.data.FEATURE_FLAGS, '+memory');
+assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_GATEKEEPER_MODEL, 'glm-5.2');
+assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_EMBEDDING_MODEL, 'text-embedding-3-large');
+assert.match(memoryWorker.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
+const memoryWorkerEnv = Object.fromEntries(
+  memoryWorker.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
+);
+assert.equal(memoryWorkerEnv.MEMORY_QUEUE_WORKER_ENABLED, '1');
+assert.equal(memoryWorkerEnv.MEMORY_QUEUE_SCHEDULER_ENABLED, '0');
+assert.equal(memoryWorkerEnv.AIHUB_READONLY_DATABASE_URL, '');
+assert.equal(
+  find(validation, 'Service', 'masterino-wecom-verification').spec.selector[
+    'app.kubernetes.io/name'
+  ],
+  'masterino-wecom-verification',
+);
+assert.equal(
+  wecomVerification.spec.selector.matchLabels['app.kubernetes.io/name'],
+  'masterino-wecom-verification',
+);
+assert.match(wecomVerification.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
 const appConfig = find(validation, 'ConfigMap', 'masterino-config');
 assert.equal(appConfig.data.APP_URL, 'https://masterino.bielcrystal.com');
 assert.equal(appConfig.data.MARKET_BASE_URL, 'http://masterino-market:3220');

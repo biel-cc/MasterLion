@@ -5,7 +5,18 @@ resources:
   - ../../base
   - configmap.yaml
   - aliases.yaml
+  - memory-worker.yaml
   - pdb.yaml
+  - wecom-verification.yaml
+configMapGenerator:
+  - name: masterino-memory-config
+    envs:
+      - memory.properties
+generatorOptions:
+  disableNameSuffixHash: false
+  labels:
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: production
 images:
   - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
     newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
@@ -14,6 +25,7 @@ images:
     newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge
     digest: sha256:9c5c1dfd20db00bbb145ff21a763acf51fa291e93dcc115bd3db466718c50ff4
 patches:
+  - path: memory-config-patch.yaml
   - target:
       kind: StatefulSet
       name: masterino-postgres

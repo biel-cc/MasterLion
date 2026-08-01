@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino-wecom-verification
+  labels:
+    app.kubernetes.io/name: masterino-wecom-verification
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: wecom-verification
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-wecom-verification
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-wecom-verification
+        app.kubernetes.io/part-of: masterino
+        app.kubernetes.io/component: wecom-verification
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: http
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino:v1.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+          args:
+            - -e
+            - >-
+              const http=require('node:http');const
+              path='/WW_verify_uSB5OnVf9BeWJX0U.txt';const
+              value='uSB5OnVf9BeWJX0U';http.createServer((request,response)=>{const
+              ok=request.url===path;response.writeHead(ok?200:404,{'Cache-Control':'no-store','Content-Type':'text/plain;
+              charset=utf-8'});response.end(ok?value:'not found')}).listen(8080,'0.0.0.0')
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /WW_verify_uSB5OnVf9BeWJX0U.txt
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
