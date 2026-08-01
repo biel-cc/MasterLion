@@ -4,8 +4,8 @@ import { resolveDesktopCloudServer, resolveDesktopMarketBaseUrl } from './cloudS
 
 describe('desktop cloud server config', () => {
   it('normalizes the configured production origin', () => {
-    expect(resolveDesktopCloudServer(' https://masterion.bielcrystal.com/ ')).toBe(
-      'https://masterion.bielcrystal.com',
+    expect(resolveDesktopCloudServer(' https://masterino.bielcrystal.com/ ')).toBe(
+      'https://masterino.bielcrystal.com',
     );
   });
 
@@ -16,14 +16,14 @@ describe('desktop cloud server config', () => {
   });
 
   it('rejects a cloud server containing a path', () => {
-    expect(() => resolveDesktopCloudServer('https://masterion.bielcrystal.com/api')).toThrow(
+    expect(() => resolveDesktopCloudServer('https://masterino.bielcrystal.com/api')).toThrow(
       'cloudServer must be an origin',
     );
   });
 
   it('derives the Market URL from the configured Cloud server', () => {
-    expect(resolveDesktopMarketBaseUrl(undefined, 'https://masterion.bielcrystal.com')).toBe(
-      'https://masterion.bielcrystal.com/market',
+    expect(resolveDesktopMarketBaseUrl(undefined, 'https://masterino.bielcrystal.com')).toBe(
+      'https://masterino.bielcrystal.com/market',
     );
   });
 
@@ -31,7 +31,7 @@ describe('desktop cloud server config', () => {
     expect(
       resolveDesktopMarketBaseUrl(
         ' https://market-test.example.com/base/ ',
-        'https://masterion.bielcrystal.com',
+        'https://masterino.bielcrystal.com',
       ),
     ).toBe('https://market-test.example.com/base');
   });

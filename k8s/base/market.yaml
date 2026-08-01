@@ -3,16 +3,16 @@ kind: ConfigMap
 metadata:
   name: masterlion-market-config
 data:
-  MARKET_PORT: "3220"
-  MARKET_PUBLIC_BASE_URL: "https://masterion.bielcrystal.com/market"
-  MARKET_OAUTH_REDIRECT_ORIGINS: "https://masterion.bielcrystal.com"
-  MARKET_OBJECT_STORAGE_ENDPOINT: "http://masterlion-market-oss:9000"
-  MARKET_OBJECT_STORAGE_BUCKET: "masterlion-market"
-  MARKET_OBJECT_STORAGE_REGION: "us-east-1"
-  MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: "1"
-  MARKET_RUNNER_INTERNAL_URL: "http://masterlion-market-runner:3221"
-  CONNECTOR_EGRESS_PROXY_URL: "http://connector-egress-proxy:3128"
-  MARKET_TRUSTED_CLIENT_IDS: "masterlion"
+  MARKET_PORT: '3220'
+  MARKET_PUBLIC_BASE_URL: 'https://masterino.bielcrystal.com/market'
+  MARKET_OAUTH_REDIRECT_ORIGINS: 'https://masterino.bielcrystal.com'
+  MARKET_OBJECT_STORAGE_ENDPOINT: 'http://masterlion-market-oss:9000'
+  MARKET_OBJECT_STORAGE_BUCKET: 'masterlion-market'
+  MARKET_OBJECT_STORAGE_REGION: 'us-east-1'
+  MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: '1'
+  MARKET_RUNNER_INTERNAL_URL: 'http://masterlion-market-runner:3221'
+  CONNECTOR_EGRESS_PROXY_URL: 'http://connector-egress-proxy:3128'
+  MARKET_TRUSTED_CLIENT_IDS: 'masterlion'
 ---
 apiVersion: batch/v1
 kind: Job
@@ -33,7 +33,7 @@ spec:
       containers:
         - name: migrate
           image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
-          command: ["node", "dist/migrate.js"]
+          command: ['node', 'dist/migrate.js']
           envFrom:
             - configMapRef:
                 name: masterlion-market-config
@@ -86,7 +86,7 @@ spec:
               name: http
           resources:
             requests: { cpu: 200m, memory: 256Mi }
-            limits: { cpu: "1", memory: 1Gi }
+            limits: { cpu: '1', memory: 1Gi }
           readinessProbe:
             httpGet: { path: /ready, port: http }
             initialDelaySeconds: 5
@@ -159,7 +159,7 @@ spec:
       containers:
         - name: runner
           image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
-          command: ["node", "dist/runner.js"]
+          command: ['node', 'dist/runner.js']
           envFrom:
             - configMapRef:
                 name: masterlion-market-config
@@ -170,7 +170,7 @@ spec:
               name: http
           resources:
             requests: { cpu: 200m, memory: 256Mi }
-            limits: { cpu: "1", memory: 1Gi }
+            limits: { cpu: '1', memory: 1Gi }
           readinessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 5
@@ -210,11 +210,11 @@ kind: Ingress
 metadata:
   name: masterlion-market
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/use-regex: 'true'
     nginx.ingress.kubernetes.io/rewrite-target: /$2
 spec:
   rules:
-    - host: masterion.bielcrystal.com
+    - host: masterino.bielcrystal.com
       http:
         paths:
           - path: /market(/|$)(.*)

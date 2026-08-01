@@ -276,18 +276,18 @@ case "$ACK_TEST_ACTION" in
     check_aihub_authorization
     ;;
   validate)
-    require_digest MASTERLION_IMAGE_DIGEST
+    require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
-    export MASTERLION_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
+    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     ;;
   deploy)
     [[ "${CONFIRM_ACK_TEST_DEPLOY:-}" == "$NAMESPACE" ]] \
       || fail "set CONFIRM_ACK_TEST_DEPLOY=$NAMESPACE to authorize a test deployment"
-    require_digest MASTERLION_IMAGE_DIGEST
+    require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
-    export MASTERLION_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
+    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     prepare_secret_files

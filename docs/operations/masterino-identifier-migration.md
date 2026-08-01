@@ -6,17 +6,18 @@ application or storage migration.
 
 ## Target mapping
 
-| Area | Old | New |
-| --- | --- | --- |
-| GitHub repository | `chaaak6/MasterLion` | `chaaak6/Masterino` |
-| ACR application repository | `biel_client/masterlion` | `biel_client/masterino` |
-| ACR bridge repository | `biel_client/masterlion-aihub-db-bridge` | `biel_client/masterino-aihub-db-bridge` |
-| Test namespace | `masterlion-test` | `masterino-test` |
-| Production namespace | `masterlion` | `masterino` |
-| Kubernetes workload prefix | `masterlion-*` | `masterino-*` |
-| Docker Compose project/service/network | `masterlion*` | `masterino*` |
+| Area                                   | Old                                      | New                                     |
+| -------------------------------------- | ---------------------------------------- | --------------------------------------- |
+| GitHub repository                      | `chaaak6/MasterLion`                     | `chaaak6/Masterino`                     |
+| ACR application repository             | `biel_client/masterlion`                 | `biel_client/masterino`                 |
+| ACR bridge repository                  | `biel_client/masterlion-aihub-db-bridge` | `biel_client/masterino-aihub-db-bridge` |
+| Production hostname                    | `masterion.bielcrystal.com`              | `masterino.bielcrystal.com`             |
+| Test namespace                         | `masterlion-test`                        | `masterino-test`                        |
+| Production namespace                   | `masterlion`                             | `masterino`                             |
+| Kubernetes workload prefix             | `masterlion-*`                           | `masterino-*`                           |
+| Docker Compose project/service/network | `masterlion*`                            | `masterino*`                            |
 
-The existing domains, OSS buckets, `@masterlion/*` packages, `MASTERLION_*`
+The existing legacy DNS aliases, OSS buckets, `@masterlion/*` packages, remaining compatibility
 environment variables, desktop protocol/bundle/storage identifiers,
 `masterlion-managed`, and the existing ACK kubeconfig context remain compatibility
 identifiers in this migration.

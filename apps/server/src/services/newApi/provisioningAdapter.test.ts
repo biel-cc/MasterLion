@@ -290,15 +290,19 @@ describe('NewApiProvisioningAdapter', () => {
 
   it('falls back to email lookup when employee number lookup misses and username matches', async () => {
     const client = createClient();
-    client.searchUsers
-      .mockResolvedValueOnce({ items: [], total: 0 })
-      .mockResolvedValueOnce({
-        items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
-        total: 1,
-      });
+    client.searchUsers.mockResolvedValueOnce({ items: [], total: 0 }).mockResolvedValueOnce({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
     client.listTokens.mockResolvedValue({
       items: [
-        { id: 8001, name: 'masterlion-managed', remain_quota: 200, unlimited_quota: false, user_id: 9001 },
+        {
+          id: 8001,
+          name: 'masterlion-managed',
+          remain_quota: 200,
+          unlimited_quota: false,
+          user_id: 9001,
+        },
       ],
       total: 1,
     });
@@ -338,12 +342,14 @@ describe('NewApiProvisioningAdapter', () => {
     };
     client.searchUsers
       .mockResolvedValueOnce({ items: [], total: 0 }) // employeeNumber lookup misses
-      .mockResolvedValueOnce({ // email lookup finds wrong user
+      .mockResolvedValueOnce({
+        // email lookup finds wrong user
         items: [{ email: 'ada@example.com', id: 9001, username: 'newapi_9001' }],
         total: 1,
       })
       .mockResolvedValueOnce({ items: [], total: 0 }) // post-create search (if needed)
-      .mockResolvedValueOnce({ // bridge fallback in findUser during createUser
+      .mockResolvedValueOnce({
+        // bridge fallback in findUser during createUser
         items: [createdUser],
         total: 1,
       });
@@ -444,7 +450,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser({
       ...enterpriseUserInput,
-      masterionUsername: 'ada',
+      masterinoUsername: 'ada',
     });
 
     expect(result).toEqual({

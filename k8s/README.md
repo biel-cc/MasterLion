@@ -3,6 +3,11 @@
 The manifests are split into a shared workload base and environment-specific overlays:
 
 - `overlays/production`: `masterino` namespace and production domain/configuration.
+- `overlays/production-maintenance`: standalone maintenance page for introducing
+  `masterino.bielcrystal.com` in the current legacy production namespace without changing the
+  existing application or data stack.
+- `overlays/production-migration`: production target data stack with the application at zero
+  replicas and no public Ingress, used before the controlled data cutover.
 - `overlays/test`: `masterino-test` namespace for ACK cluster
   `c23ea84b986c446d5b3fa9227962e77f4` in `cn-shenzhen`; it deliberately has no
   public Ingress so it can be validated beside the old namespace.
@@ -12,6 +17,8 @@ The manifests are split into a shared workload base and environment-specific ove
   is initialized or before an optional data restore.
 
 Never run `kubectl apply -f k8s/`. Render or apply an explicit overlay through `deploy.sh`.
+For the production hostname and data migration sequence, follow
+`docs/operations/masterino-v1.1.0-production-cutover.md`.
 The guarded deploy script selects `test-migration` until the database is restored. `start` brings the
 application up without taking public traffic. `cutover` is a separate, explicit action that installs
 the public Ingress after the old Ingress has been removed.

@@ -27,7 +27,7 @@ describe('GET /oidc/handoff', () => {
     };
     mocks.fetchAndConsume.mockResolvedValueOnce(handoff).mockResolvedValueOnce(null);
     const requestUrl =
-      'https://masterion.bielcrystal.com/oidc/handoff?id=handoff-id&client=desktop';
+      'https://masterino.bielcrystal.com/oidc/handoff?id=handoff-id&client=desktop';
 
     const firstResponse = await GET(new NextRequest(requestUrl));
     const secondResponse = await GET(new NextRequest(requestUrl));
@@ -44,7 +44,7 @@ describe('GET /oidc/handoff', () => {
 
   it('rejects requests missing the id or client', async () => {
     const response = await GET(
-      new NextRequest('https://masterion.bielcrystal.com/oidc/handoff?id=handoff-id'),
+      new NextRequest('https://masterino.bielcrystal.com/oidc/handoff?id=handoff-id'),
     );
 
     expect(response.status).toBe(400);

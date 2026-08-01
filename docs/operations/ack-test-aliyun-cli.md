@@ -53,7 +53,7 @@ Personal-memory background work uses the in-cluster Redis and
 
 Non-secret deployment inputs:
 
-- `MASTERLION_IMAGE_DIGEST`: digest of the application image built from the reviewed commit.
+- `MASTERINO_IMAGE_DIGEST`: digest of the application image built from the reviewed commit.
 - `BRIDGE_IMAGE_DIGEST`: digest of the reviewed bridge image. The memory branch does not change
   `apps/aihub-db-bridge`, so the currently approved bridge digest may be reused.
 

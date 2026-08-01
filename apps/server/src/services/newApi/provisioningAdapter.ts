@@ -1,13 +1,13 @@
+import { NewApiBridgeClient } from './bridgeClient';
 import {
   NewApiClient,
-  NewApiError,
   type NewApiCreateUserInput,
+  NewApiError,
   type NewApiManagementAuth,
   type NewApiToken,
   type NewApiUpdateUserInput,
   type NewApiUser,
 } from './client';
-import { NewApiBridgeClient } from './bridgeClient';
 
 type LookupField = 'email' | 'employeeNumber' | 'name';
 
@@ -31,7 +31,7 @@ export type ProvisioningPolicy = {
 export type ProvisionEnterpriseUserInput = {
   email?: string;
   employeeNumber?: string;
-  masterionUsername?: string;
+  masterinoUsername?: string;
   name?: string;
   policy: ProvisioningPolicy;
   userId: string;
@@ -189,7 +189,9 @@ const getCreateUsername = (input: ProvisionEnterpriseUserInput) => {
     asTrimmedString(input.name);
 
   if (!username) {
-    throw new Error(`Aihub user creation requires employeeNumber, email, or name for ${input.userId}`);
+    throw new Error(
+      `Aihub user creation requires employeeNumber, email, or name for ${input.userId}`,
+    );
   }
 
   return username;
@@ -251,7 +253,7 @@ export class NewApiProvisioningAdapter {
       targetUser.id,
       managedTokenName,
       policy,
-      input.masterionUsername,
+      input.masterinoUsername,
     );
 
     // Link the Aihub user to the OAuth provider (e.g. BIEL IAM) so that when
@@ -311,10 +313,7 @@ export class NewApiProvisioningAdapter {
     return this.findUser(username);
   }
 
-  private async createUser(
-    input: ProvisionEnterpriseUserInput,
-    policy: AihubProvisioningPolicy,
-  ) {
+  private async createUser(input: ProvisionEnterpriseUserInput, policy: AihubProvisioningPolicy) {
     const username = getCreateUsername(input);
     // Bug 4: NewAPI's POST /api/user/ rejects creation without a password
     // ("无效的参数"). SSO users never log in to Aihub directly, so generate a
@@ -409,13 +408,11 @@ export class NewApiProvisioningAdapter {
    * binding already records a `newApiUserId` still gets its balance topped up
    * on every login. This covers the "old user with no balance" scenario.
    */
-  async ensureUserQuota(
-    newApiUserId: number,
-    policy: ProvisioningPolicy,
-  ): Promise<void> {
+  async ensureUserQuota(newApiUserId: number, policy: ProvisioningPolicy): Promise<void> {
     if (!isValidId(newApiUserId)) return;
     const aihubPolicy = policy.aihubProvisioning ?? {};
-    const initialQuota = typeof aihubPolicy.initialQuota === 'number' ? aihubPolicy.initialQuota : 0;
+    const initialQuota =
+      typeof aihubPolicy.initialQuota === 'number' ? aihubPolicy.initialQuota : 0;
     if (initialQuota <= 0) return;
 
     // Fetch the current user record to check the existing quota.
@@ -454,7 +451,7 @@ export class NewApiProvisioningAdapter {
     newApiUserId: number,
     managedTokenName: string,
     policy: AihubProvisioningPolicy,
-    masterionUsername?: string,
+    masterinoUsername?: string,
   ) {
     // 1. Try the bridge (direct DB read) to find an existing managed token for the target user.
     //    The Aihub API only lists the authenticated user's own tokens, so admin can't see
@@ -479,9 +476,7 @@ export class NewApiProvisioningAdapter {
       });
 
       if (!filterByUserId) {
-        return (page.items ?? []).find(
-          (token) => asTrimmedString(token.name) === managedTokenName,
-        );
+        return (page.items ?? []).find((token) => asTrimmedString(token.name) === managedTokenName);
       }
 
       return findExactToken(page.items ?? [], managedTokenName, newApiUserId);
@@ -512,8 +507,8 @@ export class NewApiProvisioningAdapter {
       //    functional state (the token key still works for API calls).
       if (this.bridgeClient?.isEnabled()) {
         const desiredName =
-          masterionUsername && `Masterino_${masterionUsername}` !== managedTokenName
-            ? `Masterino_${masterionUsername}`
+          masterinoUsername && `Masterino_${masterinoUsername}` !== managedTokenName
+            ? `Masterino_${masterinoUsername}`
             : undefined;
         const reassigned = await this.bridgeClient.reassignToken(
           createdToken.id,

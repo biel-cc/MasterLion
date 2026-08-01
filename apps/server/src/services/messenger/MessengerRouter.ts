@@ -857,7 +857,9 @@ export class MessengerRouter {
             // Slash dispatch has no chat-sdk Thread; setState lives on the
             // thread instance, so direct the user back to the DM where the
             // text path can pick the command up.
-            await ctx.reply('Open your direct message with the Masterino bot and send `/new` there.');
+            await ctx.reply(
+              'Open your direct message with the Masterino bot and send `/new` there.',
+            );
             return;
           }
           // Drop the cached topicId so the next message starts a fresh topic.
@@ -1100,7 +1102,9 @@ export class MessengerRouter {
 
     const userAgents = await this.fetchUserAgents(serverDB, link.userId, link.workspaceId);
     if (userAgents.length === 0) {
-      await ctx.reply('You have no agents yet. Create one in Masterino, then come back to /agents.');
+      await ctx.reply(
+        'You have no agents yet. Create one in Masterino, then come back to /agents.',
+      );
       return;
     }
 
@@ -1369,7 +1373,7 @@ export class MessengerRouter {
     const text = [
       ":wave: Hi, I'm *Masterino* — your AI agent on Slack.",
       '',
-      '• Mention me with `@MasterLion <your question>` to chat in this channel.',
+      '• Mention me with `@Masterino <your question>` to chat in this channel.',
       '• First time? Send me a *direct message* to link your Masterino account.',
       '• Use `/agents` in DM to switch the active agent.',
     ].join('\n');

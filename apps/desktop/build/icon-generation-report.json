@@ -1,44 +1,22 @@
 {
-  "source": "D:\\MasterLion\\apps\\desktop\\build\\masterino-icon-render.png",
-  "originalSize": [
-    3960,
-    4096
-  ],
+  "appContentScale": 0.8,
+  "contentBounds": [0, 0, 3960, 4096],
+  "croppedSize": [3960, 4096],
   "manualCrop": null,
-  "trimModeRequested": "alpha",
-  "trimModeApplied": "alpha",
-  "contentBounds": [
-    0,
-    0,
-    3960,
-    4096
-  ],
-  "croppedSize": [
-    3960,
-    4096
-  ],
+  "maskableContentScale": 0.64,
+  "originalSize": [3960, 4096],
+  "outputRoot": "D:\\Masterino_prd",
+  "preview": "D:\\Masterino_prd\\apps\\desktop\\build\\icon-preview.png",
   "smallSource": {
-    "source": "D:\\MasterLion\\apps\\desktop\\build\\masterino-icon-small.png",
-    "originalSize": [
-      2048,
-      2048
-    ],
+    "source": "D:\\Masterino_prd\\apps\\desktop\\build\\masterino-icon-small.png",
+    "originalSize": [2048, 2048],
     "manualCrop": null,
     "trimModeRequested": "none",
     "trimModeApplied": "none",
-    "contentBounds": [
-      0,
-      0,
-      2048,
-      2048
-    ],
-    "croppedSize": [
-      2048,
-      2048
-    ]
+    "contentBounds": [0, 0, 2048, 2048],
+    "croppedSize": [2048, 2048]
   },
-  "appContentScale": 0.8,
-  "maskableContentScale": 0.64,
-  "outputRoot": "D:\\MasterLion",
-  "preview": "D:\\MasterLion\\apps\\desktop\\build\\icon-preview.png"
+  "source": "D:\\Masterino_prd\\apps\\desktop\\build\\masterino-icon-render.png",
+  "trimModeApplied": "alpha",
+  "trimModeRequested": "alpha"
 }

@@ -25,7 +25,7 @@ vi.mock('@/database/models/oauthHandoff', () => ({
 }));
 vi.mock('@/database/server', () => ({ serverDB: {} }));
 vi.mock('@/envs/app', () => ({
-  appEnv: { APP_URL: 'https://masterion.bielcrystal.com' },
+  appEnv: { APP_URL: 'https://masterino.bielcrystal.com' },
 }));
 
 describe('GET /oidc/callback/desktop', () => {
@@ -36,7 +36,7 @@ describe('GET /oidc/callback/desktop', () => {
   it('stores the authorization code under the state handoff id', async () => {
     const response = await GET(
       new NextRequest(
-        'https://masterion.bielcrystal.com/oidc/callback/desktop?code=auth-code&state=handoff-id',
+        'https://masterino.bielcrystal.com/oidc/callback/desktop?code=auth-code&state=handoff-id',
       ),
     );
 
@@ -46,21 +46,19 @@ describe('GET /oidc/callback/desktop', () => {
       payload: { code: 'auth-code', state: 'handoff-id' },
     });
     expect(response.headers.get('location')).toBe(
-      'https://masterion.bielcrystal.com/oauth/callback/success',
+      'https://masterino.bielcrystal.com/oauth/callback/success',
     );
     expect(mocks.cleanupExpired).toHaveBeenCalledOnce();
   });
 
   it('redirects invalid callbacks without creating a handoff', async () => {
     const response = await GET(
-      new NextRequest(
-        'https://masterion.bielcrystal.com/oidc/callback/desktop?state=missing-code',
-      ),
+      new NextRequest('https://masterino.bielcrystal.com/oidc/callback/desktop?state=missing-code'),
     );
 
     expect(mocks.create).not.toHaveBeenCalled();
     expect(response.headers.get('location')).toBe(
-      'https://masterion.bielcrystal.com/oauth/callback/error?reason=invalid_request',
+      'https://masterino.bielcrystal.com/oauth/callback/error?reason=invalid_request',
     );
   });
 });

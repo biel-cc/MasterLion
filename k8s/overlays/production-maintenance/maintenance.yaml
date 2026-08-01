@@ -1,0 +1,320 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: masterino-maintenance-page
+  labels:
+    app.kubernetes.io/name: masterino-maintenance
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: maintenance
+data:
+  server.js: |-
+    const fs = require('node:fs');
+    const http = require('node:http');
+
+    const pagePath = process.env.MAINTENANCE_PAGE_PATH || '/maintenance/index.html';
+    const port = Number(process.env.PORT || 8080);
+    const page = fs.readFileSync(pagePath);
+    const verificationPath = '/WW_verify_uSB5OnVf9BeWJX0U.txt';
+    const verificationValue = 'uSB5OnVf9BeWJX0U';
+
+    const server = http.createServer((request, response) => {
+      const path = new URL(request.url || '/', 'http://localhost').pathname;
+      if (path === '/healthz') {
+        response.writeHead(200, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/plain; charset=utf-8',
+        });
+        response.end('ok');
+        return;
+      }
+      if (path === verificationPath) {
+        response.writeHead(200, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/plain; charset=utf-8',
+        });
+        response.end(verificationValue);
+        return;
+      }
+      response.writeHead(503, {
+        'Cache-Control': 'no-store, max-age=0',
+        'Content-Length': page.length,
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'Content-Type': 'text/html; charset=utf-8',
+        'Referrer-Policy': 'no-referrer',
+        'Retry-After': '300',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'X-Robots-Tag': 'noindex, nofollow',
+      });
+      response.end(request.method === 'HEAD' ? undefined : page);
+    });
+
+    server.listen(port, '0.0.0.0', () => console.log(`maintenance server listening on ${port}`));
+    process.on('SIGTERM', () => server.close(() => process.exit(0)));
+  index.html: |-
+    <!doctype html>
+    <html lang="zh-CN">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="robots" content="noindex,nofollow" />
+        <title>Masterino 系统维护中</title>
+        <style>
+          :root {
+            color-scheme: light;
+            font-family:
+              Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+              "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #f4f7fb;
+            color: #162033;
+          }
+          * { box-sizing: border-box; }
+          body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background:
+              radial-gradient(circle at 20% 10%, rgba(65, 105, 225, 0.12), transparent 34%),
+              radial-gradient(circle at 80% 90%, rgba(74, 144, 226, 0.1), transparent 36%),
+              #f4f7fb;
+          }
+          main {
+            width: min(100%, 560px);
+            padding: 44px;
+            border: 1px solid rgba(22, 32, 51, 0.08);
+            border-radius: 24px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 24px 70px rgba(42, 59, 92, 0.12);
+          }
+          .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 32px;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+          }
+          .mark {
+            width: 36px;
+            height: 36px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            background: #1f56d8;
+            color: #fff;
+            font-size: 20px;
+          }
+          .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 7px 12px;
+            border-radius: 999px;
+            background: #eef3ff;
+            color: #244da8;
+            font-size: 13px;
+            font-weight: 650;
+          }
+          .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2f66e5;
+            box-shadow: 0 0 0 5px rgba(47, 102, 229, 0.12);
+          }
+          h1 {
+            margin: 0 0 16px;
+            font-size: clamp(30px, 6vw, 42px);
+            line-height: 1.16;
+            letter-spacing: -0.035em;
+          }
+          p {
+            margin: 0;
+            color: #566176;
+            font-size: 16px;
+            line-height: 1.75;
+          }
+          .english {
+            margin-top: 14px;
+            font-size: 14px;
+            color: #7a8497;
+          }
+          .hint {
+            margin-top: 28px;
+            padding-top: 22px;
+            border-top: 1px solid #e9edf4;
+            font-size: 13px;
+            color: #7a8497;
+          }
+          @media (max-width: 520px) {
+            main { padding: 30px 24px; border-radius: 20px; }
+            .brand { margin-bottom: 26px; }
+          }
+          @media (prefers-reduced-motion: no-preference) {
+            .pulse { animation: pulse 2.2s ease-in-out infinite; }
+            @keyframes pulse {
+              50% { box-shadow: 0 0 0 9px rgba(47, 102, 229, 0.04); }
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <main role="main" aria-labelledby="maintenance-title">
+          <div class="brand"><span class="mark" aria-hidden="true">M</span>Masterino</div>
+          <div class="status"><span class="pulse" aria-hidden="true"></span>版本升级进行中</div>
+          <h1 id="maintenance-title">系统维护中</h1>
+          <p>我们正在进行版本升级和服务切换，请稍后重新访问。</p>
+          <p class="english" lang="en">Scheduled maintenance is in progress. Please try again later.</p>
+          <div class="hint">请勿重复提交请求。服务恢复后可正常继续使用。</div>
+        </main>
+      </body>
+    </html>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterino-maintenance
+  labels:
+    app.kubernetes.io/name: masterino-maintenance
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: maintenance
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: masterino-maintenance
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino-maintenance
+  labels:
+    app.kubernetes.io/name: masterino-maintenance
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: maintenance
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-maintenance
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-maintenance
+        app.kubernetes.io/part-of: masterino
+        app.kubernetes.io/component: maintenance
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: acr-credential-secret-aggregation
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: maintenance
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino:maintenance-source
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - /maintenance/server.js
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: page
+              mountPath: /maintenance
+              readOnly: true
+      volumes:
+        - name: page
+          configMap:
+            name: masterino-maintenance-page
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: masterino-maintenance
+  labels:
+    app.kubernetes.io/name: masterino-maintenance
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: maintenance
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-maintenance
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: masterino-maintenance
+  labels:
+    app.kubernetes.io/name: masterino-maintenance
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: maintenance
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: '1m'
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '15'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '15'
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - masterino.bielcrystal.com
+      secretName: 20261122bielcrystal.com
+  rules:
+    - host: masterino.bielcrystal.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino-maintenance
+                port:
+                  number: 8080

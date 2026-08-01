@@ -21,7 +21,7 @@ vi.mock('@lobechat/const', async (importOriginal) => {
 });
 
 vi.mock('@/utils/electron/desktopRuntimeConfig', () => ({
-  getDesktopCloudServer: () => 'https://masterion.bielcrystal.com',
+  getDesktopCloudServer: () => 'https://masterino.bielcrystal.com',
 }));
 
 const createState = (dataSyncConfig: ElectronState['dataSyncConfig']): ElectronState => ({
@@ -37,12 +37,12 @@ describe('electronSyncSelectors', () => {
   describe('remoteServerUrl', () => {
     it('uses the sidecar URL mirrored into cloud config', () => {
       const state = createState({
-        remoteServerUrl: 'https://masterion.bielcrystal.com',
+        remoteServerUrl: 'https://masterino.bielcrystal.com',
         storageMode: 'cloud',
       });
 
       expect(electronSyncSelectors.remoteServerUrl(state)).toBe(
-        'https://masterion.bielcrystal.com',
+        'https://masterino.bielcrystal.com',
       );
     });
 
@@ -50,7 +50,7 @@ describe('electronSyncSelectors', () => {
       const state = createState({ storageMode: 'cloud' });
 
       expect(electronSyncSelectors.remoteServerUrl(state)).toBe(
-        'https://masterion.bielcrystal.com',
+        'https://masterino.bielcrystal.com',
       );
     });
 

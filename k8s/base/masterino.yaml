@@ -38,7 +38,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: masterino
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino:v1.0.3
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino:v1.1.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

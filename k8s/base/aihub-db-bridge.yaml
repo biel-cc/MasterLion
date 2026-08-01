@@ -34,7 +34,7 @@ spec:
     spec:
       containers:
         - name: aihub-db-bridge
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge:v1.0.3
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge:v1.1.0
           imagePullPolicy: IfNotPresent
           env:
             - name: AIHUB_BRIDGE_TOKEN
@@ -63,7 +63,7 @@ spec:
                   name: masterino-config
                   key: AIHUB_QUERY_TIMEOUT_MS
             - name: PORT
-              value: "3218"
+              value: '3218'
           ports:
             - containerPort: 3218
               name: http

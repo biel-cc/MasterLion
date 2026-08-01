@@ -49,7 +49,7 @@ Dashboard 和 REST/MCP API 共用 HTTPS 入口，模板默认仅允许 Masterino
 ```dotenv
 SANDBOX_PROVIDER=onlyboxes
 ONLYBOXES_BASE_URL=https://onlyboxes.internal.bielcrystal.com
-ONLYBOXES_JIT_ISSUER=https://masterion.bielcrystal.com
+ONLYBOXES_JIT_ISSUER=https://masterino.bielcrystal.com
 AUTH_DISABLE_EMAIL_SIGNUP=1
 AUTH_DISABLE_EMAIL_PASSWORD=0
 ```

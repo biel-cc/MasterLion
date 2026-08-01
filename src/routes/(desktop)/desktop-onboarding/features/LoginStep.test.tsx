@@ -18,7 +18,7 @@ vi.mock('@lobechat/electron-client-ipc', () => ({
 }));
 
 vi.mock('@/utils/electron/desktopRuntimeConfig', () => ({
-  getDesktopCloudServer: () => 'https://masterion.bielcrystal.com',
+  getDesktopCloudServer: () => 'https://masterino.bielcrystal.com',
   getDesktopCloudServerAliases: () => ['https://mlai-test.bielcrystal.com'],
 }));
 
@@ -186,7 +186,7 @@ describe('Desktop onboarding LoginStep', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Use self-hosted server' }));
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), {
-      target: { value: 'https://masterion.bielcrystal.com/' },
+      target: { value: 'https://masterino.bielcrystal.com/' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Connect to server' }));
 

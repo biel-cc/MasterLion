@@ -26,19 +26,19 @@ afterEach(() => {
 
 describe('OpenAPI CORS policy', () => {
   it('allows the canonical app origin', async () => {
-    vi.stubEnv('APP_URL', 'https://masterion.bielcrystal.com');
+    vi.stubEnv('APP_URL', 'https://masterino.bielcrystal.com');
 
-    const response = await preflight('https://masterion.bielcrystal.com');
+    const response = await preflight('https://masterino.bielcrystal.com');
 
     expect(response.status).toBe(204);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
-      'https://masterion.bielcrystal.com',
+      'https://masterino.bielcrystal.com',
     );
     expect(response.headers.get('Vary')).toContain('Origin');
   });
 
   it('allows an explicitly configured trusted origin', async () => {
-    vi.stubEnv('APP_URL', 'https://masterion.bielcrystal.com');
+    vi.stubEnv('APP_URL', 'https://masterino.bielcrystal.com');
     vi.stubEnv('OPENAPI_CORS_ALLOWED_ORIGINS', 'https://aihub.bielcrystal.com');
 
     const response = await preflight('https://aihub.bielcrystal.com');
@@ -49,7 +49,7 @@ describe('OpenAPI CORS policy', () => {
   });
 
   it('does not return CORS permission to an untrusted origin', async () => {
-    vi.stubEnv('APP_URL', 'https://masterion.bielcrystal.com');
+    vi.stubEnv('APP_URL', 'https://masterino.bielcrystal.com');
 
     const response = await preflight('https://attacker.example');
 
@@ -58,7 +58,7 @@ describe('OpenAPI CORS policy', () => {
   });
 
   it('does not accept a wildcard from configuration', async () => {
-    vi.stubEnv('APP_URL', 'https://masterion.bielcrystal.com');
+    vi.stubEnv('APP_URL', 'https://masterino.bielcrystal.com');
     vi.stubEnv('OPENAPI_CORS_ALLOWED_ORIGINS', '*');
 
     const response = await preflight('https://attacker.example');

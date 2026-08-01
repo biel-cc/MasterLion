@@ -28,15 +28,25 @@ type DbLike = {
       findFirst?: (args: unknown) => Promise<{ newApiUserId?: number | null } | undefined>;
     };
     users?: {
-      findFirst?: (args: unknown) => Promise<{ email?: string | null; username?: string | null } | undefined>;
+      findFirst?: (
+        args: unknown,
+      ) => Promise<{ email?: string | null; username?: string | null } | undefined>;
     };
   };
-  select?: (fields: Record<string, unknown>) => { from: (table: unknown) => { where: (condition: unknown) => { limit: (n: number) => Promise<Array<{ email?: string | null; username?: string | null }>> } } };
+  select?: (fields: Record<string, unknown>) => {
+    from: (table: unknown) => {
+      where: (condition: unknown) => {
+        limit: (n: number) => Promise<Array<{ email?: string | null; username?: string | null }>>;
+      };
+    };
+  };
   update: (table: unknown) => any;
 };
 
 type AihubProvisioningAdapter = {
-  provisionEnterpriseUser: (input: ProvisionEnterpriseUserInput) => Promise<ProvisionEnterpriseUserResult>;
+  provisionEnterpriseUser: (
+    input: ProvisionEnterpriseUserInput,
+  ) => Promise<ProvisionEnterpriseUserResult>;
   // Bug 2: independently ensure an existing Aihub user has the default initial
   // quota, even when full provisioning fails. Called from the error path so
   // old users with a recorded newApiUserId still get their balance topped up.
@@ -94,7 +104,8 @@ type IdentityProvisioningServiceOptions = {
 type TopLevelProvisioningInput = IdentityProvisioningInput &
   Partial<IdentityProvisioningServiceOptions>;
 
-const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 const asTrimmedString = (value: unknown) => {
   if (typeof value !== 'string') return undefined;
@@ -374,27 +385,27 @@ export class IdentityProvisioningService {
         try {
           adapter = adapter ?? new NewApiProvisioningAdapter();
 
-          // Fetch the Masterino username for token naming (MasterLion_{username}),
+          // Fetch the Masterino username for token naming (Masterino_{username}),
           // and the email — WeCom profiles often lack an email field, but the user
           // may have one in the Masterino users table (e.g. self-registered in
           // Aihub with the same email). Falling back to this email lets the
           // provisioning lookup match an existing Aihub user instead of creating
           // a duplicate.
-          let masterionUsername: string | undefined;
-          let masterionEmail: string | undefined;
+          let masterinoUsername: string | undefined;
+          let masterinoEmail: string | undefined;
           if (typeof this.db.query?.users?.findFirst === 'function') {
             const userRow = await this.db.query.users.findFirst({
               columns: { email: true, username: true },
               where: eq(users.id, input.userId),
             });
-            masterionUsername = userRow?.username ?? undefined;
-            masterionEmail = userRow?.email ?? undefined;
+            masterinoUsername = userRow?.username ?? undefined;
+            masterinoEmail = userRow?.email ?? undefined;
           }
 
           const provisioningResult = await adapter.provisionEnterpriseUser({
-            email: asTrimmedString(input.email) ?? masterionEmail,
+            email: asTrimmedString(input.email) ?? masterinoEmail,
             employeeNumber: input.employeeNumber,
-            masterionUsername,
+            masterinoUsername,
             name: input.name,
             policy,
             userId: input.userId,
@@ -525,10 +536,7 @@ export class IdentityProvisioningService {
     targetId: string;
     targetType: string;
   }) {
-    await this.db
-      .insert(enterpriseAuditLogs)
-      .values(input)
-      .returning();
+    await this.db.insert(enterpriseAuditLogs).values(input).returning();
   }
 
   private async writeAuditLogBestEffort(input: {

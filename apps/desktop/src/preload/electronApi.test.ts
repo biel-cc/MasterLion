@@ -94,9 +94,9 @@ describe('setupElectronApi', () => {
 
     expect(Object.prototype.hasOwnProperty.call(exposedEnv, 'nodeVersion')).toBe(true);
     expect(typeof exposedEnv.nodeVersion).toBe('string');
-    expect(exposedEnv.cloudServer).toBe('https://masterion.bielcrystal.com');
+    expect(exposedEnv.cloudServer).toBe('https://masterino.bielcrystal.com');
     expect(exposedEnv.cloudServerAliases).toEqual(['https://mlai-test.bielcrystal.com']);
-    expect(exposedEnv.marketBaseUrl).toBe('https://masterion.bielcrystal.com/market');
+    expect(exposedEnv.marketBaseUrl).toBe('https://masterino.bielcrystal.com/market');
   });
 
   it('should expose both APIs in correct order', () => {

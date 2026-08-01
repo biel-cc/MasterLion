@@ -67,7 +67,7 @@ const getPublishConfig = () => {
     {
       owner: 'chaaak6',
       provider: 'github',
-      repo: 'MasterLion',
+      repo: 'Masterino',
     },
   ];
 };

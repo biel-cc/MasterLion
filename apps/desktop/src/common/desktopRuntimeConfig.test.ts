@@ -23,16 +23,16 @@ describe('desktop runtime config', () => {
     expect(
       parseDesktopRuntimeConfig(
         JSON.stringify({
-          cloudServer: 'https://masterion.bielcrystal.com',
+          cloudServer: 'https://masterino.bielcrystal.com',
           cloudServerAliases: ['https://mlai-test.bielcrystal.com/'],
-          marketBaseUrl: 'https://masterion.bielcrystal.com/market',
+          marketBaseUrl: 'https://masterino.bielcrystal.com/market',
         }),
         'test-config.json',
       ),
     ).toEqual({
-      cloudServer: 'https://masterion.bielcrystal.com',
+      cloudServer: 'https://masterino.bielcrystal.com',
       cloudServerAliases: ['https://mlai-test.bielcrystal.com'],
-      marketBaseUrl: 'https://masterion.bielcrystal.com/market',
+      marketBaseUrl: 'https://masterino.bielcrystal.com/market',
       sourcePath: 'test-config.json',
     });
   });
