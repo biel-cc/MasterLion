@@ -6,7 +6,7 @@ resources:
 images:
   - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market
     newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market
-    newTag: v1.1.0
+    digest: sha256:e7463e93c0538bf16dcdae06f52fa63bbeb4ddea58e6734f79d5ff521c0395e5
 patches:
   - target:
       kind: Ingress

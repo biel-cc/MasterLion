@@ -60,7 +60,12 @@ assert.equal(
   'Connector Runner must remain disabled until its proxy is provisioned',
 );
 assert(find(market, 'Job', 'masterino-market-migrate'));
-assert(find(market, 'Deployment', 'masterino-market'));
+const marketDeployment = find(market, 'Deployment', 'masterino-market');
+assert(marketDeployment);
+assert.match(
+  marketDeployment.spec.template.spec.containers[0].image,
+  /masterino-market@sha256:e7463e93c0538bf16dcdae06f52fa63bbeb4ddea58e6734f79d5ff521c0395e5/,
+);
 assert(find(market, 'HorizontalPodAutoscaler', 'masterino-market'));
 assert(find(market, 'PodDisruptionBudget', 'masterino-market'));
 const marketPolicy = find(market, 'NetworkPolicy', 'masterino-market-api-no-public-egress');
