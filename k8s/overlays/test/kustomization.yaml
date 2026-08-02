@@ -19,6 +19,42 @@ generatorOptions:
 patches:
   - path: memory-config-patch.yaml
   - path: storage-patch.yaml
+  - target:
+      kind: Deployment
+      name: masterino
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_JIT_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: masterino-onlyboxes-secret
+              key: ONLYBOXES_JIT_SIGNING_KEY
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: onlyboxes-ca
+            mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+            subPath: onlyboxes-internal-ca.crt
+            readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: onlyboxes-ca
+            configMap:
+              name: masterino-onlyboxes-ca
+      - op: add
+        path: /spec/template/spec/hostAliases
+        value:
+          - ip: 10.80.137.220
+            hostnames:
+              - onlyboxes.internal.bielcrystal.com
 replicas:
   - name: masterino
     count: 1
