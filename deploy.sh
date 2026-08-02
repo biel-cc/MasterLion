@@ -150,6 +150,33 @@ render_manifests() {
     -e "s|${BRIDGE_IMAGE}:${IMAGE_TAG_MARKER}|${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}|g"
 }
 
+render_deploy_manifests() {
+  local render_dir="${1:-$OVERLAY_DIR}"
+
+  # StorageClass is a bootstrap resource whose parameters are immutable. Keep it
+  # in validation and bootstrap, but never include it in routine app rollouts.
+  render_manifests "$render_dir" | awk '
+    function flush_document() {
+      if (document != "" && !is_storage_class) {
+        if (documents_printed > 0) print "---"
+        printf "%s", document
+        documents_printed++
+      }
+      document = ""
+      is_storage_class = 0
+    }
+    /^---[[:space:]]*$/ {
+      flush_document()
+      next
+    }
+    {
+      document = document $0 ORS
+      if ($0 == "kind: StorageClass") is_storage_class = 1
+    }
+    END { flush_document() }
+  '
+}
+
 required_secret_keys=(
   KEY_VAULTS_SECRET AUTH_SECRET JWKS_KEY POSTGRES_PASSWORD DATABASE_URL
   REDIS_PASSWORD REDIS_URL S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
@@ -376,10 +403,12 @@ case "$COMMAND" in
       deploy_overlay="$MIGRATION_OVERLAY_DIR"
       echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
     fi
-    render_manifests "$deploy_overlay" \
-      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - > /dev/null
-    render_manifests "$deploy_overlay" \
-      | "${KUBE[@]}" apply --server-side --field-manager=kubectl -f -
+    render_deploy_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
+          --force-conflicts --dry-run=server -f - > /dev/null
+    render_deploy_manifests "$deploy_overlay" \
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
+          --force-conflicts -f -
     ;;
   start)
     verify_target mutation
