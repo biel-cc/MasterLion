@@ -5,15 +5,18 @@ import { z } from 'zod';
 import { withRbacPermission } from '@/business/server/trpc-middlewares/rbacPermission';
 import { publicProcedure, router } from '@/libs/trpc/lambda';
 import { marketUserInfo, requireMarketAuth, serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { isMarketFeatureExplicitlyDisabled } from '@/server/featureFlags';
 import { MarketService } from '@/server/services/market';
 
 const log = debug('lambda-router:market:creds');
 
 // Creds procedure with market authentication
-const credsProcedure = publicProcedure
+const credsBaseProcedure = publicProcedure
   .use(serverDatabase)
   .use(marketUserInfo)
-  .use(requireMarketAuth)
+  .use(requireMarketAuth);
+
+const credsProcedure = credsBaseProcedure
   .use(async ({ ctx, next }) => {
     return next({
       ctx: {
@@ -24,6 +27,18 @@ const credsProcedure = publicProcedure
       },
     });
   });
+const credsListProcedure = credsBaseProcedure.use(async ({ ctx, next }) => {
+  return next({
+    ctx: {
+      marketService: isMarketFeatureExplicitlyDisabled()
+        ? undefined
+        : new MarketService({
+            accessToken: ctx.marketAccessToken,
+            userInfo: ctx.marketUserInfo,
+          }),
+    },
+  });
+});
 const credsManageProcedure = credsProcedure.use(withRbacPermission('workspace:update:all'));
 
 export const credsRouter = router({
@@ -308,8 +323,10 @@ export const credsRouter = router({
     }),
 
   // List all credentials
-  list: credsProcedure.query(async ({ ctx }) => {
+  list: credsListProcedure.query(async ({ ctx }) => {
     log('list called');
+
+    if (!ctx.marketService) return { data: [] };
 
     try {
       const result = await ctx.marketService.market.creds.list();

@@ -45,6 +45,18 @@ const FEATURE_FLAG_OVERRIDE_DOMAIN: RuntimeConfigDomain<Record<string, boolean>>
 let featureFlagsProvider: RuntimeConfigProvider<IFeatureFlags> | null = null;
 let featureFlagsOverrideProvider: RuntimeConfigProvider<Record<string, boolean>> | null = null;
 
+export const isMarketFeatureExplicitlyDisabled = () =>
+  (process.env.FEATURE_FLAGS || '')
+    .replaceAll('\uFF0C', ',')
+    .split(',')
+    .some((flag) => flag.trim() === '-market');
+
+const applyDeploymentFeatureFlagLocks = (flags: IFeatureFlags): IFeatureFlags => {
+  if (!isMarketFeatureExplicitlyDisabled()) return flags;
+
+  return { ...flags, market: false };
+};
+
 const getFeatureFlagsProvider = () => {
   featureFlagsProvider ??= new CompositeRuntimeConfigProvider(
     new RedisRuntimeConfigProvider(FEATURE_FLAGS_DOMAIN),
@@ -65,7 +77,9 @@ const getFeatureFlagOverrideProvider = () => {
 const getMergedFeatureFlags = async (userId?: string) => {
   const globalSnapshot = await getFeatureFlagsProvider().getSnapshot({ scope: 'global' });
 
-  const globalFlags = merge(DEFAULT_FEATURE_FLAGS, globalSnapshot?.data || {});
+  const globalFlags = applyDeploymentFeatureFlagLocks(
+    merge(DEFAULT_FEATURE_FLAGS, globalSnapshot?.data || {}),
+  );
 
   if (!userId) {
     return globalFlags;
@@ -80,7 +94,9 @@ const getMergedFeatureFlags = async (userId?: string) => {
     return globalFlags;
   }
 
-  return merge(globalFlags, userOverrideSnapshot.data as Partial<IFeatureFlags>);
+  return applyDeploymentFeatureFlagLocks(
+    merge(globalFlags, userOverrideSnapshot.data as Partial<IFeatureFlags>),
+  );
 };
 
 /**

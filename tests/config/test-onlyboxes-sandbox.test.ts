@@ -104,4 +104,20 @@ describe('test OnlyBoxes sandbox configuration', () => {
     expect(cloudConfigHook).toContain('isClaudeCode && showMarket');
     expect(cloudProfile).toContain('{ enabled: showMarket }');
   });
+
+  it('treats deployment -market as an authoritative runtime lock', async () => {
+    const featureFlags = await readFile(
+      path.join(root, 'apps', 'server', 'src', 'featureFlags', 'index.ts'),
+      'utf8',
+    );
+    const credsRouter = await readFile(
+      path.join(root, 'apps', 'server', 'src', 'routers', 'lambda', 'market', 'creds.ts'),
+      'utf8',
+    );
+
+    expect(featureFlags).toContain("flag.trim() === '-market'");
+    expect(featureFlags).toContain('applyDeploymentFeatureFlagLocks');
+    expect(credsRouter).toContain('list: credsListProcedure');
+    expect(credsRouter).toContain('if (!ctx.marketService) return { data: [] }');
+  });
 });
