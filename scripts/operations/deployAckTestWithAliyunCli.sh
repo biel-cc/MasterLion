@@ -282,6 +282,17 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     ;;
+  apply)
+    [[ "${CONFIRM_ACK_TEST_DEPLOY:-}" == "$NAMESPACE" ]] \
+      || fail "set CONFIRM_ACK_TEST_DEPLOY=$NAMESPACE to authorize a test deployment"
+    require_digest MASTERINO_IMAGE_DIGEST
+    require_digest BRIDGE_IMAGE_DIGEST
+    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
+    bash ./deploy.sh --env test preflight
+    bash ./deploy.sh --env test validate
+    bash ./deploy.sh --env test deploy
+    bash ./deploy.sh --env test rollout
+    ;;
   deploy)
     [[ "${CONFIRM_ACK_TEST_DEPLOY:-}" == "$NAMESPACE" ]] \
       || fail "set CONFIRM_ACK_TEST_DEPLOY=$NAMESPACE to authorize a test deployment"
@@ -301,6 +312,6 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, apply, deploy, or status"
     ;;
 esac
