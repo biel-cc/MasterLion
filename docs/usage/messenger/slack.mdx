@@ -1,9 +1,8 @@
 ---
 title: Use Masterino on Slack
 description: >-
-  Install the official Masterino Slack app to your workspace, then link each
-  member's Slack account to Masterino. Pick a default agent and chat with your AI
-  assistants from Slack DMs — no bot setup required.
+  Install the official Masterino Slack app to your workspace, then link each member's Slack account to Masterino. Pick a default agent and chat with your AI assistants from Slack DMs — no bot setup required.
+
 tags:
   - Messenger
   - Slack
@@ -43,7 +42,7 @@ Slack works in two phases: a **workspace admin installs** the official Masterino
 
   {/* TODO: screenshot — Slack detail page showing one connected workspace row */}
 
-  > **Workspace already connected by someone else?** Masterino blocks the install and shows a "Workspace already connected" notice. You don't need to install again — just DM **@MasterLion** on Slack to link your personal account. If you want to take over ownership, ask the original installer to disconnect the workspace first.
+  > **Workspace already connected by someone else?** Masterino blocks the install and shows a "Workspace already connected" notice. You don't need to install again — just DM **@Masterino** on Slack to link your personal account. If you want to take over ownership, ask the original installer to disconnect the workspace first.
 </Steps>
 
 ## Phase B — Link your personal account (each member)
@@ -51,7 +50,7 @@ Slack works in two phases: a **workspace admin installs** the official Masterino
 <Steps>
   ### Open the Masterino bot on Slack
 
-  On Slack, open the **Apps** sidebar and find **Masterino**, or search for `@MasterLion`. Open a DM with the bot.
+  On Slack, open the **Apps** sidebar and find **Masterino**, or search for `@Masterino`. Open a DM with the bot.
 
   {/* TODO: screenshot — Slack apps sidebar with Masterino highlighted */}
 
@@ -87,14 +86,14 @@ Slack has two distinct disconnect actions:
 
 | Action                              | Effect                                                                                                                                                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Disconnect** on a *user* row      | Unlinks **your** Masterino account from your Slack account in this workspace. Your inbound DMs stop until you message the bot and link again.                                                             |
+| **Disconnect** on a *user* row      | Unlinks **your** Masterino account from your Slack account in this workspace. Your inbound DMs stop until you message the bot and link again.                                                           |
 | **Disconnect** on a *workspace* row | Removes the workspace install. The bot is **frozen for everyone** in that workspace because dispatch is token-gated — existing user links remain on file but pause until the workspace is re-installed. |
 
 You can re-install (workspace) or re-link (personal) at any time by repeating the relevant phase.
 
 ## Troubleshooting
 
-- **"Workspace already connected"** — Another Masterino user already installed the app to this workspace. DM **@MasterLion** to link your personal account; you do not need to install again. To take over ownership, ask the original installer to disconnect first.
+- **"Workspace already connected"** — Another Masterino user already installed the app to this workspace. DM **@Masterino** to link your personal account; you do not need to install again. To take over ownership, ask the original installer to disconnect first.
 - **Slack install failed (`<reason>`)** — Common reasons: authorisation cancelled, install session expired (re-open the modal and try again), Slack returned incomplete data (retry; if persistent, contact support).
 - **Bot does not reply to your DM** — The workspace install may have been disconnected. Check **Settings → Messenger → Slack** for a workspace row; if missing, ask an admin to re-install.
 - **"This link is already used"** — One-time confirmation links expire after one use. DM the bot again to get a new link.

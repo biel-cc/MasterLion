@@ -419,7 +419,7 @@ export class UpdaterManager {
       autoUpdater.setFeedURL({
         owner: 'chaaak6',
         provider: 'github',
-        repo: 'MasterLion',
+        repo: 'Masterino',
       });
 
       autoUpdater.allowPrerelease = this.currentChannel !== 'stable';

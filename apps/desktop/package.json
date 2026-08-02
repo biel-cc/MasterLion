@@ -6,7 +6,7 @@
   "homepage": "https://aihub.bielcrystal.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chaaak6/MasterLion"
+    "url": "https://github.com/chaaak6/Masterino"
   },
   "author": "Masterino",
   "main": "./dist/main/index.js",

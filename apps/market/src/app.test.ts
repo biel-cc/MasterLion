@@ -1,4 +1,8 @@
-import { buildTrustedClientPayload, createTrustedClientToken, MarketSDK } from '@lobehub/market-sdk';
+import {
+  buildTrustedClientPayload,
+  createTrustedClientToken,
+  MarketSDK,
+} from '@lobehub/market-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMarketApp } from './app.js';
@@ -6,8 +10,16 @@ import type { MarketConfig } from './config.js';
 import { encryptJson } from './crypto.js';
 
 const secret = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-const actor = { email: 'employee@example.com', name: 'Employee', userId: 'user-1', workspaceId: 'workspace-1' };
-const token = createTrustedClientToken(buildTrustedClientPayload({ ...actor, clientId: 'masterlion' }), secret);
+const actor = {
+  email: 'employee@example.com',
+  name: 'Employee',
+  userId: 'user-1',
+  workspaceId: 'workspace-1',
+};
+const token = createTrustedClientToken(
+  buildTrustedClientPayload({ ...actor, clientId: 'masterino' }),
+  secret,
+);
 
 const config: MarketConfig = {
   MARKET_ADMIN_USER_IDS: 'user-1',
@@ -21,26 +33,46 @@ const config: MarketConfig = {
   MARKET_OBJECT_STORAGE_REGION: 'us-east-1',
   MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY: 'unused',
   MARKET_OAUTH_CLIENTS_JSON: '{}',
-  MARKET_OAUTH_REDIRECT_ORIGINS: 'https://masterlion.example.com',
+  MARKET_OAUTH_REDIRECT_ORIGINS: 'https://masterino.example.com',
   MARKET_PORT: 3220,
-  MARKET_PUBLIC_BASE_URL: 'https://masterlion.example.com/market',
+  MARKET_PUBLIC_BASE_URL: 'https://masterino.example.com/market',
   MARKET_REDIS_URL: 'redis://unused',
   MARKET_RUNNER_INTERNAL_TOKEN: 'runner-token-at-least-thirty-two-bytes',
   MARKET_RUNNER_INTERNAL_URL: 'http://runner.local',
-  MARKET_TRUSTED_CLIENT_IDS: 'masterlion',
+  MARKET_TRUSTED_CLIENT_IDS: 'masterino',
   MARKET_TRUSTED_CLIENT_SECRET: secret,
 };
 
-const account = { email: actor.email, externalUserId: actor.userId, id: 7, name: actor.name, role: 'admin' as const };
+const account = {
+  email: actor.email,
+  externalUserId: actor.userId,
+  id: 7,
+  name: actor.name,
+  role: 'admin' as const,
+};
 
 const createRepository = () => ({
   audit: vi.fn(async () => undefined),
   categories: vi.fn(async () => []),
-  detail: vi.fn(async (_type, identifier) => ({ config: { model: 'internal-model' }, identifier, name: 'Internal Assistant' })),
-  getPool: () => ({ query: vi.fn(async (sql: string) => sql.includes('INSERT INTO market_events')
-    ? { rowCount: 1, rows: [{ id: 42 }] }
-    : { rowCount: 0, rows: [] }) }),
-  list: vi.fn(async () => ({ currentPage: 1, items: [{ identifier: 'internal-assistant', name: 'Internal Assistant' }], pageSize: 20, totalCount: 1, totalPages: 1 })),
+  detail: vi.fn(async (_type, identifier) => ({
+    config: { model: 'internal-model' },
+    identifier,
+    name: 'Internal Assistant',
+  })),
+  getPool: () => ({
+    query: vi.fn(async (sql: string) =>
+      sql.includes('INSERT INTO market_events')
+        ? { rowCount: 1, rows: [{ id: 42 }] }
+        : { rowCount: 0, rows: [] },
+    ),
+  }),
+  list: vi.fn(async () => ({
+    currentPage: 1,
+    items: [{ identifier: 'internal-assistant', name: 'Internal Assistant' }],
+    pageSize: 20,
+    totalCount: 1,
+    totalPages: 1,
+  })),
   social: vi.fn(async () => ({ isFavorited: true, success: true })),
   syncAccount: vi.fn(async () => account),
 });
@@ -56,7 +88,9 @@ describe('Market SDK compatibility', () => {
       repository: repository as any,
       storage: { ping: vi.fn(async () => undefined) } as any,
     });
-    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => app.request(input.toString(), init));
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      app.request(input.toString(), init),
+    );
     const sdk = new MarketSDK({ baseURL: 'http://market.local', trustedClientToken: token });
 
     const list = await sdk.agents.getAgentList({ locale: 'zh-CN' });
@@ -64,7 +98,10 @@ describe('Market SDK compatibility', () => {
 
     expect(list.items).toHaveLength(1);
     expect(detail.config).toEqual({ model: 'internal-model' });
-    expect(repository.syncAccount).toHaveBeenCalledWith(expect.objectContaining({ userId: actor.userId, workspaceId: actor.workspaceId }), expect.any(Set));
+    expect(repository.syncAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: actor.userId, workspaceId: actor.workspaceId }),
+      expect.any(Set),
+    );
   });
 
   it('rejects forged trusted client tokens', async () => {
@@ -74,22 +111,52 @@ describe('Market SDK compatibility', () => {
       repository: createRepository() as any,
       storage: { ping: vi.fn(async () => undefined) } as any,
     });
-    const response = await app.request('/api/v1/agents', { headers: { 'x-lobe-trust-token': `${token}tampered` } });
+    const response = await app.request('/api/v1/agents', {
+      headers: { 'x-lobe-trust-token': `${token}tampered` },
+    });
     expect(response.status).toBe(401);
   });
 
   it('returns plaintext only on the authenticated server-side decrypt contract', async () => {
-    const encryptedValue = encryptJson({ API_TOKEN: 'secret' }, config.MARKET_CREDENTIAL_ENCRYPTION_KEY);
+    const encryptedValue = encryptJson(
+      { API_TOKEN: 'secret' },
+      config.MARKET_CREDENTIAL_ENCRYPTION_KEY,
+    );
     const pool = {
-      query: vi.fn(async (sql: string) => sql.includes('market_credentials')
-        ? { rowCount: 1, rows: [{ created_at: new Date(), encrypted_value: encryptedValue, id: 9, key: 'api', metadata: {}, name: 'API', type: 'kv-env', updated_at: new Date() }] }
-        : { rowCount: 0, rows: [] }),
+      query: vi.fn(async (sql: string) =>
+        sql.includes('market_credentials')
+          ? {
+              rowCount: 1,
+              rows: [
+                {
+                  created_at: new Date(),
+                  encrypted_value: encryptedValue,
+                  id: 9,
+                  key: 'api',
+                  metadata: {},
+                  name: 'API',
+                  type: 'kv-env',
+                  updated_at: new Date(),
+                },
+              ],
+            }
+          : { rowCount: 0, rows: [] },
+      ),
     };
     const repository = { ...createRepository(), getPool: () => pool };
-    const app = createMarketApp({ config, redis: { ping: vi.fn(async () => 'PONG') } as any, repository: repository as any, storage: { ping: vi.fn(async () => undefined) } as any });
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: repository as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
 
-    const masked = await app.request('/api/v1/user/creds/9', { headers: { 'x-lobe-trust-token': token } });
-    const decrypted = await app.request('/api/v1/user/creds/9?decrypt=true', { headers: { 'x-lobe-trust-token': token } });
+    const masked = await app.request('/api/v1/user/creds/9', {
+      headers: { 'x-lobe-trust-token': token },
+    });
+    const decrypted = await app.request('/api/v1/user/creds/9?decrypt=true', {
+      headers: { 'x-lobe-trust-token': token },
+    });
 
     expect(await masked.json()).not.toHaveProperty('plaintext');
     expect(await decrypted.json()).toHaveProperty('plaintext.API_TOKEN', 'secret');
@@ -97,19 +164,45 @@ describe('Market SDK compatibility', () => {
 
   it('serves the current SDK catalog, connection, social, feedback, and task-template surfaces', async () => {
     const repository = createRepository();
-    const app = createMarketApp({ config, redis: { ping: vi.fn(async () => 'PONG') } as any, repository: repository as any, storage: { ping: vi.fn(async () => undefined) } as any });
-    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => app.request(input.toString(), init));
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: repository as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      app.request(input.toString(), init),
+    );
     const sdk = new MarketSDK({ baseURL: 'http://market.local', trustedClientToken: token });
 
     await expect(sdk.agentGroups.getAgentGroupList()).resolves.toHaveProperty('items');
     await expect(sdk.marketSkills.getSkillList()).resolves.toHaveProperty('items');
-    await expect(sdk.marketSkills.getSkillDetail('internal-skill')).resolves.toHaveProperty('identifier', 'internal-skill');
+    await expect(sdk.marketSkills.getSkillDetail('internal-skill')).resolves.toHaveProperty(
+      'identifier',
+      'internal-skill',
+    );
     await expect(sdk.plugins.getPluginList()).resolves.toHaveProperty('items');
-    await expect(sdk.plugins.getPluginDetail({ identifier: 'internal-mcp' })).resolves.toHaveProperty('identifier', 'internal-mcp');
-    await expect(sdk.connect.listConnections()).resolves.toEqual({ connections: [], success: true });
-    await expect(sdk.favorites.addFavorite('agent', 'internal-assistant')).resolves.toHaveProperty('success', true);
-    await expect(sdk.feedback.submitFeedback({ email: actor.email, message: 'Test', title: 'Internal feedback' })).resolves.toMatchObject({ issueId: '42', success: true });
-    await expect(sdk.taskTemplates.getTaskTemplateRecommendations({ interestKeys: ['coding'] })).resolves.toEqual({ items: [] });
+    await expect(
+      sdk.plugins.getPluginDetail({ identifier: 'internal-mcp' }),
+    ).resolves.toHaveProperty('identifier', 'internal-mcp');
+    await expect(sdk.connect.listConnections()).resolves.toEqual({
+      connections: [],
+      success: true,
+    });
+    await expect(sdk.favorites.addFavorite('agent', 'internal-assistant')).resolves.toHaveProperty(
+      'success',
+      true,
+    );
+    await expect(
+      sdk.feedback.submitFeedback({
+        email: actor.email,
+        message: 'Test',
+        title: 'Internal feedback',
+      }),
+    ).resolves.toMatchObject({ issueId: '42', success: true });
+    await expect(
+      sdk.taskTemplates.getTaskTemplateRecommendations({ interestKeys: ['coding'] }),
+    ).resolves.toEqual({ items: [] });
   });
 
   it('creates a short-lived OAuth handoff without storing the client secret in Redis', async () => {
@@ -124,18 +217,40 @@ describe('Market SDK compatibility', () => {
       detail: vi.fn(async () => ({
         config: {},
         identifier: 'linear',
-        manifest: { oauth: { authorizationUrl: 'https://linear.example.com/oauth/authorize', scopes: ['read'], tokenUrl: 'https://linear.example.com/oauth/token' } },
+        manifest: {
+          oauth: {
+            authorizationUrl: 'https://linear.example.com/oauth/authorize',
+            scopes: ['read'],
+            tokenUrl: 'https://linear.example.com/oauth/token',
+          },
+        },
       })),
       getPool: () => ({ query: vi.fn(async () => ({ rowCount: 1, rows: [{}] })) }),
     };
-    const oauthConfig = { ...config, MARKET_OAUTH_CLIENTS_JSON: JSON.stringify({ linear: { clientId: 'client-id', clientSecret: 'client-secret' } }) };
-    const app = createMarketApp({ config: oauthConfig, redis: redis as any, repository: repository as any, storage: { ping: vi.fn(async () => undefined) } as any });
-    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => app.request(input.toString(), init));
+    const oauthConfig = {
+      ...config,
+      MARKET_OAUTH_CLIENTS_JSON: JSON.stringify({
+        linear: { clientId: 'client-id', clientSecret: 'client-secret' },
+      }),
+    };
+    const app = createMarketApp({
+      config: oauthConfig,
+      redis: redis as any,
+      repository: repository as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      app.request(input.toString(), init),
+    );
     const sdk = new MarketSDK({ baseURL: 'http://market.local', trustedClientToken: token });
 
-    const response = await sdk.connect.authorize('linear', { redirect_uri: 'https://masterlion.example.com/oauth/callback' });
+    const response = await sdk.connect.authorize('linear', {
+      redirect_uri: 'https://masterino.example.com/oauth/callback',
+    });
 
-    expect(response.authorize_url).toContain('https://masterlion.example.com/market/connect/linear/start?code=');
+    expect(response.authorize_url).toContain(
+      'https://masterino.example.com/market/connect/linear/start?code=',
+    );
     const storedState = String(redis.set.mock.calls[0][1]);
     expect(storedState).toContain('client-id');
     expect(storedState).not.toContain('client-secret');

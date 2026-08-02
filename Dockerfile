@@ -96,7 +96,7 @@ COPY . .
 # ARG/ENV 只影响预构建 / Next.js 构建，放在 COPY . . 之后，避免打掉依赖安装缓存。
 ARG NEXT_PUBLIC_BASE_PATH
 ARG NEXT_PUBLIC_SENTRY_DSN
-ARG NEXT_PUBLIC_MARKET_BASE_URL="https://masterion.bielcrystal.com/market"
+ARG NEXT_PUBLIC_MARKET_BASE_URL="https://masterino.bielcrystal.com/market"
 ARG NEXT_PUBLIC_ANALYTICS_POSTHOG
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ARG NEXT_PUBLIC_POSTHOG_KEY

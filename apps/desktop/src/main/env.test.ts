@@ -27,7 +27,7 @@ describe('desktop environment', () => {
   it('defaults the cloud service to the Masterino production origin', async () => {
     const { getDesktopEnv } = await import('./env');
 
-    expect(getDesktopEnv().OFFICIAL_CLOUD_SERVER).toBe('https://masterion.bielcrystal.com');
+    expect(getDesktopEnv().OFFICIAL_CLOUD_SERVER).toBe('https://masterino.bielcrystal.com');
   });
 
   it('accepts an explicit runtime cloud service override', async () => {

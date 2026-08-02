@@ -1,9 +1,8 @@
 ---
 title: Messenger Overview
 description: >-
-  Connect your Masterino account to the official Masterino bot on Telegram, Slack,
-  and Discord. Link once, pick an active agent, and chat with your assistants
-  from the chat apps you already use — no bot setup required.
+  Connect your Masterino account to the official Masterino bot on Telegram, Slack, and Discord. Link once, pick an active agent, and chat with your assistants from the chat apps you already use — no bot setup required.
+
 tags:
   - Messenger
   - Telegram
@@ -24,18 +23,18 @@ You manage everything from **Settings → Messenger** in Masterino.
 
 ## Messenger vs. Channels
 
-|               | **Messenger**                                 | **Channels**                                                          |
-| ------------- | --------------------------------------------- | --------------------------------------------------------------------- |
-| Bot identity  | Official **@MasterLion** bot, hosted by Masterino  | Your own bot, you bring the token                                     |
-| Setup effort  | Tap **Connect**, send `/start`, pick an agent | Create the bot on the platform, paste credentials, configure policies |
-| Scope         | Personal — only you talk to the bot           | Public — anyone in the channel/server can talk to it                  |
-| Active agent  | One per platform link, switchable any time    | One agent per channel binding                                         |
-| Configured at | Settings → Messenger                          | Agent → Channels                                                      |
+|               | **Messenger**                                    | **Channels**                                                          |
+| ------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
+| Bot identity  | Official **@Masterino** bot, hosted by Masterino | Your own bot, you bring the token                                     |
+| Setup effort  | Tap **Connect**, send `/start`, pick an agent    | Create the bot on the platform, paste credentials, configure policies |
+| Scope         | Personal — only you talk to the bot              | Public — anyone in the channel/server can talk to it                  |
+| Active agent  | One per platform link, switchable any time       | One agent per channel binding                                         |
+| Configured at | Settings → Messenger                             | Agent → Channels                                                      |
 
 ## Supported Platforms
 
-| Platform     | Setup model                              | Guide                                                     |
-| ------------ | ---------------------------------------- | --------------------------------------------------------- |
+| Platform     | Setup model                              | Guide                                                       |
+| ------------ | ---------------------------------------- | ----------------------------------------------------------- |
 | **Telegram** | Global bot — any account can DM directly | [Use Masterino on Telegram](/docs/usage/messenger/telegram) |
 | **Slack**    | Per-workspace install + per-member link  | [Use Masterino on Slack](/docs/usage/messenger/slack)       |
 | **Discord**  | Per-server install + per-member link     | [Use Masterino on Discord](/docs/usage/messenger/discord)   |
@@ -68,7 +67,7 @@ There are two distinct disconnect actions per platform:
 
 | Action                                       | Effect                                                                                                                                                              |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Disconnect** on a *user* row               | Unlinks **your** Masterino account from the platform account. Inbound messages stop until you `/start` again.                                                         |
+| **Disconnect** on a *user* row               | Unlinks **your** Masterino account from the platform account. Inbound messages stop until you `/start` again.                                                       |
 | **Disconnect** on a *workspace / server* row | Removes the install audit entry. On Slack, this also freezes the workspace bot for everyone. On Discord, the bot stays in the server until a server admin kicks it. |
 
 You can re-link at any time by repeating the **Connect** flow.

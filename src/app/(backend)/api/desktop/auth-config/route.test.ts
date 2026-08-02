@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GET } from './route';
 
 const mocks = vi.hoisted(() => ({
-  appEnv: { APP_URL: 'https://masterion.bielcrystal.com' as string | undefined },
+  appEnv: { APP_URL: 'https://masterino.bielcrystal.com' as string | undefined },
   authEnv: { ENABLE_OIDC: true },
 }));
 
@@ -12,7 +12,7 @@ vi.mock('@/envs/auth', () => ({ authEnv: mocks.authEnv }));
 
 describe('GET /api/desktop/auth-config', () => {
   beforeEach(() => {
-    mocks.appEnv.APP_URL = 'https://masterion.bielcrystal.com';
+    mocks.appEnv.APP_URL = 'https://masterino.bielcrystal.com';
     mocks.authEnv.ENABLE_OIDC = true;
   });
 
@@ -22,8 +22,8 @@ describe('GET /api/desktop/auth-config', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await response.json()).toEqual({
-      appUrl: 'https://masterion.bielcrystal.com/',
-      redirectUri: 'https://masterion.bielcrystal.com/oidc/callback/desktop',
+      appUrl: 'https://masterino.bielcrystal.com/',
+      redirectUri: 'https://masterino.bielcrystal.com/oidc/callback/desktop',
     });
   });
 

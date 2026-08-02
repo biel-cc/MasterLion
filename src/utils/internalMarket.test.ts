@@ -12,9 +12,9 @@ afterEach(() => {
 describe('getPublicInternalMarketBaseUrl', () => {
   it('uses the Market URL exposed from desktop-config.json', () => {
     vi.stubEnv('NEXT_PUBLIC_MARKET_BASE_URL', '');
-    window.lobeEnv = { marketBaseUrl: 'https://masterion.bielcrystal.com/market' };
+    window.lobeEnv = { marketBaseUrl: 'https://masterino.bielcrystal.com/market' };
 
-    expect(getPublicInternalMarketBaseUrl()).toBe('https://masterion.bielcrystal.com/market');
+    expect(getPublicInternalMarketBaseUrl()).toBe('https://masterino.bielcrystal.com/market');
   });
 
   it('keeps the web environment fallback', () => {

@@ -20,7 +20,7 @@ describe('Masterion production security configuration', () => {
       MODEL_PROVIDER_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com',
       OPENAPI_CORS_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com',
       SKILL_IMPORT_ALLOWED_ORIGINS:
-        'https://masterion.bielcrystal.com,https://github.com,https://raw.githubusercontent.com,https://codeload.github.com,https://pinchwork.dev',
+        'https://masterino.bielcrystal.com,https://github.com,https://raw.githubusercontent.com,https://codeload.github.com,https://pinchwork.dev',
     });
   });
 

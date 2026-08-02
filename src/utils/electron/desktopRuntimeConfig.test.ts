@@ -15,14 +15,14 @@ afterEach(() => {
 describe('desktop renderer runtime config', () => {
   it('reads Cloud and Market URLs exposed by the preload', () => {
     window.lobeEnv = {
-      cloudServer: 'https://masterion.bielcrystal.com',
+      cloudServer: 'https://masterino.bielcrystal.com',
       cloudServerAliases: ['https://mlai-test.bielcrystal.com'],
-      marketBaseUrl: 'https://masterion.bielcrystal.com/market',
+      marketBaseUrl: 'https://masterino.bielcrystal.com/market',
     };
 
-    expect(getDesktopCloudServer()).toBe('https://masterion.bielcrystal.com');
+    expect(getDesktopCloudServer()).toBe('https://masterino.bielcrystal.com');
     expect(getDesktopCloudServerAliases()).toEqual(['https://mlai-test.bielcrystal.com']);
-    expect(getDesktopMarketBaseUrl()).toBe('https://masterion.bielcrystal.com/market');
+    expect(getDesktopMarketBaseUrl()).toBe('https://masterino.bielcrystal.com/market');
   });
 
   it('derives Market from Cloud when the optional field is omitted', () => {

@@ -1,18 +1,34 @@
 ARG NODEJS_VERSION="24"
-FROM node:${NODEJS_VERSION}-slim AS builder
+ARG BASE_REGISTRY="docker.io/library"
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS builder
+ARG USE_CN_MIRROR
 ENV CI=true
 WORKDIR /app
-RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY patches patches
 COPY apps/market/package.json apps/market/package.json
-RUN pnpm install --frozen-lockfile --filter @masterlion/market... --prod=false
+RUN --mount=type=cache,id=masterino-market-npm-cache,target=/root/.npm,sharing=locked \
+    set -e && \
+    if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
+      export SENTRYCLI_CDNURL="https://npmmirror.com/mirrors/sentry-cli"; \
+      export FFMPEG_BINARIES_URL="https://npmmirror.com/mirrors/ffmpeg-static"; \
+      npm config set registry "https://registry.npmmirror.com/"; \
+    fi && \
+    export COREPACK_NPM_REGISTRY="$(npm config get registry | sed 's/\/$//')" && \
+    export PNPM_SPEC="$(node -p 'require("./package.json").packageManager.split("+")[0]')" && \
+    corepack enable && \
+    corepack prepare "$PNPM_SPEC" --activate && \
+    if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
+      pnpm config set registry "https://registry.npmmirror.com/"; \
+    fi && \
+    pnpm install --frozen-lockfile --filter @masterino/market... --prefer-offline --prod=false
 COPY apps/market apps/market
-RUN pnpm --filter @masterlion/market build && \
+RUN pnpm --filter @masterino/market build && \
     mkdir -p apps/market/dist/migrations && \
     cp apps/market/src/migrations/*.sql apps/market/dist/migrations/ && \
-    pnpm --filter @masterlion/market deploy --prod /out
+    pnpm --config.inject-workspace-packages=true --filter @masterino/market --prod deploy /out
 
-FROM node:${NODEJS_VERSION}-slim AS runtime
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /out ./

@@ -6,7 +6,7 @@ Masterino is a private, company-internal AI workspace. Contributions should focu
 
 ```bash
 git clone https://github.com/chaaak6/Masterino.git
-cd MasterLion
+cd Masterino
 ```
 
 The historical upstream codebase still contains legacy package names such as `@lobehub/*` and `@lobechat/*`. Treat those as implementation identifiers. Do not rename package names, provider ids, database enums, or import paths unless the migration impact is reviewed explicitly.
@@ -14,6 +14,7 @@ The historical upstream codebase still contains legacy package names such as `@l
 ## Development Flow
 
 1. Start from the current target branch.
+
 2. Check the workspace before editing:
 
    ```bash
@@ -22,7 +23,9 @@ The historical upstream codebase still contains legacy package names such as `@l
    ```
 
 3. Keep changes focused and avoid unrelated refactors.
+
 4. Do not commit secrets, `.env`, `.env.desktop`, `.codex/`, `.next/`, `node_modules/`, logs, or local runtime caches.
+
 5. Run targeted tests for the touched area before handoff.
 
 ## Local Setup

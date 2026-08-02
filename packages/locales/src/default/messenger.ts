@@ -108,7 +108,7 @@ export default {
   'messenger.list.discord.description':
     'Chat with your Masterino agents on Discord by DMing the Masterino bot from any server.',
   'messenger.list.slack.description':
-    'Chat with your Masterino agents on Slack by DMing or mentioning @MasterLion in any workspace.',
+    'Chat with your Masterino agents on Slack by DMing or mentioning @Masterino in any workspace.',
   'messenger.list.telegram.description':
     'Chat with your Masterino agents on Telegram, and choose which agent replies.',
   'messenger.setActiveFailed': 'Failed to set as active.',

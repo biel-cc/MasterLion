@@ -59,7 +59,7 @@ vi.mock('electron-is', () => ({
 
 // Mock OFFICIAL_CLOUD_SERVER
 vi.mock('@/const/env', () => ({
-  OFFICIAL_CLOUD_SERVER: 'https://masterion.bielcrystal.com',
+  OFFICIAL_CLOUD_SERVER: 'https://masterino.bielcrystal.com',
   isMac: false,
   isWindows: false,
   isLinux: false,
@@ -93,7 +93,7 @@ const mockRemoteServerConfigCtr = {
     if (config?.storageMode === 'selfHost') {
       return config.remoteServerUrl || 'https://mock-server.com';
     }
-    return config?.remoteServerUrl || 'https://masterion.bielcrystal.com';
+    return config?.remoteServerUrl || 'https://masterino.bielcrystal.com';
   }),
   getTokenExpiresAt: vi.fn().mockReturnValue(Date.now() + 3600000),
   isNonRetryableError: vi.fn().mockReturnValue(false),
@@ -187,7 +187,7 @@ describe('AuthCtr', () => {
 
         // Verify shell.openExternal was called with correct URL
         expect(shell.openExternal).toHaveBeenCalledWith(
-          expect.stringContaining('https://masterion.bielcrystal.com/oidc/auth'),
+          expect.stringContaining('https://masterino.bielcrystal.com/oidc/auth'),
         );
 
         // Verify URL contains required parameters
@@ -615,7 +615,7 @@ describe('AuthCtr', () => {
 
         // Verify only the still-current origin was atomically activated.
         expect(mockRemoteServerConfigCtr.activateRemoteServerForOrigin).toHaveBeenCalledWith(
-          'https://masterion.bielcrystal.com',
+          'https://masterino.bielcrystal.com',
         );
       }, 6000);
     });
@@ -733,7 +733,7 @@ describe('AuthCtr', () => {
       mockFetch.mockImplementation((url: string) => {
         const parsed = new URL(url);
         if (parsed.pathname === '/api/desktop/auth-config') {
-          if (parsed.origin === 'https://masterion.bielcrystal.com') {
+          if (parsed.origin === 'https://masterino.bielcrystal.com') {
             return oldPreflight.promise;
           }
 
@@ -756,7 +756,7 @@ describe('AuthCtr', () => {
       });
 
       oldPreflight.resolve({
-        json: () => Promise.resolve({ appUrl: 'https://masterion.bielcrystal.com' }),
+        json: () => Promise.resolve({ appUrl: 'https://masterino.bielcrystal.com' }),
         ok: true,
         status: 200,
       });
@@ -840,7 +840,7 @@ describe('AuthCtr', () => {
           return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' });
         }
         if (
-          parsed.origin === 'https://masterion.bielcrystal.com' &&
+          parsed.origin === 'https://masterino.bielcrystal.com' &&
           parsed.pathname === '/oidc/handoff'
         ) {
           return Promise.resolve({
@@ -854,7 +854,7 @@ describe('AuthCtr', () => {
           });
         }
         if (
-          parsed.origin === 'https://masterion.bielcrystal.com' &&
+          parsed.origin === 'https://masterino.bielcrystal.com' &&
           parsed.pathname === '/oidc/token'
         ) {
           const tokens = {
@@ -906,7 +906,7 @@ describe('AuthCtr', () => {
       await vi.advanceTimersByTimeAsync(3000);
 
       expect(mockRemoteServerConfigCtr.isRemoteServerOriginCurrent).toHaveBeenCalledWith(
-        'https://masterion.bielcrystal.com',
+        'https://masterino.bielcrystal.com',
       );
       expect(mockRemoteServerConfigCtr.saveTokens).not.toHaveBeenCalled();
       expect(mockRemoteServerConfigCtr.activateRemoteServerForOrigin).not.toHaveBeenCalled();
@@ -934,7 +934,7 @@ describe('AuthCtr', () => {
 
       expect(mockRemoteServerConfigCtr.saveTokens).toHaveBeenCalledTimes(1);
       expect(mockRemoteServerConfigCtr.activateRemoteServerForOrigin).toHaveBeenCalledWith(
-        'https://masterion.bielcrystal.com',
+        'https://masterino.bielcrystal.com',
       );
       expect(mockRemoteServerConfigCtr.clearTokens).toHaveBeenCalled();
       expect(mockRemoteServerConfigCtr.setRemoteServerConfig).toHaveBeenCalledWith({
@@ -1253,7 +1253,7 @@ describe('AuthCtr', () => {
       expect(tokenParams.get('code_verifier')).toBe('mock-random-1');
       expect(tokenParams.get('grant_type')).toBe('authorization_code');
       expect(tokenParams.get('redirect_uri')).toBe(
-        'https://masterion.bielcrystal.com/oidc/callback/desktop',
+        'https://masterino.bielcrystal.com/oidc/callback/desktop',
       );
       expect(mockRemoteServerConfigCtr.saveTokens).toHaveBeenCalledWith(
         'access-token',
@@ -1523,7 +1523,7 @@ describe('AuthCtr', () => {
     beforeEach(() => {
       vi.mocked(mockRemoteServerConfigCtr.getRemoteServerConfig).mockResolvedValue({
         active: true,
-        remoteServerUrl: 'https://masterion.bielcrystal.com',
+        remoteServerUrl: 'https://masterino.bielcrystal.com',
         storageMode: 'cloud',
       });
       vi.mocked(mockRemoteServerConfigCtr.isRemoteServerConfigured).mockResolvedValue(true);

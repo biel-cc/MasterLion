@@ -1,6 +1,6 @@
 {
-  "name": "@masterlion/aihub-db-bridge",
-  "version": "1.0.3",
+  "name": "@masterino/aihub-db-bridge",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {

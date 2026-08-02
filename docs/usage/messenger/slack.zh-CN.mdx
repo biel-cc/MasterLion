@@ -1,8 +1,8 @@
 ---
 title: 在 Slack 使用 Masterino
 description: >-
-  在 Slack 工作区安装官方 Masterino Slack 应用，再让每位成员各自关联自己的 Masterino
-  账号；选择默认 Agent，就能在 Slack DM 里直接和 AI 助手对话，无需自建机器人。
+  在 Slack 工作区安装官方 Masterino Slack 应用，再让每位成员各自关联自己的 Masterino 账号；选择默认 Agent，就能在 Slack DM 里直接和 AI 助手对话，无需自建机器人。
+
 tags:
   - Messenger
   - Slack
@@ -42,7 +42,7 @@ Slack 接入分两步：**工作区管理员安装一次** 官方 Masterino Slac
 
   {/* TODO: 截图 —— Slack 详情页：已连接的 workspace 行 */}
 
-  > **工作区已被他人连接？** Masterino 会阻止安装并提示「Workspace already connected」。你**不需要**重新安装，只要在 Slack 里私聊 **@MasterLion** 完成个人账号关联即可。如果想接管所有权，请请求最初的安装者先断开连接。
+  > **工作区已被他人连接？** Masterino 会阻止安装并提示「Workspace already connected」。你**不需要**重新安装，只要在 Slack 里私聊 **@Masterino** 完成个人账号关联即可。如果想接管所有权，请请求最初的安装者先断开连接。
 </Steps>
 
 ## 阶段 B —— 关联个人账号（每位成员）
@@ -50,7 +50,7 @@ Slack 接入分两步：**工作区管理员安装一次** 官方 Masterino Slac
 <Steps>
   ### 在 Slack 里打开 Masterino 机器人
 
-  在 Slack 左侧 **Apps** 栏里找到 **Masterino**，或直接搜索 `@MasterLion`，打开它的 DM 会话。
+  在 Slack 左侧 **Apps** 栏里找到 **Masterino**，或直接搜索 `@Masterino`，打开它的 DM 会话。
 
   {/* TODO: 截图 —— Slack Apps 栏里高亮 Masterino */}
 
@@ -86,14 +86,14 @@ Slack 有两种含义不同的断开操作：
 
 | 操作                      | 效果                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------- |
-| 在 *user* 行点 **断开**      | 解除 **你自己** 的 Masterino 账号与该工作区 Slack 账号的关联。你的 DM 不再被接收，直到你再次给机器人发消息并完成关联。         |
+| 在 *user* 行点 **断开**      | 解除 **你自己** 的 Masterino 账号与该工作区 Slack 账号的关联。你的 DM 不再被接收，直到你再次给机器人发消息并完成关联。       |
 | 在 *workspace* 行点 **断开** | 移除工作区安装。由于消息分发受 token 控制，这会让该工作区里**所有人的机器人都失效**；现有 user 关联记录还在，但暂停工作直到工作区被重新安装。 |
 
 任何时候都可以重走对应阶段重新安装（工作区）或重新关联（个人）。
 
 ## 故障排查
 
-- **"Workspace already connected"（工作区已连接）** —— 工作区已被另一位 Masterino 用户安装过。私聊 **@MasterLion** 完成个人关联即可，无需重装。如需接管，请请求最初的安装者先断开。
+- **"Workspace already connected"（工作区已连接）** —— 工作区已被另一位 Masterino 用户安装过。私聊 **@Masterino** 完成个人关联即可，无需重装。如需接管，请请求最初的安装者先断开。
 - **Slack 安装失败（`<原因>`）** —— 常见原因：用户取消授权、安装会话过期（重新打开弹窗再试）、Slack 返回的数据不完整（重试；持续失败请联系支持）。
 - **机器人不回 DM** —— 工作区安装可能已被断开。检查 **设置 → Messenger → Slack** 是否还有 workspace 行；没有就请管理员重新安装。
 - **"This link is already used"** —— 一次性确认链接只能用一次，给机器人再发一条消息获取新链接。

@@ -410,13 +410,13 @@ describe('useSignIn', () => {
         value: {
           ...originalLocation,
           href: '',
-          origin: 'https://masterion.bielcrystal.com',
+          origin: 'https://masterino.bielcrystal.com',
         },
         writable: true,
       });
       const oidcPath =
-        '/oidc/auth?client_id=lobehub-desktop&response_type=code&redirect_uri=https%3A%2F%2Fmasterion.bielcrystal.com%2Foidc%2Fcallback%2Fdesktop&code_challenge=challenge&code_challenge_method=S256&prompt=consent&resource=urn%3Alobehub%3Achat&scope=profile%20email%20offline_access&state=desktop-state';
-      const oidcUrl = `https://masterion.bielcrystal.com${oidcPath}`;
+        '/oidc/auth?client_id=lobehub-desktop&response_type=code&redirect_uri=https%3A%2F%2Fmasterino.bielcrystal.com%2Foidc%2Fcallback%2Fdesktop&code_challenge=challenge&code_challenge_method=S256&prompt=consent&resource=urn%3Alobehub%3Achat&scope=profile%20email%20offline_access&state=desktop-state';
+      const oidcUrl = `https://masterino.bielcrystal.com${oidcPath}`;
       mockSearchParamsGet.mockImplementation((key: string) =>
         key === 'callbackUrl' ? oidcUrl : null,
       );

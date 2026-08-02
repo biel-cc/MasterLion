@@ -13,7 +13,7 @@ export KUBECONFIG=/secure/path/masterino-test-ack-c23ea84b.yaml
 export ACK_CONTEXT=ack-c23ea84b-masterlion-test
 export ACK_API_SERVER=https://example-api-server:6443
 
-export MASTERLION_IMAGE_DIGEST=sha256:<64-hex-digest>
+export MASTERINO_IMAGE_DIGEST=sha256:<64-hex-digest>
 export BRIDGE_IMAGE_DIGEST=sha256:<64-hex-digest>
 
 bash ./deploy.sh --env test preflight

@@ -16,7 +16,7 @@ const ConfigSchema = z.object({
   MARKET_PORT: z.coerce.number().int().positive().default(3220),
   MARKET_PUBLIC_BASE_URL: z.string().url(),
   MARKET_REDIS_URL: z.string().min(1),
-  MARKET_RUNNER_INTERNAL_URL: z.string().url().default('http://masterlion-market-runner:3221'),
+  MARKET_RUNNER_INTERNAL_URL: z.string().url().default('http://masterino-market-runner:3221'),
   MARKET_RUNNER_INTERNAL_TOKEN: z.string().min(32),
   MARKET_TRUSTED_CLIENT_IDS: z.string().min(1),
   MARKET_TRUSTED_CLIENT_SECRET: z.string().min(32),
@@ -34,4 +34,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): MarketConfig =
 };
 
 export const splitCsv = (value: string): Set<string> =>
-  new Set(value.split(',').map((item) => item.trim()).filter(Boolean));
+  new Set(
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );

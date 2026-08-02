@@ -13,10 +13,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - masterion.bielcrystal.com
+        - masterino.bielcrystal.com
       secretName: 20261122bielcrystal.com
   rules:
-    - host: masterion.bielcrystal.com
+    - host: masterino.bielcrystal.com
       http:
         paths:
           - path: /webapi/trace

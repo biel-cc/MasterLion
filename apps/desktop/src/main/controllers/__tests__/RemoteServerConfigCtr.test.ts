@@ -64,7 +64,7 @@ vi.mock('electron', () => ({
 
 // Mock @/const/env
 vi.mock('@/const/env', () => ({
-  OFFICIAL_CLOUD_SERVER: 'https://masterion.bielcrystal.com',
+  OFFICIAL_CLOUD_SERVER: 'https://masterino.bielcrystal.com',
 }));
 
 // Mock storeManager
@@ -244,7 +244,7 @@ describe('RemoteServerConfigCtr', () => {
         expect.objectContaining({
           accessToken: expect.any(String),
           expiresAt: expect.any(Number),
-          issuerOrigin: 'https://masterion.bielcrystal.com',
+          issuerOrigin: 'https://masterino.bielcrystal.com',
           refreshToken: expect.any(String),
         }),
       );
@@ -261,7 +261,7 @@ describe('RemoteServerConfigCtr', () => {
         expect.objectContaining({
           accessToken: expect.any(String),
           expiresAt: undefined,
-          issuerOrigin: 'https://masterion.bielcrystal.com',
+          issuerOrigin: 'https://masterino.bielcrystal.com',
           refreshToken: expect.any(String),
         }),
       );
@@ -386,7 +386,7 @@ describe('RemoteServerConfigCtr', () => {
         if (key === 'encryptedTokens') {
           return {
             accessToken: Buffer.from('stored-access-token').toString('base64'),
-            issuerOrigin: 'https://masterion.bielcrystal.com',
+            issuerOrigin: 'https://masterino.bielcrystal.com',
             refreshToken: Buffer.from('stored-refresh-token').toString('base64'),
           };
         }
@@ -446,7 +446,7 @@ describe('RemoteServerConfigCtr', () => {
         if (key === 'encryptedTokens') {
           return {
             accessToken: 'invalid-encrypted-token',
-            issuerOrigin: 'https://masterion.bielcrystal.com',
+            issuerOrigin: 'https://masterino.bielcrystal.com',
             refreshToken: 'invalid-encrypted-token',
           };
         }
@@ -1056,7 +1056,7 @@ describe('RemoteServerConfigCtr', () => {
           return {
             accessToken: 'stored-access',
             expiresAt: Date.now() + 3600000,
-            issuerOrigin: 'https://masterion.bielcrystal.com',
+            issuerOrigin: 'https://masterino.bielcrystal.com',
             refreshToken: 'stored-refresh',
           };
         }
@@ -1125,7 +1125,7 @@ describe('RemoteServerConfigCtr', () => {
           return {
             accessToken: 'stored-access',
             expiresAt: Date.now() + 3600000,
-            issuerOrigin: 'https://masterion.bielcrystal.com',
+            issuerOrigin: 'https://masterino.bielcrystal.com',
             lastRefreshAt: lastRefreshTime,
             refreshToken: 'stored-refresh',
           };
@@ -1174,7 +1174,7 @@ describe('RemoteServerConfigCtr', () => {
           return {
             accessToken: 'legacy-plaintext-access-token',
             expiresAt: Date.now() + 3600000,
-            issuerOrigin: 'https://masterion.bielcrystal.com',
+            issuerOrigin: 'https://masterino.bielcrystal.com',
             refreshToken: 'legacy-plaintext-refresh-token',
           };
         }
@@ -1227,7 +1227,7 @@ describe('RemoteServerConfigCtr', () => {
 
       const result = await controller.getRemoteServerUrl();
 
-      expect(result).toBe('https://masterion.bielcrystal.com');
+      expect(result).toBe('https://masterino.bielcrystal.com');
     });
 
     it('should return custom URL for selfHost mode', async () => {
@@ -1376,7 +1376,7 @@ describe('RemoteServerConfigCtr', () => {
       await handler(
         {
           requestHeaders: { 'oIdC-AuTh': 'renderer-supplied-token', 'X-Test': '1' },
-          url: 'https://masterion.bielcrystal.com/subscription',
+          url: 'https://masterino.bielcrystal.com/subscription',
         },
         callback,
       );

@@ -3,16 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_ACK_CLUSTER_ID="c23ea84b986c446d5b3fa9227962e77f4"
-PRODUCTION_ACK_CLUSTER_ID="c5c81a41c33164f578f4e43a77fda5fc3"
+PRODUCTION_ACK_CLUSTER_ID="c23ea84b986c446d5b3fa9227962e77f4"
 EXPECTED_ACK_REGION="cn-shenzhen"
 DEFAULT_TEST_CONTEXT="ack-c23ea84b-masterlion-test"
-MASTERLION_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
+MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
-IMAGE_TAG_MARKER="v1.0.3"
+IMAGE_TAG_MARKER="v1.1.0"
 TLS_SECRET_NAME="20261122bielcrystal.com"
+ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 
 usage() {
-  cat <<'EOF'
+  cat << 'EOF'
 Masterino ACK deployment tool
 
 Usage:
@@ -24,8 +25,8 @@ Required for all cluster commands:
 
 Required for mutating commands:
   ACK_API_SERVER             Exact API server URL printed by the preflight command.
-  MASTERLION_IMAGE_DIGEST    Immutable sha256: digest for Masterino v1.0.3.
-  BRIDGE_IMAGE_DIGEST        Immutable sha256: digest for Aihub DB Bridge v1.0.3.
+  MASTERINO_IMAGE_DIGEST     Immutable sha256: digest for the reviewed Masterino image.
+  BRIDGE_IMAGE_DIGEST        Immutable sha256: digest for the reviewed Aihub DB Bridge image.
 
 Commands:
   preflight                  Read-only ACK capability and identity checks.
@@ -56,7 +57,10 @@ fail() {
   exit 1
 }
 
-[[ "${1:-}" == "--env" ]] || { usage; fail "--env test or --env production is required"; }
+[[ "${1:-}" == "--env" ]] || {
+  usage
+  fail "--env test or --env production is required"
+}
 ENVIRONMENT="${2:-}"
 shift 2
 COMMAND="${1:-}"
@@ -79,16 +83,20 @@ case "$ENVIRONMENT" in
     NAMESPACE="masterino"
     EXPECTED_ACK_CLUSTER_ID="$PRODUCTION_ACK_CLUSTER_ID"
     OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production"
+    MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production-migration"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-}"
     [[ -n "$EXPECTED_CONTEXT" ]] || fail "ACK_CONTEXT is required for production"
     ;;
-  *) usage; fail "unknown environment: $ENVIRONMENT" ;;
+  *)
+    usage
+    fail "unknown environment: $ENVIRONMENT"
+    ;;
 esac
 
 KUBE=()
 
 init_kube() {
-  command -v kubectl >/dev/null 2>&1 || fail "kubectl is not installed"
+  command -v kubectl > /dev/null 2>&1 || fail "kubectl is not installed"
   [[ -n "${KUBECONFIG:-}" ]] || fail "KUBECONFIG must point to the ACK kubeconfig"
   [[ -f "$KUBECONFIG" ]] || fail "KUBECONFIG file does not exist: $KUBECONFIG"
   KUBE=(kubectl --kubeconfig "$KUBECONFIG" --context "$EXPECTED_CONTEXT")
@@ -119,7 +127,7 @@ verify_target() {
   [[ "$regions" == "$EXPECTED_ACK_REGION" ]] || fail \
     "node region mismatch: expected '$EXPECTED_ACK_REGION', found '${regions:-none}'"
 
-  if "${KUBE[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
+  if "${KUBE[@]}" get namespace "$NAMESPACE" > /dev/null 2>&1; then
     namespace_cluster="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/ack-cluster-id}')"
     [[ "$namespace_cluster" == "$EXPECTED_ACK_CLUSTER_ID" ]] || fail \
       "namespace '$NAMESPACE' is not labelled for ACK cluster '$EXPECTED_ACK_CLUSTER_ID'"
@@ -133,17 +141,17 @@ require_digest() {
 
 render_manifests() {
   local render_dir="${1:-$OVERLAY_DIR}"
-  require_digest MASTERLION_IMAGE_DIGEST "${MASTERLION_IMAGE_DIGEST:-}"
+  require_digest MASTERINO_IMAGE_DIGEST "${MASTERINO_IMAGE_DIGEST:-}"
   require_digest BRIDGE_IMAGE_DIGEST "${BRIDGE_IMAGE_DIGEST:-}"
 
   kubectl kustomize "$render_dir" | sed \
-    -e "s|${MASTERLION_IMAGE}:${IMAGE_TAG_MARKER}|${MASTERLION_IMAGE}@${MASTERLION_IMAGE_DIGEST}|g" \
+    -e "s|${MASTERINO_IMAGE}:${IMAGE_TAG_MARKER}|${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}|g" \
     -e "s|${BRIDGE_IMAGE}:${IMAGE_TAG_MARKER}|${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}|g"
 }
 
 required_secret_keys=(
   KEY_VAULTS_SECRET AUTH_SECRET JWKS_KEY POSTGRES_PASSWORD DATABASE_URL
-  REDIS_PASSWORD REDIS_URL S3_ACCESS_KEY S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
+  REDIS_PASSWORD REDIS_URL S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
   AIHUB_BRIDGE_TOKEN
 )
 
@@ -160,13 +168,13 @@ required_searxng_secret_keys=(SEARXNG_SECRET)
 
 check_secret() {
   local key value
-  "${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" >/dev/null 2>&1 || fail \
+  "${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
     "masterino-secret is missing in namespace '$NAMESPACE'"
   for key in "${required_secret_keys[@]}"; do
     value="$("${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
     [[ -n "$value" ]] || fail "masterino-secret is missing key: $key"
   done
-  "${KUBE[@]}" get secret masterino-bridge-secret -n "$NAMESPACE" >/dev/null 2>&1 || fail \
+  "${KUBE[@]}" get secret masterino-bridge-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
     "masterino-bridge-secret is missing in namespace '$NAMESPACE'"
   for key in "${required_bridge_secret_keys[@]}"; do
     value="$("${KUBE[@]}" get secret masterino-bridge-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
@@ -177,7 +185,7 @@ check_secret() {
   [[ "$app_token" == "$bridge_token" ]] || fail \
     "AIHUB_BRIDGE_TOKEN differs between application and bridge Secrets"
   if [[ "$ENVIRONMENT" == "test" ]]; then
-    "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" >/dev/null 2>&1 || fail \
+    "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
     for key in "${required_searxng_secret_keys[@]}"; do
       value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
@@ -215,8 +223,10 @@ case "$COMMAND" in
     "${KUBE[@]}" get ingressclass nginx
     echo
     "${KUBE[@]}" get pods -n kube-system -o name | grep -E 'ingress|csi|acr-credential' || true
-    if "${KUBE[@]}" get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    if "${KUBE[@]}" get namespace "$NAMESPACE" > /dev/null 2>&1; then
       "${KUBE[@]}" get serviceaccount default -n "$NAMESPACE" -o jsonpath='Default service account pull secrets: {.imagePullSecrets}{"\n"}'
+      "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" || true
+      "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" || true
       "${KUBE[@]}" get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" || true
     else
       echo "Namespace '$NAMESPACE' does not exist yet; run bootstrap after reviewing preflight."
@@ -227,7 +237,7 @@ case "$COMMAND" in
     ;;
   validate)
     rendered="$(render_manifests)"
-    printf '%s\n' "$rendered" | grep -q "image: ${MASTERLION_IMAGE}@${MASTERLION_IMAGE_DIGEST}"
+    printf '%s\n' "$rendered" | grep -q "image: ${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
@@ -276,12 +286,25 @@ case "$COMMAND" in
       if printf '%s\n' "$migration_rendered" | grep -q 'host: masterlion.bielcrystal.com'; then
         fail "test migration manifests contain the production hostname"
       fi
+    else
+      printf '%s\n' "$rendered" | grep -q 'host: masterino.bielcrystal.com'
+      printf '%s\n' "$rendered" | grep -q 'name: masterino-production-essd-retain'
+      printf '%s\n' "$rendered" | grep -q 'reclaimPolicy: Retain'
+      printf '%s\n' "$rendered" | grep -q 'replicas: 2'
+      migration_rendered="$(render_manifests "$MIGRATION_OVERLAY_DIR")"
+      printf '%s\n' "$migration_rendered" | grep -q 'replicas: 0'
+      if printf '%s\n' "$migration_rendered" | grep -q '^kind: Ingress$'; then
+        fail "production migration manifests unexpectedly contain an Ingress"
+      fi
     fi
     echo "Kustomize rendering and environment invariants passed."
     ;;
   bootstrap)
-    [[ "$ENVIRONMENT" == "test" ]] || fail "bootstrap is only used for the test environment"
     verify_target mutation
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+      [[ "${CONFIRM_BOOTSTRAP:-}" == "$NAMESPACE" ]] || fail \
+        "set CONFIRM_BOOTSTRAP=$NAMESPACE to create the guarded production target"
+    fi
     "${KUBE[@]}" apply -f "$OVERLAY_DIR/namespace.yaml"
     "${KUBE[@]}" apply -f "$OVERLAY_DIR/storageclass.yaml"
     verify_target mutation
@@ -296,8 +319,8 @@ case "$COMMAND" in
     if [[ "$ENVIRONMENT" == "test" ]]; then
       [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
     fi
-    if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file" || \
-      { [[ "$ENVIRONMENT" == "test" ]] && grep -q 'CHANGE_ME' "$searxng_secret_file"; }; then
+    if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file" \
+      || { [[ "$ENVIRONMENT" == "test" ]] && grep -q 'CHANGE_ME' "$searxng_secret_file"; }; then
       fail "a secret env file still contains CHANGE_ME placeholders"
     fi
     for key in "${required_secret_keys[@]}"; do
@@ -313,7 +336,8 @@ case "$COMMAND" in
     fi
     s3_key="$(sed -n 's/^S3_ACCESS_KEY=//p' "$secret_file")"
     s3_key_id="$(sed -n 's/^S3_ACCESS_KEY_ID=//p' "$secret_file")"
-    [[ "$s3_key" == "$s3_key_id" ]] || fail "S3_ACCESS_KEY and S3_ACCESS_KEY_ID must match"
+    [[ -z "$s3_key" || "$s3_key" == "$s3_key_id" ]] || fail \
+      "optional S3_ACCESS_KEY alias must match S3_ACCESS_KEY_ID"
     app_bridge_token="$(sed -n 's/^AIHUB_BRIDGE_TOKEN=//p' "$secret_file")"
     bridge_token="$(sed -n 's/^AIHUB_BRIDGE_TOKEN=//p' "$bridge_secret_file")"
     [[ "$app_bridge_token" == "$bridge_token" ]] || fail \
@@ -331,31 +355,33 @@ case "$COMMAND" in
   deploy)
     verify_target mutation
     check_secret
-    "${KUBE[@]}" get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1 || fail \
+    "${KUBE[@]}" get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "TLS secret '$TLS_SECRET_NAME' is missing in namespace '$NAMESPACE'"
+    "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
+    "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     deploy_overlay="$OVERLAY_DIR"
-    if [[ "$ENVIRONMENT" == "test" ]]; then
-      cutover_complete="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/cutover-complete}')"
-      if [[ "$cutover_complete" == "true" ]]; then
+    cutover_complete="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/cutover-complete}')"
+    if [[ "$cutover_complete" == "true" ]]; then
+      if [[ "$ENVIRONMENT" == "test" ]]; then
         deploy_overlay="$CUTOVER_OVERLAY_DIR"
-      else
-        deploy_overlay="$MIGRATION_OVERLAY_DIR"
-        echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
       fi
+    else
+      deploy_overlay="$MIGRATION_OVERLAY_DIR"
+      echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
     fi
     render_manifests "$deploy_overlay" \
-      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - >/dev/null
+      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - > /dev/null
     render_manifests "$deploy_overlay" \
       | "${KUBE[@]}" apply --server-side --field-manager=kubectl -f -
     ;;
   start)
     verify_target mutation
     check_secret
-    if [[ "$ENVIRONMENT" == "test" ]]; then
-      database_confirmation="${CONFIRM_DATABASE_READY:-${CONFIRM_DATA_RESTORED:-}}"
-      [[ "$database_confirmation" == "$NAMESPACE" ]] || fail \
-        "set CONFIRM_DATABASE_READY=$NAMESPACE after the fresh database is ready or a restore is validated"
-    fi
+    database_confirmation="${CONFIRM_DATABASE_READY:-${CONFIRM_DATA_RESTORED:-}}"
+    [[ "$database_confirmation" == "$NAMESPACE" ]] || fail \
+      "set CONFIRM_DATABASE_READY=$NAMESPACE after the fresh database is ready or a restore is validated"
     "${KUBE[@]}" scale deployment/masterino -n "$NAMESPACE" --replicas=1
     "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
     if [[ "$ENVIRONMENT" == "test" ]]; then
@@ -375,12 +401,12 @@ case "$COMMAND" in
     source_replicas="$("${KUBE[@]}" get deployment masterlion -n "$SOURCE_NAMESPACE" -o jsonpath='{.spec.replicas}')"
     [[ "$source_replicas" == "0" ]] || fail \
       "the old Masterino deployment must be scaled to zero before final data sync and cutover"
-    "${KUBE[@]}" get ingress "$SOURCE_INGRESS_NAME" -n "$SOURCE_NAMESPACE" >/dev/null
-    render_manifests "$CUTOVER_OVERLAY_DIR" | \
-      "${KUBE[@]}" apply --dry-run=client -f - >/dev/null
+    "${KUBE[@]}" get ingress "$SOURCE_INGRESS_NAME" -n "$SOURCE_NAMESPACE" > /dev/null
+    render_manifests "$CUTOVER_OVERLAY_DIR" \
+      | "${KUBE[@]}" apply --dry-run=client -f - > /dev/null
     "${KUBE[@]}" apply -f "$SOURCE_VERIFICATION_INGRESS"
-    if ! render_manifests "$CUTOVER_OVERLAY_DIR" | \
-      "${KUBE[@]}" apply --server-side --dry-run=server -f - >/dev/null; then
+    if ! render_manifests "$CUTOVER_OVERLAY_DIR" \
+      | "${KUBE[@]}" apply --server-side --dry-run=server -f - > /dev/null; then
       "${KUBE[@]}" apply -f "$ROLLBACK_INGRESS"
       fail "cutover preflight failed; the old test Ingress was restored"
     fi
@@ -434,7 +460,7 @@ case "$COMMAND" in
     verify_target read
     service="${1:-masterino}"
     case "$service" in
-      masterino|aihub-db-bridge)
+      masterino | aihub-db-bridge)
         "${KUBE[@]}" logs -n "$NAMESPACE" -l "app.kubernetes.io/name=$service" --tail=100 -f
         ;;
       memory-worker)
@@ -486,8 +512,11 @@ case "$COMMAND" in
     "${KUBE[@]}" cluster-info | head -1
     "${KUBE[@]}" get namespace "$NAMESPACE" -o yaml
     ;;
-  ""|-h|--help|help)
+  "" | -h | --help | help)
     usage
     ;;
-  *) usage; fail "unknown command: $COMMAND" ;;
+  *)
+    usage
+    fail "unknown command: $COMMAND"
+    ;;
 esac

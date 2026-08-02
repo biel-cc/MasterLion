@@ -73,16 +73,16 @@ describe('defineConfig locale path-traversal hardening', () => {
 
   it('preserves the complete desktop OIDC request when redirecting an unauthenticated user', async () => {
     vi.stubEnv('APP_URL_DYNAMIC', '1');
-    vi.stubEnv('APP_URL_ALLOWED_HOSTS', 'masterion.bielcrystal.com');
+    vi.stubEnv('APP_URL_ALLOWED_HOSTS', 'masterino.bielcrystal.com');
 
     const oidcUrl =
-      'https://masterion.bielcrystal.com/oidc/auth?client_id=lobehub-desktop&response_type=code&redirect_uri=https%3A%2F%2Fmasterion.bielcrystal.com%2Foidc%2Fcallback%2Fdesktop&code_challenge=challenge&code_challenge_method=S256&prompt=consent&resource=urn%3Alobehub%3Achat&scope=profile%20email%20offline_access&state=desktop-state';
+      'https://masterino.bielcrystal.com/oidc/auth?client_id=lobehub-desktop&response_type=code&redirect_uri=https%3A%2F%2Fmasterino.bielcrystal.com%2Foidc%2Fcallback%2Fdesktop&code_challenge=challenge&code_challenge_method=S256&prompt=consent&resource=urn%3Alobehub%3Achat&scope=profile%20email%20offline_access&state=desktop-state';
 
     const response = await middleware(
       new NextRequest(oidcUrl, {
         headers: {
-          'host': 'masterion.bielcrystal.com',
-          'x-forwarded-host': 'masterion.bielcrystal.com',
+          'host': 'masterino.bielcrystal.com',
+          'x-forwarded-host': 'masterino.bielcrystal.com',
           'x-forwarded-proto': 'https',
         },
       }),

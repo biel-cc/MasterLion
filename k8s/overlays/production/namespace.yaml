@@ -6,5 +6,5 @@ metadata:
     app.kubernetes.io/part-of: masterino
     masterino.io/environment: production
   annotations:
-    masterino.io/ack-cluster-id: c5c81a41c33164f578f4e43a77fda5fc3
+    masterino.io/ack-cluster-id: c23ea84b986c446d5b3fa9227962e77f4
     masterino.io/ack-region: cn-shenzhen

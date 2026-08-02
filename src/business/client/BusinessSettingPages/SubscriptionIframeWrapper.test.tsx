@@ -3,7 +3,7 @@ import { render, waitFor } from '@testing-library/react';
 import { SubscriptionIframeWrapper } from './SubscriptionIframeWrapper';
 
 const mocks = vi.hoisted(() => ({
-  cloudServer: 'https://masterion.bielcrystal.com',
+  cloudServer: 'https://masterino.bielcrystal.com',
   setupSubscriptionWebviewSession: vi.fn().mockResolvedValue({ success: true }),
 }));
 
@@ -45,7 +45,7 @@ vi.mock('@/store/serverConfig/selectors', () => ({
 
 describe('SubscriptionIframeWrapper', () => {
   beforeEach(() => {
-    mocks.cloudServer = 'https://masterion.bielcrystal.com';
+    mocks.cloudServer = 'https://masterino.bielcrystal.com';
   });
 
   it('loads desktop cloud subscription pages from the Masterino origin', async () => {
@@ -56,7 +56,7 @@ describe('SubscriptionIframeWrapper', () => {
     expect(mocks.setupSubscriptionWebviewSession).toHaveBeenCalledWith('persist:subscription');
     expect(container.querySelector('webview')).toHaveAttribute(
       'src',
-      'https://masterion.bielcrystal.com/embed/subscription/usage?hl=zh-CN',
+      'https://masterino.bielcrystal.com/embed/subscription/usage?hl=zh-CN',
     );
   });
 

@@ -24,7 +24,7 @@ vi.mock('@lobechat/const', async (importOriginal) => {
 });
 
 vi.mock('@/utils/electron/desktopRuntimeConfig', () => ({
-  getDesktopCloudServer: () => 'https://masterion.bielcrystal.com',
+  getDesktopCloudServer: () => 'https://masterino.bielcrystal.com',
 }));
 
 describe('useUserAvatar', () => {
@@ -129,7 +129,7 @@ describe('useUserAvatar', () => {
 
     const { result } = renderHook(() => useUserAvatar());
 
-    expect(result.current).toBe('https://masterion.bielcrystal.com/api/avatar.png');
+    expect(result.current).toBe('https://masterino.bielcrystal.com/api/avatar.png');
   });
 
   it('should return original avatar when storageMode is selfHost but no URL configured', () => {

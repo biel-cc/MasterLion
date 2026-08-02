@@ -9,7 +9,38 @@ resources:
   - ingress.yaml
   - metadata-egress-network-policy.yaml
   - oidc-token-ingress.yaml
+  - pdb.yaml
+  - storageclass.yaml
   - webapi-trace-ingress.yaml
 replicas:
   - name: masterino
-    count: 1
+    count: 2
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: acr-credential-secret-aggregation
+  - target:
+      kind: StatefulSet
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: acr-credential-secret-aggregation
+  - target:
+      kind: StatefulSet
+      name: masterino-postgres
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: masterino-production-essd-retain
+  - target:
+      kind: StatefulSet
+      name: masterino-redis
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: masterino-production-essd-retain

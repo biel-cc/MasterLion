@@ -65,9 +65,9 @@ const installTestDesktopRuntimeConfig = () => {
   if (typeof globalThis.window === 'undefined') return;
 
   window.lobeEnv = {
-    cloudServer: 'https://masterion.bielcrystal.com',
+    cloudServer: 'https://masterino.bielcrystal.com',
     cloudServerAliases: ['https://mlai-test.bielcrystal.com'],
-    marketBaseUrl: 'https://masterion.bielcrystal.com/market',
+    marketBaseUrl: 'https://masterino.bielcrystal.com/market',
   };
 };
 

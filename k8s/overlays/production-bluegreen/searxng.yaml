@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino-searxng
+  labels:
+    app.kubernetes.io/name: masterino-searxng
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: search
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-searxng
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-searxng
+        app.kubernetes.io/part-of: masterino
+        app.kubernetes.io/component: search
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: acr-credential-secret-aggregation
+      nodeSelector:
+        alibabacloud.com/nodepool-id: npb74caa73461b49c986f40c22580f91c1
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searxng
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/searxng@sha256:663c20b2d6487ac6f34d741975ada147b996b1a0b68b1cd1e06300c6b5703803
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SEARXNG_SETTINGS_FILE
+              value: /etc/searxng/settings.yml
+            - name: SEARXNG_PORT
+              value: '8080'
+            - name: SEARXNG_BIND_ADDRESS
+              value: 0.0.0.0
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: masterino-secret
+                  key: SEARXNG_SECRET
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: '2'
+              memory: 2560Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: searxng-config
+              mountPath: /etc/searxng
+              readOnly: true
+      volumes:
+        - name: searxng-config
+          configMap:
+            name: searxng-config

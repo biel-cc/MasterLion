@@ -1,55 +1,55 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: masterlion-market-config
+  name: masterino-market-config
 data:
-  MARKET_PORT: "3220"
-  MARKET_PUBLIC_BASE_URL: "https://masterion.bielcrystal.com/market"
-  MARKET_OAUTH_REDIRECT_ORIGINS: "https://masterion.bielcrystal.com"
-  MARKET_OBJECT_STORAGE_ENDPOINT: "http://masterlion-market-oss:9000"
-  MARKET_OBJECT_STORAGE_BUCKET: "masterlion-market"
-  MARKET_OBJECT_STORAGE_REGION: "us-east-1"
-  MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: "1"
-  MARKET_RUNNER_INTERNAL_URL: "http://masterlion-market-runner:3221"
-  CONNECTOR_EGRESS_PROXY_URL: "http://connector-egress-proxy:3128"
-  MARKET_TRUSTED_CLIENT_IDS: "masterlion"
+  MARKET_PORT: '3220'
+  MARKET_PUBLIC_BASE_URL: 'https://masterino.bielcrystal.com/market'
+  MARKET_OAUTH_REDIRECT_ORIGINS: 'https://masterino.bielcrystal.com'
+  MARKET_OBJECT_STORAGE_ENDPOINT: 'http://masterino-market-oss:9000'
+  MARKET_OBJECT_STORAGE_BUCKET: 'masterino-market'
+  MARKET_OBJECT_STORAGE_REGION: 'us-east-1'
+  MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: '1'
+  MARKET_RUNNER_INTERNAL_URL: 'http://masterino-market-runner:3221'
+  CONNECTOR_EGRESS_PROXY_URL: 'http://connector-egress-proxy:3128'
+  MARKET_TRUSTED_CLIENT_IDS: 'masterino'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: masterlion-market-migrate
+  name: masterino-market-migrate
   labels:
-    app.kubernetes.io/name: masterlion-market-migrate
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-market-migrate
+    app.kubernetes.io/part-of: masterino
 spec:
   backoffLimit: 3
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: masterlion-market-migrate
-        app.kubernetes.io/part-of: masterlion
+        app.kubernetes.io/name: masterino-market-migrate
+        app.kubernetes.io/part-of: masterino
     spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
-          command: ["node", "dist/migrate.js"]
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market:v1.1.0
+          command: ['node', 'dist/migrate.js']
           envFrom:
             - configMapRef:
-                name: masterlion-market-config
+                name: masterino-market-config
             - secretRef:
-                name: masterlion-market-secret
+                name: masterino-market-secret
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: masterlion-market
+  name: masterino-market
   labels:
-    app.kubernetes.io/name: masterlion-market
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-market
+    app.kubernetes.io/part-of: masterino
 spec:
   selector:
-    app.kubernetes.io/name: masterlion-market
+    app.kubernetes.io/name: masterino-market
   ports:
     - name: http
       port: 3220
@@ -58,35 +58,35 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: masterlion-market
+  name: masterino-market
   labels:
-    app.kubernetes.io/name: masterlion-market
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-market
+    app.kubernetes.io/part-of: masterino
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market
+      app.kubernetes.io/name: masterino-market
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: masterlion-market
-        app.kubernetes.io/part-of: masterlion
+        app.kubernetes.io/name: masterino-market
+        app.kubernetes.io/part-of: masterino
     spec:
       containers:
         - name: market
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market:v1.1.0
           envFrom:
             - configMapRef:
-                name: masterlion-market-config
+                name: masterino-market-config
             - secretRef:
-                name: masterlion-market-secret
+                name: masterino-market-secret
           ports:
             - containerPort: 3220
               name: http
           resources:
             requests: { cpu: 200m, memory: 256Mi }
-            limits: { cpu: "1", memory: 1Gi }
+            limits: { cpu: '1', memory: 1Gi }
           readinessProbe:
             httpGet: { path: /ready, port: http }
             initialDelaySeconds: 5
@@ -99,24 +99,24 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: masterlion-market
+  name: masterino-market
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market
+      app.kubernetes.io/name: masterino-market
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: masterlion-market
+  name: masterino-market
 spec:
   minReplicas: 2
   maxReplicas: 6
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: masterlion-market
+    name: masterino-market
   metrics:
     - type: Resource
       resource:
@@ -126,13 +126,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: masterlion-market-runner
+  name: masterino-market-runner
   labels:
-    app.kubernetes.io/name: masterlion-market-runner
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-market-runner
+    app.kubernetes.io/part-of: masterino
 spec:
   selector:
-    app.kubernetes.io/name: masterlion-market-runner
+    app.kubernetes.io/name: masterino-market-runner
   ports:
     - name: http
       port: 3221
@@ -141,36 +141,36 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: masterlion-market-runner
+  name: masterino-market-runner
   labels:
-    app.kubernetes.io/name: masterlion-market-runner
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-market-runner
+    app.kubernetes.io/part-of: masterino
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market-runner
+      app.kubernetes.io/name: masterino-market-runner
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: masterlion-market-runner
-        app.kubernetes.io/part-of: masterlion
+        app.kubernetes.io/name: masterino-market-runner
+        app.kubernetes.io/part-of: masterino
     spec:
       containers:
         - name: runner
-          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterlion-market:v0.0.1
-          command: ["node", "dist/runner.js"]
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market:v1.1.0
+          command: ['node', 'dist/runner.js']
           envFrom:
             - configMapRef:
-                name: masterlion-market-config
+                name: masterino-market-config
             - secretRef:
-                name: masterlion-market-secret
+                name: masterino-market-secret
           ports:
             - containerPort: 3221
               name: http
           resources:
             requests: { cpu: 200m, memory: 256Mi }
-            limits: { cpu: "1", memory: 1Gi }
+            limits: { cpu: '1', memory: 1Gi }
           readinessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 5
@@ -181,24 +181,24 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: masterlion-market-runner
+  name: masterino-market-runner
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-market-runner
+      app.kubernetes.io/name: masterino-market-runner
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: masterlion-market-runner
+  name: masterino-market-runner
 spec:
   minReplicas: 2
   maxReplicas: 6
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: masterlion-market-runner
+    name: masterino-market-runner
   metrics:
     - type: Resource
       resource:
@@ -208,19 +208,19 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: masterlion-market
+  name: masterino-market
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/use-regex: 'true'
     nginx.ingress.kubernetes.io/rewrite-target: /$2
 spec:
   rules:
-    - host: masterion.bielcrystal.com
+    - host: masterino.bielcrystal.com
       http:
         paths:
           - path: /market(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: masterlion-market
+                name: masterino-market
                 port:
                   number: 3220
