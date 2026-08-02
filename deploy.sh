@@ -10,7 +10,6 @@ MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/maste
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
 IMAGE_TAG_MARKER="v1.1.0"
 TLS_SECRET_NAME="20261122bielcrystal.com"
-ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 
 usage() {
   cat << 'EOF'
@@ -78,6 +77,7 @@ case "$ENVIRONMENT" in
     SOURCE_VERIFICATION_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-verification-ingress.yaml"
     SOURCE_INGRESS_NAME="masterlion-test-ingress"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-$DEFAULT_TEST_CONTEXT}"
+    ACR_PULL_SECRET_NAME="masterino-acr-fixed"
     ;;
   production)
     NAMESPACE="masterino"
@@ -85,6 +85,7 @@ case "$ENVIRONMENT" in
     OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production"
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production-migration"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-}"
+    ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
     [[ -n "$EXPECTED_CONTEXT" ]] || fail "ACK_CONTEXT is required for production"
     ;;
   *)
@@ -233,7 +234,6 @@ case "$COMMAND" in
     if "${KUBE[@]}" get namespace "$NAMESPACE" > /dev/null 2>&1; then
       "${KUBE[@]}" get serviceaccount default -n "$NAMESPACE" -o jsonpath='Default service account pull secrets: {.imagePullSecrets}{"\n"}'
       "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" || true
-      "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" || true
       "${KUBE[@]}" get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" || true
     else
       echo "Namespace '$NAMESPACE' does not exist yet; run bootstrap after reviewing preflight."
@@ -364,8 +364,6 @@ case "$COMMAND" in
     check_secret
     "${KUBE[@]}" get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "TLS secret '$TLS_SECRET_NAME' is missing in namespace '$NAMESPACE'"
-    "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
-      "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     deploy_overlay="$OVERLAY_DIR"

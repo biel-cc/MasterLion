@@ -33,6 +33,7 @@ describe('test OnlyBoxes sandbox configuration', () => {
     expect(kustomization).toContain('masterino-onlyboxes-ca');
     expect(deployScript).toContain('masterino-onlyboxes-secret is missing');
     expect(deployScript).toContain('masterino-onlyboxes-ca is missing');
+    expect(deployScript).toContain('ACR_PULL_SECRET_NAME="masterino-acr-fixed"');
 
     const checkSecret = deployScript.slice(
       deployScript.indexOf('check_secret()'),
