@@ -185,12 +185,6 @@ check_secret() {
   [[ "$app_token" == "$bridge_token" ]] || fail \
     "AIHUB_BRIDGE_TOKEN differs between application and bridge Secrets"
   if [[ "$ENVIRONMENT" == "test" ]]; then
-    "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
-      "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
-    for key in "${required_searxng_secret_keys[@]}"; do
-      value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
-      [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
-    done
     "${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterino-onlyboxes-secret is missing in namespace '$NAMESPACE'"
     value="$("${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" \
