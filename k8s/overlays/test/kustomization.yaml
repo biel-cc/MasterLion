@@ -49,6 +49,8 @@ patches:
           - name: onlyboxes-ca
             configMap:
               name: masterino-onlyboxes-ca
+      # Keep the TLS hostname for certificate verification, but resolve it from
+      # the Pod hosts file so the sandbox path never depends on DNS.
       - op: add
         path: /spec/template/spec/hostAliases
         value:
