@@ -43,4 +43,35 @@ describe('test OnlyBoxes sandbox configuration', () => {
     );
     expect(checkSecret).not.toContain('masterlion-searxng-secret');
   });
+
+  it('does not construct Market services on OnlyBoxes sandbox or skill read paths', async () => {
+    const toolsRouter = await readFile(
+      path.join(root, 'apps', 'server', 'src', 'routers', 'tools', 'market.ts'),
+      'utf8',
+    );
+    const skillsRouter = await readFile(
+      path.join(root, 'apps', 'server', 'src', 'routers', 'lambda', 'agentSkills.ts'),
+      'utf8',
+    );
+
+    const sandboxProcedure = toolsRouter.slice(
+      toolsRouter.indexOf('const sandboxToolProcedure'),
+      toolsRouter.indexOf('// ============================== LobeHub Skill Procedures'),
+    );
+    expect(sandboxProcedure).toContain("sandboxEnv.SANDBOX_PROVIDER === 'market'");
+    expect(toolsRouter).toContain('execInSandbox: sandboxToolProcedure');
+    expect(toolsRouter).toContain('exportAndUploadFile: sandboxToolProcedure');
+    expect(toolsRouter).toContain('marketService?: MarketService');
+
+    const skillProcedure = skillsRouter.slice(
+      skillsRouter.indexOf('const skillProcedure'),
+      skillsRouter.indexOf('// Writes:'),
+    );
+    const importFromMarket = skillsRouter.slice(
+      skillsRouter.indexOf('importFromMarket:'),
+      skillsRouter.indexOf('list: skillProcedure'),
+    );
+    expect(skillProcedure).not.toContain('new MarketService');
+    expect(importFromMarket).toContain('new MarketService');
+  });
 });

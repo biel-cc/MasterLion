@@ -66,7 +66,6 @@ const skillProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
     ctx: {
       fileModel: new FileModel(ctx.serverDB, ctx.userId, workspaceId),
       fileService: new FileService(ctx.serverDB, ctx.userId, workspaceId),
-      marketService: new MarketService({ userInfo: { userId: ctx.userId } }),
       skillImporter: new SkillImporter(ctx.serverDB, ctx.userId, workspaceId),
       skillModel,
     },
@@ -208,7 +207,8 @@ export const agentSkillsRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         // Get download URL from market service
-        const downloadUrl = ctx.marketService.getSkillDownloadUrl(input.identifier);
+        const marketService = new MarketService({ userInfo: { userId: ctx.userId } });
+        const downloadUrl = marketService.getSkillDownloadUrl(input.identifier);
         // Import using the download URL
         return await ctx.skillImporter.importFromUrl(
           { url: downloadUrl },
