@@ -318,6 +318,114 @@ describe('MessageContentProcessor', () => {
   });
 
   describe('File context processing', () => {
+    it('should defer a large spreadsheet to the sandbox without injecting its full content', async () => {
+      const processor = new MessageContentProcessor({
+        fileContext: {
+          analysisToolEnabled: true,
+          enabled: true,
+          maxDirectSpreadsheetTokens: 10,
+        },
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+      const sensitiveRow = 'CONFIDENTIAL-WORKBOOK-ROW'.repeat(20);
+      const messages: UIChatMessage[] = [
+        {
+          content: 'Analyze the workbook',
+          createdAt: Date.now(),
+          fileList: [
+            {
+              content: `<sheet name="Data">\n${sensitiveRow}\n</sheet>`,
+              fileType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              id: 'spreadsheet-1',
+              name: 'large.xlsx',
+              size: 1024,
+              url: 'https://example.com/large.xlsx',
+            },
+          ],
+          id: 'test',
+          role: 'user',
+          updatedAt: Date.now(),
+        },
+      ];
+
+      const result = await processor.process(createContext(messages));
+      const text = (result.messages[0].content as any[])[0].text;
+
+      expect(text).toContain('mode="sandbox-analysis"');
+      expect(text).toContain('pandas or openpyxl');
+      expect(text).toContain('sheets="Data"');
+      expect(text).not.toContain(sensitiveRow);
+    });
+
+    it('should tell the model not to claim full analysis when no spreadsheet tool is enabled', async () => {
+      const processor = new MessageContentProcessor({
+        fileContext: { enabled: true, maxDirectSpreadsheetTokens: 10 },
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+      const fullContent = 'ROW-TOO-LARGE'.repeat(30);
+      const messages: UIChatMessage[] = [
+        {
+          content: 'Analyze the workbook',
+          createdAt: Date.now(),
+          fileList: [
+            {
+              content: fullContent,
+              fileType: 'application/vnd.ms-excel',
+              id: 'spreadsheet-1',
+              name: 'large.xls',
+              size: 1024,
+              url: 'https://example.com/large.xls',
+            },
+          ],
+          id: 'test',
+          role: 'user',
+          updatedAt: Date.now(),
+        },
+      ];
+
+      const result = await processor.process(createContext(messages));
+      const text = (result.messages[0].content as any[])[0].text;
+
+      expect(text).toContain('mode="analysis-required"');
+      expect(text).toContain('enable Cloud Sandbox/data analysis');
+      expect(text).not.toContain(fullContent);
+    });
+
+    it('should preserve direct context for a spreadsheet under the configured budget', async () => {
+      const processor = new MessageContentProcessor({
+        fileContext: { enabled: true, maxDirectSpreadsheetTokens: 10_000 },
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+      const messages: UIChatMessage[] = [
+        {
+          content: 'Analyze the workbook',
+          createdAt: Date.now(),
+          fileList: [
+            {
+              content: 'small spreadsheet content',
+              fileType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              id: 'spreadsheet-1',
+              name: 'small.xlsx',
+              size: 128,
+              url: 'https://example.com/small.xlsx',
+            },
+          ],
+          id: 'test',
+          role: 'user',
+          updatedAt: Date.now(),
+        },
+      ];
+
+      const result = await processor.process(createContext(messages));
+      const text = (result.messages[0].content as any[])[0].text;
+
+      expect(text).toContain('small spreadsheet content');
+      expect(text).not.toContain('spreadsheet_context');
+    });
+
     it('should add file context when enabled', async () => {
       mockIsCanUseVision.mockReturnValue(false);
 

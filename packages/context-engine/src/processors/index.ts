@@ -14,6 +14,11 @@ export { InputTemplateProcessor } from './InputTemplate';
 export { MessageCleanupProcessor } from './MessageCleanup';
 export { MessageContentProcessor } from './MessageContent';
 export {
+  DEFAULT_MAX_DIRECT_SPREADSHEET_TOKENS,
+  prepareSpreadsheetFileContext,
+  resolveDirectSpreadsheetTokenBudget,
+} from './spreadsheetContext';
+export {
   buildPlaceholderGenerators,
   formatPlaceholderValues,
   PlaceholderVariablesProcessor,

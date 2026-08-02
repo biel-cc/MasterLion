@@ -131,6 +131,9 @@ export interface ServerMessagesEngineParams {
   /** Model ID */
   model: string;
 
+  /** Model context window resolved for this runtime request. */
+  modelContextWindowTokens?: number;
+
   /** Page content context (optional, for document editing) */
   pageContentContext?: PageContentContext;
 

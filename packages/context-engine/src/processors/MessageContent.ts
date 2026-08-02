@@ -7,6 +7,10 @@ import debug from 'debug';
 
 import { BaseProcessor } from '../base/BaseProcessor';
 import type { PipelineContext, ProcessorOptions } from '../types';
+import {
+  prepareSpreadsheetFileContext,
+  resolveDirectSpreadsheetTokenBudget,
+} from './spreadsheetContext';
 
 declare module '../types' {
   interface PipelineContextMetadataOverrides {
@@ -45,10 +49,16 @@ const deserializeParts = (content: string): MessageContentPart[] | null => {
 };
 
 export interface FileContextConfig {
+  /** Whether a tool can read the original uploaded workbook. */
+  analysisToolEnabled?: boolean;
+  /** Effective model context window used to derive a safe spreadsheet budget. */
+  contextWindowTokens?: number;
   /** Whether to enable file context injection */
   enabled?: boolean;
   /** Whether to include file URLs in file context prompts */
   includeFileUrl?: boolean;
+  /** Maximum parsed spreadsheet tokens allowed in direct model context. */
+  maxDirectSpreadsheetTokens?: number;
 }
 
 export interface MessageContentConfig {
@@ -211,11 +221,19 @@ export class MessageContentProcessor extends BaseProcessor {
 
     // Add file context (if file context is enabled and has files, images or videos)
     if ((hasFiles || hasImages || hasVideos) && this.config.fileContext?.enabled) {
+      const fileList = hasFiles
+        ? prepareSpreadsheetFileContext(message.fileList, {
+            analysisToolEnabled: this.config.fileContext.analysisToolEnabled,
+            maxDirectTokens:
+              this.config.fileContext.maxDirectSpreadsheetTokens ??
+              resolveDirectSpreadsheetTokenBudget(this.config.fileContext.contextWindowTokens),
+          })
+        : message.fileList;
       const filesContext = filesPrompts({
         // File access URLs are needed by sandbox/code tools that fetch attachments from text.
         // Call sites can still disable them for environments such as desktop local files.
         addUrl: this.config.fileContext.includeFileUrl ?? true,
-        fileList: message.fileList,
+        fileList,
         imageList: message.imageList || [],
         messageId: message.id,
         videoList: message.videoList || [],

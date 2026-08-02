@@ -113,6 +113,7 @@ import { archiveToolResultIfNeeded } from '@/server/services/toolExecution/archi
 import { toAgentContextDocuments } from '@/utils/agentDocumentContextMapping';
 import { nanoid } from '@/utils/uuid';
 
+import { assertFinalContextWithinWindow } from './contextWindowPreflight';
 import { dispatchClientTool } from './dispatchClientTool';
 import { formatErrorEventData } from './formatErrorEventData';
 import { classifyLLMError, type LLMErrorKind } from './llmErrorClassification';
@@ -999,6 +1000,7 @@ export const createRuntimeExecutors = (
       let shouldReplayAssistantReasoning = false;
       let preserveThinkingForPayload: boolean | undefined;
       let resolvedExtendParams: ModelExtendParams | undefined;
+      let resolvedContextWindowTokens: number | undefined;
       let sourceMessagesForProviderImages = llmPayload.messages as UIChatMessage[];
 
       // Process messages through serverMessagesEngine to inject system role, knowledge, etc.
@@ -1031,6 +1033,7 @@ export const createRuntimeExecutors = (
             item.providerId === provider &&
             (item.id === model || item.config?.deploymentName === model),
         );
+        resolvedContextWindowTokens = modelCard?.contextWindowTokens;
 
         let modelExtendParams = readExtendParams(modelCard);
 
@@ -1416,6 +1419,7 @@ export const createRuntimeExecutors = (
           },
           messages: messagesForContext,
           model,
+          modelContextWindowTokens: resolvedContextWindowTokens,
           provider,
           systemRole: agentConfig.systemRole ?? undefined,
           toolDiscoveryConfig,
@@ -1499,6 +1503,13 @@ export const createRuntimeExecutors = (
       } else {
         processedMessages = llmPayload.messages;
       }
+
+      assertFinalContextWithinWindow({
+        contextWindowTokens: resolvedContextWindowTokens,
+        messages: processedMessages as UIChatMessage[],
+        model,
+        tools,
+      });
 
       // Initialize ModelRuntime (read user's keyVaults from database)
       const modelRuntime = await initModelRuntimeFromDB(
