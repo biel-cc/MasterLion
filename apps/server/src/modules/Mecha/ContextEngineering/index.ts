@@ -51,6 +51,7 @@ const createServerVariableGenerators = (params: {
 export const serverMessagesEngine = async ({
   messages = [],
   model,
+  modelContextWindowTokens,
   provider,
   systemRole,
   inputTemplate,
@@ -93,7 +94,12 @@ export const serverMessagesEngine = async ({
     enableHistoryCount,
 
     // Server-side file access URLs resolve to stable file-proxy URLs in production.
-    fileContext: { enabled: true, includeFileUrl: true },
+    fileContext: {
+      analysisToolEnabled: toolsConfig?.tools?.includes('lobe-cloud-sandbox') ?? false,
+      contextWindowTokens: modelContextWindowTokens,
+      enabled: true,
+      includeFileUrl: true,
+    },
 
     // Force finish mode (inject summary prompt when maxSteps exceeded)
     forceFinish,

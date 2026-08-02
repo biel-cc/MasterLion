@@ -57,7 +57,7 @@ import { getAgentStoreState } from '@/store/agent';
 import { agentChatConfigSelectors, agentSelectors } from '@/store/agent/selectors';
 import { getChatGroupStoreState } from '@/store/agentGroup';
 import { agentGroupSelectors } from '@/store/agentGroup/selectors';
-import { getAiInfraStoreState } from '@/store/aiInfra';
+import { aiModelSelectors, getAiInfraStoreState } from '@/store/aiInfra';
 import { getChatStoreState } from '@/store/chat';
 import { chatSelectors, topicSelectors } from '@/store/chat/selectors';
 import { getToolStoreState } from '@/store/tool';
@@ -138,6 +138,11 @@ export const contextEngineering = async ({
   memoryContext,
 }: ContextEngineeringContext): Promise<OpenAIChatMessage[]> => {
   log('tools: %o', tools);
+
+  const modelContextWindowTokens = aiModelSelectors.modelContextWindowTokens(
+    model,
+    provider,
+  )(getAiInfraStoreState());
 
   // Check if Agent Builder tool is enabled
   const isAgentBuilderEnabled = tools?.includes(AgentBuilderIdentifier) ?? false;
@@ -676,7 +681,12 @@ export const contextEngineering = async ({
     },
 
     // Desktop local/static URLs are not fetchable by remote providers or cloud tools.
-    fileContext: { enabled: true, includeFileUrl: !isDesktop },
+    fileContext: {
+      analysisToolEnabled: tools?.includes('lobe-cloud-sandbox') ?? false,
+      contextWindowTokens: modelContextWindowTokens,
+      enabled: true,
+      includeFileUrl: !isDesktop,
+    },
 
     // Knowledge injection
     knowledge: {

@@ -86,10 +86,16 @@ export type VariableGenerators = Record<string, () => string>;
  * File context configuration
  */
 export interface FileContextConfig {
+  /** Whether a tool can read the original uploaded workbook. */
+  analysisToolEnabled?: boolean;
+  /** Effective model context window used to derive a safe spreadsheet budget. */
+  contextWindowTokens?: number;
   /** Whether to enable file context injection */
   enabled: boolean;
   /** Whether to include file URLs (desktop typically uses false) */
   includeFileUrl: boolean;
+  /** Maximum parsed spreadsheet tokens allowed in direct model context. */
+  maxDirectSpreadsheetTokens?: number;
 }
 
 /**

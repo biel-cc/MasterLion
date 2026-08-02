@@ -73,6 +73,10 @@ export const ERROR_PATTERNS: ErrorPattern[] = [
   { code: AgentRuntimeErrorType.ExceededContextWindow, match: sub('context_length_exceeded') },
   {
     code: AgentRuntimeErrorType.ExceededContextWindow,
+    match: sub('model_context_window_exceeded'),
+  },
+  {
+    code: AgentRuntimeErrorType.ExceededContextWindow,
     match: sub('context window exceeds', { caseInsensitive: true }),
   },
   {

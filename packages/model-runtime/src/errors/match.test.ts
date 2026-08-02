@@ -17,6 +17,15 @@ describe('matchErrorPattern', () => {
     );
   });
 
+  it('classifies NewAPI model_context_window_exceeded errors', () => {
+    expect(
+      matchErrorPattern({
+        message: '400 provider error: finish_reason=model_context_window_exceeded',
+        provider: 'newapi',
+      })?.code,
+    ).toBe(AgentRuntimeErrorType.ExceededContextWindow);
+  });
+
   it('classifies ollamacloud "context window exceeds limit" as ExceededContextWindow, not ProviderBizError', () => {
     // ollamacloud surfaces context-window overflow as a generic 400 that the
     // upstream labels ProviderBizError. The ECW message pattern sits before the
