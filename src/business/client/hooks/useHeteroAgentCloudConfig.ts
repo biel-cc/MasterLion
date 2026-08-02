@@ -5,6 +5,7 @@ import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { lambdaQuery } from '@/libs/trpc/client';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors } from '@/store/agent/selectors';
+import { featureFlagsSelectors, useServerConfigStore } from '@/store/serverConfig';
 
 // Fixed cred key — must stay in sync with CloudHeterogeneousConfig
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -16,6 +17,7 @@ interface HeteroAgentCloudConfig {
 
 export const useHeteroAgentCloudConfig = (agentId: string): HeteroAgentCloudConfig => {
   const router = useQueryRoute();
+  const { showMarket } = useServerConfigStore(featureFlagsSelectors);
 
   const heterogeneousProvider = useAgentStore(
     (s) => agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider,
@@ -23,7 +25,7 @@ export const useHeteroAgentCloudConfig = (agentId: string): HeteroAgentCloudConf
 
   // Only claude-code agents require a cloud credential — codex and other providers do not use this key
   const isClaudeCode = heterogeneousProvider?.type === 'claude-code';
-  const needsCredCheck = !isDesktop && isClaudeCode;
+  const needsCredCheck = !isDesktop && isClaudeCode && showMarket;
 
   // Only fetch credentials when actually needed
   const { data: credsData, isLoading: isCredsLoading } = lambdaQuery.market.creds.list.useQuery(

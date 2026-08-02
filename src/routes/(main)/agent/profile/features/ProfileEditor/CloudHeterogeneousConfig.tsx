@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
 import { lambdaClient, lambdaQuery } from '@/libs/trpc/client';
+import { featureFlagsSelectors, useServerConfigStore } from '@/store/serverConfig';
 
 // Fixed cred key for Claude Code OAuth token — never changes
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -290,6 +291,7 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
     const { t } = useTranslation('setting');
     const navigate = useWorkspaceAwareNavigate();
     const { allowed: canEdit } = usePermission('edit_own_content');
+    const { showMarket } = useServerConfigStore(featureFlagsSelectors);
 
     const currentEnv = provider.env ?? {};
     const storedGithubCredKey = currentEnv.GITHUB_CRED_KEY ?? '';
@@ -305,7 +307,7 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
       data: credsData,
       isLoading,
       refetch,
-    } = lambdaQuery.market.creds.list.useQuery(undefined);
+    } = lambdaQuery.market.creds.list.useQuery(undefined, { enabled: showMarket });
     const allCreds: UserCredSummary[] = credsData?.data ?? [];
 
     const claudeTokenCred = allCreds.find((c) => c.key === CLAUDE_TOKEN_CRED_KEY);

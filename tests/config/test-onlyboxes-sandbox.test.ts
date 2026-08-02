@@ -74,4 +74,34 @@ describe('test OnlyBoxes sandbox configuration', () => {
     expect(skillProcedure).not.toContain('new MarketService');
     expect(importFromMarket).toContain('new MarketService');
   });
+
+  it('does not query Market credentials when the Market feature is disabled', async () => {
+    const contextEngineering = await readFile(
+      path.join(root, 'src', 'services', 'chat', 'mecha', 'contextEngineering.ts'),
+      'utf8',
+    );
+    const cloudConfigHook = await readFile(
+      path.join(root, 'src', 'business', 'client', 'hooks', 'useHeteroAgentCloudConfig.ts'),
+      'utf8',
+    );
+    const cloudProfile = await readFile(
+      path.join(
+        root,
+        'src',
+        'routes',
+        '(main)',
+        'agent',
+        'profile',
+        'features',
+        'ProfileEditor',
+        'CloudHeterogeneousConfig.tsx',
+      ),
+      'utf8',
+    );
+
+    expect(contextEngineering).toContain('if (isCredsEnabled && isMarketEnabled)');
+    expect(contextEngineering).toContain('featureFlags?.showMarket === true');
+    expect(cloudConfigHook).toContain('isClaudeCode && showMarket');
+    expect(cloudProfile).toContain('{ enabled: showMarket }');
+  });
 });

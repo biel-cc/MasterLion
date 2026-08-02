@@ -381,9 +381,12 @@ export const contextEngineering = async ({
   // Resolve user credentials context for creds tool
   // Creds tool must be enabled to fetch credentials
   const isCredsEnabled = tools?.includes(CredsIdentifier) ?? false;
+  const isMarketEnabled =
+    typeof window !== 'undefined' &&
+    window.global_serverConfigStore?.getState()?.featureFlags?.showMarket === true;
   let credsList: CredSummary[] | undefined;
 
-  if (isCredsEnabled) {
+  if (isCredsEnabled && isMarketEnabled) {
     try {
       const credsResult = await lambdaClient.market.creds.list.query();
       const userCreds = (credsResult as any)?.data ?? [];
