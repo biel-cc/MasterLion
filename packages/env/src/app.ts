@@ -130,7 +130,14 @@ export const getAppConfig = () => {
       TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED === '1',
     },
   });
-  if (process.env.NODE_ENV === 'production' && !config.MARKET_ALLOW_EXTERNAL_FALLBACK) {
+  const isMarketDisabled = process.env.FEATURE_FLAGS?.split(',').some(
+    (flag) => flag.trim() === '-market',
+  );
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !config.MARKET_ALLOW_EXTERNAL_FALLBACK &&
+    !isMarketDisabled
+  ) {
     const missing = [
       ['MARKET_BASE_URL', config.MARKET_BASE_URL],
       ['MARKET_TRUSTED_CLIENT_ID', config.MARKET_TRUSTED_CLIENT_ID],

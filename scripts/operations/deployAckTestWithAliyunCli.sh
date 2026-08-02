@@ -275,6 +275,19 @@ case "$ACK_TEST_ACTION" in
   aihub-check)
     check_aihub_authorization
     ;;
+  diagnose)
+    echo "Masterino image: $(kubectl -n "$NAMESPACE" get deployment masterino -o jsonpath='{.spec.template.spec.containers[0].image}')"
+    echo "Sandbox provider: $(kubectl -n "$NAMESPACE" get configmap masterino-config -o jsonpath='{.data.SANDBOX_PROVIDER}')"
+    if kubectl -n "$NAMESPACE" get configmap masterino-config -o jsonpath='{.data.MARKET_BASE_URL}' | grep -q .; then
+      fail "MARKET_BASE_URL is unexpectedly configured"
+    fi
+    echo "Market base URL: absent"
+    kubectl -n "$NAMESPACE" get deployment masterino \
+      -o jsonpath='Host aliases: {.spec.template.spec.hostAliases}{"\n"}'
+    kubectl -n "$NAMESPACE" logs deployment/masterino --since=15m --tail=2000 \
+      | grep -Ei 'error|exception|market|sandbox|trusted_client|internal server' \
+      | tail -n 200 || true
+    ;;
   validate)
     require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
@@ -312,6 +325,6 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, apply, deploy, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, diagnose, validate, apply, deploy, or status"
     ;;
 esac

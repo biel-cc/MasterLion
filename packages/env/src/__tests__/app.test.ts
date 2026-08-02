@@ -9,6 +9,7 @@ describe('getServerConfig', () => {
     delete process.env.MARKET_BASE_URL;
     delete process.env.MARKET_TRUSTED_CLIENT_ID;
     delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
+    delete process.env.FEATURE_FLAGS;
   });
 
   describe('index url', () => {
@@ -53,6 +54,18 @@ describe('getServerConfig', () => {
     delete process.env.MARKET_TRUSTED_CLIENT_ID;
     delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
     await expect(import('../app')).rejects.toThrow('Internal Market configuration is required');
+  });
+
+  it('allows production startup without Market identity when Market is disabled', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('FEATURE_FLAGS', '+memory,-market');
+
+    const { getAppConfig } = await import('../app');
+    const config = getAppConfig();
+
+    expect(config.MARKET_BASE_URL).toBeUndefined();
+    expect(config.MARKET_TRUSTED_CLIENT_ID).toBeUndefined();
+    expect(config.MARKET_TRUSTED_CLIENT_SECRET).toBeUndefined();
   });
 
   describe('INTERNAL_APP_URL', () => {
