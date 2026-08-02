@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MarketService } from '@/server/services/market';
 
@@ -11,6 +11,10 @@ const baseOptions = {
 describe('sandbox service factory', () => {
   beforeEach(() => {
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('uses a disabled provider when no sandbox provider is configured', async () => {
@@ -55,6 +59,19 @@ describe('sandbox service factory', () => {
     });
   });
 
+  it('fails clearly when the market provider has no Market configuration', async () => {
+    vi.stubEnv('MARKET_BASE_URL', '');
+    vi.doMock('@/envs/sandbox', () => ({
+      sandboxEnv: { SANDBOX_PROVIDER: 'market' },
+    }));
+
+    const { createSandboxService } = await import('../factory');
+
+    expect(() =>
+      createSandboxService({ topicId: 'topic-1', userId: 'user-1' }),
+    ).toThrow('MARKET_BASE_URL is required for the Market sandbox provider');
+  });
+
   it('uses the onlyboxes provider when configured', async () => {
     vi.doMock('@/envs/app', () => ({
       appEnv: {
@@ -70,7 +87,7 @@ describe('sandbox service factory', () => {
     }));
 
     const { createSandboxService } = await import('../factory');
-    const service = createSandboxService(baseOptions);
+    const service = createSandboxService({ topicId: 'topic-1', userId: 'user-1' });
 
     expect(service.kind).toBe('onlyboxes');
     expect(service.capabilities.languages).toEqual(['python', 'javascript', 'typescript']);

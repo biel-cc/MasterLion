@@ -5,25 +5,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TaskTemplateService } from './index';
 
-const { mockGetTaskTemplateRecommendations, mockMarket } = vi.hoisted(() => {
-  const market: {
-    taskTemplates?: {
-      getTaskTemplateRecommendations: ReturnType<typeof vi.fn>;
+const { mockGetTaskTemplateRecommendations, mockMarket, mockMarketServiceConstructor } = vi.hoisted(
+  () => {
+    const market: {
+      taskTemplates?: {
+        getTaskTemplateRecommendations: ReturnType<typeof vi.fn>;
+      };
+    } = {
+      taskTemplates: {
+        getTaskTemplateRecommendations: vi.fn(),
+      },
     };
-  } = {
-    taskTemplates: {
-      getTaskTemplateRecommendations: vi.fn(),
-    },
-  };
 
-  return {
-    mockGetTaskTemplateRecommendations: vi.fn(),
-    mockMarket: market,
-  };
-});
+    return {
+      mockGetTaskTemplateRecommendations: vi.fn(),
+      mockMarket: market,
+      mockMarketServiceConstructor: vi.fn(),
+    };
+  },
+);
 
 vi.mock('@/server/services/market', () => ({
-  MarketService: vi.fn(() => ({ market: mockMarket })),
+  MarketService: mockMarketServiceConstructor.mockImplementation(() => ({ market: mockMarket })),
 }));
 
 vi.mock('@/config/composio', () => ({
@@ -71,6 +74,7 @@ describe('TaskTemplateService.listDailyRecommend', () => {
 
     expect(result).toEqual([]);
     expect(mockGetTaskTemplateRecommendations).not.toHaveBeenCalled();
+    expect(mockMarketServiceConstructor).not.toHaveBeenCalled();
   });
 
   it('returns Market recommendation items', async () => {

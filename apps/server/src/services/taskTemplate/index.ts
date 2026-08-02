@@ -41,11 +41,7 @@ const isMarketTaskTemplateRecommendationsEnabled = () =>
   process.env.MASTERLION_ENABLE_MARKET_RECOMMENDATIONS === '1';
 
 export class TaskTemplateService {
-  private marketService: MarketService;
-
-  constructor(private userId: string) {
-    this.marketService = new MarketService({ userInfo: { userId } });
-  }
+  constructor(private userId: string) {}
 
   async listDailyRecommend(
     interestKeys: string[],
@@ -60,7 +56,8 @@ export class TaskTemplateService {
     if (!isMarketTaskTemplateRecommendationsEnabled()) return [];
 
     try {
-      const result = await this.marketService.market.taskTemplates.getTaskTemplateRecommendations({
+      const marketService = new MarketService({ userInfo: { userId: this.userId } });
+      const result = await marketService.market.taskTemplates.getTaskTemplateRecommendations({
         count: clampRecommendationCount(options.count),
         enabledConnectors: options.enabledConnectors ? [...options.enabledConnectors] : undefined,
         excludeIds: options.excludeIds,

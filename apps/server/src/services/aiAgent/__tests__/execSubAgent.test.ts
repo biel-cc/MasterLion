@@ -1,6 +1,8 @@
 import { ThreadStatus, ThreadType } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MarketService } from '@/server/services/market';
+
 import { AiAgentService } from '../index';
 
 // Mock trusted client to avoid server-side env access
@@ -119,6 +121,10 @@ describe('AiAgentService.execSubAgent', () => {
     mockThreadModel.update.mockResolvedValue({});
 
     service = new AiAgentService(mockDb, userId);
+  });
+
+  it('does not initialize Market when the service is constructed', () => {
+    expect(MarketService).not.toHaveBeenCalled();
   });
 
   describe('successful isolated execution', () => {

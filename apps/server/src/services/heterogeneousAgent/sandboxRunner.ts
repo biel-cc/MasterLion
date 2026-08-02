@@ -9,7 +9,6 @@ import {
 import debug from 'debug';
 
 import { appEnv } from '@/envs/app';
-import type { MarketService } from '@/server/services/market';
 import { createSandboxService } from '@/server/services/sandbox';
 
 const log = debug('lobe-server:hetero-sandbox-runner');
@@ -31,7 +30,6 @@ export interface SandboxRunParams {
   imageList?: HeteroExecImageRef[];
   /** Operation-scoped JWT injected as LOBEHUB_JWT env in the sandbox. */
   jwt: string;
-  marketService: MarketService;
   operationId: string;
   prompt: string;
   /** GitHub repos to clone before running the agent (e.g. ['owner/repo', ...]). */
@@ -127,7 +125,6 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
     assistantMessageId,
     githubToken,
     jwt,
-    marketService,
     operationId,
     prompt,
     repos,
@@ -205,7 +202,7 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
     topicId,
   );
 
-  const sandboxService = createSandboxService({ marketService, topicId, userId });
+  const sandboxService = createSandboxService({ topicId, userId });
   const result = await sandboxService.callTool('runCommand', {
     background: true,
     command: shellCommand,

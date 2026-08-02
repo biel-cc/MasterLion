@@ -5,6 +5,7 @@ import { BuiltinToolsExecutor } from '../builtin';
 import type { ToolExecutionContext } from '../types';
 
 const mockApiHandler = vi.fn();
+const mockMarketServiceConstructor = vi.hoisted(() => vi.fn());
 
 vi.mock('../serverRuntimes', () => ({
   hasServerRuntime: vi.fn().mockReturnValue(true),
@@ -15,7 +16,7 @@ vi.mock('@/server/services/composio', () => ({
   ComposioService: vi.fn().mockImplementation(() => ({})),
 }));
 vi.mock('@/server/services/market', () => ({
-  MarketService: vi.fn().mockImplementation(() => ({})),
+  MarketService: mockMarketServiceConstructor.mockImplementation(() => ({})),
 }));
 
 const buildPayload = (argsStr: string): ChatToolPayload => ({
@@ -36,6 +37,15 @@ describe('BuiltinToolsExecutor truncated arguments', () => {
 
   beforeEach(() => {
     mockApiHandler.mockReset();
+    mockMarketServiceConstructor.mockClear();
+  });
+
+  it('does not initialize Market for non-Market builtin tools', async () => {
+    mockApiHandler.mockResolvedValueOnce({ content: 'ok', success: true });
+
+    await executor.execute(buildPayload('{}'), context);
+
+    expect(mockMarketServiceConstructor).not.toHaveBeenCalled();
   });
 
   it('short-circuits with TRUNCATED_ARGUMENTS when JSON is cut mid-object', async () => {

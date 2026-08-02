@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     findByName: vi.fn(),
     getAgentSkills: vi.fn(),
     getUserSettings: vi.fn(),
+    marketServiceConstructor: vi.fn(),
     marketService: {},
     readResource: vi.fn(),
     sandboxService,
@@ -72,7 +73,7 @@ vi.mock('@/server/services/file', () => ({
 }));
 
 vi.mock('@/server/services/market', () => ({
-  MarketService: vi.fn(() => mocks.marketService),
+  MarketService: mocks.marketServiceConstructor.mockImplementation(() => mocks.marketService),
 }));
 
 vi.mock('@/server/services/sandbox', async () => {
@@ -130,6 +131,8 @@ describe('skillsRuntime', () => {
       topicId: 'topic-1',
       userId: 'user-1',
     });
+
+    expect(mocks.marketServiceConstructor).not.toHaveBeenCalled();
 
     const result = await runtime.execScript({
       activatedSkills: [

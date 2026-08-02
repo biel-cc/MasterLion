@@ -1,4 +1,5 @@
 import { sandboxEnv } from '@/envs/sandbox';
+import { MarketService } from '@/server/services/market';
 
 import { DisabledSandboxProvider } from './providers/disabled';
 import { MarketSandboxProvider } from './providers/market';
@@ -38,7 +39,17 @@ const createSandboxProvider = (options: SandboxServiceOptions): SandboxProvider 
     }
 
     case 'market': {
-      return new MarketSandboxProvider(options);
+      if (!options.marketService && !process.env.MARKET_BASE_URL) {
+        throw new Error('MARKET_BASE_URL is required for the Market sandbox provider');
+      }
+
+      const marketService =
+        options.marketService ??
+        new MarketService({
+          userInfo: { userId: options.userId },
+        });
+
+      return new MarketSandboxProvider({ ...options, marketService });
     }
   }
 };

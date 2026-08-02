@@ -191,6 +191,19 @@ check_secret() {
       value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
       [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
     done
+    "${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-onlyboxes-secret is missing in namespace '$NAMESPACE'"
+    value="$("${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" \
+      -o 'jsonpath={.data.ONLYBOXES_JIT_SIGNING_KEY}')"
+    [[ -n "$value" ]] || fail \
+      "masterino-onlyboxes-secret is missing key: ONLYBOXES_JIT_SIGNING_KEY"
+
+    "${KUBE[@]}" get configmap masterino-onlyboxes-ca -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-onlyboxes-ca is missing in namespace '$NAMESPACE'"
+    value="$("${KUBE[@]}" get configmap masterino-onlyboxes-ca -n "$NAMESPACE" \
+      -o 'jsonpath={.data.onlyboxes-internal-ca\.crt}')"
+    [[ -n "$value" ]] || fail \
+      "masterino-onlyboxes-ca is missing key: onlyboxes-internal-ca.crt"
   fi
 }
 

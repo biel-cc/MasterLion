@@ -299,7 +299,7 @@ export class AiAgentService {
   private readonly threadModel: ThreadModel;
   private readonly topicModel: TopicModel;
   private readonly agentRuntimeService: AgentRuntimeService;
-  private readonly marketService: MarketService;
+  private marketService?: MarketService;
   private readonly composioService: ComposioService;
 
   private readonly workspaceId?: string;
@@ -340,8 +340,14 @@ export class AiAgentService {
       },
       workspaceId: wsId,
     });
-    this.marketService = new MarketService({ userInfo: { userId } });
     this.composioService = new ComposioService({ db, userId });
+  }
+
+  private getMarketService() {
+    if (!process.env.MARKET_BASE_URL) return;
+
+    this.marketService ??= new MarketService({ userInfo: { userId: this.userId } });
+    return this.marketService;
   }
 
   private async resolveOperationTaskId(
@@ -1192,12 +1198,15 @@ export class AiAgentService {
       const githubCredKey =
         agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
       try {
-        const list = await this.marketService.market.creds.list();
-        const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
-        if (cred) {
-          const full = await this.marketService.market.creds.get(cred.id, { decrypt: true });
-          const vals = (full as any).plaintext ?? (full as any).values ?? {};
-          githubToken = vals.access_token ?? vals.token;
+        const marketService = this.getMarketService();
+        if (marketService) {
+          const list = await marketService.market.creds.list();
+          const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);
+          if (cred) {
+            const full = await marketService.market.creds.get(cred.id, { decrypt: true });
+            const vals = (full as any).plaintext ?? (full as any).values ?? {};
+            githubToken = vals.access_token ?? vals.token;
+          }
         }
       } catch (err) {
         log('execAgent: failed to resolve GitHub token: %O', err);
@@ -1544,7 +1553,6 @@ export class AiAgentService {
           spawnHeteroSandbox({
             ...heteroParams,
             agentType: heteroType as 'claude-code' | 'codex',
-            marketService: this.marketService,
           }).catch((err) => {
             log('execAgent: hetero sandbox spawn failed: %O', err);
           });
@@ -1733,7 +1741,10 @@ export class AiAgentService {
 
       // 5c. Fetch LobeHub Skills manifests
       try {
-        lobehubSkillManifests = await this.marketService.getLobehubSkillManifests();
+        const marketService = this.getMarketService();
+        if (marketService) {
+          lobehubSkillManifests = await marketService.getLobehubSkillManifests();
+        }
       } catch (error) {
         log('execAgent: failed to fetch lobehub skill manifests: %O', error);
       }

@@ -12,6 +12,10 @@ import type {
   SandboxServiceOptions,
 } from '../types';
 
+type MarketSandboxProviderOptions = SandboxServiceOptions & {
+  marketService: NonNullable<SandboxServiceOptions['marketService']>;
+};
+
 const log = debug('lobe-server:sandbox:market');
 const REDACTED_SANDBOX_PARAM = '[redacted]';
 const SANDBOX_AUTH_ENV_PATTERN = /\b(LOBEHUB_JWT|GITHUB_TOKEN)=("[^"]*"|'[^']*'|\S+)/g;
@@ -29,9 +33,9 @@ export class MarketSandboxProvider implements SandboxProvider {
 
   readonly kind = 'market';
 
-  private readonly options: SandboxServiceOptions;
+  private readonly options: MarketSandboxProviderOptions;
 
-  constructor(options: SandboxServiceOptions) {
+  constructor(options: MarketSandboxProviderOptions) {
     this.options = options;
   }
 
@@ -164,7 +168,7 @@ export const redactSandboxParams = (params: Record<string, unknown>) => {
 
 /** @deprecated Use createSandboxService. */
 export class ServerSandboxService extends SandboxMiddlewareService implements SandboxService {
-  constructor(options: SandboxServiceOptions) {
+  constructor(options: MarketSandboxProviderOptions) {
     super(new MarketSandboxProvider(options), options);
   }
 }

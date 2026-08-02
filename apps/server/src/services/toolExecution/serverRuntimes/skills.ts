@@ -18,13 +18,11 @@ import debug from 'debug';
 
 import { AgentSkillModel } from '@/database/models/agentSkill';
 import { FileModel } from '@/database/models/file';
-import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
 import { filterBuiltinSkills } from '@/helpers/skillFilters';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { FileService } from '@/server/services/file';
-import { MarketService } from '@/server/services/market';
 import { createSandboxService, normalizeSandboxCommandResult } from '@/server/services/sandbox';
 import { SkillResourceService } from '@/server/services/skill/resource';
 import { preprocessLhCommand } from '@/server/services/toolExecution/preprocessLhCommand';
@@ -33,16 +31,9 @@ import { type ServerRuntimeRegistration } from './types';
 
 const log = debug('lobe-server:skills-runtime');
 
-interface UserSettingsWithMarketToken {
-  market?: {
-    accessToken?: string;
-  };
-}
-
 class SkillServerRuntimeService implements SkillRuntimeService {
   private resourceService: SkillResourceService;
   private skillModel: AgentSkillModel;
-  private marketService: MarketService;
   private fileService: FileService;
   private fileModel: FileModel;
   private serverDB: LobeChatDatabase;
@@ -52,7 +43,6 @@ class SkillServerRuntimeService implements SkillRuntimeService {
   constructor(options: {
     fileModel: FileModel;
     fileService: FileService;
-    marketService: MarketService;
     resourceService: SkillResourceService;
     serverDB: LobeChatDatabase;
     skillModel: AgentSkillModel;
@@ -61,7 +51,6 @@ class SkillServerRuntimeService implements SkillRuntimeService {
   }) {
     this.skillModel = options.skillModel;
     this.resourceService = options.resourceService;
-    this.marketService = options.marketService;
     this.fileService = options.fileService;
     this.fileModel = options.fileModel;
     this.serverDB = options.serverDB;
@@ -102,7 +91,6 @@ class SkillServerRuntimeService implements SkillRuntimeService {
     try {
       const sandboxService = createSandboxService({
         fileService: this.fileService,
-        marketService: this.marketService,
         serverDB: this.serverDB,
         topicId: this.topicId,
         userId: this.userId,
@@ -185,7 +173,6 @@ class SkillServerRuntimeService implements SkillRuntimeService {
 
       const sandboxService = createSandboxService({
         fileService: this.fileService,
-        marketService: this.marketService,
         serverDB: this.serverDB,
         topicId: this.topicId,
         userId: this.userId,
@@ -223,7 +210,6 @@ class SkillServerRuntimeService implements SkillRuntimeService {
     try {
       const sandboxService = createSandboxService({
         fileService: this.fileService,
-        marketService: this.marketService,
         topicId: this.topicId,
         userId: this.userId,
       });
@@ -260,39 +246,18 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       throw new Error('userId is required for Skills execution');
     }
 
-    // Fetch market access token from user settings
-    let marketAccessToken: string | undefined;
-    try {
-      const userModel = new UserModel(context.serverDB, context.userId);
-      const userSettings = await userModel.getUserSettings();
-      marketAccessToken = (userSettings as UserSettingsWithMarketToken | undefined)?.market
-        ?.accessToken;
-      log(
-        'Fetched market accessToken for user %s: %s',
-        context.userId,
-        marketAccessToken ? 'exists' : 'not found',
-      );
-    } catch (error) {
-      log('Failed to fetch market accessToken for user %s: %O', context.userId, error);
-    }
-
     const skillModel = new AgentSkillModel(context.serverDB, context.userId, context.workspaceId);
     const resourceService = new SkillResourceService(
       context.serverDB,
       context.userId,
       context.workspaceId,
     );
-    const marketService = new MarketService({
-      accessToken: marketAccessToken,
-      userInfo: { userId: context.userId },
-    });
     const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
     const fileModel = new FileModel(context.serverDB, context.userId, context.workspaceId);
 
     const service = new SkillServerRuntimeService({
       fileModel,
       fileService,
-      marketService,
       resourceService,
       serverDB: context.serverDB,
       skillModel,
