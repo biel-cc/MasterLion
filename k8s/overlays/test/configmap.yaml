@@ -17,6 +17,7 @@ data:
   # requiring production trusted-client credentials in the test environment.
   MARKET_ALLOW_EXTERNAL_FALLBACK: '1'
   MARKET_BASE_URL: 'http://masterino-market.masterlion.svc.cluster.local:3220'
+  SANDBOX_PROVIDER: 'market'
   INTERNAL_APP_URL: 'http://masterino:3210'
   DATABASE_DRIVER: 'node'
   LOBE_DB_NAME: 'lobechat'
