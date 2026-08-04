@@ -60,6 +60,7 @@ jobs:
           manifest_url="${DESKTOP_UPDATE_SERVER_URL}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
           manifest_file="$RUNNER_TEMP/current-desktop-manifest.yml"
           manifest_key="${DESKTOP_OSS_PREFIX}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
+          aws configure set default.s3.addressing_style virtual
           if ! listed_key="$(aws s3api list-objects-v2 \
             --bucket "$DESKTOP_OSS_BUCKET" \
             --prefix "$manifest_key" \
