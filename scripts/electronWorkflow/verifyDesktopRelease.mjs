@@ -30,6 +30,7 @@ for (const manifestName of manifests) {
 
   const content = fs.readFileSync(manifestPath, 'utf8');
   const lines = content.split(/\r?\n/);
+  const manifestUrls = new Set();
   const versionLine = lines.find((line) => line.startsWith('version:'));
   const manifestVersion = unquote(versionLine?.slice('version:'.length) || '');
   if (manifestVersion !== version) {
@@ -43,6 +44,11 @@ for (const manifestName of manifests) {
     if (!currentLine.startsWith('- url:')) continue;
 
     const url = unquote(currentLine.slice('- url:'.length));
+    if (manifestUrls.has(url)) {
+      throw new Error(`${manifestName} contains a duplicate URL: ${url}`);
+    }
+    manifestUrls.add(url);
+
     if (!url.startsWith(`${version}/`)) {
       throw new Error(`${manifestName} contains a non-versioned URL: ${url}`);
     }
