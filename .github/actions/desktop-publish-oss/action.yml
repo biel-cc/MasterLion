@@ -111,7 +111,8 @@ runs:
         for file in "${release_files[@]}"; do
           name="$(basename "$file")"
           downloaded="$RUNNER_TEMP/desktop-oss-${name}"
-          curl --fail --silent --show-error --location --retry 3 \
+          curl --fail --silent --show-error --location \
+            --retry 60 --retry-all-errors --retry-delay 5 \
             --output "$downloaded" \
             "${PUBLIC_BASE_URL}/${CHANNEL}/${VERSION}/${name}"
           cmp --silent "$file" "$downloaded"
@@ -120,7 +121,8 @@ runs:
 
         for manifest in "${CHANNEL}.yml" "${CHANNEL}-mac.yml"; do
           downloaded="$RUNNER_TEMP/desktop-oss-${VERSION}-${manifest}"
-          curl --fail --silent --show-error --location --retry 3 \
+          curl --fail --silent --show-error --location \
+            --retry 60 --retry-all-errors --retry-delay 5 \
             --output "$downloaded" \
             "${PUBLIC_BASE_URL}/${CHANNEL}/${VERSION}/${manifest}"
           cmp --silent "release/${manifest}" "$downloaded"
@@ -152,6 +154,7 @@ runs:
             --content-type 'application/yaml' \
             --only-show-errors
 
-          curl --fail --silent --show-error --location --retry 3 \
+          curl --fail --silent --show-error --location \
+            --retry 60 --retry-all-errors --retry-delay 5 \
             "${PUBLIC_BASE_URL}/${CHANNEL}/${manifest}" >/dev/null
         done
