@@ -199,6 +199,21 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
 
+      - name: Normalize update manifests for release channel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f release/latest.yml
+          mv release/latest.yml "release/${DESKTOP_CHANNEL}.yml"
+
+          for arch in arm64 x64; do
+            source="release/latest-mac-${arch}.yml"
+            target="release/${DESKTOP_CHANNEL}-mac-${arch}.yml"
+            test -f "$source"
+            mv "$source" "$target"
+          done
+
       - name: Merge macOS update manifests
         run: |
           cd scripts/electronWorkflow
