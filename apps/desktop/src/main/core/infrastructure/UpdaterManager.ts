@@ -12,7 +12,7 @@ import { autoUpdater } from 'electron-updater';
 import { isDev, isWindows } from '@/const/env';
 import { getDesktopEnv } from '@/env';
 import { UPDATE_CHANNEL, UPDATE_SERVER_URL, updaterConfig } from '@/modules/updater/configs';
-import { extractRestoreRoute } from '@/modules/updater/utils';
+import { extractRestoreRoute, getManualUpdateDownloadUrl } from '@/modules/updater/utils';
 import { createLogger } from '@/utils/logger';
 
 import type { App as AppCore } from '../App';
@@ -36,6 +36,7 @@ export class UpdaterManager {
 
   private stage: UpdaterStage = 'idle';
   private latestUpdateInfo: UpdateInfo | null = null;
+  private latestDownloadUrl: string | null = null;
   private latestProgress: ProgressInfo | null = null;
   private latestError: string | null = null;
 
@@ -56,6 +57,7 @@ export class UpdaterManager {
     const state: UpdaterState = { stage: this.stage };
     if (this.latestProgress) state.progress = this.latestProgress;
     if (this.latestUpdateInfo) state.updateInfo = this.latestUpdateInfo;
+    if (this.latestDownloadUrl) state.downloadUrl = this.latestDownloadUrl;
     if (this.latestError) state.errorMessage = this.latestError;
     return state;
   }
@@ -64,6 +66,7 @@ export class UpdaterManager {
     stage: UpdaterStage,
     opts?: {
       error?: string;
+      downloadUrl?: string;
       progress?: ProgressInfo;
       rebuildMenu?: boolean;
       updateInfo?: UpdateInfo;
@@ -71,6 +74,7 @@ export class UpdaterManager {
   ) {
     this.stage = stage;
     if (opts?.updateInfo !== undefined) this.latestUpdateInfo = opts.updateInfo;
+    if (opts?.downloadUrl !== undefined) this.latestDownloadUrl = opts.downloadUrl;
     if (opts?.progress !== undefined) this.latestProgress = opts.progress;
     if (opts?.error !== undefined) this.latestError = opts.error;
 
@@ -78,7 +82,9 @@ export class UpdaterManager {
     if (stage === 'idle' || stage === 'checking') {
       this.latestProgress = null;
       this.latestError = null;
+      this.latestDownloadUrl = null;
     }
+    if (stage === 'latest' || stage === 'error') this.latestDownloadUrl = null;
     if (stage !== 'error') {
       this.latestError = null;
     }
@@ -443,16 +449,22 @@ export class UpdaterManager {
       if (this.isStaleCheck()) return;
 
       this.updateAvailable = true;
+      const downloadUrl = getManualUpdateDownloadUrl({
+        arch: process.arch,
+        channel: this.currentChannel,
+        platform: process.platform,
+        updateServerUrl: UPDATE_SERVER_URL,
+        version: info.version,
+      });
 
-      // Always auto-download
-      logger.info('Update found, starting download automatically...');
-      this.setStage('downloading', { updateInfo: info });
-      this.downloadUpdate();
+      logger.info('Update found, waiting for the user to download the installer manually');
+      this.setStage('available', { downloadUrl, updateInfo: info });
     });
 
     autoUpdater.on('update-not-available', (info) => {
       logger.info(`Update not available. Current: ${info.version}`);
 
+      this.updateAvailable = false;
       this.setStage('latest');
       setTimeout(() => {
         if (this.stage === 'latest') this.setStage('idle');
