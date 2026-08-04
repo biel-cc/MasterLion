@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import YAML from 'yaml';
 
@@ -23,6 +24,26 @@ function detectPlatform(yamlContent) {
   return 'none';
 }
 
+function dedupeFiles(files) {
+  const uniqueFiles = [];
+  const filesByUrl = new Map();
+
+  for (const file of files) {
+    const existing = filesByUrl.get(file.url);
+    if (!existing) {
+      filesByUrl.set(file.url, file);
+      uniqueFiles.push(file);
+      continue;
+    }
+
+    if (existing.sha512 !== file.sha512 || existing.size !== file.size) {
+      throw new Error(`Conflicting update metadata for ${file.url}`);
+    }
+  }
+
+  return uniqueFiles;
+}
+
 /**
  * Merge x64 and ARM64 YAML files
  * @param {Object} x64Content
@@ -32,7 +53,7 @@ function detectPlatform(yamlContent) {
 function mergeYamlFiles(x64Content, arm64Content) {
   const merged = {
     ...arm64Content,
-    files: [...arm64Content.files, ...x64Content.files],
+    files: dedupeFiles([...arm64Content.files, ...x64Content.files]),
   };
 
   return YAML.stringify(merged);
@@ -98,7 +119,10 @@ function mergeForPrefix(prefix, releaseFiles) {
         console.log(`🔍 Detected ${platform} platform in ${fileName}`);
       } else if (platform === 'both') {
         console.log(`✅ Found already merged file: ${fileName}`);
-        writeLocalFile(path.join(RELEASE_DIR, outputFileName), content);
+        writeLocalFile(
+          path.join(RELEASE_DIR, outputFileName),
+          YAML.stringify({ ...yamlContent, files: dedupeFiles(yamlContent.files) }),
+        );
         return;
       } else {
         console.log(`⚠️  Unknown platform type: ${platform} in ${fileName}`);
@@ -118,13 +142,22 @@ function mergeForPrefix(prefix, releaseFiles) {
 
   if (x64Files.length === 0) {
     console.log(`⚠️  No x64 files found for ${prefix}, using ARM64 only`);
-    writeLocalFile(path.join(RELEASE_DIR, outputFileName), arm64Files[0].content);
+    writeLocalFile(
+      path.join(RELEASE_DIR, outputFileName),
+      YAML.stringify({
+        ...arm64Files[0].yaml,
+        files: dedupeFiles(arm64Files[0].yaml.files),
+      }),
+    );
     return;
   }
 
   if (arm64Files.length === 0) {
     console.log(`⚠️  No ARM64 files found for ${prefix}, using x64 only`);
-    writeLocalFile(path.join(RELEASE_DIR, outputFileName), x64Files[0].content);
+    writeLocalFile(
+      path.join(RELEASE_DIR, outputFileName),
+      YAML.stringify({ ...x64Files[0].yaml, files: dedupeFiles(x64Files[0].yaml.files) }),
+    );
     return;
   }
 
@@ -167,4 +200,8 @@ async function main() {
   }
 }
 
-await main();
+export { dedupeFiles, mergeYamlFiles };
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  await main();
+}
