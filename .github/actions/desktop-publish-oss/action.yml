@@ -78,6 +78,7 @@ runs:
       run: |
         set -euo pipefail
         aws --version
+        aws configure set default.s3.addressing_style virtual
 
         mapfile -d '' release_files < <(
           find release -maxdepth 1 -type f \
