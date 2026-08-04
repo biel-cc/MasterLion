@@ -69,7 +69,7 @@ vi.mock('@/modules/updater/configs', () => ({
   updaterConfig: {
     app: {
       autoCheckUpdate: false,
-      autoDownloadUpdate: true,
+      autoDownloadUpdate: false,
       checkUpdateInterval: 60 * 60 * 1000,
     },
     enableAppUpdate: true,
@@ -426,7 +426,7 @@ describe('UpdaterManager', () => {
     });
 
     describe('update-available', () => {
-      it('should broadcast updaterStateChanged and auto download when update available', async () => {
+      it('should expose the update without downloading it automatically', async () => {
         vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
         await updaterManager.checkForUpdates({ manual: true });
 
@@ -439,14 +439,14 @@ describe('UpdaterManager', () => {
         expect(mockBroadcast).toHaveBeenCalledWith(
           'updaterStateChanged',
           expect.objectContaining({
-            stage: 'downloading',
+            stage: 'available',
             updateInfo: expect.objectContaining({ version: '2.0.0' }),
           }),
         );
-        expect(autoUpdater.downloadUpdate).toHaveBeenCalled();
+        expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
       });
 
-      it('should auto download when auto check finds update', async () => {
+      it('should not auto download when an automatic check finds an update', async () => {
         // Trigger auto check first
         vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
         await updaterManager.checkForUpdates({ manual: false });
@@ -456,7 +456,7 @@ describe('UpdaterManager', () => {
         const handler = registeredEvents.get('update-available');
         handler?.({ version: '2.0.0' });
 
-        expect(autoUpdater.downloadUpdate).toHaveBeenCalled();
+        expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
       });
     });
 

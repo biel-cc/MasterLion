@@ -1,0 +1,287 @@
+name: Build Unsigned Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: Chinese release notes embedded in the update manifest
+        required: false
+        type: string
+        default: Masterino Desktop unsigned canary build
+      version:
+        description: Stable SemVer greater than the current OSS canary version
+        required: true
+        type: string
+        default: 1.1.2
+
+concurrency:
+  group: unsigned-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DESKTOP_CHANNEL: canary
+  DESKTOP_OSS_BUCKET: masterlion-prd
+  DESKTOP_OSS_ENDPOINT: https://oss-cn-shenzhen.aliyuncs.com
+  DESKTOP_OSS_PREFIX: desktop/releases
+  DESKTOP_UPDATE_SERVER_URL: https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases
+  NODE_VERSION: 24.11.1
+
+jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate SemVer and current OSS version
+        id: validate
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DESKTOP_OSS_ACCESS_KEY_ID }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_REGION: cn-shenzhen
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DESKTOP_OSS_ACCESS_KEY_SECRET }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "$INPUT_VERSION" =~ $semver_pattern ]]; then
+            echo "Version must be a stable SemVer such as 1.1.2" >&2
+            exit 1
+          fi
+
+          desktop_version="$(node -p "require('./apps/desktop/package.json').version")"
+          current_version="$desktop_version"
+          manifest_url="${DESKTOP_UPDATE_SERVER_URL}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
+          manifest_file="$RUNNER_TEMP/current-desktop-manifest.yml"
+          manifest_key="${DESKTOP_OSS_PREFIX}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
+          if aws s3 cp "s3://${DESKTOP_OSS_BUCKET}/${manifest_key}" "$manifest_file" \
+            --endpoint-url "$DESKTOP_OSS_ENDPOINT" --only-show-errors; then
+            oss_version="$(sed -n 's/^version:[[:space:]]*["'"']\?\([^"'"']*\)["'"']\?$/\1/p' "$manifest_file" | head -1)"
+            if [ -z "$oss_version" ]; then
+              echo "Unable to read the current version from $manifest_url" >&2
+              exit 1
+            fi
+            current_version="$oss_version"
+          else
+            if head_error="$(aws s3api head-object \
+              --bucket "$DESKTOP_OSS_BUCKET" \
+              --key "$manifest_key" \
+              --endpoint-url "$DESKTOP_OSS_ENDPOINT" 2>&1)"; then
+              echo "OSS manifest exists but could not be downloaded: $manifest_url" >&2
+              exit 1
+            elif ! grep -Eq '404|Not Found|NoSuchKey' <<<"$head_error"; then
+              echo "Unable to query the current OSS manifest: $head_error" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ ! "$current_version" =~ $semver_pattern ]]; then
+            echo "Current desktop version is not a stable SemVer: $current_version" >&2
+            exit 1
+          fi
+
+          if ! CURRENT_VERSION="$current_version" node -e "const current=process.env.CURRENT_VERSION.split('.').map(Number); const next=process.env.INPUT_VERSION.split('.').map(Number); const changed=next.findIndex((part,index)=>part!==current[index]); process.exit(changed>=0&&next[changed]>current[changed]?0:1)"; then
+            echo "Version $INPUT_VERSION must be greater than current version $current_version" >&2
+            exit 1
+          fi
+
+          echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validated desktop version $INPUT_VERSION (current: $current_version)"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-15
+            artifact: desktop-macos-arm64
+          - name: macOS x64
+            os: macos-15-intel
+            artifact: desktop-macos-x64
+          - name: Windows x64
+            os: windows-2025
+            artifact: desktop-windows-x64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/desktop-build-setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set desktop package version
+        env:
+          DESKTOP_VERSION: ${{ needs.validate-version.outputs.version }}
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const path='apps/desktop/package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.DESKTOP_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+'\n');"
+          node -e "const pkg=require('./apps/desktop/package.json'); if(pkg.productName!=='Masterino'||pkg.version!==process.env.DESKTOP_VERSION) process.exit(1)"
+
+      - name: Build unsigned macOS artifacts
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          UPDATE_CHANNEL: ${{ env.DESKTOP_CHANNEL }}
+          UPDATE_SERVER_URL: ${{ env.DESKTOP_UPDATE_SERVER_URL }}
+        run: npm run package:mac
+
+      - name: Verify unsigned macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find apps/desktop/release -type d -name 'Masterino.app' -print -quit)"
+          test -n "$app_path"
+          signature="$(codesign -dv --verbose=4 "$app_path" 2>&1 || true)"
+          if grep -q '^Authority=' <<<"$signature"; then
+            echo "Unexpected Developer ID signature found" >&2
+            exit 1
+          fi
+          echo "Verified no Developer ID authority on $(uname -m) build"
+
+      - name: Build unsigned Windows artifacts
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          UPDATE_CHANNEL: ${{ env.DESKTOP_CHANNEL }}
+          UPDATE_SERVER_URL: ${{ env.DESKTOP_UPDATE_SERVER_URL }}
+        run: npm run package:win
+
+      - name: Verify unsigned Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ((node -p "process.arch") -ne 'x64') { throw 'Expected an x64 runner' }
+          $installer = Get-ChildItem apps/desktop/release -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not created' }
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          if ($signature.SignerCertificate) { throw 'Unexpected Authenticode signature found' }
+          Write-Host "Verified unsigned Windows installer: $($installer.Name)"
+
+      - name: Upload build artifacts
+        uses: ./.github/actions/desktop-upload-artifacts
+        with:
+          artifact-name: ${{ matrix.artifact }}
+          retention-days: '7'
+
+  merge:
+    name: Merge desktop release artifacts
+    needs: [validate-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup merge environment
+        uses: ./.github/actions/setup-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release
+          pattern: desktop-*
+          merge-multiple: true
+
+      - name: Merge macOS update manifests
+        run: |
+          cd scripts/electronWorkflow
+          printf '{"name":"desktop-release-merge","private":true,"type":"module"}\n' > package.json
+          bun add --no-save yaml@2.8.1
+          cd ../..
+          bun run scripts/electronWorkflow/mergeMacReleaseFiles.js
+
+      - name: Validate expected release files
+        env:
+          VERSION: ${{ needs.validate-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f "release/Masterino-${VERSION}-arm64.dmg"
+          test -f "release/Masterino-${VERSION}-x64.dmg"
+          test -f "release/Masterino-${VERSION}-setup.exe"
+          test -f "release/${DESKTOP_CHANNEL}.yml"
+          test -f "release/${DESKTOP_CHANNEL}-mac.yml"
+          test "$(find release -maxdepth 1 -name '*.zip' | wc -l)" -eq 2
+
+      - name: Upload merged release
+        uses: actions/upload-artifact@v6
+        with:
+          name: merged-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish OSS and draft GitHub release
+    needs: [validate-version, merge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Publish release files to Alibaba Cloud OSS
+        uses: ./.github/actions/desktop-publish-oss
+        with:
+          access-key-id: ${{ secrets.DESKTOP_OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.DESKTOP_OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ env.DESKTOP_OSS_BUCKET }}
+          channel: ${{ env.DESKTOP_CHANNEL }}
+          endpoint: ${{ env.DESKTOP_OSS_ENDPOINT }}
+          key-prefix: ${{ env.DESKTOP_OSS_PREFIX }}
+          public-base-url: ${{ env.DESKTOP_UPDATE_SERVER_URL }}
+          region: cn-shenzhen
+          version: ${{ needs.validate-version.outputs.version }}
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          VERSION: ${{ needs.validate-version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="desktop-unsigned-v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+
+          mapfile -d '' assets < <(
+            find release -maxdepth 1 -type f \
+              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) \
+              -print0
+          )
+          test "${#assets[@]}" -eq 5
+
+          notes_file="$RUNNER_TEMP/desktop-release-notes.md"
+          {
+            echo "## Masterino Desktop ${VERSION}（未签名测试版）"
+            echo
+            echo "$RELEASE_NOTES"
+            echo
+            echo "- 更新通道：canary"
+            echo "- macOS：未使用 Developer ID 签名或公证，需通过右键打开或移除 quarantine。"
+            echo "- Windows：未使用 Authenticode 签名，可能出现 SmartScreen 提示。"
+            echo "- 客户端仅检测新版本并打开 OSS 下载地址，不会自动安装。"
+          } > "$notes_file"
+
+          gh release create "$tag" "${assets[@]}" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Masterino Desktop ${VERSION}（未签名）" \
+            --notes-file "$notes_file"

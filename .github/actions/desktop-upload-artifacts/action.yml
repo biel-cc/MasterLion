@@ -52,4 +52,5 @@ runs:
           apps/desktop/release/*.snap*
           apps/desktop/release/*.rpm*
           apps/desktop/release/*.tar.gz*
+        if-no-files-found: error
         retention-days: ${{ inputs.retention-days }}
