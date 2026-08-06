@@ -52,6 +52,7 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 10001
           env:
             - name: PORT
               value: '8788'
