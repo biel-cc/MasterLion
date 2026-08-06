@@ -167,6 +167,11 @@ fi
 required_bridge_secret_keys=(AIHUB_BRIDGE_TOKEN AIHUB_READONLY_DATABASE_URL)
 required_searxng_secret_keys=(SEARXNG_SECRET)
 
+searxng_enabled() {
+  [[ "$ENVIRONMENT" == "test" ]] || return 1
+  kubectl kustomize "$OVERLAY_DIR" | grep -Eq 'SEARCH_PROVIDERS:.*searxng'
+}
+
 check_secret() {
   local key value
   "${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
@@ -194,6 +199,8 @@ check_secret() {
       "masterino-onlyboxes-secret is missing key: ONLYBOXES_JIT_SIGNING_KEY"
     "${KUBE[@]}" get configmap masterino-onlyboxes-ca -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterino-onlyboxes-ca is missing in namespace '$NAMESPACE'"
+  fi
+  if searxng_enabled; then
     "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
     for key in "${required_searxng_secret_keys[@]}"; do
