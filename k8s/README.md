@@ -45,6 +45,7 @@ connections in memory. `overlays/test-cutover` exposes it at
 and WebSocket traffic. Create `masterino-device-gateway-secret` from a random `SERVICE_TOKEN` and a
 public-only JWKS derived from `masterino-secret/JWKS_KEY`; never copy private RSA fields into the
 gateway Secret.
+The test overlay pins the ACR image by digest; update the digest only after a reviewed ACR build.
 
 Before deploying the test rollout:
 

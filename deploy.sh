@@ -10,7 +10,6 @@ MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/maste
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
 DEVICE_GATEWAY_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway"
 IMAGE_TAG_MARKER="v1.1.0"
-DEVICE_GATEWAY_IMAGE_TAG_MARKER="v0.3.1-masterino.1"
 TLS_SECRET_NAME="20261122bielcrystal.com"
 ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 
@@ -29,8 +28,6 @@ Required for mutating commands:
   ACK_API_SERVER             Exact API server URL printed by the preflight command.
   MASTERINO_IMAGE_DIGEST     Immutable sha256: digest for the reviewed Masterino image.
   BRIDGE_IMAGE_DIGEST        Immutable sha256: digest for the reviewed Aihub DB Bridge image.
-  DEVICE_GATEWAY_IMAGE_DIGEST
-                              Immutable sha256: digest for the reviewed test Device Gateway image.
 
 Commands:
   preflight                  Read-only ACK capability and identity checks.
@@ -155,13 +152,6 @@ render_manifests() {
     -e "s|${MASTERINO_IMAGE}:${IMAGE_TAG_MARKER}|${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}|g"
     -e "s|${BRIDGE_IMAGE}:${IMAGE_TAG_MARKER}|${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}|g"
   )
-  if [[ "$ENVIRONMENT" == "test" ]]; then
-    require_digest DEVICE_GATEWAY_IMAGE_DIGEST "${DEVICE_GATEWAY_IMAGE_DIGEST:-}"
-    sed_args+=(
-      -e "s|${DEVICE_GATEWAY_IMAGE}:${DEVICE_GATEWAY_IMAGE_TAG_MARKER}|${DEVICE_GATEWAY_IMAGE}@${DEVICE_GATEWAY_IMAGE_DIGEST}|g"
-    )
-  fi
-
   kubectl kustomize "$render_dir" | sed "${sed_args[@]}"
 }
 
@@ -264,7 +254,8 @@ case "$COMMAND" in
     printf '%s\n' "$rendered" | grep -q "image: ${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      printf '%s\n' "$rendered" | grep -q "image: ${DEVICE_GATEWAY_IMAGE}@${DEVICE_GATEWAY_IMAGE_DIGEST}"
+      printf '%s\n' "$rendered" \
+        | grep -q "image: ${DEVICE_GATEWAY_IMAGE}@sha256:140fef6157de6505536c0689f409ca87dbcf1547470ad2301293cd199fb9029e"
       printf '%s\n' "$rendered" | grep -q 'name: masterino-device-gateway'
       printf '%s\n' "$rendered" | grep -q 'DEVICE_GATEWAY_URL: http://masterino-device-gateway:8788'
       printf '%s\n' "$rendered" \
