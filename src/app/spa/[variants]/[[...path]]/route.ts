@@ -54,7 +54,7 @@ async function getTemplate(isMobile: boolean, request: Request): Promise<string>
 
 function buildClientEnv(): SPAClientEnv {
   return {
-    marketBaseUrl: appEnv.MARKET_BASE_URL,
+    marketBaseUrl: appEnv.NEXT_PUBLIC_MARKET_BASE_URL,
     pyodideIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_INDEX_URL,
     pyodidePipIndexUrl: pythonEnv.NEXT_PUBLIC_PYODIDE_PIP_INDEX_URL,
     s3FilePath: fileEnv.NEXT_PUBLIC_S3_FILE_PATH,

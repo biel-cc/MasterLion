@@ -86,9 +86,24 @@ export interface MarketServiceOptions {
  * ```
  */
 export class MarketService {
-  market: MarketSDK;
+  private marketInstance?: MarketSDK;
+  private readonly options: MarketServiceOptions;
 
   constructor(options: MarketServiceOptions = {}) {
+    this.options = options;
+  }
+
+  /**
+   * Initialize the Market SDK only when a Market-backed operation is used.
+   *
+   * A MarketService is injected into several mixed runtimes (skills, sandbox,
+   * task templates). Constructing those runtimes must not make local skills or
+   * Onlyboxes depend on MARKET_BASE_URL.
+   */
+  get market(): MarketSDK {
+    if (this.marketInstance) return this.marketInstance;
+
+    const options = this.options;
     const { accessToken, userInfo, clientCredentials, trustedClientToken, ownerAccountId } =
       options;
 
@@ -96,9 +111,10 @@ export class MarketService {
     const resolvedTrustedClientToken =
       trustedClientToken || (userInfo ? generateTrustedClientToken(userInfo) : undefined);
 
-    this.market = new MarketSDK({
+    const baseURL = getInternalMarketBaseUrl();
+    this.marketInstance = new MarketSDK({
       accessToken,
-      baseURL: getInternalMarketBaseUrl(),
+      baseURL,
       clientId: clientCredentials?.clientId,
       clientSecret: clientCredentials?.clientSecret,
       ownerAccountId,
@@ -107,12 +123,14 @@ export class MarketService {
 
     log(
       'MarketService initialized: baseURL=%s, hasAccessToken=%s, hasTrustedToken=%s, hasClientCredentials=%s, ownerAccountId=%s',
-      getInternalMarketBaseUrl(),
+      baseURL,
       !!accessToken,
       !!resolvedTrustedClientToken,
       !!clientCredentials,
       ownerAccountId ?? 'none',
     );
+
+    return this.marketInstance;
   }
 
   // ============================== Factory Methods ==============================

@@ -38,6 +38,7 @@ export const getAppConfig = () => {
     clientPrefix: 'NEXT_PUBLIC_',
     client: {
       NEXT_PUBLIC_ENABLE_SENTRY: z.boolean(),
+      NEXT_PUBLIC_MARKET_BASE_URL: z.string().url().optional(),
     },
     server: {
       AGENTS_INDEX_URL: z.string().url(),
@@ -91,6 +92,7 @@ export const getAppConfig = () => {
     runtimeEnv: {
       // Sentry
       NEXT_PUBLIC_ENABLE_SENTRY: !!process.env.NEXT_PUBLIC_SENTRY_DSN,
+      NEXT_PUBLIC_MARKET_BASE_URL: process.env.NEXT_PUBLIC_MARKET_BASE_URL,
 
       AGENTS_INDEX_URL: !!process.env.AGENTS_INDEX_URL
         ? process.env.AGENTS_INDEX_URL
@@ -130,14 +132,6 @@ export const getAppConfig = () => {
       TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED === '1',
     },
   });
-  if (process.env.NODE_ENV === 'production' && !config.MARKET_ALLOW_EXTERNAL_FALLBACK) {
-    const missing = [
-      ['MARKET_BASE_URL', config.MARKET_BASE_URL],
-      ['MARKET_TRUSTED_CLIENT_ID', config.MARKET_TRUSTED_CLIENT_ID],
-      ['MARKET_TRUSTED_CLIENT_SECRET', config.MARKET_TRUSTED_CLIENT_SECRET],
-    ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) throw new Error(`Internal Market configuration is required: ${missing.join(', ')}`);
-  }
   return config;
 };
 

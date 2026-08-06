@@ -279,6 +279,106 @@ export class SkillImporter {
     return { skill, status: 'created' };
   }
 
+  private persistImportedSkill = async (input: {
+    identifier: string;
+    manifest: SkillManifest;
+    resources?: Map<string, Buffer>;
+    skillContent: string;
+    source: 'market' | 'user';
+    sourceUrl?: string;
+    zipBuffer?: Buffer;
+    zipHash?: string;
+  }): Promise<SkillImportResult> => {
+    const { identifier, manifest, resources, skillContent, source, sourceUrl, zipBuffer, zipHash } =
+      input;
+    const existing = await this.skillModel.findByIdentifier(identifier);
+    const fullManifest: SkillManifest = {
+      ...manifest,
+      ...(sourceUrl && { sourceUrl }),
+    };
+
+    let resourceMap: Record<string, { fileHash: string; size: number }> | undefined;
+    if (resources && resources.size > 0 && zipHash) {
+      resourceMap = await this.resourceService.storeResources(zipHash, resources);
+    }
+
+    let zipFileHash: string | undefined;
+    if (zipHash && zipBuffer) {
+      const zipKey = `skills/zip/${zipHash}.zip`;
+      await this.fileService.uploadBuffer(zipKey, zipBuffer, 'application/zip');
+      await this.fileService.createGlobalFile({
+        fileHash: zipHash,
+        fileType: 'application/zip',
+        metadata: {
+          dirname: 'skills/zip',
+          filename: `${zipHash}.zip`,
+          path: zipKey,
+        },
+        size: zipBuffer.length,
+        url: zipKey,
+      });
+      zipFileHash = zipHash;
+    }
+
+    if (existing) {
+      const existingHash = existing.zipFileHash ?? undefined;
+      if (existing.content === skillContent && existingHash === zipFileHash) {
+        return { skill: existing, status: 'unchanged' };
+      }
+
+      const skill = await this.skillModel.update(existing.id, {
+        content: skillContent,
+        description: manifest.description,
+        manifest: fullManifest,
+        name: manifest.name,
+        ...(resourceMap && { resources: resourceMap }),
+        ...(zipFileHash && { zipFileHash }),
+      });
+      return { skill, status: 'updated' };
+    }
+
+    const skill = await this.skillModel.create({
+      content: skillContent,
+      description: manifest.description,
+      identifier,
+      manifest: fullManifest,
+      name: manifest.name,
+      ...(resourceMap && { resources: resourceMap }),
+      source,
+      ...(zipFileHash && { zipFileHash }),
+    });
+    return { skill, status: 'created' };
+  };
+
+  /**
+   * Import a ZIP already downloaded through the authenticated Market SDK.
+   * This keeps internal Market credentials out of URLs and bypasses the
+   * public remote-source/SSRF path, which intentionally rejects cluster-local
+   * HTTP endpoints.
+   */
+  async importFromMarketArchive(input: {
+    buffer: Buffer;
+    identifier: string;
+  }): Promise<SkillImportResult> {
+    if (input.buffer.length > MAX_REMOTE_SKILL_BYTES) {
+      throw new SkillImportError(
+        'Market skill package exceeds the 16 MiB limit',
+        'DOWNLOAD_FAILED',
+      );
+    }
+
+    const parsed = await this.parser.parseZipPackage(input.buffer);
+    return this.persistImportedSkill({
+      identifier: input.identifier,
+      manifest: parsed.manifest,
+      resources: parsed.resources,
+      skillContent: parsed.content,
+      source: 'market',
+      zipBuffer: input.buffer,
+      zipHash: parsed.zipHash,
+    });
+  }
+
   /**
    * Import skill from a direct URL pointing to SKILL.md
    * @param input - URL to SKILL.md file
@@ -404,95 +504,21 @@ export class SkillImporter {
       throw new SkillImportError('Failed to process remote skill', 'DOWNLOAD_FAILED');
     }
 
-    log('importFromUrl: parsed manifest=%o', manifest);
-
-    // 4. Generate identifier based on URL host and path
+    // Generate identifier based on URL host and path
     const pathPart = url.pathname
       .replace(/^\//, '') // Remove leading slash
       .replace(/\.md$/i, '') // Remove .md extension
       .replaceAll('/', '.'); // Replace slashes with dots
     const identifier = options?.identifier || `url.${url.host}.${pathPart || 'skill'}`;
-    log('importFromUrl: identifier=%s', identifier);
-
-    // 5. Check for existing skill
-    const existing = await this.skillModel.findByIdentifier(identifier);
-
-    // 6. Build manifest with source URL
-    const fullManifest: SkillManifest = {
-      ...manifest,
-      sourceUrl: input.url,
-    };
-
-    // 7. Handle ZIP resources if present
-    let resourceMap: Record<string, { fileHash: string; size: number }> | undefined;
-    if (resources && resources.size > 0 && zipHash) {
-      log('importFromUrl: storing %d resource files...', resources.size);
-      resourceMap = await this.resourceService.storeResources(zipHash, resources);
-      log('importFromUrl: stored resource files');
-    }
-
-    // 8. Upload ZIP file to S3 and create globalFiles record (for zipFileHash foreign key)
-    let zipFileHash: string | undefined;
-    if (zipHash && zipBuffer) {
-      const zipKey = `skills/zip/${zipHash}.zip`;
-      await this.fileService.uploadBuffer(zipKey, zipBuffer, 'application/zip');
-      // Use createGlobalFile directly - no need to create then delete user file record
-      await this.fileService.createGlobalFile({
-        fileHash: zipHash,
-        fileType: 'application/zip',
-        metadata: {
-          dirname: 'skills/zip',
-          filename: `${zipHash}.zip`,
-          path: zipKey,
-        },
-        size: zipBuffer.length,
-        url: zipKey,
-      });
-      zipFileHash = zipHash;
-      log(
-        'importFromUrl: uploaded ZIP file, hash=%s, size=%d bytes',
-        zipFileHash,
-        zipBuffer.length,
-      );
-    }
-
-    // 9. Update existing skill or create new
-    if (existing) {
-      // Check if content is the same (simple deduplication based on content and zipHash)
-      // Use nullish coalescing to handle null/undefined comparison correctly
-      const existingHash = existing.zipFileHash ?? undefined;
-      const isSameContent = existing.content === skillContent && existingHash === zipFileHash;
-      if (isSameContent) {
-        log('importFromUrl: skill unchanged, skipping update id=%s', existing.id);
-        return { skill: existing, status: 'unchanged' };
-      }
-
-      log('importFromUrl: skill exists but content changed, updating id=%s', existing.id);
-      const skill = await this.skillModel.update(existing.id, {
-        content: skillContent,
-        description: manifest.description,
-        manifest: fullManifest,
-        name: manifest.name,
-        ...(resourceMap && { resources: resourceMap }),
-        ...(zipFileHash && { zipFileHash }),
-      });
-      log('importFromUrl: updated skill id=%s', skill.id);
-      return { skill, status: 'updated' };
-    }
-
-    // 10. Create new skill record
-    log('importFromUrl: creating new skill...');
-    const skill = await this.skillModel.create({
-      content: skillContent,
-      description: manifest.description,
+    return this.persistImportedSkill({
       identifier,
-      manifest: fullManifest,
-      name: manifest.name,
-      ...(resourceMap && { resources: resourceMap }),
-      source: options?.source || 'market', // URL source defaults to market
-      ...(zipFileHash && { zipFileHash }),
+      manifest,
+      resources,
+      skillContent,
+      source: options?.source || 'market',
+      sourceUrl: input.url,
+      zipBuffer,
+      zipHash,
     });
-    log('importFromUrl: created skill id=%s', skill.id);
-    return { skill, status: 'created' };
   }
 }

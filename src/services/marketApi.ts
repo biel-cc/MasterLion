@@ -16,7 +16,6 @@ import {
   type AgentGroupForksResponse,
   type SkillSorts,
 } from '@/types/discover';
-import { getPublicInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 interface GetOwnAgentsParams {
   page?: number;
@@ -200,8 +199,7 @@ export class MarketApiService {
    * Get skill download URL from market
    */
   getSkillDownloadUrl(identifier: string): string {
-    const marketBaseUrl = getPublicInternalMarketBaseUrl();
-    return `${marketBaseUrl}/api/v1/skills/${identifier}/download`;
+    return `/api/market/skills/${encodeURIComponent(identifier)}/download`;
   }
 }
 

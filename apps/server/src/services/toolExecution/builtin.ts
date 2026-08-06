@@ -12,11 +12,12 @@ import { type IToolExecutor, type ToolExecutionContext, type ToolExecutionResult
 const log = debug('lobe-server:builtin-tools-executor');
 
 export class BuiltinToolsExecutor implements IToolExecutor {
-  private marketService: MarketService;
+  private marketService?: MarketService;
   private composioService: ComposioService;
+  private readonly userId: string;
 
   constructor(db: LobeChatDatabase, userId: string) {
-    this.marketService = new MarketService({ userInfo: { userId } });
+    this.userId = userId;
     this.composioService = new ComposioService({ db, userId });
   }
 
@@ -68,6 +69,7 @@ export class BuiltinToolsExecutor implements IToolExecutor {
 
     // Route LobeHub Skills to MarketService
     if (source === 'lobehubSkill') {
+      this.marketService ??= new MarketService({ userInfo: { userId: this.userId } });
       return this.marketService.executeLobehubSkill({
         args,
         context: {

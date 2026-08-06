@@ -5,28 +5,29 @@ import { appEnv } from '@/envs/app';
 import { authEnv } from '@/envs/auth';
 
 const appBaseUrl = appEnv.APP_URL ?? 'https://aihub.bielcrystal.com';
-const marketBaseUrl = new URL(appEnv.MARKET_BASE_URL ?? 'https://market.lobehub.com').origin;
+const marketBaseUrl = appEnv.NEXT_PUBLIC_MARKET_BASE_URL?.replace(/\/$/, '');
 const masterLionLogoUrl = urlJoin(appBaseUrl, '/brand/masterlion/logo.png');
-const marketClient: ClientMetadata | undefined = authEnv.OIDC_MARKET_CLIENT_SECRET
-  ? {
-      application_type: 'web',
-      client_id: 'lobehub-market',
-      client_name: 'Masterino Marketplace',
-      client_secret: authEnv.OIDC_MARKET_CLIENT_SECRET,
-      grant_types: ['authorization_code', 'refresh_token'],
-      logo_uri: masterLionLogoUrl,
-      post_logout_redirect_uris: [
-        urlJoin(marketBaseUrl, '/lobehub-oidc/logout'),
-        'http://localhost:8787/lobehub-oidc/logout',
-      ],
-      redirect_uris: [
-        urlJoin(marketBaseUrl, '/lobehub-oidc/consent/callback'),
-        'http://localhost:8787/lobehub-oidc/consent/callback',
-      ],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'client_secret_basic',
-    }
-  : undefined;
+const marketClient: ClientMetadata | undefined =
+  authEnv.OIDC_MARKET_CLIENT_SECRET && marketBaseUrl
+    ? {
+        application_type: 'web',
+        client_id: 'lobehub-market',
+        client_name: 'Masterino Marketplace',
+        client_secret: authEnv.OIDC_MARKET_CLIENT_SECRET,
+        grant_types: ['authorization_code', 'refresh_token'],
+        logo_uri: masterLionLogoUrl,
+        post_logout_redirect_uris: [
+          urlJoin(marketBaseUrl, '/lobehub-oidc/logout'),
+          'http://localhost:8787/lobehub-oidc/logout',
+        ],
+        redirect_uris: [
+          urlJoin(marketBaseUrl, '/lobehub-oidc/consent/callback'),
+          'http://localhost:8787/lobehub-oidc/consent/callback',
+        ],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      }
+    : undefined;
 
 /**
  * Default OIDC client configuration

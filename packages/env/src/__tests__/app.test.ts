@@ -7,6 +7,7 @@ describe('getServerConfig', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     delete process.env.MARKET_BASE_URL;
+    delete process.env.NEXT_PUBLIC_MARKET_BASE_URL;
     delete process.env.MARKET_TRUSTED_CLIENT_ID;
     delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
   });
@@ -15,12 +16,8 @@ describe('getServerConfig', () => {
     it('should return default URLs when no environment variables are set', async () => {
       const { getAppConfig } = await import('../app');
       const config = getAppConfig();
-      expect(config.AGENTS_INDEX_URL).toBe(
-        'http://localhost:3220/indexes/agents',
-      );
-      expect(config.PLUGINS_INDEX_URL).toBe(
-        'http://localhost:3220/indexes/plugins',
-      );
+      expect(config.AGENTS_INDEX_URL).toBe('http://localhost:3220/indexes/agents');
+      expect(config.PLUGINS_INDEX_URL).toBe('http://localhost:3220/indexes/plugins');
     });
 
     it('should return custom URLs when environment variables are set', async () => {
@@ -38,21 +35,32 @@ describe('getServerConfig', () => {
 
       const { getAppConfig } = await import('../app');
       const config = getAppConfig();
-      expect(config.AGENTS_INDEX_URL).toBe(
-        'http://localhost:3220/indexes/agents',
-      );
-      expect(config.PLUGINS_INDEX_URL).toBe(
-        'http://localhost:3220/indexes/plugins',
-      );
+      expect(config.AGENTS_INDEX_URL).toBe('http://localhost:3220/indexes/agents');
+      expect(config.PLUGINS_INDEX_URL).toBe('http://localhost:3220/indexes/plugins');
     });
   });
 
-  it('fails fast in production when internal Market identity is missing', async () => {
+  it('does not make application startup depend on Market configuration', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     delete process.env.MARKET_BASE_URL;
+    delete process.env.NEXT_PUBLIC_MARKET_BASE_URL;
     delete process.env.MARKET_TRUSTED_CLIENT_ID;
     delete process.env.MARKET_TRUSTED_CLIENT_SECRET;
-    await expect(import('../app')).rejects.toThrow('Internal Market configuration is required');
+    const { getAppConfig } = await import('../app');
+    expect(getAppConfig()).toMatchObject({
+      MARKET_BASE_URL: undefined,
+      NEXT_PUBLIC_MARKET_BASE_URL: undefined,
+    });
+  });
+
+  it('keeps server and browser Market addresses separate', async () => {
+    process.env.MARKET_BASE_URL = 'http://masterino-market:3220';
+    process.env.NEXT_PUBLIC_MARKET_BASE_URL = 'https://mlai-test.bielcrystal.com/market';
+    const { getAppConfig } = await import('../app');
+    expect(getAppConfig()).toMatchObject({
+      MARKET_BASE_URL: 'http://masterino-market:3220',
+      NEXT_PUBLIC_MARKET_BASE_URL: 'https://mlai-test.bielcrystal.com/market',
+    });
   });
 
   describe('INTERNAL_APP_URL', () => {

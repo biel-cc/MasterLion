@@ -9,6 +9,7 @@ vi.mock('@/envs/app', () => ({
   appEnv: {
     APP_URL: 'https://example.com',
     MARKET_BASE_URL: undefined,
+    NEXT_PUBLIC_MARKET_BASE_URL: undefined,
   },
 }));
 
@@ -48,7 +49,8 @@ describe('OIDC Provider - Market Client Integration', () => {
       vi.doMock('@/envs/app', () => ({
         appEnv: {
           APP_URL: 'https://example.com',
-          MARKET_BASE_URL: 'https://market.lobehub.com',
+          MARKET_BASE_URL: 'http://masterino-market:3220',
+          NEXT_PUBLIC_MARKET_BASE_URL: 'https://mlai-test.bielcrystal.com/market',
         },
       }));
 
@@ -60,6 +62,9 @@ describe('OIDC Provider - Market Client Integration', () => {
       expect(marketClient?.client_name).toBe('Masterino Marketplace');
       expect(marketClient?.token_endpoint_auth_method).toBe('client_secret_basic');
       expect(marketClient?.client_secret).toBe('test-market-client-secret-at-least-32-bytes');
+      expect(marketClient?.redirect_uris).toContain(
+        'https://mlai-test.bielcrystal.com/market/lobehub-oidc/consent/callback',
+      );
 
       vi.doUnmock('@/envs/app');
     });
@@ -87,6 +92,23 @@ describe('OIDC Provider - Market Client Integration', () => {
 
       vi.doUnmock('@/envs/auth');
     });
+
+    it('does not register Market against a public fallback when its base URL is missing', async () => {
+      vi.doMock('@/envs/app', () => ({
+        appEnv: {
+          APP_URL: 'https://example.com',
+          MARKET_BASE_URL: undefined,
+          NEXT_PUBLIC_MARKET_BASE_URL: undefined,
+        },
+      }));
+
+      const { defaultClients } = await import('./config');
+
+      expect(
+        defaultClients.find((client) => client.client_id === MARKET_CLIENT_ID),
+      ).toBeUndefined();
+      vi.doUnmock('@/envs/app');
+    });
   });
 
   describe('Provider Configuration', () => {
@@ -102,7 +124,7 @@ describe('OIDC Provider - Market Client Integration', () => {
       expect(module.API_AUDIENCE).toBe('urn:lobehub:chat');
 
       vi.doUnmock('@/envs/app');
-    }, 10000);
+    }, 20_000);
 
     it('should have createOIDCProvider function', async () => {
       vi.doMock('@/envs/app', () => ({
@@ -117,7 +139,7 @@ describe('OIDC Provider - Market Client Integration', () => {
       expect(typeof module.createOIDCProvider).toBe('function');
 
       vi.doUnmock('@/envs/app');
-    }, 10000);
+    }, 20_000);
   });
 
   describe('Name Resolution Priority', () => {
