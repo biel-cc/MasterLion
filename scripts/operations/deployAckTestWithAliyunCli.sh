@@ -15,6 +15,7 @@ AIHUB_MANAGED_TOKEN_NAME="${AIHUB_MANAGED_TOKEN_NAME:-masterlion-managed}"
 AIHUB_REQUIRED_CHAT_MODEL="${AIHUB_REQUIRED_CHAT_MODEL:-glm-5.2}"
 AIHUB_REQUIRED_EMBEDDING_MODEL="${AIHUB_REQUIRED_EMBEDDING_MODEL:-text-embedding-3-large}"
 NAMESPACE="masterino-test"
+DEVICE_GATEWAY_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -297,10 +298,19 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test rollout
     check_aihub_authorization
     ;;
+  gateway-update)
+    [[ "${CONFIRM_ACK_TEST_DEPLOY:-}" == "$NAMESPACE" ]] \
+      || fail "set CONFIRM_ACK_TEST_DEPLOY=$NAMESPACE to authorize a test deployment"
+    require_digest DEVICE_GATEWAY_IMAGE_DIGEST
+    export DEVICE_GATEWAY_IMAGE_DIGEST
+    bash ./deploy.sh --env test preflight
+    bash ./deploy.sh --env test update-image device-gateway \
+      "$DEVICE_GATEWAY_IMAGE@$DEVICE_GATEWAY_IMAGE_DIGEST"
+    ;;
   status)
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, gateway-update, or status"
     ;;
 esac
