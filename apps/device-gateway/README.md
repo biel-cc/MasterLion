@@ -11,6 +11,9 @@ local Docker image for production.
 uses a mainland mirror. It changes only the Go and Alpine base-image registry; the upstream source
 commit and checksum remain pinned.
 
+`GATEWAY_SOURCE_BASE_URL` defaults to GitHub codeload and may be pointed at a transparent mirror
+by ACR. The downloaded archive must still match `GATEWAY_SOURCE_SHA256` before compilation starts.
+
 Runtime configuration is supplied by Kubernetes:
 
 - `SERVICE_TOKEN`: shared only with the Masterino server.
@@ -18,3 +21,4 @@ Runtime configuration is supplied by Kubernetes:
 - `PORT`: `8788`.
 
 Never pass the private `JWKS_KEY` to this workload.
+
