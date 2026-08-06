@@ -83,6 +83,7 @@ case "$ENVIRONMENT" in
     SOURCE_INGRESS_NAME="masterlion-test-ingress"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-$DEFAULT_TEST_CONTEXT}"
     ACR_PULL_SECRET_NAME="masterino-acr-fixed"
+    STORAGE_CLASS_NAME="masterino-test-essd-retain"
     ;;
   production)
     NAMESPACE="masterino"
@@ -91,6 +92,7 @@ case "$ENVIRONMENT" in
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production-migration"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-}"
     [[ -n "$EXPECTED_CONTEXT" ]] || fail "ACK_CONTEXT is required for production"
+    STORAGE_CLASS_NAME="masterino-production-essd-retain"
     ;;
   *)
     usage
@@ -415,7 +417,28 @@ case "$COMMAND" in
         "set CONFIRM_BOOTSTRAP=$NAMESPACE to create the guarded production target"
     fi
     "${KUBE[@]}" apply -f "$OVERLAY_DIR/namespace.yaml"
-    "${KUBE[@]}" apply -f "$OVERLAY_DIR/storageclass.yaml"
+    if "${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" > /dev/null 2>&1; then
+      storage_provisioner="$("${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" -o jsonpath='{.provisioner}')"
+      storage_type="$("${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" -o jsonpath='{.parameters.type}')"
+      storage_reclaim_policy="$("${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" -o jsonpath='{.reclaimPolicy}')"
+      storage_binding_mode="$("${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" -o jsonpath='{.volumeBindingMode}')"
+      storage_expansion="$("${KUBE[@]}" get storageclass "$STORAGE_CLASS_NAME" -o jsonpath='{.allowVolumeExpansion}')"
+      [[ "$storage_provisioner" == "diskplugin.csi.alibabacloud.com" ]] || fail \
+        "existing StorageClass '$STORAGE_CLASS_NAME' uses an unexpected provisioner"
+      case "$storage_type" in
+        cloud_essd | cloud_essd,cloud_ssd,cloud_efficiency) ;;
+        *) fail "existing StorageClass '$STORAGE_CLASS_NAME' uses an unexpected disk type: $storage_type" ;;
+      esac
+      [[ "$storage_reclaim_policy" == "Retain" ]] || fail \
+        "existing StorageClass '$STORAGE_CLASS_NAME' must retain volumes"
+      [[ "$storage_binding_mode" == "WaitForFirstConsumer" ]] || fail \
+        "existing StorageClass '$STORAGE_CLASS_NAME' has an unexpected binding mode"
+      [[ "$storage_expansion" == "true" ]] || fail \
+        "existing StorageClass '$STORAGE_CLASS_NAME' must allow volume expansion"
+      echo "Existing StorageClass '$STORAGE_CLASS_NAME' passed immutable-field checks."
+    else
+      "${KUBE[@]}" apply -f "$OVERLAY_DIR/storageclass.yaml"
+    fi
     verify_target mutation
     ;;
   create-secret)
