@@ -189,8 +189,10 @@ export default class GatewayConnectionCtr extends ControllerModule {
 
     srv.loadOrCreateDeviceId();
 
-    // Wire up token provider and refresher
+    // Wire up the auth context for the central gateway. The gateway URL and
+    // application server URL are intentionally different in production.
     srv.setTokenProvider(() => this.remoteServerConfigCtr.getAccessToken());
+    srv.setServerUrlProvider(() => this.remoteServerConfigCtr.getRemoteServerUrl());
     srv.setTokenRefresher(() => this.remoteServerConfigCtr.refreshAccessToken());
 
     // Wire up tool call handler

@@ -284,6 +284,7 @@ export default defineConfig({
       sourcemap: isDev ? 'inline' : false,
     },
     define: {
+      'process.env.DESKTOP_BUILD_FLAVOR': JSON.stringify(process.env.DESKTOP_BUILD_FLAVOR),
       'process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS': JSON.stringify(externalNavigationHosts),
       'process.env.DISABLE_APP_UPDATE': JSON.stringify(
         isTestDesktopBuild ? '1' : process.env.DISABLE_APP_UPDATE,

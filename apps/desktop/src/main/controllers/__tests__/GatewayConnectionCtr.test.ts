@@ -331,6 +331,7 @@ describe('GatewayConnectionCtr', () => {
       expect(options.token).toBe('mock-access-token');
       expect(options.deviceId).toBe('stored-device-id');
       expect(options.gatewayUrl).toBe('https://aihub.bielcrystal.com');
+      expect(options.serverUrl).toBe('https://server.example.com');
       expect(options.logger).toBeDefined();
     });
 
@@ -358,6 +359,18 @@ describe('GatewayConnectionCtr', () => {
 
       const result = await ctr.connect();
       expect(result).toEqual({ error: 'No access token available', success: false });
+      expect(MockGatewayClient.lastInstance).toBeNull();
+    });
+
+    it('should return success:false when no remote server URL', async () => {
+      vi.mocked(mockRemoteServerConfigCtr.isRemoteServerConfigured).mockResolvedValueOnce(false);
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+
+      vi.mocked(mockRemoteServerConfigCtr.getRemoteServerUrl).mockResolvedValueOnce(undefined);
+
+      const result = await ctr.connect();
+      expect(result).toEqual({ error: 'No remote server URL available', success: false });
       expect(MockGatewayClient.lastInstance).toBeNull();
     });
 
@@ -883,7 +896,9 @@ describe('GatewayConnectionCtr', () => {
     });
 
     it('sends rejected ack when remote server URL is not configured', async () => {
-      vi.mocked(mockRemoteServerConfigCtr.getRemoteServerUrl).mockResolvedValueOnce('');
+      vi.mocked(mockRemoteServerConfigCtr.getRemoteServerUrl)
+        .mockResolvedValueOnce('https://server.example.com')
+        .mockResolvedValueOnce('');
 
       const client = await connectAndOpen();
       client.simulateAgentRunRequest('openclaw', 'op-fail');

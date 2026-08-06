@@ -118,6 +118,7 @@ export default class GatewayConnectionService extends ServiceModule {
   private identitySource: IdentitySource | null = null;
 
   private tokenProvider: (() => Promise<string | null>) | null = null;
+  private serverUrlProvider: (() => Promise<string | null | undefined>) | null = null;
   private tokenRefresher: (() => Promise<{ error?: string; success: boolean }>) | null = null;
   private toolCallHandler: ToolCallHandler | null = null;
   private mcpCallHandler: McpCallHandler | null = null;
@@ -133,6 +134,15 @@ export default class GatewayConnectionService extends ServiceModule {
    */
   setTokenProvider(provider: () => Promise<string | null>) {
     this.tokenProvider = provider;
+  }
+
+  /**
+   * Set the application server URL provider. The central device gateway uses
+   * this value to validate the token against the server the desktop is logged
+   * into (for example masterino.bielcrystal.com).
+   */
+  setServerUrlProvider(provider: () => Promise<string | null | undefined>) {
+    this.serverUrlProvider = provider;
   }
 
   /**
@@ -299,10 +309,19 @@ export default class GatewayConnectionService extends ServiceModule {
       return { error: 'No token provider configured', success: false };
     }
 
-    const token = await this.tokenProvider();
+    if (!this.serverUrlProvider) {
+      logger.warn('Cannot connect: no server URL provider configured');
+      return { error: 'No server URL provider configured', success: false };
+    }
+
+    const [token, serverUrl] = await Promise.all([this.tokenProvider(), this.serverUrlProvider()]);
     if (!token) {
       logger.warn('Cannot connect: no access token');
       return { error: 'No access token available', success: false };
+    }
+    if (!serverUrl) {
+      logger.warn('Cannot connect: no remote server URL');
+      return { error: 'No remote server URL available', success: false };
     }
 
     const gatewayUrl = this.getGatewayUrl();
@@ -330,6 +349,7 @@ export default class GatewayConnectionService extends ServiceModule {
       deviceId: this.getDeviceId(),
       gatewayUrl,
       logger,
+      serverUrl,
       token,
       userId: userId || undefined,
     });
