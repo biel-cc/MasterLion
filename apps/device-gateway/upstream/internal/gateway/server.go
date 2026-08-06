@@ -53,7 +53,7 @@ func (s *Server) Routes() http.Handler {
 	return mux
 }
 
-func (s 鈥?4 tokens truncated鈥?return existing
+func (s …34 tokens truncated…	return existing
 	}
 	h := newHub(userID)
 	s.hubs[userID] = h
@@ -174,7 +174,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, _ *http.Request, body devi
 func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
 	h := s.hub(body.UserID)
 	if len(h.authenticatedConnections()) == 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "妗岄潰璁惧涓嶅湪绾?, "error": "DEVICE_OFFLINE", "success": false})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 		return
 	}
 	target := h.target(body.DeviceID)
@@ -200,9 +200,9 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 	case dispatchOK:
 		writeMergedResult(w, http.StatusOK, true, msg.Result)
 	case dispatchTimeout:
-		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "宸ュ叿璋冪敤瓒呮椂锛? + formatSeconds(timeout) + "s锛?, "error": "TIMEOUT", "success": false})
+		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "工具调用超时（" + formatSeconds(timeout) + "s）", "error": "TIMEOUT", "success": false})
 	case dispatchOffline:
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "妗岄潰璁惧涓嶅湪绾?, "error": "DEVICE_OFFLINE", "success": false})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 	}
 }
 
@@ -273,7 +273,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, _ *http.Request, body deviceHT
 func (s *Server) handleMessageAPI(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
 	h := s.hub(body.UserID)
 	if len(h.authenticatedConnections()) == 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "妗岄潰璁惧涓嶅湪绾?, "error": "DEVICE_OFFLINE", "success": false})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 		return
 	}
 	target := h.target(body.DeviceID)
@@ -297,9 +297,9 @@ func (s *Server) handleMessageAPI(w http.ResponseWriter, _ *http.Request, body d
 	case dispatchOK:
 		writeMergedResult(w, http.StatusOK, true, msg.Result)
 	case dispatchTimeout:
-		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "娑堟伅 API 璋冪敤瓒呮椂锛? + formatSeconds(timeout) + "s锛?, "error": "TIMEOUT", "success": false})
+		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "消息 API 调用超时（" + formatSeconds(timeout) + "s）", "error": "TIMEOUT", "success": false})
 	case dispatchOffline:
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "妗岄潰璁惧涓嶅湪绾?, "error": "DEVICE_OFFLINE", "success": false})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 	}
 }
 
@@ -426,4 +426,3 @@ func formatSeconds(d time.Duration) string {
 	text := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.3f", seconds), "0"), ".")
 	return text
 }
-
