@@ -47,6 +47,20 @@ describe('defineConfig locale path-traversal hardening', () => {
     expect(rewrite).toBeNull();
   });
 
+  it.each(['success', 'social', 'error'])(
+    'serves the public OAuth callback %s page from the auth SPA',
+    async (page) => {
+      const response = await middleware(
+        new NextRequest(`http://localhost:3010/oauth/callback/${page}`),
+      );
+
+      expect(response?.headers.get('location')).toBeNull();
+      expect(new URL(response!.headers.get('x-middleware-rewrite')!).pathname).toBe(
+        `/spa-auth/en-US/oauth/callback/${page}`,
+      );
+    },
+  );
+
   it('redirects protected routes to signin on the current request origin when dynamic origins are enabled', async () => {
     vi.stubEnv('APP_URL_DYNAMIC', '1');
     vi.stubEnv('APP_URL_ALLOWED_HOSTS', '*');
