@@ -45,6 +45,9 @@ export const getAppConfig = () => {
       DEFAULT_AGENT_CONFIG: z.string(),
       SYSTEM_AGENT: z.string().optional(),
 
+      TELEMETRY_MODE: z.enum(['disabled', 'optional', 'required']),
+      SLS_PRODUCT_EVENTS_FILE: z.string().optional(),
+
       PLUGINS_INDEX_URL: z.string().url(),
       PLUGIN_SETTINGS: z.string().optional(),
 
@@ -99,6 +102,14 @@ export const getAppConfig = () => {
       DEFAULT_AGENT_CONFIG: process.env.DEFAULT_AGENT_CONFIG || '',
       SYSTEM_AGENT: process.env.SYSTEM_AGENT,
 
+      TELEMETRY_MODE:
+        process.env.TELEMETRY_MODE === 'required' || process.env.TELEMETRY_MODE === 'disabled'
+          ? process.env.TELEMETRY_MODE
+          : process.env.TELEMETRY_DISABLED === '1'
+            ? 'disabled'
+            : 'optional',
+      SLS_PRODUCT_EVENTS_FILE: process.env.SLS_PRODUCT_EVENTS_FILE,
+
       PLUGINS_INDEX_URL: !!process.env.PLUGINS_INDEX_URL
         ? process.env.PLUGINS_INDEX_URL
         : PLUGINS_INDEX_URL,
@@ -135,8 +146,11 @@ export const getAppConfig = () => {
       ['MARKET_BASE_URL', config.MARKET_BASE_URL],
       ['MARKET_TRUSTED_CLIENT_ID', config.MARKET_TRUSTED_CLIENT_ID],
       ['MARKET_TRUSTED_CLIENT_SECRET', config.MARKET_TRUSTED_CLIENT_SECRET],
-    ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) throw new Error(`Internal Market configuration is required: ${missing.join(', ')}`);
+    ]
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length)
+      throw new Error(`Internal Market configuration is required: ${missing.join(', ')}`);
   }
   return config;
 };

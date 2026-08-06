@@ -6,6 +6,7 @@ import { HeartHandshake, Undo2Icon } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { getTelemetryMode } from '@/libs/telemetry/mode';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/selectors';
 
@@ -21,10 +22,18 @@ interface DataModeStepProps {
 
 const DataModeStep = memo<DataModeStepProps>(({ onBack, onNext }) => {
   const { t } = useTranslation('desktop-onboarding');
+  const telemetryMode = getTelemetryMode();
+  const isManaged = telemetryMode !== 'optional';
   const telemetryEnabled = useUserStore(userGeneralSettingsSelectors.telemetry);
   const updateGeneralConfig = useUserStore((s) => s.updateGeneralConfig);
   const [selectedMode, setSelectedMode] = useState<DataMode>(
-    telemetryEnabled ? 'share' : 'privacy',
+    telemetryMode === 'required'
+      ? 'share'
+      : telemetryMode === 'disabled'
+        ? 'privacy'
+        : telemetryEnabled
+          ? 'share'
+          : 'privacy',
   );
 
   const setMode = useCallback(
@@ -51,68 +60,82 @@ const DataModeStep = memo<DataModeStepProps>(({ onBack, onNext }) => {
   return (
     <Flexbox gap={16} style={{ height: '100%', minHeight: '100%' }}>
       <Flexbox>
-        <LobeMessage sentences={[t('screen4.title'), t('screen4.title2'), t('screen4.title3')]} />
-        <Text as={'p'}>{t('screen4.description')}</Text>
+        <LobeMessage
+          sentences={
+            isManaged
+              ? [t(`screen4.${telemetryMode}.heading`)]
+              : [t('screen4.title'), t('screen4.title2'), t('screen4.title3')]
+          }
+        />
+        <Text as={'p'}>
+          {t(isManaged ? `screen4.${telemetryMode}.notice` : 'screen4.description')}
+        </Text>
       </Flexbox>
       <Flexbox gap={16} style={{ width: '100%' }}>
         {/* Shared data option */}
-        <Block
-          clickable
-          flex={1}
-          gap={16}
-          padding={16}
-          style={{ borderColor: selectedMode === 'share' ? cssVar.colorSuccess : undefined }}
-          variant={'outlined'}
-          onClick={() => setMode('share')}
-        >
-          {selectedMode === 'share' && checkIcon}
-          <Empty
-            description={t('screen4.share.description')}
-            icon={HeartHandshake}
-            padding={0}
-            title={t('screen4.share.title')}
-            type={'page'}
-            descriptionProps={{
-              fontSize: 14,
-            }}
-            titleProps={{
-              fontSize: 18,
-            }}
-          />
-          <Flexbox as={'ul'} gap={4} style={{ listStyle: 'none', padding: 0 }}>
-            <li>
-              <Text>• {t('screen4.share.items.1')}</Text>
-            </li>
-            <li>
-              <Text>• {t('screen4.share.items.2')}</Text>
-            </li>
-            <li>
-              <Text>• {t('screen4.share.items.3')}</Text>
-            </li>
-          </Flexbox>
-        </Block>
+        {telemetryMode !== 'disabled' && (
+          <Block
+            clickable={!isManaged}
+            flex={1}
+            gap={16}
+            padding={16}
+            style={{ borderColor: selectedMode === 'share' ? cssVar.colorSuccess : undefined }}
+            variant={'outlined'}
+            onClick={isManaged ? undefined : () => setMode('share')}
+          >
+            {(isManaged || selectedMode === 'share') && checkIcon}
+            <Empty
+              icon={HeartHandshake}
+              padding={0}
+              title={t(isManaged ? 'screen4.required.title' : 'screen4.share.title')}
+              type={'page'}
+              description={t(
+                isManaged ? 'screen4.required.description' : 'screen4.share.description',
+              )}
+              descriptionProps={{
+                fontSize: 14,
+              }}
+              titleProps={{
+                fontSize: 18,
+              }}
+            />
+            <Flexbox as={'ul'} gap={4} style={{ listStyle: 'none', padding: 0 }}>
+              <li>
+                <Text>• {t(isManaged ? 'screen4.required.items.1' : 'screen4.share.items.1')}</Text>
+              </li>
+              <li>
+                <Text>• {t(isManaged ? 'screen4.required.items.2' : 'screen4.share.items.2')}</Text>
+              </li>
+              <li>
+                <Text>• {t(isManaged ? 'screen4.required.items.3' : 'screen4.share.items.3')}</Text>
+              </li>
+            </Flexbox>
+          </Block>
+        )}
 
         {/* Privacy mode option */}
-        <Block
-          clickable
-          flex={1}
-          gap={6}
-          padding={16}
-          style={{ borderColor: selectedMode === 'privacy' ? cssVar.colorSuccess : undefined }}
-          variant={'outlined'}
-          onClick={() => setMode('privacy')}
-        >
-          {selectedMode === 'privacy' && checkIcon}
-          <Text strong fontSize={18}>
-            {t('screen4.privacy.title')}
-          </Text>
-          <Text fontSize={14} type={'secondary'}>
-            {t('screen4.privacy.description')}
-          </Text>
-        </Block>
+        {telemetryMode !== 'required' && (
+          <Block
+            clickable={!isManaged}
+            flex={1}
+            gap={6}
+            padding={16}
+            style={{ borderColor: selectedMode === 'privacy' ? cssVar.colorSuccess : undefined }}
+            variant={'outlined'}
+            onClick={isManaged ? undefined : () => setMode('privacy')}
+          >
+            {selectedMode === 'privacy' && checkIcon}
+            <Text strong fontSize={18}>
+              {t('screen4.privacy.title')}
+            </Text>
+            <Text fontSize={14} type={'secondary'}>
+              {t('screen4.privacy.description')}
+            </Text>
+          </Block>
+        )}
       </Flexbox>
       <Text color={cssVar.colorTextSecondary} fontSize={12} style={{ marginTop: 16 }}>
-        {t('screen4.footerNote')}
+        {t(isManaged ? `screen4.${telemetryMode}.footerNote` : 'screen4.footerNote')}
       </Text>
       <OnboardingFooterActions
         left={

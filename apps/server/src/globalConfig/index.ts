@@ -141,6 +141,7 @@ export const getServerGlobalConfig = async () => {
     systemAgent: parseSystemAgent(appEnv.SYSTEM_AGENT),
     telemetry: {
       langfuse: langfuseEnv.ENABLE_LANGFUSE,
+      mode: appEnv.TELEMETRY_MODE,
     },
   };
 

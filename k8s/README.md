@@ -15,6 +15,8 @@ The manifests are split into a shared workload base and environment-specific ove
   during the guarded cutover.
 - `overlays/test-migration`: temporary zero-replica application state used while the fresh database
   is initialized or before an optional data restore.
+- `observability`: separately rendered `masterino-observability` namespace containing Langfuse,
+  single-node ClickHouse, OSS backups, and isolation policies. See `observability/README.md`.
 
 Never run `kubectl apply -f k8s/`. Render or apply an explicit overlay through `deploy.sh`.
 For the production hostname and data migration sequence, follow

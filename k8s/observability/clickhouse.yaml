@@ -1,0 +1,78 @@
+# This uses the mature Altinity ClickHouse operator because its single-node CR
+# supports running without Keeper. The new clickhouse.com operator currently
+# requires keeperClusterRef even for one replica.
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: langfuse
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: masterino-observability
+spec:
+  configuration:
+    clusters:
+      - name: langfuse
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+        templates:
+          podTemplate: clickhouse
+          dataVolumeClaimTemplate: data
+  defaults:
+    templates:
+      podTemplate: clickhouse
+      dataVolumeClaimTemplate: data
+  templates:
+    podTemplates:
+      - name: clickhouse
+        spec:
+          containers:
+            - name: clickhouse
+              image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/clickhouse-server:25.8-lts-digest-marker
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: CLICKHOUSE_DB
+                  value: default
+                - name: CLICKHOUSE_USER
+                  value: langfuse
+                - name: CLICKHOUSE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: langfuse-secret
+                      key: CLICKHOUSE_PASSWORD
+                - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+                  value: '1'
+              resources:
+                requests:
+                  cpu: '2'
+                  memory: 8Gi
+                limits:
+                  cpu: '2'
+                  memory: 8Gi
+    volumeClaimTemplates:
+      - name: data
+        reclaimPolicy: Retain
+        spec:
+          accessModes: [ReadWriteOnce]
+          storageClassName: masterlion-ssd-c-retain
+          resources:
+            requests:
+              storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    app.kubernetes.io/name: clickhouse
+spec:
+  type: ClusterIP
+  selector:
+    clickhouse.altinity.com/chi: langfuse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000

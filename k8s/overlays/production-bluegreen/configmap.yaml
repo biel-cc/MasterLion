@@ -49,3 +49,7 @@ data:
   SEARXNG_URL: 'http://masterino-searxng:8080'
   REDIS_PREFIX: 'lobechat'
   REDIS_TLS: '0'
+  TELEMETRY_MODE: 'required'
+  SLS_PRODUCT_EVENTS_FILE: '/var/log/masterino/product-events.jsonl'
+  ENABLE_LANGFUSE: '1'
+  LANGFUSE_HOST: 'http://langfuse-web.masterino-observability.svc.cluster.local:3000'

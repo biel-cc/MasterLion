@@ -7,10 +7,12 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - ingress.yaml
+  - langfuse-db-bootstrap.yaml
   - metadata-egress-network-policy.yaml
   - oidc-token-ingress.yaml
   - pdb.yaml
   - storageclass.yaml
+  - product-telemetry-log.yaml
   - webapi-trace-ingress.yaml
 replicas:
   - name: masterino

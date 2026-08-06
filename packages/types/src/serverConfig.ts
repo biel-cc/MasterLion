@@ -51,6 +51,8 @@ export interface ServerModelProviderConfig {
 
 export type ServerLanguageModel = Partial<Record<GlobalLLMProviderKey, ServerModelProviderConfig>>;
 
+export type TelemetryMode = 'disabled' | 'optional' | 'required';
+
 export interface GlobalServerConfig {
   /**
    * Agent Gateway URL for WebSocket-based agent execution.
@@ -85,6 +87,7 @@ export interface GlobalServerConfig {
   systemAgent?: PartialDeep<UserServiceModelConfig>;
   telemetry: {
     langfuse?: boolean;
+    mode?: TelemetryMode;
   };
   visualUnderstanding?: VisualUnderstandingConfig;
 }

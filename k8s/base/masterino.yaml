@@ -93,3 +93,10 @@ spec:
               port: http
             periodSeconds: 10
             failureThreshold: 30
+          volumeMounts:
+            - name: product-telemetry
+              mountPath: /var/log/masterino
+      volumes:
+        - name: product-telemetry
+          emptyDir:
+            sizeLimit: 1Gi

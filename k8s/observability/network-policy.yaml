@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clickhouse-ingress
+spec:
+  podSelector:
+    matchLabels:
+      clickhouse.altinity.com/chi: langfuse
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [langfuse-web, langfuse-worker, clickhouse-backup]
+      ports:
+        - { protocol: TCP, port: 8123 }
+        - { protocol: TCP, port: 9000 }

@@ -24,6 +24,7 @@ import { ModelProvider } from 'model-bank';
 import { getActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
 import { DEFAULT_AGENT_CONFIG } from '@/const/settings';
 import { getSearchConfig } from '@/helpers/getSearchConfig';
+import { resolveTelemetryEnabled } from '@/libs/telemetry/mode';
 import { getAgentStoreState } from '@/store/agent';
 import {
   agentByIdSelectors,
@@ -51,6 +52,7 @@ import { createTraceHeader } from '@/utils/trace';
 
 import { createHeaderWithAuth } from '../_auth';
 import { API_ENDPOINTS } from '../_url';
+import { submitProductTelemetryEvent } from '../productTelemetry';
 import { findDeploymentName, isEnableFetchOnClient, resolveRuntimeProvider } from './helper';
 import { type ResolvedAgentConfig } from './mecha';
 import {
@@ -454,6 +456,15 @@ class ChatService {
 
     const traceHeader = createTraceHeader({ ...options?.trace });
 
+    if (options?.trace?.enabled && options.trace.traceId) {
+      void submitProductTelemetryEvent({
+        name: 'model_request_started',
+        properties: { model, provider },
+        traceId: options.trace.traceId,
+        workspaceId: getActiveWorkspaceId() || undefined,
+      });
+    }
+
     const headers = await createHeaderWithAuth({
       headers: {
         'Content-Type': 'application/json',
@@ -549,13 +560,16 @@ class ChatService {
   private mapTrace = (trace?: TracePayload, tag?: TraceTagMap): TracePayload => {
     const tags = agentSelectors.currentAgentMeta(getAgentStoreState()).tags || [];
 
-    const enabled = userGeneralSettingsSelectors.telemetry(getUserStoreState());
+    const enabled = resolveTelemetryEnabled(
+      userGeneralSettingsSelectors.telemetry(getUserStoreState()),
+    );
 
     if (!enabled) return { ...trace, enabled: false };
 
     return {
       ...trace,
       enabled: true,
+      traceId: trace?.traceId || crypto.randomUUID(),
       tags: [tag, ...(trace?.tags || []), ...tags].filter(Boolean) as string[],
       userId: userProfileSelectors.userId(useUserStore.getState()),
     };

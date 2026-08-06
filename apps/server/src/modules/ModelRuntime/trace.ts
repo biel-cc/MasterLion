@@ -1,10 +1,12 @@
 import { INBOX_SESSION_ID, LOBE_CHAT_OBSERVATION_ID, LOBE_CHAT_TRACE_ID } from '@lobechat/const';
 import { type ChatStreamCallbacks, type ChatStreamPayload } from '@lobechat/model-runtime';
+import { trace as otelTrace } from '@lobechat/observability-otel/api';
 import { type TracePayload } from '@lobechat/types';
 import { TraceTagMap } from '@lobechat/types';
 import { after } from 'next/server';
 
 import { TraceClient } from '@/libs/traces';
+import { sanitizeTelemetryValue } from '@/server/services/productTelemetry';
 
 export interface AgentChatOptions {
   enableTrace?: boolean;
@@ -19,13 +21,31 @@ export const createTraceOptions = (
   const { messages, model, tools, ...parameters } = payload;
   // create a trace to monitor the completion
   const traceClient = new TraceClient();
+  if (tracePayload?.traceId) {
+    otelTrace.getActiveSpan()?.setAttribute('masterino.trace_id', tracePayload.traceId);
+  }
   const messageLength = messages.length;
   const systemRole = messages.find((message) => message.role === 'system')?.content;
+  const traceSanitizeOptions = {
+    maxArrayItems: 500,
+    maxDepth: 8,
+    maxObjectKeys: 500,
+    maxStringLength: 128 * 1024,
+  };
+  const sanitizedMessages = sanitizeTelemetryValue(messages, traceSanitizeOptions);
+  const sanitizedSystemRole = sanitizeTelemetryValue(systemRole, traceSanitizeOptions);
+  const sanitizedTools = sanitizeTelemetryValue(tools, traceSanitizeOptions);
 
   const trace = traceClient.createTrace({
     id: tracePayload?.traceId,
-    input: messages,
-    metadata: { messageLength, model, provider, systemRole, tools },
+    input: sanitizedMessages,
+    metadata: {
+      messageLength,
+      model,
+      provider,
+      systemRole: sanitizedSystemRole,
+      tools: sanitizedTools,
+    },
     name: tracePayload?.traceName,
     sessionId: tracePayload?.topicId
       ? tracePayload.topicId
@@ -35,10 +55,10 @@ export const createTraceOptions = (
   });
 
   const generation = trace?.generation({
-    input: messages,
+    input: sanitizedMessages,
     metadata: { messageLength, model, provider },
     model,
-    modelParameters: parameters as any,
+    modelParameters: sanitizeTelemetryValue(parameters, traceSanitizeOptions) as any,
     name: `Chat Completion (${provider})`,
     startTime: new Date(),
   });
@@ -67,10 +87,12 @@ export const createTraceOptions = (
               ? { text, thinking }
               : text;
 
+        const sanitizedOutput = sanitizeTelemetryValue(output, traceSanitizeOptions);
+
         generation?.update({
           endTime: new Date(),
-          metadata: { grounding, thinking },
-          output,
+          metadata: sanitizeTelemetryValue({ grounding, thinking }, traceSanitizeOptions) as any,
+          output: sanitizedOutput,
           usage: usage
             ? {
                 completionTokens: usage.outputTextTokens,
@@ -82,7 +104,7 @@ export const createTraceOptions = (
             : undefined,
         });
 
-        trace?.update({ output });
+        trace?.update({ output: sanitizedOutput });
       },
 
       onFinal: () => {

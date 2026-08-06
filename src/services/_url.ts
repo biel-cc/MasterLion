@@ -3,6 +3,7 @@ export const API_ENDPOINTS = {
 
   // trace
   trace: '/webapi/trace',
+  telemetryEvents: '/webapi/telemetry/events',
 
   // chat
   chat: (provider: string) => `/webapi/chat/${provider}`,

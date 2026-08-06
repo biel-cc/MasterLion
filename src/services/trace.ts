@@ -1,3 +1,4 @@
+import { resolveTelemetryEnabled } from '@/libs/telemetry/mode';
 import { API_ENDPOINTS } from '@/services/_url';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/selectors';
@@ -17,7 +18,9 @@ class TraceService {
   };
 
   traceEvent = async (data: TraceEventPayloads & TraceEventBasePayload) => {
-    const enabled = userGeneralSettingsSelectors.telemetry(useUserStore.getState());
+    const enabled = resolveTelemetryEnabled(
+      userGeneralSettingsSelectors.telemetry(useUserStore.getState()),
+    );
 
     if (!enabled) return;
 

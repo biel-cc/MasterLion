@@ -56,6 +56,9 @@ export default {
   'screen4.description':
     'Choose how you want to share data. Your choice helps us improve, and you can change this anytime in settings.',
   'screen4.footerNote': 'You can change this anytime in settings',
+  'screen4.disabled.footerNote': 'Telemetry is disabled by the system administrator.',
+  'screen4.disabled.heading': 'Telemetry is disabled',
+  'screen4.disabled.notice': 'This deployment does not collect product or model telemetry.',
   'screen4.navigation.next': 'Continue',
   'screen4.privacy.description':
     'Disable anonymized usage analytics. No performance, model usage, or feature interaction data is shared.',
@@ -63,6 +66,17 @@ export default {
   'screen4.privacy.items.2': 'No usage analytics',
   'screen4.privacy.items.3': 'All processing stays local',
   'screen4.privacy.title': 'Privacy Mode',
+  'screen4.required.description':
+    'Masterino records internal product telemetry and model traces for operations, troubleshooting, and quality improvement.',
+  'screen4.required.footerNote':
+    'Detailed records are retained for 90 days and access is restricted to authorized internal roles.',
+  'screen4.required.heading': 'Internal telemetry notice',
+  'screen4.required.items.1': 'Performance and feature interactions',
+  'screen4.required.items.2': 'Model inputs, outputs, token usage, and latency',
+  'screen4.required.items.3': 'Errors and tool-call traces; credentials are excluded',
+  'screen4.required.notice':
+    'This company-internal deployment records usage and complete model traces under the administrator policy.',
+  'screen4.required.title': 'Company-managed telemetry',
   'screen4.share.description':
     'Share anonymized usage data to help us improve Masterino. This helps us understand how Agents are used and make them better.',
   'screen4.share.items.1': 'Performance metrics',

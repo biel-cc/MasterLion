@@ -6,6 +6,8 @@ resources:
   - configmap.yaml
   - aliases.yaml
   - memory-worker.yaml
+  - langfuse-db-bootstrap.yaml
+  - product-telemetry-log.yaml
   - pdb.yaml
   - searxng.yaml
   - wecom-verification.yaml
@@ -121,18 +123,18 @@ patches:
           name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/certs/masterino-onlyboxes-ca.crt
       - op: add
-        path: /spec/template/spec/containers/0/volumeMounts
+        path: /spec/template/spec/containers/0/volumeMounts/-
         value:
-          - name: onlyboxes-ca
-            mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt
-            subPath: onlyboxes-internal-ca.crt
-            readOnly: true
+          name: onlyboxes-ca
+          mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+          subPath: onlyboxes-internal-ca.crt
+          readOnly: true
       - op: add
-        path: /spec/template/spec/volumes
+        path: /spec/template/spec/volumes/-
         value:
-          - name: onlyboxes-ca
-            configMap:
-              name: masterino-onlyboxes-ca
+          name: onlyboxes-ca
+          configMap:
+            name: masterino-onlyboxes-ca
       - op: add
         path: /spec/template/spec/topologySpreadConstraints
         value:

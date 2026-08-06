@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: masterino-observability
+resources:
+  - namespace.yaml
+  - clickhouse.yaml
+  - langfuse.yaml
+  - network-policy.yaml
+  - backup.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: langfuse-config
+    envs:
+      - langfuse.env
+generatorOptions:
+  disableNameSuffixHash: true

@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: langfuse-internal
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 20m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [langfuse.internal.bielcrystal.com]
+      secretName: 20261122bielcrystal.com
+  rules:
+    - host: langfuse.internal.bielcrystal.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: langfuse-web
+                port: { number: 3000 }

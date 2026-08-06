@@ -213,6 +213,10 @@ export default {
     'Existing documents with the same filename will be replaced.',
   'agentDocuments.title': 'Agent Documents',
   'analytics.telemetry.desc': 'Help us improve {{appName}} with anonymous usage data',
+  'analytics.telemetry.disabledDesc': 'Telemetry is disabled by the system administrator.',
+  'analytics.telemetry.managedTitle': 'Company-managed telemetry',
+  'analytics.telemetry.requiredDesc':
+    'Product usage and complete model traces are recorded for internal operations, troubleshooting, and quality improvement. Detailed records are retained for 90 days.',
   'analytics.telemetry.title': 'Send Anonymous Usage Data',
   'analytics.title': 'Analytics',
 
