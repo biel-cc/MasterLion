@@ -313,6 +313,7 @@ const config = {
 
   win: {
     executableName: 'Masterino',
+    icon: 'build/icon.ico',
   },
 };
 

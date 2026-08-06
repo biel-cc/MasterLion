@@ -118,7 +118,7 @@ export class WindowThemeManager {
   private getWindowsConfig(isDarkMode: boolean): WindowsThemeConfig {
     return {
       backgroundColor: isDarkMode ? BACKGROUND_DARK : BACKGROUND_LIGHT,
-      icon: isDev ? path.join(buildDir, 'icon-dev.ico') : undefined,
+      icon: path.join(buildDir, isDev ? 'icon-dev.ico' : 'icon.ico'),
       titleBarOverlay: this.getWindowsTitleBarOverlay(isDarkMode),
       titleBarStyle: 'hidden',
     };

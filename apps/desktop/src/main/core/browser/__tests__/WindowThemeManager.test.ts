@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WindowThemeManager } from '../WindowThemeManager';
@@ -94,7 +96,7 @@ describe('WindowThemeManager', () => {
 
       expect(config).toEqual({
         backgroundColor: '#1a1a1a',
-        icon: undefined,
+        icon: path.join('/mock/build', 'icon.ico'),
         titleBarOverlay: {
           color: '#00000000',
           height: 36,
@@ -111,7 +113,7 @@ describe('WindowThemeManager', () => {
 
       expect(config).toEqual({
         backgroundColor: '#ffffff',
-        icon: undefined,
+        icon: path.join('/mock/build', 'icon.ico'),
         titleBarOverlay: {
           color: '#00000000',
           height: 36,
