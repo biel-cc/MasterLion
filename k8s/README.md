@@ -39,6 +39,17 @@ values with ad hoc `kubectl set env` commands: the next declarative deploy would
 `deploy.sh --env test validate` fails if the memory flag, model selection, concurrency, worker
 enablement, or the content-hashed memory ConfigMap is removed.
 
+The test application and Bridge configuration are also generated as content-hashed ConfigMaps.
+All active test workloads, including `masterino-searxng`, live in `masterino-test`; daily deploy,
+cutover, smoke, and rollback commands never read a Service, ConfigMap, or Secret from
+`masterlion-test`. The old namespace is retained only as stopped rollback material and can be
+retired with the separately guarded `retire-legacy-test` command after acceptance.
+
+Test web search uses the in-cluster `masterino-searxng` Service. Page crawling uses `naive,jina`
+and deliberately excludes Search1API so exhausted external credits cannot break the fallback
+chain. Create `masterino-searxng-secret` independently in `masterino-test`; never copy or mount the
+legacy namespace Secret.
+
 Before deploying the test rollout:
 
 1. Copy `overlays/test/secret.env.example` to the ignored `secret.env`. No QStash or other

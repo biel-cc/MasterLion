@@ -3,9 +3,16 @@ kind: Kustomization
 namespace: masterino-test
 resources:
   - ../../base
-  - configmap.yaml
+  - device-gateway.yaml
   - memory-worker.yaml
+  - searxng.yaml
 configMapGenerator:
+  - name: masterino-config
+    envs:
+      - app.properties
+  - name: masterino-bridge-config
+    envs:
+      - bridge.properties
   - name: masterino-memory-config
     envs:
       - memory.properties
@@ -14,13 +21,99 @@ generatorOptions:
   labels:
     app.kubernetes.io/part-of: masterino
     masterino.io/environment: test
+images:
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    digest: sha256:140fef6157de6505536c0689f409ca87dbcf1547470ad2301293cd199fb9029e
 patches:
   - path: memory-config-patch.yaml
   - path: storage-patch.yaml
   - target:
+      kind: StatefulSet
+      name: masterino-postgres
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0
+        value:
+          name: POSTGRES_DB
+          value: lobechat
+  - target:
+      kind: Deployment
+      name: masterino-aihub-db-bridge
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/valueFrom/configMapKeyRef/name
+        value: masterino-bridge-config
+      - op: replace
+        path: /spec/template/spec/containers/0/env/3/valueFrom/configMapKeyRef/name
+        value: masterino-bridge-config
+      - op: replace
+        path: /spec/template/spec/containers/0/env/4/valueFrom/configMapKeyRef/name
+        value: masterino-bridge-config
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+          failureThreshold: 3
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe
+        value:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 3
+  - target:
       kind: Deployment
       name: masterino
     patch: |-
+      - op: add
+        path: /spec/minReadySeconds
+        value: 10
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
+      - op: add
+        path: /spec/template/spec/terminationGracePeriodSeconds
+        value: 45
+      - op: add
+        path: /spec/template/spec/containers/0/lifecycle
+        value:
+          preStop:
+            exec:
+              command: ['/bin/sh', '-c', 'sleep 10']
+      - op: replace
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          httpGet:
+            path: /api/healthz
+            port: http
+          periodSeconds: 10
+          failureThreshold: 30
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /api/healthz
+            port: http
+          periodSeconds: 5
+          failureThreshold: 6
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe
+        value:
+          httpGet:
+            path: /api/healthz
+            port: http
+          periodSeconds: 30
+          failureThreshold: 3
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
@@ -52,6 +145,14 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
+          name: DEVICE_GATEWAY_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: masterino-device-gateway-secret
+              key: SERVICE_TOKEN
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
           name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/certs/masterino-onlyboxes-ca.crt
       - op: add
@@ -68,6 +169,20 @@ patches:
             configMap:
               name: masterino-onlyboxes-ca
               defaultMode: 420
+  - target:
+      kind: Deployment
+      name: masterino-memory-worker
+    patch: |-
+      - op: add
+        path: /spec/minReadySeconds
+        value: 10
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 1
 replicas:
   - name: masterino
     count: 1

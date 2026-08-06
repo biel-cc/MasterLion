@@ -1,10 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: masterlion-searxng-config
+  name: masterino-searxng-config
   labels:
-    app.kubernetes.io/name: masterlion-searxng
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-searxng
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: search
 data:
   settings.yml: |
     use_default_settings:
@@ -60,14 +61,15 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: masterlion-searxng
+  name: masterino-searxng
   labels:
-    app.kubernetes.io/name: masterlion-searxng
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-searxng
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: search
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: masterlion-searxng
+    app.kubernetes.io/name: masterino-searxng
   ports:
     - name: http
       port: 8080
@@ -76,21 +78,33 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: masterlion-searxng
+  name: masterino-searxng
   labels:
-    app.kubernetes.io/name: masterlion-searxng
-    app.kubernetes.io/part-of: masterlion
+    app.kubernetes.io/name: masterino-searxng
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: search
 spec:
   replicas: 1
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: masterlion-searxng
+      app.kubernetes.io/name: masterino-searxng
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: masterlion-searxng
-        app.kubernetes.io/part-of: masterlion
+        app.kubernetes.io/name: masterino-searxng
+        app.kubernetes.io/part-of: masterino
+        app.kubernetes.io/component: search
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: searxng
           image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/searxng@sha256:663c20b2d6487ac6f34d741975ada147b996b1a0b68b1cd1e06300c6b5703803
@@ -105,26 +119,28 @@ spec:
             - name: SEARXNG_PORT
               value: "8080"
             - name: SEARXNG_URL
-              value: http://masterlion-searxng:8080/
+              value: http://masterino-searxng:8080/
             - name: SEARXNG_LIMITER
               value: "false"
             - name: SEARXNG_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: masterlion-searxng-secret
+                  name: masterino-searxng-secret
                   key: SEARXNG_SECRET
           ports:
             - name: http
               containerPort: 8080
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 2
-            failureThreshold: 12
+            timeoutSeconds: 3
+            failureThreshold: 6
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10
@@ -150,4 +166,4 @@ spec:
       volumes:
         - name: settings
           configMap:
-            name: masterlion-searxng-config
+            name: masterino-searxng-config

@@ -33,18 +33,16 @@ identifiers in this migration.
    The script refuses to restore unless both application Deployments are at zero.
 5. Start `masterino`, validate it through a local port-forward, and verify login,
    Aihub models/quota, chat, upload, and database writes.
-6. Run the guarded `cutover` command. It verifies the old Deployment is stopped,
-   removes only the old root route, retains the legacy enterprise-WeChat verification
-   path in its original namespace, and installs the new root Ingress.
-7. Observe health and logs. Keep the old namespace, PVCs, and ACR repositories
-   unchanged during the rollback window.
+6. Run the guarded `cutover` command to install the new root Ingress entirely from
+   `masterino-test`; it no longer reads or rewrites resources in the legacy namespace.
+7. Observe health and logs. After complete acceptance, run the separately guarded
+   `retire-legacy-test` command to scale legacy workloads to zero while retaining the namespace,
+   PVCs, Secrets, and ACR repositories during the rollback window.
 
 ## Rollback
 
-Run the guarded `rollback` command. It removes the new Ingress, starts the old
-Deployment, waits for it to become available, restores the old Ingress, and stops
-the new Deployment. Database writes made after cutover are not automatically
-replayed to the old database, so rollback after accepting new writes requires a
-separate reverse data migration decision.
+Run the guarded `rollback` command to restore the previous application, Worker, and Bridge
+Deployment revisions inside `masterino-test`. The active rollback flow never starts or references
+the legacy namespace.
 
 No step in this runbook deletes the old namespace, PVCs, repository, or images.

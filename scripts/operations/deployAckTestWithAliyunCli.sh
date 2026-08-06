@@ -46,6 +46,7 @@ cleanup() {
   [[ -n "${APP_SECRET_FILE:-}" ]] && rm -f -- "$APP_SECRET_FILE"
   [[ -n "${BRIDGE_SECRET_FILE:-}" ]] && rm -f -- "$BRIDGE_SECRET_FILE"
   [[ -n "${MARKET_SECRET_FILE:-}" ]] && rm -f -- "$MARKET_SECRET_FILE"
+  [[ -n "${SEARXNG_SECRET_FILE:-}" ]] && rm -f -- "$SEARXNG_SECRET_FILE"
   [[ -n "${TEMP_DIR:-}" ]] && rmdir -- "$TEMP_DIR" 2> /dev/null
 }
 
@@ -221,6 +222,18 @@ prepare_secret_files() {
   chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$MARKET_SECRET_FILE"
 }
 
+prepare_searxng_secret_file() {
+  if kubectl -n "$NAMESPACE" get secret masterino-searxng-secret > /dev/null 2>&1; then
+    return
+  fi
+
+  local secret
+  secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+  : > "$SEARXNG_SECRET_FILE"
+  write_env "$SEARXNG_SECRET_FILE" SEARXNG_SECRET "$secret"
+  chmod 600 "$SEARXNG_SECRET_FILE"
+}
+
 check_aihub_authorization() {
   require_env ACK_TEST_AIHUB_USERNAME
   require_env AIHUB_MANAGED_TOKEN_NAME
@@ -309,6 +322,7 @@ ACK_RESPONSE_FILE="$TEMP_DIR/ack-response.json"
 APP_SECRET_FILE="$TEMP_DIR/secret.env"
 BRIDGE_SECRET_FILE="$TEMP_DIR/bridge-secret.env"
 MARKET_SECRET_FILE="$TEMP_DIR/market-secret.env"
+SEARXNG_SECRET_FILE="$TEMP_DIR/searxng-secret.env"
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
@@ -342,17 +356,33 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     prepare_secret_files
+    prepare_searxng_secret_file
     bash ./deploy.sh --env test bootstrap
-    bash ./deploy.sh --env test create-secret \
-      "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$TEMP_DIR/searxng-secret.env" "$MARKET_SECRET_FILE"
+    create_secret_args=("$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE")
+    if [[ -s "$SEARXNG_SECRET_FILE" ]]; then
+      create_secret_args+=("$SEARXNG_SECRET_FILE")
+    else
+      create_secret_args+=("")
+    fi
+    create_secret_args+=("$MARKET_SECRET_FILE")
+    bash ./deploy.sh --env test create-secret "${create_secret_args[@]}"
     bash ./deploy.sh --env test deploy
     bash ./deploy.sh --env test rollout
     check_aihub_authorization
+    bash ./deploy.sh --env test smoke
+    ;;
+  smoke)
+    bash ./deploy.sh --env test smoke
+    ;;
+  retire-legacy-test)
+    [[ "${CONFIRM_RETIRE_LEGACY_TEST:-}" == "masterlion-test" ]] \
+      || fail "set CONFIRM_RETIRE_LEGACY_TEST=masterlion-test to authorize retirement"
+    bash ./deploy.sh --env test retire-legacy-test
     ;;
   status)
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, smoke, retire-legacy-test, or status"
     ;;
 esac

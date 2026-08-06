@@ -37,10 +37,14 @@ Commands:
   bootstrap                  Create the namespace and test StorageClass.
   create-secret [app-env] [bridge-env] [searxng-env] [market-env]
                               Create/update isolated app, bridge, SearXNG and Market Secrets.
+  create-gateway-secret [gateway-env]
+                              Create/update the isolated test Device Gateway Secret.
   deploy                     Server dry-run and apply the selected overlay.
   start                      Scale Masterino to one replica for private validation.
-  cutover                    Move the test Ingress from the old namespace to Masterino.
-  rollback                   Restore the old test Ingress and stop Masterino.
+  cutover                    Install the test Ingress after private validation.
+  rollback                   Roll back active test Deployments inside masterino-test.
+  smoke                      Verify test services and web search inside masterino-test.
+  retire-legacy-test         Stop old masterlion-test workloads while retaining data.
   stop                       Scale Masterino to zero replicas.
   status                     Show workloads, ingress and persistent volumes.
   rollout                    Wait for all running workloads.
@@ -71,16 +75,12 @@ shift || true
 case "$ENVIRONMENT" in
   test)
     NAMESPACE="masterino-test"
-    SOURCE_NAMESPACE="masterlion-test"
     EXPECTED_ACK_CLUSTER_ID="$TEST_ACK_CLUSTER_ID"
     OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test"
     CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-cutover"
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-migration"
     MARKET_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market"
     MARKET_CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market-cutover"
-    ROLLBACK_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-ingress.yaml"
-    SOURCE_VERIFICATION_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-verification-ingress.yaml"
-    SOURCE_INGRESS_NAME="masterlion-test-ingress"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-$DEFAULT_TEST_CONTEXT}"
     ACR_PULL_SECRET_NAME="masterino-acr-fixed"
     STORAGE_CLASS_NAME="masterino-test-essd-retain"
@@ -187,6 +187,7 @@ required_market_secret_keys=(
   MARKET_OBJECT_STORAGE_ACCESS_KEY_ID MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY
   MARKET_OAUTH_CLIENTS_JSON MARKET_ADMIN_USER_IDS
 )
+required_gateway_secret_keys=(SERVICE_TOKEN JWKS_PUBLIC_KEY)
 
 searxng_enabled() {
   [[ "$ENVIRONMENT" == "test" ]] || return 1
@@ -263,13 +264,19 @@ check_secret() {
       -o jsonpath='{.data.MARKET_TRUSTED_CLIENT_SECRET}')"
     [[ "$app_market_secret" == "$market_market_secret" ]] || fail \
       "MARKET_TRUSTED_CLIENT_SECRET differs between application and Market Secrets"
+    "${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-device-gateway-secret is missing in namespace '$NAMESPACE'"
+    for key in "${required_gateway_secret_keys[@]}"; do
+      value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "masterino-device-gateway-secret is missing key: $key"
+    done
   fi
   if searxng_enabled; then
-    "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
-      "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
+    "${KUBE[@]}" get secret masterino-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-searxng-secret is missing in namespace '$NAMESPACE'"
     for key in "${required_searxng_secret_keys[@]}"; do
-      value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
-      [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
+      value="$("${KUBE[@]}" get secret masterino-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "masterino-searxng-secret is missing key: $key"
     done
   fi
 }
@@ -351,6 +358,7 @@ case "$COMMAND" in
       if printf '%s\n' "$rendered" | grep -q 'MARKET_ALLOW_EXTERNAL_FALLBACK'; then
         fail "test application must not enable external Market fallback"
       fi
+      printf '%s\n' "$rendered" | node "$SCRIPT_DIR/scripts/operations/verifyAckTestManifests.mjs"
       printf '%s\n' "$rendered" | grep -q 'storageClassName: masterino-test-essd-retain'
       if printf '%s\n' "$rendered" | grep -q '^kind: Namespace$'; then
         fail "test runtime manifests must not reapply the bootstrap Namespace"
@@ -476,18 +484,18 @@ case "$COMMAND" in
     verify_target mutation
     secret_file="${1:-$OVERLAY_DIR/secret.env}"
     bridge_secret_file="${2:-$OVERLAY_DIR/bridge-secret.env}"
-    searxng_secret_file="${3:-$OVERLAY_DIR/searxng-secret.env}"
+    searxng_secret_file="${3:-}"
     market_secret_file="${4:-$OVERLAY_DIR/market-secret.env}"
     [[ -f "$secret_file" ]] || fail "secret env file does not exist: $secret_file"
     [[ -f "$bridge_secret_file" ]] || fail "bridge secret env file does not exist: $bridge_secret_file"
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      if searxng_enabled; then
+      if searxng_enabled && [[ -n "$searxng_secret_file" ]]; then
         [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
       fi
       [[ -f "$market_secret_file" ]] || fail "Market secret env file does not exist: $market_secret_file"
     fi
     if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file" \
-      || { [[ "$ENVIRONMENT" == "test" ]] && { { searxng_enabled && grep -q 'CHANGE_ME' "$searxng_secret_file"; } \
+      || { [[ "$ENVIRONMENT" == "test" ]] && { { [[ -n "$searxng_secret_file" ]] && grep -q 'CHANGE_ME' "$searxng_secret_file"; } \
         || grep -q 'CHANGE_ME' "$market_secret_file"; }; }; then
       fail "a secret env file still contains CHANGE_ME placeholders"
     fi
@@ -498,7 +506,7 @@ case "$COMMAND" in
       grep -Eq "^${key}=.+" "$bridge_secret_file" || fail "bridge secret env file is missing key: $key"
     done
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      if searxng_enabled; then
+      if [[ -n "$searxng_secret_file" ]]; then
         for key in "${required_searxng_secret_keys[@]}"; do
           grep -Eq "^${key}=.+" "$searxng_secret_file" || fail "SearXNG secret env file is missing key: $key"
         done
@@ -532,14 +540,44 @@ case "$COMMAND" in
     "${KUBE[@]}" create secret generic masterino-bridge-secret -n "$NAMESPACE" \
       --from-env-file="$bridge_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      if searxng_enabled; then
-        "${KUBE[@]}" create secret generic masterlion-searxng-secret -n "$NAMESPACE" \
+      if [[ -n "$searxng_secret_file" ]]; then
+        "${KUBE[@]}" create secret generic masterino-searxng-secret -n "$NAMESPACE" \
           --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+      elif searxng_enabled; then
+        "${KUBE[@]}" get secret masterino-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+          "masterino-searxng-secret is missing; provide a SearXNG env file on first deployment"
       fi
       "${KUBE[@]}" create secret generic masterino-market-secret -n "$NAMESPACE" \
         --from-env-file="$market_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     fi
     check_secret
+    ;;
+  create-gateway-secret)
+    [[ "$ENVIRONMENT" == "test" ]] || fail "create-gateway-secret is only used for the test environment"
+    verify_target mutation
+    gateway_secret_file="${1:-$OVERLAY_DIR/device-gateway-secret.env}"
+    [[ -f "$gateway_secret_file" ]] || fail "gateway secret env file does not exist: $gateway_secret_file"
+    if grep -q 'CHANGE_ME\|replace-with' "$gateway_secret_file"; then
+      fail "the gateway secret env file still contains placeholders"
+    fi
+    for key in "${required_gateway_secret_keys[@]}"; do
+      grep -Eq "^${key}=.+" "$gateway_secret_file" || fail "gateway secret env file is missing key: $key"
+    done
+    gateway_service_token="$(sed -n 's/^SERVICE_TOKEN=//p' "$gateway_secret_file")"
+    [[ "${#gateway_service_token}" -ge 32 ]] || fail "SERVICE_TOKEN must contain at least 32 characters"
+    gateway_public_jwks="$(sed -n 's/^JWKS_PUBLIC_KEY=//p' "$gateway_secret_file")"
+    printf '%s' "$gateway_public_jwks" | node -e '
+      const fs = require("node:fs");
+      const jwks = JSON.parse(fs.readFileSync(0, "utf8"));
+      const privateFields = new Set(["d", "p", "q", "dp", "dq", "qi", "oth"]);
+      if (!Array.isArray(jwks?.keys) || jwks.keys.length === 0) process.exit(1);
+      for (const key of jwks.keys) {
+        if (key.kty !== "RSA" || !key.n || !key.e || key.alg !== "RS256" || key.use !== "sig") process.exit(1);
+        if (Object.keys(key).some((field) => privateFields.has(field))) process.exit(1);
+      }
+    ' || fail "JWKS_PUBLIC_KEY must contain public-only RS256 signing keys"
+    "${KUBE[@]}" create secret generic masterino-device-gateway-secret -n "$NAMESPACE" \
+      --from-env-file="$gateway_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     ;;
   deploy)
     verify_target mutation
@@ -616,36 +654,26 @@ case "$COMMAND" in
     [[ "$available" == "1" ]] || fail "Masterino must have one available replica before cutover"
     worker_available="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}')"
     [[ "$worker_available" == "1" ]] || fail "Memory worker must have one available replica before cutover"
-    source_replicas="$("${KUBE[@]}" get deployment masterlion -n "$SOURCE_NAMESPACE" -o jsonpath='{.spec.replicas}')"
-    [[ "$source_replicas" == "0" ]] || fail \
-      "the old Masterino deployment must be scaled to zero before final data sync and cutover"
-    "${KUBE[@]}" get ingress "$SOURCE_INGRESS_NAME" -n "$SOURCE_NAMESPACE" > /dev/null
     render_manifests "$CUTOVER_OVERLAY_DIR" \
       | "${KUBE[@]}" apply --dry-run=client -f - > /dev/null
-    "${KUBE[@]}" apply -f "$SOURCE_VERIFICATION_INGRESS"
     if ! render_manifests "$CUTOVER_OVERLAY_DIR" \
       | "${KUBE[@]}" apply --server-side --dry-run=server -f - > /dev/null; then
-      "${KUBE[@]}" apply -f "$ROLLBACK_INGRESS"
-      fail "cutover preflight failed; the old test Ingress was restored"
+      fail "cutover preflight failed"
     fi
     if ! render_manifests "$CUTOVER_OVERLAY_DIR" | "${KUBE[@]}" apply --server-side -f -; then
-      "${KUBE[@]}" apply -f "$ROLLBACK_INGRESS"
-      fail "cutover failed; the old test Ingress was restored"
+      fail "cutover failed"
     fi
     "${KUBE[@]}" annotate namespace "$NAMESPACE" masterino.io/cutover-complete=true --overwrite
     ;;
   rollback)
     [[ "$ENVIRONMENT" == "test" ]] || fail "rollback is only used for the test environment"
     verify_target mutation
-    [[ "${CONFIRM_ROLLBACK:-}" == "$SOURCE_NAMESPACE" ]] || fail \
-      "set CONFIRM_ROLLBACK=$SOURCE_NAMESPACE to restore the old test Ingress"
-    "${KUBE[@]}" delete ingress masterino-ingress -n "$NAMESPACE" --ignore-not-found
-    "${KUBE[@]}" scale deployment/masterlion -n "$SOURCE_NAMESPACE" --replicas=1
-    "${KUBE[@]}" rollout status deployment/masterlion -n "$SOURCE_NAMESPACE" --timeout=10m
-    "${KUBE[@]}" apply -f "$ROLLBACK_INGRESS"
-    "${KUBE[@]}" scale deployment/masterino -n "$NAMESPACE" --replicas=0
-    "${KUBE[@]}" scale deployment/masterino-memory-worker -n "$NAMESPACE" --replicas=0
-    "${KUBE[@]}" annotate namespace "$NAMESPACE" masterino.io/cutover-complete=false --overwrite
+    [[ "${CONFIRM_ROLLBACK:-}" == "$NAMESPACE" ]] || fail \
+      "set CONFIRM_ROLLBACK=$NAMESPACE to roll back active test Deployments"
+    for deployment in masterino masterino-memory-worker masterino-aihub-db-bridge; do
+      "${KUBE[@]}" rollout undo "deployment/$deployment" -n "$NAMESPACE"
+      "${KUBE[@]}" rollout status "deployment/$deployment" -n "$NAMESPACE" --timeout=10m
+    done
     ;;
   stop)
     verify_target mutation
@@ -673,11 +701,79 @@ case "$COMMAND" in
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
         job/masterino-market-migrate --timeout=10m
       "${KUBE[@]}" rollout status deployment/masterino-market -n "$NAMESPACE" --timeout=10m
+      "${KUBE[@]}" rollout status deployment/masterino-searxng -n "$NAMESPACE" --timeout=10m
+      "${KUBE[@]}" rollout status deployment/masterino-device-gateway -n "$NAMESPACE" --timeout=10m
       worker_replicas="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')"
       if [[ "$worker_replicas" != "0" ]]; then
         "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
       fi
     fi
+    ;;
+  smoke)
+    [[ "$ENVIRONMENT" == "test" ]] || fail "smoke is only used for the test environment"
+    verify_target read
+    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+      const checks = [
+        ["Masterino", "http://masterino:3210/api/healthz", (response, body) => response.ok && body === "ok"],
+        ["Aihub Bridge", "http://masterino-aihub-db-bridge:3218/health", (response) => response.ok],
+        ["SearXNG", "http://masterino-searxng:8080/healthz", (response) => response.ok],
+      ];
+      for (const [name, url, valid] of checks) {
+        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const body = await response.text();
+        if (!valid(response, body)) throw new Error(`${name} health check failed (${response.status})`);
+      }
+      const search = await fetch("http://masterino-searxng:8080/search?q=Masterino&format=json", {
+        signal: AbortSignal.timeout(30000),
+      });
+      const result = await search.json();
+      if (!search.ok || !Array.isArray(result.results) || result.results.length === 0) {
+        throw new Error("SearXNG returned no search results");
+      }
+      console.log("Masterino, Bridge, SearXNG and search smoke checks passed.");
+    '
+    if "${KUBE[@]}" get service masterino-device-gateway -n "$NAMESPACE" > /dev/null 2>&1; then
+      "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+        const response = await fetch("http://masterino-device-gateway:8788/health", {
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error(`Device Gateway health check failed (${response.status})`);
+        console.log("Device Gateway smoke check passed.");
+      '
+    fi
+    if "${KUBE[@]}" logs -n "$NAMESPACE" deployment/masterino --since=10m \
+      | grep -Eq 'SearXNG is not configured|Search1API request failed with status 402'; then
+      fail "recent Masterino logs contain a disabled search provider or Search1API 402"
+    fi
+    ;;
+  retire-legacy-test)
+    [[ "$ENVIRONMENT" == "test" ]] || fail "retire-legacy-test is only used for the test environment"
+    verify_target mutation
+    [[ "${CONFIRM_RETIRE_LEGACY_TEST:-}" == "masterlion-test" ]] || fail \
+      "set CONFIRM_RETIRE_LEGACY_TEST=masterlion-test after masterino-test acceptance succeeds"
+    "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
+    "${KUBE[@]}" rollout status deployment/masterino-searxng -n "$NAMESPACE" --timeout=10m
+    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+      const response = await fetch("http://masterino-searxng:8080/healthz");
+      if (!response.ok) process.exit(1);
+    '
+    legacy_workloads="$("${KUBE[@]}" get deployment,statefulset -n masterlion-test -o name)"
+    if [[ -n "$legacy_workloads" ]]; then
+      while IFS= read -r workload; do
+        [[ -n "$workload" ]] && "${KUBE[@]}" scale -n masterlion-test "$workload" --replicas=0
+      done <<< "$legacy_workloads"
+    fi
+    legacy_pods="$("${KUBE[@]}" get pod -n masterlion-test -o name)"
+    if [[ -n "$legacy_pods" ]]; then
+      "${KUBE[@]}" wait -n masterlion-test --for=delete pod --all --timeout=10m
+    fi
+    retired_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "${KUBE[@]}" annotate namespace masterlion-test \
+      masterino.io/retired=true masterino.io/retired-at="$retired_at" --overwrite
+    remaining_addresses="$("${KUBE[@]}" get endpointslice -n masterlion-test \
+      -o jsonpath='{range .items[*].endpoints[*].addresses[*]}{.}{"\n"}{end}')"
+    [[ -z "$remaining_addresses" ]] || fail "legacy namespace still has active EndpointSlice addresses"
+    echo "masterlion-test workloads are stopped; namespace, PVCs and Secrets were retained."
     ;;
   logs)
     verify_target read

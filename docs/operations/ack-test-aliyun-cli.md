@@ -96,10 +96,23 @@ bash scripts/operations/deployAckTestWithAliyunCli.sh
 ```
 
 The deploy action creates or updates Kubernetes Secrets, applies the migration overlay, and waits
-for PostgreSQL, Redis, and Aihub DB Bridge. It then runs the same exact-token authorization gate.
+for PostgreSQL, Redis, Aihub DB Bridge, and SearXNG. It then runs the same exact-token authorization
+gate and the in-cluster health/search smoke test. The first deployment creates an independent
+`masterino-searxng-secret`; later deployments preserve it.
 Masterino remains at zero replicas with no public Ingress until database readiness is separately
 confirmed. Starting Masterino and its memory worker, private acceptance, cutover, and enabling the
 internal hourly BullMQ scheduler remain explicit follow-up operations. The scheduler flag stays
 off for the first manual extraction acceptance.
+
+After `masterino-test` passes login, chat, search, crawling, upload, OfficeCLI, and Aihub acceptance,
+stop all remaining workloads in the legacy namespace without deleting its PVCs or Secrets:
+
+```bash
+export ACK_TEST_ACTION=retire-legacy-test
+export CONFIRM_RETIRE_LEGACY_TEST=masterlion-test
+bash scripts/operations/deployAckTestWithAliyunCli.sh
+```
+
+Normal deploy, cutover, rollback, and smoke actions do not access `masterlion-test`.
 
 Do not echo the secret environment or enable shell tracing while running the command.
