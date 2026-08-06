@@ -18,5 +18,6 @@ export const authSpaRoutes = [
   '/reset-password',
   '/verify-email',
   '/oauth/consent',
+  '/oauth/callback',
   '/market-auth-callback',
 ];
