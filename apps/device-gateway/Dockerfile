@@ -8,7 +8,7 @@ ARG GATEWAY_SOURCE_SHA256=f6d8dbe3e39569587b42ea67c683bc50903b6a30bc6b6f6d05666c
 RUN set -eux; \
     wget --tries=5 --timeout=30 \
       -O /tmp/lobehub-gateway.tar.gz \
-      "https://github.com/lobehub/lobehub-gateway/archive/${GATEWAY_COMMIT}.tar.gz"; \
+      "https://codeload.github.com/lobehub/lobehub-gateway/tar.gz/${GATEWAY_COMMIT}"; \
     echo "${GATEWAY_SOURCE_SHA256}  /tmp/lobehub-gateway.tar.gz" | sha256sum -c -; \
     mkdir -p /src; \
     tar -xzf /tmp/lobehub-gateway.tar.gz -C /src --strip-components=1; \
