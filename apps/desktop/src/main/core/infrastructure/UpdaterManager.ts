@@ -11,7 +11,12 @@ import { autoUpdater } from 'electron-updater';
 
 import { isDev, isWindows } from '@/const/env';
 import { getDesktopEnv } from '@/env';
-import { UPDATE_CHANNEL, UPDATE_SERVER_URL, updaterConfig } from '@/modules/updater/configs';
+import {
+  resolveInitialUpdateChannel,
+  UPDATE_CHANNEL,
+  UPDATE_SERVER_URL,
+  updaterConfig,
+} from '@/modules/updater/configs';
 import { extractRestoreRoute, getManualUpdateDownloadUrl } from '@/modules/updater/utils';
 import { createLogger } from '@/utils/logger';
 
@@ -104,8 +109,11 @@ export class UpdaterManager {
       return;
     }
 
-    // Read persisted channel from store (defaults to build-time UPDATE_CHANNEL)
-    this.currentChannel = this.app.storeManager.get('updateChannel') ?? UPDATE_CHANNEL;
+    const storedChannel = this.app.storeManager.get('updateChannel');
+    this.currentChannel = resolveInitialUpdateChannel(storedChannel);
+    if (storedChannel !== this.currentChannel) {
+      this.app.storeManager.set('updateChannel', this.currentChannel);
+    }
 
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;

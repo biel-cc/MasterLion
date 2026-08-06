@@ -1,0 +1,61 @@
+name: Build Test Desktop
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/desktop-build-setup/**'
+      - '.github/actions/desktop-upload-artifacts/**'
+      - '.github/workflows/build-desktop-test.yml'
+      - 'apps/desktop/**'
+      - 'packages/device-gateway-client/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  DEVICE_GATEWAY_URL: https://mlai-test.bielcrystal.com/device-gateway
+  NODE_VERSION: 24.11.1
+
+jobs:
+  build-windows:
+    name: Build unsigned Windows test client
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/desktop-build-setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set isolated test package version
+        shell: bash
+        env:
+          DESKTOP_VERSION: 1.1.4-test.${{ github.run_number }}
+        run: |
+          node -e "const fs=require('fs'); const path='apps/desktop/package.json'; const pkg=JSON.parse(fs.readFileSync(path,'utf8')); pkg.version=process.env.DESKTOP_VERSION; fs.writeFileSync(path, JSON.stringify(pkg, null, 2)+'\n');"
+          node -e "const pkg=require('./apps/desktop/package.json'); if(pkg.productName!=='Masterino'||pkg.version!==process.env.DESKTOP_VERSION) process.exit(1)"
+
+      - name: Build unsigned Windows test client
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run package:win:test
+
+      - name: Verify isolated unsigned test installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/release -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows test installer was not created' }
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          if ($signature.SignerCertificate) { throw 'Unexpected Authenticode signature found' }
+          Write-Host "Verified isolated unsigned test installer: $($installer.Name)"
+
+      - name: Upload Windows test client
+        uses: ./.github/actions/desktop-upload-artifacts
+        with:
+          artifact-name: desktop-windows-test
+          retention-days: '7'

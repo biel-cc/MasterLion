@@ -8,7 +8,9 @@ EXPECTED_ACK_REGION="cn-shenzhen"
 DEFAULT_TEST_CONTEXT="ack-c23ea84b-masterlion-test"
 MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
+DEVICE_GATEWAY_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway"
 IMAGE_TAG_MARKER="v1.1.0"
+DEVICE_GATEWAY_IMAGE_TAG_MARKER="v0.3.1-masterino.1"
 TLS_SECRET_NAME="20261122bielcrystal.com"
 ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
 
@@ -27,6 +29,8 @@ Required for mutating commands:
   ACK_API_SERVER             Exact API server URL printed by the preflight command.
   MASTERINO_IMAGE_DIGEST     Immutable sha256: digest for the reviewed Masterino image.
   BRIDGE_IMAGE_DIGEST        Immutable sha256: digest for the reviewed Aihub DB Bridge image.
+  DEVICE_GATEWAY_IMAGE_DIGEST
+                              Immutable sha256: digest for the reviewed test Device Gateway image.
 
 Commands:
   preflight                  Read-only ACK capability and identity checks.
@@ -35,6 +39,8 @@ Commands:
   bootstrap                  Create the namespace and test StorageClass.
   create-secret [app-env] [bridge-env] [searxng-env]
                               Create/update isolated app, bridge and SearXNG Secrets.
+  create-gateway-secret [gateway-env]
+                              Create/update the isolated test Device Gateway Secret.
   deploy                     Server dry-run and apply the selected overlay.
   start                      Scale Masterino to one replica for private validation.
   cutover                    Move the test Ingress from the old namespace to Masterino.
@@ -141,12 +147,22 @@ require_digest() {
 
 render_manifests() {
   local render_dir="${1:-$OVERLAY_DIR}"
+  local sed_args
   require_digest MASTERINO_IMAGE_DIGEST "${MASTERINO_IMAGE_DIGEST:-}"
   require_digest BRIDGE_IMAGE_DIGEST "${BRIDGE_IMAGE_DIGEST:-}"
 
-  kubectl kustomize "$render_dir" | sed \
-    -e "s|${MASTERINO_IMAGE}:${IMAGE_TAG_MARKER}|${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}|g" \
+  sed_args=(
+    -e "s|${MASTERINO_IMAGE}:${IMAGE_TAG_MARKER}|${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}|g"
     -e "s|${BRIDGE_IMAGE}:${IMAGE_TAG_MARKER}|${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}|g"
+  )
+  if [[ "$ENVIRONMENT" == "test" ]]; then
+    require_digest DEVICE_GATEWAY_IMAGE_DIGEST "${DEVICE_GATEWAY_IMAGE_DIGEST:-}"
+    sed_args+=(
+      -e "s|${DEVICE_GATEWAY_IMAGE}:${DEVICE_GATEWAY_IMAGE_TAG_MARKER}|${DEVICE_GATEWAY_IMAGE}@${DEVICE_GATEWAY_IMAGE_DIGEST}|g"
+    )
+  fi
+
+  kubectl kustomize "$render_dir" | sed "${sed_args[@]}"
 }
 
 required_secret_keys=(
@@ -165,6 +181,7 @@ fi
 
 required_bridge_secret_keys=(AIHUB_BRIDGE_TOKEN AIHUB_READONLY_DATABASE_URL)
 required_searxng_secret_keys=(SEARXNG_SECRET)
+required_gateway_secret_keys=(SERVICE_TOKEN JWKS_PUBLIC_KEY)
 
 check_secret() {
   local key value
@@ -191,6 +208,12 @@ check_secret() {
       value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
       [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
     done
+    "${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-device-gateway-secret is missing in namespace '$NAMESPACE'"
+    for key in "${required_gateway_secret_keys[@]}"; do
+      value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "masterino-device-gateway-secret is missing key: $key"
+    done
   fi
 }
 
@@ -198,6 +221,7 @@ service_resource() {
   case "$1" in
     masterino) echo "deployment/masterino" ;;
     memory-worker) echo "deployment/masterino-memory-worker" ;;
+    device-gateway) echo "deployment/masterino-device-gateway" ;;
     aihub-db-bridge) echo "deployment/masterino-aihub-db-bridge" ;;
     postgres) echo "statefulset/masterino-postgres" ;;
     redis) echo "statefulset/masterino-redis" ;;
@@ -240,6 +264,13 @@ case "$COMMAND" in
     printf '%s\n' "$rendered" | grep -q "image: ${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
+      printf '%s\n' "$rendered" | grep -q "image: ${DEVICE_GATEWAY_IMAGE}@${DEVICE_GATEWAY_IMAGE_DIGEST}"
+      printf '%s\n' "$rendered" | grep -q 'name: masterino-device-gateway'
+      printf '%s\n' "$rendered" | grep -q 'DEVICE_GATEWAY_URL: http://masterino-device-gateway:8788'
+      printf '%s\n' "$rendered" \
+        | grep -A5 -F 'name: DEVICE_GATEWAY_SERVICE_TOKEN' \
+        | grep -Fq 'name: masterino-device-gateway-secret' \
+        || fail "test Masterino deployment must reference the Device Gateway service token"
       printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
       printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
       printf '%s\n' "$rendered" | grep -Eq 'name: masterino-memory-config-[a-z0-9]{10}$' \
@@ -278,6 +309,8 @@ case "$COMMAND" in
       cutover_rendered="$(render_manifests "$CUTOVER_OVERLAY_DIR")"
       printf '%s\n' "$cutover_rendered" | grep -q 'host: mlai-test.bielcrystal.com'
       printf '%s\n' "$cutover_rendered" | grep -q 'name: masterino-ingress'
+      printf '%s\n' "$cutover_rendered" | grep -Fq 'path: /device-gateway(/|$)(.*)'
+      printf '%s\n' "$cutover_rendered" | grep -q 'name: masterino-device-gateway'
       migration_rendered="$(render_manifests "$MIGRATION_OVERLAY_DIR")"
       printf '%s\n' "$migration_rendered" | grep -q 'replicas: 0'
       if printf '%s\n' "$migration_rendered" | grep -q 'kind: Ingress'; then
@@ -351,6 +384,37 @@ case "$COMMAND" in
         --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     fi
     check_secret
+    ;;
+  create-gateway-secret)
+    [[ "$ENVIRONMENT" == "test" ]] || fail "create-gateway-secret is only used for the test environment"
+    verify_target mutation
+    gateway_secret_file="${1:-$OVERLAY_DIR/device-gateway-secret.env}"
+    [[ -f "$gateway_secret_file" ]] || fail "gateway secret env file does not exist: $gateway_secret_file"
+    if grep -q 'CHANGE_ME\|replace-with' "$gateway_secret_file"; then
+      fail "the gateway secret env file still contains placeholders"
+    fi
+    for key in "${required_gateway_secret_keys[@]}"; do
+      grep -Eq "^${key}=.+" "$gateway_secret_file" || fail "gateway secret env file is missing key: $key"
+    done
+    gateway_service_token="$(sed -n 's/^SERVICE_TOKEN=//p' "$gateway_secret_file")"
+    [[ "${#gateway_service_token}" -ge 32 ]] || fail "SERVICE_TOKEN must contain at least 32 characters"
+    gateway_public_jwks="$(sed -n 's/^JWKS_PUBLIC_KEY=//p' "$gateway_secret_file")"
+    printf '%s' "$gateway_public_jwks" | node -e '
+      const fs = require("node:fs");
+      const jwks = JSON.parse(fs.readFileSync(0, "utf8"));
+      const privateFields = new Set(["d", "p", "q", "dp", "dq", "qi", "oth"]);
+      if (!Array.isArray(jwks?.keys) || jwks.keys.length === 0) process.exit(1);
+      for (const key of jwks.keys) {
+        if (key.kty !== "RSA" || !key.n || !key.e || key.alg !== "RS256" || key.use !== "sig") process.exit(1);
+        if (Object.keys(key).some((field) => privateFields.has(field))) process.exit(1);
+      }
+    ' || fail "JWKS_PUBLIC_KEY must contain public-only RS256 signing keys"
+    "${KUBE[@]}" create secret generic masterino-device-gateway-secret -n "$NAMESPACE" \
+      --from-env-file="$gateway_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+    for key in "${required_gateway_secret_keys[@]}"; do
+      value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "created gateway Secret is missing key: $key"
+    done
     ;;
   deploy)
     verify_target mutation
@@ -454,6 +518,7 @@ case "$COMMAND" in
       if [[ "$worker_replicas" != "0" ]]; then
         "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
       fi
+      "${KUBE[@]}" rollout status deployment/masterino-device-gateway -n "$NAMESPACE" --timeout=10m
     fi
     ;;
   logs)
@@ -462,6 +527,9 @@ case "$COMMAND" in
     case "$service" in
       masterino | aihub-db-bridge)
         "${KUBE[@]}" logs -n "$NAMESPACE" -l "app.kubernetes.io/name=$service" --tail=100 -f
+        ;;
+      device-gateway)
+        "${KUBE[@]}" logs -n "$NAMESPACE" -l 'app.kubernetes.io/name=masterino-device-gateway' --tail=100 -f
         ;;
       memory-worker)
         "${KUBE[@]}" logs -n "$NAMESPACE" -l "app.kubernetes.io/name=masterino-memory-worker" --tail=100 -f
@@ -491,12 +559,13 @@ case "$COMMAND" in
     verify_target mutation
     service="${1:-}"
     image="${2:-}"
-    [[ "$service" == "masterino" || "$service" == "memory-worker" || "$service" == "aihub-db-bridge" ]] || fail \
-      "update-image supports masterino, memory-worker, or aihub-db-bridge"
+    [[ "$service" == "masterino" || "$service" == "memory-worker" || "$service" == "aihub-db-bridge" || "$service" == "device-gateway" ]] || fail \
+      "update-image supports masterino, memory-worker, aihub-db-bridge, or device-gateway"
     [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || fail "image must be pinned as image@sha256:digest"
     deployment="$service"
     [[ "$service" == "aihub-db-bridge" ]] && deployment="masterino-aihub-db-bridge"
     [[ "$service" == "memory-worker" ]] && deployment="masterino-memory-worker"
+    [[ "$service" == "device-gateway" ]] && deployment="masterino-device-gateway"
     container="$service"
     [[ "$service" == "memory-worker" ]] && container="masterino-memory-worker"
     "${KUBE[@]}" set image --field-manager=kubectl -n "$NAMESPACE" \

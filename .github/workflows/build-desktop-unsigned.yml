@@ -26,6 +26,7 @@ env:
   DESKTOP_OSS_BUCKET: masterlion-prd
   DESKTOP_OSS_ENDPOINT: https://oss-cn-shenzhen.aliyuncs.com
   DESKTOP_OSS_PREFIX: desktop/releases
+  DESKTOP_DEVICE_GATEWAY_URL: https://masterino.bielcrystal.com/device-gateway
   DESKTOP_UPDATE_SERVER_URL: https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases
   NODE_VERSION: 24.11.1
 
@@ -146,6 +147,7 @@ jobs:
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          DEVICE_GATEWAY_URL: ${{ env.DESKTOP_DEVICE_GATEWAY_URL }}
           RELEASE_NOTES: ${{ inputs.release_notes }}
           UPDATE_CHANNEL: ${{ env.DESKTOP_CHANNEL }}
           UPDATE_SERVER_URL: ${{ env.DESKTOP_UPDATE_SERVER_URL }}
@@ -170,6 +172,7 @@ jobs:
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          DEVICE_GATEWAY_URL: ${{ env.DESKTOP_DEVICE_GATEWAY_URL }}
           RELEASE_NOTES: ${{ inputs.release_notes }}
           UPDATE_CHANNEL: ${{ env.DESKTOP_CHANNEL }}
           UPDATE_SERVER_URL: ${{ env.DESKTOP_UPDATE_SERVER_URL }}

@@ -64,6 +64,8 @@ vi.mock('@/utils/logger', () => ({
 
 // Mock updater configs
 vi.mock('@/modules/updater/configs', () => ({
+  resolveInitialUpdateChannel: (channel?: string | null) =>
+    channel === 'canary' ? 'canary' : 'stable',
   UPDATE_CHANNEL: 'stable',
   UPDATE_SERVER_URL: 'https://mock.update.server',
   updaterConfig: {

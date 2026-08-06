@@ -154,6 +154,7 @@ describe('GatewayClient', () => {
       const c = new GatewayClient({ autoReconnect: false, token: 'tok' });
       c.connect();
       const ws = (c as any).ws;
+      expect(ws.url).toContain('wss://masterino.bielcrystal.com/device-gateway/ws');
       expect(ws.url).toContain(`connectionId=${c.currentConnectionId}`);
       expect(ws.url).not.toContain('channel=');
       c.disconnect();

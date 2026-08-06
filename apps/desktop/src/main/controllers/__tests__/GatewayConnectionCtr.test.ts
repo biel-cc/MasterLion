@@ -330,7 +330,7 @@ describe('GatewayConnectionCtr', () => {
       expect(options).not.toBeNull();
       expect(options.token).toBe('mock-access-token');
       expect(options.deviceId).toBe('stored-device-id');
-      expect(options.gatewayUrl).toBe('https://aihub.bielcrystal.com');
+      expect(options.gatewayUrl).toBe('https://masterino.bielcrystal.com/device-gateway');
       expect(options.serverUrl).toBe('https://server.example.com');
       expect(options.logger).toBeDefined();
     });
@@ -347,6 +347,22 @@ describe('GatewayConnectionCtr', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(MockGatewayClient.lastOptions.gatewayUrl).toBe('http://localhost:8787');
+    });
+
+    it('should migrate the legacy Aihub default to the production device gateway', async () => {
+      mockStoreGet.mockImplementation((key: string) => {
+        if (key === 'gatewayEnabled') return true;
+        if (key === 'gatewayUrl') return 'https://aihub.bielcrystal.com';
+        return undefined;
+      });
+
+      ctr = new GatewayConnectionCtr(mockApp);
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(MockGatewayClient.lastOptions.gatewayUrl).toBe(
+        'https://masterino.bielcrystal.com/device-gateway',
+      );
     });
 
     it('should return success:false when no access token', async () => {

@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../test
   - auth-signup-ingress.yaml
+  - device-gateway-ingress.yaml
   - ingress.yaml
   - metadata-egress-network-policy.yaml
   - oidc-token-ingress.yaml

@@ -23,7 +23,7 @@ import type {
 
 // ─── Constants ───
 
-const DEFAULT_GATEWAY_URL = 'https://aihub.bielcrystal.com';
+const DEFAULT_GATEWAY_URL = 'https://masterino.bielcrystal.com/device-gateway';
 const HEARTBEAT_INTERVAL = 30_000; // 30s
 const INITIAL_RECONNECT_DELAY = 1000; // 1s
 const MAX_RECONNECT_DELAY = 30_000; // 30s

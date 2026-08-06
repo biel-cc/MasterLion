@@ -18,13 +18,12 @@ import { app, powerSaveBlocker } from 'electron';
 
 import { isDev } from '@/const/env';
 import { getDesktopEnv } from '@/env';
+import { resolveGatewayUrl } from '@/modules/gateway/configs';
 import { createLogger } from '@/utils/logger';
 
 import { ServiceModule } from './index';
 
 const logger = createLogger('services:GatewayConnectionSrv');
-
-const DEFAULT_GATEWAY_URL = 'https://aihub.bielcrystal.com';
 
 /**
  * Result envelope a tool-call handler must return. Mirrors
@@ -649,13 +648,10 @@ export default class GatewayConnectionService extends ServiceModule {
   // ─── Gateway URL ───
 
   private getGatewayUrl(): string {
-    // Env override wins (dev: point at a local `wrangler dev` gateway), then the
-    // user-configured store value, then the production default.
-    return (
-      getDesktopEnv().DEVICE_GATEWAY_URL ||
-      this.app.storeManager.get('gatewayUrl') ||
-      DEFAULT_GATEWAY_URL
-    );
+    return resolveGatewayUrl({
+      envUrl: getDesktopEnv().DEVICE_GATEWAY_URL,
+      storedUrl: this.app.storeManager.get('gatewayUrl'),
+    });
   }
 
   // ─── Token Helpers ───
