@@ -726,10 +726,10 @@ case "$COMMAND" in
   smoke)
     [[ "$ENVIRONMENT" == "test" ]] || fail "smoke is only used for the test environment"
     verify_target read
-    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- //bin/node --input-type=module -e '
+      import { connect } from "node:net";
       const checks = [
         ["Masterino", "http://masterino:3210/api/healthz", (response, body) => response.ok && body === "ok"],
-        ["Aihub Bridge", "http://masterino-aihub-db-bridge:3218/health", (response) => response.ok],
         ["SearXNG", "http://masterino-searxng:8080/healthz", (response) => response.ok],
       ];
       for (const [name, url, valid] of checks) {
@@ -737,6 +737,19 @@ case "$COMMAND" in
         const body = await response.text();
         if (!valid(response, body)) throw new Error(`${name} health check failed (${response.status})`);
       }
+      await new Promise((resolve, reject) => {
+        const socket = connect(3218, "masterino-aihub-db-bridge", () => {
+          socket.end();
+          resolve();
+        });
+        socket.setTimeout(15000, () => socket.destroy(new Error("Aihub Bridge TCP check timed out")));
+        socket.on("error", reject);
+      });
+      const bridge = await fetch("http://masterino-aihub-db-bridge:3218/health?deep=1", {
+        headers: { Authorization: `Bearer ${process.env.AIHUB_BRIDGE_TOKEN}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!bridge.ok) throw new Error(`Aihub Bridge deep health check failed (${bridge.status})`);
       const search = await fetch("http://masterino-searxng:8080/search?q=Masterino&format=json", {
         signal: AbortSignal.timeout(30000),
       });
@@ -747,7 +760,7 @@ case "$COMMAND" in
       console.log("Masterino, Bridge, SearXNG and search smoke checks passed.");
     '
     if "${KUBE[@]}" get service masterino-device-gateway -n "$NAMESPACE" > /dev/null 2>&1; then
-      "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+      "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- //bin/node --input-type=module -e '
         const response = await fetch("http://masterino-device-gateway:8788/health", {
           signal: AbortSignal.timeout(15000),
         });
@@ -767,7 +780,7 @@ case "$COMMAND" in
       "set CONFIRM_RETIRE_LEGACY_TEST=masterlion-test after masterino-test acceptance succeeds"
     "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
     "${KUBE[@]}" rollout status deployment/masterino-searxng -n "$NAMESPACE" --timeout=10m
-    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- /bin/node --input-type=module -e '
+    "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- //bin/node --input-type=module -e '
       const response = await fetch("http://masterino-searxng:8080/healthz");
       if (!response.ok) process.exit(1);
     '
