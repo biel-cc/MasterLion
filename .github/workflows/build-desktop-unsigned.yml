@@ -75,7 +75,19 @@ jobs:
           if [ "$listed_key" = "$manifest_key" ]; then
             aws s3 cp "s3://${DESKTOP_OSS_BUCKET}/${manifest_key}" "$manifest_file" \
               --endpoint-url "$DESKTOP_OSS_ENDPOINT" --only-show-errors
-            oss_version="$(sed -n 's/^version:[[:space:]]*["'"']\?\([^"'"']*\)["'"']\?$/\1/p' "$manifest_file" | head -1)"
+            oss_version="$(node -e '
+              const fs = require("node:fs");
+              const manifest = fs.readFileSync(process.argv[1], "utf8");
+              const line = manifest.split(/\r?\n/).find((item) => /^version:\s*/.test(item));
+              if (line) {
+                let value = line.slice(line.indexOf(":") + 1).trim();
+                const quote = value.charCodeAt(0);
+                if ((quote === 34 || quote === 39) && value.charCodeAt(value.length - 1) === quote) {
+                  value = value.slice(1, -1);
+                }
+                process.stdout.write(value);
+              }
+            ' "$manifest_file")"
             if [ -z "$oss_version" ]; then
               echo "Unable to read the current version from $manifest_url" >&2
               exit 1
