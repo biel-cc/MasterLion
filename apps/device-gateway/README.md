@@ -3,16 +3,17 @@
 This image packages the self-hosted Go device gateway from
 `lobehub/lobehub-gateway` release `0.3.1`.
 
-The build is pinned to commit `1abeb8a551fbb5d017ae2031ded775a129555834` and verifies the
-source archive SHA256 before compiling. Build it in Alibaba Cloud ACR; do not build or publish a
-local Docker image for production.
+The build is pinned to commit `1abeb8a551fbb5d017ae2031ded775a129555834`. The minimal Go source
+needed for the standalone server is vendored under `upstream/` because the ACR build sandbox cannot
+download arbitrary HTTPS resources. `SOURCE_SHA256SUMS` is verified before compilation. Build it in
+Alibaba Cloud ACR; do not build or publish a local Docker image for production.
 
 `BASE_REGISTRY` defaults to `docker.io/library` and can be overridden by ACR when the cloud builder
 uses a mainland mirror. It changes only the Go and Alpine base-image registry; the upstream source
 commit and checksum remain pinned.
 
-`GATEWAY_SOURCE_BASE_URL` defaults to GitHub codeload and may be pointed at a transparent mirror
-by ACR. The downloaded archive must still match `GATEWAY_SOURCE_SHA256` before compilation starts.
+`upstream/UPSTREAM.md` records the original Git blob SHA for every vendored file. Update the source,
+blob map, SHA256 manifest, and `GATEWAY_COMMIT` together when upgrading upstream.
 
 Runtime configuration is supplied by Kubernetes:
 
@@ -21,4 +22,3 @@ Runtime configuration is supplied by Kubernetes:
 - `PORT`: `8788`.
 
 Never pass the private `JWKS_KEY` to this workload.
-

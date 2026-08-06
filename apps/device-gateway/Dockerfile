@@ -3,17 +3,15 @@ ARG BASE_REGISTRY="docker.io/library"
 FROM ${BASE_REGISTRY}/golang:1.26-alpine AS builder
 
 ARG GATEWAY_COMMIT=1abeb8a551fbb5d017ae2031ded775a129555834
-ARG GATEWAY_SOURCE_SHA256=f6d8dbe3e39569587b42ea67c683bc50903b6a30bc6b6f6d05666c72c8794444
-ARG GATEWAY_SOURCE_BASE_URL=https://codeload.github.com/lobehub/lobehub-gateway/tar.gz
+
+LABEL org.opencontainers.image.revision="${GATEWAY_COMMIT}" \
+      org.opencontainers.image.source="https://github.com/lobehub/lobehub-gateway"
+
+WORKDIR /src
+COPY upstream/ ./
 
 RUN set -eux; \
-    wget --tries=5 --timeout=30 \
-      -O /tmp/lobehub-gateway.tar.gz \
-      "${GATEWAY_SOURCE_BASE_URL}/${GATEWAY_COMMIT}"; \
-    echo "${GATEWAY_SOURCE_SHA256}  /tmp/lobehub-gateway.tar.gz" | sha256sum -c -; \
-    mkdir -p /src; \
-    tar -xzf /tmp/lobehub-gateway.tar.gz -C /src --strip-components=1; \
-    cd /src/device-gateway-go; \
+    sha256sum -c SOURCE_SHA256SUMS; \
     CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
       -o /out/device-gateway-go ./cmd/device-gateway-go
 
@@ -27,4 +25,3 @@ ENV PORT=8788
 EXPOSE 8788
 COPY --from=builder /out/device-gateway-go /usr/local/bin/device-gateway-go
 ENTRYPOINT ["device-gateway-go"]
-
