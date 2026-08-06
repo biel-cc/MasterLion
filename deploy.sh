@@ -193,6 +193,37 @@ searxng_enabled() {
   kubectl kustomize "$OVERLAY_DIR" | grep -Eq 'SEARCH_PROVIDERS:.*searxng'
 }
 
+normalize_workload_schema_transitions() {
+  local legacy_probe postgres_db_value
+
+  if "${KUBE[@]}" get deployment masterino -n "$NAMESPACE" > /dev/null 2>&1; then
+    legacy_probe="$(
+      "${KUBE[@]}" get deployment masterino -n "$NAMESPACE" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="masterino")].readinessProbe.httpGet.path}{.spec.template.spec.containers[?(@.name=="masterino")].livenessProbe.httpGet.path}{.spec.template.spec.containers[?(@.name=="masterino")].startupProbe.httpGet.path}'
+    )"
+    if [[ -n "$legacy_probe" ]]; then
+      # Probe handlers are mutually exclusive. Server-side apply merges object
+      # fields, so explicitly remove the legacy HTTP handlers while installing
+      # the desired TCP handlers in the same valid strategic-merge patch.
+      "${KUBE[@]}" patch deployment masterino -n "$NAMESPACE" --type=strategic --patch \
+        '{"spec":{"template":{"spec":{"containers":[{"name":"masterino","readinessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"livenessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"startupProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}}}]}}}}'
+    fi
+  fi
+
+  if "${KUBE[@]}" get statefulset masterino-postgres -n "$NAMESPACE" > /dev/null 2>&1; then
+    postgres_db_value="$(
+      "${KUBE[@]}" get statefulset masterino-postgres -n "$NAMESPACE" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="postgres")].env[?(@.name=="POSTGRES_DB")].value}'
+    )"
+    if [[ -n "$postgres_db_value" ]]; then
+      # EnvVar.value and EnvVar.valueFrom are mutually exclusive. Replace the
+      # legacy literal with the reviewed ConfigMap reference atomically.
+      "${KUBE[@]}" patch statefulset masterino-postgres -n "$NAMESPACE" --type=strategic --patch \
+        '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","env":[{"name":"POSTGRES_DB","value":null,"valueFrom":{"configMapKeyRef":{"name":"masterino-config","key":"LOBE_DB_NAME"}}}]}]}}}}'
+    fi
+  fi
+}
+
 check_secret() {
   local key value
   "${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
@@ -555,6 +586,7 @@ case "$COMMAND" in
       deploy_overlay="$MIGRATION_OVERLAY_DIR"
       echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
     fi
+    normalize_workload_schema_transitions
     render_manifests "$deploy_overlay" \
       | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
         --force-conflicts --dry-run=server -f - > /dev/null
