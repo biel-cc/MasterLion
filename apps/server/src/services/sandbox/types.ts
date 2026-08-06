@@ -16,7 +16,8 @@ export interface SandboxSessionContext {
 
 export interface SandboxServiceOptions extends SandboxSessionContext {
   fileService?: FileService;
-  marketService: MarketService;
+  /** Required only when SANDBOX_PROVIDER=market. */
+  marketService?: MarketService;
   /** Used to look up topic/session files when bootstrapping the sandbox. */
   serverDB?: LobeChatDatabase;
 }

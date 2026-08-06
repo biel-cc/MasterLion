@@ -2,6 +2,8 @@ import type { SandboxCallToolResult } from '@lobechat/builtin-tool-cloud-sandbox
 import type { CodeInterpreterToolName } from '@lobehub/market-sdk';
 import debug from 'debug';
 
+import type { MarketService } from '@/server/services/market';
+
 import { SandboxMiddlewareService } from '../service';
 import type {
   SandboxProvider,
@@ -11,6 +13,8 @@ import type {
   SandboxService,
   SandboxServiceOptions,
 } from '../types';
+
+type MarketSandboxServiceOptions = SandboxServiceOptions & { marketService: MarketService };
 
 const log = debug('lobe-server:sandbox:market');
 const REDACTED_SANDBOX_PARAM = '[redacted]';
@@ -29,9 +33,9 @@ export class MarketSandboxProvider implements SandboxProvider {
 
   readonly kind = 'market';
 
-  private readonly options: SandboxServiceOptions;
+  private readonly options: MarketSandboxServiceOptions;
 
-  constructor(options: SandboxServiceOptions) {
+  constructor(options: MarketSandboxServiceOptions) {
     this.options = options;
   }
 
@@ -164,7 +168,7 @@ export const redactSandboxParams = (params: Record<string, unknown>) => {
 
 /** @deprecated Use createSandboxService. */
 export class ServerSandboxService extends SandboxMiddlewareService implements SandboxService {
-  constructor(options: SandboxServiceOptions) {
+  constructor(options: MarketSandboxServiceOptions) {
     super(new MarketSandboxProvider(options), options);
   }
 }
