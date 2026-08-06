@@ -53,7 +53,11 @@ func (s *Server) Routes() http.Handler {
 	return mux
 }
 
-func (s …34 tokens truncated…	return existing
+func (s *Server) hub(userID string) *hub {
+	s.hubsMu.Lock()
+	defer s.hubsMu.Unlock()
+	if existing := s.hubs[userID]; existing != nil {
+		return existing
 	}
 	h := newHub(userID)
 	s.hubs[userID] = h
