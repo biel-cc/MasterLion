@@ -50,7 +50,14 @@ export function defineConfig() {
   // `/oauth/connector` is a backend route handler (custom connector OAuth callback);
   // the rest of `/oauth/*` (e.g. /oauth/callback/success) are SPA pages, so scope
   // the passthrough to the connector subtree only.
-  const backendApiEndpoints = ['/api', '/trpc', '/webapi', '/oidc', '/oauth/connector', '/oauth/wecom'];
+  const backendApiEndpoints = [
+    '/api',
+    '/trpc',
+    '/webapi',
+    '/oidc',
+    '/oauth/connector',
+    '/oauth/wecom',
+  ];
 
   const defaultMiddleware = (request: NextRequest) => {
     const url = new URL(request.url);
@@ -206,6 +213,9 @@ export function defineConfig() {
     // oauth
     // Make only the consent view public (GET page), not other oauth paths
     '/oauth/consent/(.*)',
+    // OAuth completion pages only render the handoff result. They must remain
+    // reachable when the provider/browser session cookie is unavailable.
+    '/oauth/callback/(.*)',
     // WeCom OAuth authorize proxy — redirects to WeCom QR/workbench page,
     // must be reachable before the user has a session.
     '/oauth/wecom/authorize',
