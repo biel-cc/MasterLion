@@ -2,12 +2,18 @@ import { ComputerRuntime } from '@lobechat/tool-runtime';
 import type { BuiltinServerRuntimeOutput } from '@lobechat/types';
 
 import type {
+  BatchOfficeDocumentParams,
+  CreateOfficeDocumentParams,
   ExecuteCodeParams,
   ExecuteCodeState,
   ExportFileParams,
   ExportFileState,
+  InspectOfficeDocumentParams,
   ISandboxService,
+  MergeOfficeTemplateParams,
+  OfficeToolState,
   SandboxCallToolResult,
+  ValidateOfficeDocumentParams,
 } from '../types';
 
 /**
@@ -71,6 +77,64 @@ export class CloudSandboxExecutionRuntime extends ComputerRuntime {
       console.error('executeCode error', error);
       return this.handleError(error);
     }
+  }
+
+  // ==================== Cloud-Specific: Office Documents ====================
+
+  private async callOfficeTool(
+    toolName: string,
+    args:
+      | BatchOfficeDocumentParams
+      | CreateOfficeDocumentParams
+      | InspectOfficeDocumentParams
+      | MergeOfficeTemplateParams
+      | ValidateOfficeDocumentParams,
+  ): Promise<BuiltinServerRuntimeOutput> {
+    try {
+      const result = await this.callService(toolName, args as unknown as Record<string, unknown>);
+      const payload = (result.result || {}) as Record<string, any>;
+      const state: OfficeToolState = {
+        error: result.error?.message
+          ? { message: result.error.message }
+          : payload.error
+            ? { code: String(payload.code || ''), message: String(payload.error) }
+            : undefined,
+        format: payload.format,
+        issues: Array.isArray(payload.issues) ? payload.issues : undefined,
+        output: payload.output,
+        path: payload.path,
+        previews: Array.isArray(payload.previews) ? payload.previews : undefined,
+        success: result.success && payload.success !== false,
+      };
+
+      return {
+        content: JSON.stringify(result.success ? payload : { error: result.error?.message }),
+        state,
+        success: true,
+      };
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  createOfficeDocument(args: CreateOfficeDocumentParams) {
+    return this.callOfficeTool('createOfficeDocument', args);
+  }
+
+  batchOfficeDocument(args: BatchOfficeDocumentParams) {
+    return this.callOfficeTool('batchOfficeDocument', args);
+  }
+
+  mergeOfficeTemplate(args: MergeOfficeTemplateParams) {
+    return this.callOfficeTool('mergeOfficeTemplate', args);
+  }
+
+  inspectOfficeDocument(args: InspectOfficeDocumentParams) {
+    return this.callOfficeTool('inspectOfficeDocument', args);
+  }
+
+  validateOfficeDocument(args: ValidateOfficeDocumentParams) {
+    return this.callOfficeTool('validateOfficeDocument', args);
   }
 
   // ==================== Cloud-Specific: File Export ====================

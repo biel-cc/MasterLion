@@ -10,6 +10,7 @@ describe('getSandboxConfig', () => {
     delete process.env.ONLYBOXES_JIT_SIGNING_KEY;
     delete process.env.ONLYBOXES_JIT_TTL_SEC;
     delete process.env.ONLYBOXES_LEASE_TTL_SEC;
+    delete process.env.OFFICECLI_ENABLED;
   });
 
   it('should treat docker empty string defaults as unset optional values', async () => {
@@ -19,6 +20,7 @@ describe('getSandboxConfig', () => {
     process.env.ONLYBOXES_JIT_SIGNING_KEY = '';
     process.env.ONLYBOXES_JIT_TTL_SEC = '';
     process.env.ONLYBOXES_LEASE_TTL_SEC = '';
+    process.env.OFFICECLI_ENABLED = '';
 
     const { getSandboxConfig } = await import('../sandbox');
     const config = getSandboxConfig();
@@ -29,6 +31,7 @@ describe('getSandboxConfig', () => {
     expect(config.ONLYBOXES_JIT_SIGNING_KEY).toBeUndefined();
     expect(config.ONLYBOXES_JIT_TTL_SEC).toBeUndefined();
     expect(config.ONLYBOXES_LEASE_TTL_SEC).toBeUndefined();
+    expect(config.OFFICECLI_ENABLED).toBeUndefined();
   });
 
   it('should parse configured sandbox values', async () => {
@@ -38,6 +41,7 @@ describe('getSandboxConfig', () => {
     process.env.ONLYBOXES_JIT_SIGNING_KEY = 'jit-signing-key';
     process.env.ONLYBOXES_JIT_TTL_SEC = '900';
     process.env.ONLYBOXES_LEASE_TTL_SEC = '3600';
+    process.env.OFFICECLI_ENABLED = 'true';
 
     const { getSandboxConfig } = await import('../sandbox');
     const config = getSandboxConfig();
@@ -48,5 +52,6 @@ describe('getSandboxConfig', () => {
     expect(config.ONLYBOXES_JIT_SIGNING_KEY).toBe('jit-signing-key');
     expect(config.ONLYBOXES_JIT_TTL_SEC).toBe(900);
     expect(config.ONLYBOXES_LEASE_TTL_SEC).toBe(3600);
+    expect(config.OFFICECLI_ENABLED).toBe(true);
   });
 });

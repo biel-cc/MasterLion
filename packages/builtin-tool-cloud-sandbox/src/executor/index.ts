@@ -8,21 +8,26 @@ import { userProfileSelectors } from '@/store/user/slices/auth/selectors';
 import { CloudSandboxExecutionRuntime } from '../ExecutionRuntime';
 import { CloudSandboxIdentifier } from '../manifest';
 import type {
+  BatchOfficeDocumentParams,
+  CreateOfficeDocumentParams,
   EditLocalFileParams,
   ExecuteCodeParams,
   ExportFileParams,
   GetCommandOutputParams,
   GlobLocalFilesParams,
   GrepContentParams,
+  InspectOfficeDocumentParams,
   ISandboxService,
   KillCommandParams,
   ListLocalFilesParams,
+  MergeOfficeTemplateParams,
   MoveLocalFilesParams,
   ReadLocalFileParams,
   RunCommandParams,
   SandboxCallToolResult,
   SandboxExportFileResult,
   SearchLocalFilesParams,
+  ValidateOfficeDocumentParams,
   WriteLocalFileParams,
 } from '../types';
 import { CloudSandboxApiName } from '../types';
@@ -197,6 +202,38 @@ class CloudSandboxExecutor extends BaseExecutor<typeof CloudSandboxApiName> {
     const result = await runtime.globFiles(params);
     return this.toBuiltinResult(result);
   };
+
+  // ==================== Office Documents ====================
+
+  createOfficeDocument = async (
+    params: CreateOfficeDocumentParams,
+    ctx: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> =>
+    this.toBuiltinResult(await this.getRuntime(ctx).createOfficeDocument(params));
+
+  batchOfficeDocument = async (
+    params: BatchOfficeDocumentParams,
+    ctx: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> =>
+    this.toBuiltinResult(await this.getRuntime(ctx).batchOfficeDocument(params));
+
+  mergeOfficeTemplate = async (
+    params: MergeOfficeTemplateParams,
+    ctx: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> =>
+    this.toBuiltinResult(await this.getRuntime(ctx).mergeOfficeTemplate(params));
+
+  inspectOfficeDocument = async (
+    params: InspectOfficeDocumentParams,
+    ctx: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> =>
+    this.toBuiltinResult(await this.getRuntime(ctx).inspectOfficeDocument(params));
+
+  validateOfficeDocument = async (
+    params: ValidateOfficeDocumentParams,
+    ctx: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> =>
+    this.toBuiltinResult(await this.getRuntime(ctx).validateOfficeDocument(params));
 
   // ==================== Export Operations ====================
 

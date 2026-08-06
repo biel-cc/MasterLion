@@ -9,6 +9,7 @@
 - Console：`coolfan1024/onlyboxes:0.7.1` → `boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/onlyboxes:0.7.1`
 - Python 运行时：`ghcr.io/astral-sh/uv:python3.12-bookworm-slim` → `.../onlyboxes-python:python3.12-bookworm-slim`
 - Terminal 运行时：`coolfan1024/onlyboxes-runtime:0.7.1-lobehub` → `.../onlyboxes-runtime:0.7.1-lobehub`
+- Office Terminal 运行时：使用 `Dockerfile.office-runtime` 在 ACR 云端构建，固定 OfficeCLI `1.0.143` 及官方 SHA-256，发布为 `.../onlyboxes-office-runtime:0.7.1-officecli-1.0.143`。不要在 Onlyboxes 节点或开发机临时下载 OfficeCLI。
 - GitHub Release `0.7.1` 中与节点架构匹配的 `onlyboxes-worker-docker` 二进制 → 内部制品库
 
 生产节点只从内部仓库拉取这些产物。部署记录必须保存上游摘要、内部摘要和 Worker 二进制 SHA-256；禁止使用 `latest`。
@@ -52,6 +53,7 @@ ONLYBOXES_BASE_URL=https://onlyboxes.internal.bielcrystal.com
 ONLYBOXES_JIT_ISSUER=https://masterino.bielcrystal.com
 AUTH_DISABLE_EMAIL_SIGNUP=1
 AUTH_DISABLE_EMAIL_PASSWORD=0
+OFFICECLI_ENABLED=false
 ```
 
 在生产 Secret 的外部 env 文件中加入以下值，再通过现有 `deploy.sh --env production create-secret ...` 流程更新 Secret：
@@ -61,6 +63,8 @@ ONLYBOXES_JIT_SIGNING_KEY=<与 Console 相同的随机值>
 ```
 
 默认沿用 Masterino 的 `ONLYBOXES_JIT_TTL_SEC=1800` 和 `ONLYBOXES_LEASE_TTL_SEC=900`。不要把 Dashboard、Worker 或 JIT 密钥写入 ConfigMap、Git 或命令历史。
+
+Office Runtime digest 在测试节点完成 Word、Excel、PowerPoint 黄金样例验证后，将 `OFFICECLI_ENABLED` 改为 `true` 并按受控 ACK 流程发布。回滚时先关闭该开关，再恢复上一版 Runtime digest。
 
 ## 6. 出口隔离
 

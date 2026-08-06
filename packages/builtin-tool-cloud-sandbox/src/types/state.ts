@@ -52,6 +52,21 @@ export interface ExecuteCodeState {
   success: boolean;
 }
 
+export interface OfficeToolError {
+  code?: string;
+  message: string;
+}
+
+export interface OfficeToolState {
+  error?: OfficeToolError;
+  format?: 'docx' | 'pptx' | 'xlsx';
+  issues?: unknown[];
+  output?: unknown;
+  path?: string;
+  previews?: string[];
+  success: boolean;
+}
+
 // ==================== Session Info ====================
 
 export interface SessionInfo {
