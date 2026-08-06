@@ -32,7 +32,12 @@ export type MainBroadcastParams<T extends MainBroadcastEventKey> = Parameters<
   MainBroadcastEvents[T]
 >[0];
 
-export type { GatewayConnectionStatus } from './gatewayConnection';
+export type {
+  GatewayConnectionError,
+  GatewayConnectionErrorCode,
+  GatewayConnectionState,
+  GatewayConnectionStatus,
+} from './gatewayConnection';
 export type {
   DetectAppsResult,
   DetectedApp,

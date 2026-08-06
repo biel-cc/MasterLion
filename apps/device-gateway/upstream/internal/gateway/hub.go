@@ -59,23 +59,10 @@ func (h *hub) remove(conn *connection) {
 	}
 }
 
-func (h *hub) markAuthenticated(conn *connection) {
-	h.mu.Lock()
-	conn.att.Authenticated = true
-	conn.att.LastHeartbeat = time.Now().UnixMilli()
-	h.mu.Unlock()
-}
-
 func (h *hub) recordHeartbeat(conn *connection) {
 	h.mu.Lock()
 	conn.att.LastHeartbeat = time.Now().UnixMilli()
 	h.mu.Unlock()
-}
-
-func (h *hub) isAuthenticated(conn *connection) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return conn.att.Authenticated
 }
 
 func (h *hub) authenticatedConnections() []*connection {
@@ -83,7 +70,7 @@ func (h *hub) authenticatedConnections() []*connection {
 	defer h.mu.RUnlock()
 	connections := make([]*connection, 0, len(h.connections))
 	for _, conn := range h.connections {
-		if conn.att.Authenticated {
+		if conn.isAuthenticated() {
 			connections = append(connections, conn)
 		}
 	}
@@ -95,7 +82,7 @@ func (h *hub) deviceCount() int {
 	defer h.mu.RUnlock()
 	deviceIDs := map[string]struct{}{}
 	for _, conn := range h.connections {
-		if conn.att.Authenticated {
+		if conn.isAuthenticated() {
 			deviceIDs[conn.att.DeviceID] = struct{}{}
 		}
 	}
@@ -107,7 +94,7 @@ func (h *hub) devices() []GatewayDevice {
 	defer h.mu.RUnlock()
 	byDevice := map[string]*GatewayDevice{}
 	for _, conn := range h.connections {
-		if !conn.att.Authenticated {
+		if !conn.isAuthenticated() {
 			continue
 		}
 		channel := DeviceConnection{

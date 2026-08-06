@@ -1,5 +1,6 @@
 import { setLoggerFactory } from '@lobechat/local-file-shell';
 import debug from 'debug';
+import { app } from 'electron';
 import electronLog from 'electron-log';
 
 import { getDesktopEnv } from '@/env';
@@ -14,20 +15,21 @@ electronLog.transports.console.level =
 // Create namespaced debugger
 export const createLogger = (namespace: string) => {
   const debugLogger = debug(namespace);
+  const shouldWriteFile = app.isPackaged || getDesktopEnv().NODE_ENV === 'production';
 
   return {
     debug: (message, ...args) => {
       debugLogger(message, ...args);
     },
     error: (message, ...args) => {
-      if (getDesktopEnv().NODE_ENV === 'production') {
+      if (shouldWriteFile) {
         electronLog.error(message, ...args);
       } else {
         console.error(message, ...args);
       }
     },
     info: (message, ...args) => {
-      if (getDesktopEnv().NODE_ENV === 'production') {
+      if (shouldWriteFile) {
         electronLog.info(`[${namespace}]`, message, ...args);
       }
 
@@ -40,7 +42,7 @@ export const createLogger = (namespace: string) => {
       }
     },
     warn: (message, ...args) => {
-      if (getDesktopEnv().NODE_ENV === 'production') {
+      if (shouldWriteFile) {
         electronLog.warn(message, ...args);
       }
       debugLogger(`WARN: ${message}`, ...args);

@@ -10,6 +10,7 @@ import type {
   ClientMessage,
   ConnectionStatus,
   GatewayClientEvents,
+  GatewayConnectResult,
   MessageApiRequestMessage,
   MessageApiResponseMessage,
   RpcRequestMessage,
@@ -28,6 +29,7 @@ const HEARTBEAT_INTERVAL = 30_000; // 30s
 const INITIAL_RECONNECT_DELAY = 1000; // 1s
 const MAX_RECONNECT_DELAY = 30_000; // 30s
 const MAX_MISSED_HEARTBEATS = 3; // Force reconnect after 3 missed acks
+const CONNECT_TIMEOUT = 15_000;
 
 // ─── Logger Interface ───
 
@@ -89,6 +91,10 @@ export class GatewayClient extends EventEmitter {
   private serverUrl?: string;
   private logger: GatewayClientLogger;
   private autoReconnect: boolean;
+  private connectPromise: Promise<GatewayConnectResult> | null = null;
+  private connectResolver: ((result: GatewayConnectResult) => void) | null = null;
+  private connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private authenticatedUserId?: string;
 
   constructor(options: GatewayClientOptions) {
     super();
@@ -144,24 +150,48 @@ export class GatewayClient extends EventEmitter {
    * Force a reconnect cycle: close the current WebSocket and establish a new connection.
    * Useful after calling `updateToken()` with a fresh JWT.
    */
-  async reconnect(): Promise<void> {
+  async reconnect(): Promise<GatewayConnectResult> {
     this.cleanup();
+    this.setStatus('disconnected');
     this.intentionalDisconnect = false;
     this.reconnectDelay = INITIAL_RECONNECT_DELAY;
-    this.doConnect();
+    return this.connect();
   }
 
-  async connect(): Promise<void> {
-    if (this.status === 'connected' || this.status === 'connecting') {
-      return;
+  async connect(): Promise<GatewayConnectResult> {
+    if (this.status === 'connected') {
+      return { success: true, userId: this.authenticatedUserId };
     }
+    if (this.connectPromise) return this.connectPromise;
+
     this.intentionalDisconnect = false;
+    this.connectPromise = new Promise<GatewayConnectResult>((resolve) => {
+      this.connectResolver = resolve;
+      this.connectTimeout = setTimeout(() => {
+        this.settleConnect({
+          code: 'TIMEOUT',
+          error: `Gateway connection timed out after ${CONNECT_TIMEOUT / 1000} seconds`,
+          success: false,
+        });
+        this.closeWebSocket();
+        if (!this.intentionalDisconnect && this.autoReconnect) {
+          this.setStatus('reconnecting');
+          this.scheduleReconnect();
+        } else {
+          this.setStatus('disconnected');
+          this.emit('disconnected');
+        }
+      }, CONNECT_TIMEOUT);
+    });
+    const pending = this.connectPromise;
     this.doConnect();
+    return pending;
   }
 
   async disconnect(): Promise<void> {
     this.intentionalDisconnect = true;
     this.cleanup();
+    this.settleConnect({ code: 'UNKNOWN', error: 'Connection cancelled', success: false });
     this.setStatus('disconnected');
   }
 
@@ -222,6 +252,7 @@ export class GatewayClient extends EventEmitter {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error('Failed to create WebSocket:', msg);
+      this.settleConnect({ code: 'NETWORK', error: msg, success: false });
       this.setStatus('disconnected');
       if (this.autoReconnect) {
         this.scheduleReconnect();
@@ -276,15 +307,18 @@ export class GatewayClient extends EventEmitter {
       switch (message.type) {
         case 'auth_success': {
           this.logger.info('Authentication successful');
+          this.authenticatedUserId = message.userId;
           this.setStatus('connected');
           this.startHeartbeat();
-          this.emit('connected');
+          this.settleConnect({ success: true, userId: message.userId });
+          this.emit('connected', message.userId);
           break;
         }
 
         case 'auth_failed': {
           const reason = (message as any).reason || 'Unknown reason';
           this.logger.error(`Authentication failed: ${reason}`);
+          this.settleConnect({ code: 'AUTH_FAILED', error: reason, success: false });
           this.emit('auth_failed', reason);
           this.disconnect();
           break;
@@ -337,9 +371,16 @@ export class GatewayClient extends EventEmitter {
   };
 
   private handleClose = (code: number, reason: Buffer) => {
-    this.logger.info(`WebSocket closed: code=${code} reason=${reason.toString()}`);
+    const closeReason = reason.toString();
+    this.logger.info(`WebSocket closed: code=${code} reason=${closeReason}`);
     this.stopHeartbeat();
     this.ws = null;
+
+    this.settleConnect({
+      code: code === 1008 ? 'HANDSHAKE_REJECTED' : 'NETWORK',
+      error: closeReason || `WebSocket closed with code ${code}`,
+      success: false,
+    });
 
     if (!this.intentionalDisconnect && this.autoReconnect) {
       this.setStatus('reconnecting');
@@ -352,6 +393,13 @@ export class GatewayClient extends EventEmitter {
 
   private handleError = (error: Error) => {
     this.logger.error('WebSocket error:', error.message);
+    this.settleConnect({
+      code: /unexpected server response|status code|handshake/i.test(error.message)
+        ? 'HANDSHAKE_REJECTED'
+        : 'NETWORK',
+      error: error.message,
+      success: false,
+    });
     this.emit('error', error);
   };
 
@@ -469,5 +517,17 @@ export class GatewayClient extends EventEmitter {
     this.stopHeartbeat();
     this.clearReconnectTimer();
     this.closeWebSocket();
+  }
+
+  private settleConnect(result: GatewayConnectResult) {
+    if (!this.connectResolver) return;
+    if (this.connectTimeout) {
+      clearTimeout(this.connectTimeout);
+      this.connectTimeout = null;
+    }
+    const resolve = this.connectResolver;
+    this.connectResolver = null;
+    this.connectPromise = null;
+    resolve(result);
   }
 }

@@ -79,6 +79,8 @@ export interface HeartbeatAckMessage {
 
 export interface AuthSuccessMessage {
   type: 'auth_success';
+  /** User id derived from the verified credential by the gateway. */
+  userId?: string;
 }
 
 export interface AuthFailedMessage {
@@ -254,11 +256,22 @@ export type ConnectionStatus =
   | 'disconnected'
   | 'reconnecting';
 
+export type GatewayConnectErrorCode =
+  | 'AUTH_FAILED'
+  | 'HANDSHAKE_REJECTED'
+  | 'NETWORK'
+  | 'TIMEOUT'
+  | 'UNKNOWN';
+
+export type GatewayConnectResult =
+  | { success: true; userId?: string }
+  | { code: GatewayConnectErrorCode; error: string; success: false };
+
 export interface GatewayClientEvents {
   agent_run_request: (request: AgentRunRequestMessage) => void;
   auth_expired: () => void;
   auth_failed: (reason: string) => void;
-  connected: () => void;
+  connected: (userId?: string) => void;
   disconnected: () => void;
   error: (error: Error) => void;
   heartbeat_ack: () => void;

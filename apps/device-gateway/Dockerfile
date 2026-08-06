@@ -12,6 +12,7 @@ COPY upstream/ ./
 
 RUN set -eux; \
     sha256sum -c SOURCE_SHA256SUMS; \
+    go test ./...; \
     CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
       -o /out/device-gateway-go ./cmd/device-gateway-go
 

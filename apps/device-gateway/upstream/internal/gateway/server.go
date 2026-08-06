@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -92,19 +93,13 @@ func (s *Server) withServiceAuth(next func(http.ResponseWriter, *http.Request, d
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("userId")
-	if userID == "" {
-		writeText(w, http.StatusBadRequest, "Missing userId")
-		return
-	}
-
 	ws, err := upgradeWebSocket(w, r)
 	if err != nil {
+		slog.Warn("device gateway websocket upgrade failed", "reason", err.Error())
 		return
 	}
 
 	now := time.Now().UnixMilli()
-	h := s.hub(userID)
 	conn := &connection{
 		att: DeviceAttachment{
 			Authenticated: false,
@@ -116,11 +111,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			LastHeartbeat: now,
 			Platform:      r.URL.Query().Get("platform"),
 		},
-		authTimeout: s.authTimeout,
-		hub:         h,
-		ws:          ws,
+		authTimeout:  s.authTimeout,
+		claimedUserID: r.URL.Query().Get("userId"),
+		server:       s,
+		ws:           ws,
 	}
-	h.register(conn)
+	slog.Info(
+		"device gateway websocket accepted",
+		"connectionId", conn.att.ConnectionID,
+		"deviceId", conn.att.DeviceID,
+		"channel", conn.att.Channel,
+	)
 	conn.startAuthTimer()
 	go conn.readLoop(s.auth, s.heartbeatTimeout)
 }

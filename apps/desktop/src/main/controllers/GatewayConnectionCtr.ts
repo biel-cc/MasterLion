@@ -10,7 +10,7 @@ import type {
 } from '@lobechat/device-gateway-client';
 import type {
   EditLocalFileParams,
-  GatewayConnectionStatus,
+  GatewayConnectionState,
   GetCommandOutputParams,
   GlobFilesParams,
   GrepContentParams,
@@ -235,8 +235,8 @@ export default class GatewayConnectionCtr extends ControllerModule {
   }
 
   @IpcMethod()
-  async getConnectionStatus(): Promise<{ status: GatewayConnectionStatus }> {
-    return { status: this.service.getStatus() };
+  async getConnectionStatus(): Promise<GatewayConnectionState> {
+    return this.service.getState();
   }
 
   @IpcMethod()

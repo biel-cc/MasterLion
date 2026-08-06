@@ -22,6 +22,7 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
   class _MockGatewayClient extends EventEmitter {
     static lastInstance: _MockGatewayClient | null = null;
     static lastOptions: any = null;
+    static nextConnectResult: any = undefined;
 
     connectionStatus = 'disconnected' as string;
     currentDeviceId: string;
@@ -29,6 +30,9 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
     connect = vi.fn(async () => {
       this.connectionStatus = 'connecting';
       this.emit('status_changed', 'connecting');
+      const result = _MockGatewayClient.nextConnectResult;
+      _MockGatewayClient.nextConnectResult = undefined;
+      return result;
     });
 
     disconnect = vi.fn(async () => {
@@ -47,10 +51,10 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
     }
 
     // Test helpers
-    simulateConnected() {
+    simulateConnected(userId?: string) {
       this.connectionStatus = 'connected';
       this.emit('status_changed', 'connected');
-      this.emit('connected');
+      this.emit('connected', userId);
     }
 
     simulateStatusChanged(status: string) {
@@ -105,6 +109,10 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
 
     simulateAuthExpired() {
       this.emit('auth_expired');
+    }
+
+    simulateAuthFailed(reason: string) {
+      this.emit('auth_failed', reason);
     }
 
     simulateError(message: string) {
@@ -297,6 +305,13 @@ describe('GatewayConnectionCtr', () => {
     vi.useFakeTimers();
     MockGatewayClient.lastInstance = null;
     MockGatewayClient.lastOptions = null;
+    MockGatewayClient.nextConnectResult = undefined;
+    vi.mocked(mockRemoteServerConfigCtr.getAccessToken).mockResolvedValue('mock-access-token');
+    vi.mocked(mockRemoteServerConfigCtr.getRemoteServerUrl).mockResolvedValue(
+      'https://server.example.com',
+    );
+    vi.mocked(mockRemoteServerConfigCtr.isRemoteServerConfigured).mockResolvedValue(true);
+    vi.mocked(mockRemoteServerConfigCtr.refreshAccessToken).mockResolvedValue({ success: true });
     mockStoreGet.mockImplementation((key: string) => {
       if (key === 'gatewayEnabled') return true;
       return undefined;
@@ -416,11 +431,17 @@ describe('GatewayConnectionCtr', () => {
       ctr.afterAppReady();
       await vi.advanceTimersByTimeAsync(0);
       expect(mockBroadcast).toHaveBeenCalledWith('gatewayConnectionStatusChanged', {
+        enabled: true,
+        error: undefined,
+        retryAt: undefined,
         status: 'connecting',
       });
 
       MockGatewayClient.lastInstance!.simulateConnected();
       expect(mockBroadcast).toHaveBeenCalledWith('gatewayConnectionStatusChanged', {
+        enabled: true,
+        error: undefined,
+        retryAt: undefined,
         status: 'connected',
       });
     });
@@ -439,9 +460,10 @@ describe('GatewayConnectionCtr', () => {
       await ctr.disconnect();
 
       expect(client.disconnect).toHaveBeenCalled();
-      expect(mockBroadcast).toHaveBeenCalledWith('gatewayConnectionStatusChanged', {
-        status: 'disconnected',
-      });
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        'gatewayConnectionStatusChanged',
+        expect.objectContaining({ status: 'disconnected' }),
+      );
     });
 
     it('should persist gatewayEnabled=false on disconnect', async () => {
@@ -545,9 +567,70 @@ describe('GatewayConnectionCtr', () => {
 
       client.simulateReconnecting(1000);
 
-      expect(mockBroadcast).toHaveBeenCalledWith('gatewayConnectionStatusChanged', {
-        status: 'reconnecting',
-      });
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        'gatewayConnectionStatusChanged',
+        expect.objectContaining({
+          enabled: true,
+          error: { code: 'NETWORK', message: 'Connection interrupted', retriable: true },
+          status: 'reconnecting',
+        }),
+      );
+    });
+
+    it('should register the device after a network recovery authenticates', async () => {
+      vi.mocked(mockRemoteServerConfigCtr.isRemoteServerConfigured).mockResolvedValueOnce(false);
+      const payload = Buffer.from(JSON.stringify({ sub: 'verified-user' })).toString('base64url');
+      vi.mocked(mockRemoteServerConfigCtr.getAccessToken).mockResolvedValueOnce(
+        `header.${payload}.sig`,
+      );
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const registrar = vi.fn().mockResolvedValue(undefined);
+      mockGatewayConnectionSrv.setDeviceRegistrar(registrar);
+      MockGatewayClient.nextConnectResult = {
+        code: 'NETWORK',
+        error: 'connection interrupted',
+        success: false,
+      };
+      await ctr.connect();
+      const client = MockGatewayClient.lastInstance!;
+
+      client.simulateConnected('verified-user');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(registrar).toHaveBeenCalledWith(
+        expect.objectContaining({ hostname: 'mock-hostname', platform: process.platform }),
+      );
+    });
+
+    it('should reject a recovered connection for a different verified user', async () => {
+      vi.mocked(mockRemoteServerConfigCtr.isRemoteServerConfigured).mockResolvedValueOnce(false);
+      const payload = Buffer.from(JSON.stringify({ sub: 'expected-user' })).toString('base64url');
+      vi.mocked(mockRemoteServerConfigCtr.getAccessToken).mockResolvedValueOnce(
+        `header.${payload}.sig`,
+      );
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+
+      MockGatewayClient.nextConnectResult = {
+        code: 'NETWORK',
+        error: 'connection interrupted',
+        success: false,
+      };
+      await ctr.connect();
+      const client = MockGatewayClient.lastInstance!;
+
+      client.simulateConnected('different-user');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.disconnect).toHaveBeenCalled();
+      expect(mockGatewayConnectionSrv.getState()).toEqual(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: 'AUTH_FAILED', retriable: false }),
+          status: 'disconnected',
+        }),
+      );
     });
   });
 
@@ -840,9 +923,54 @@ describe('GatewayConnectionCtr', () => {
       client.simulateAuthExpired();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(mockBroadcast).toHaveBeenCalledWith('gatewayConnectionStatusChanged', {
-        status: 'disconnected',
-      });
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        'gatewayConnectionStatusChanged',
+        expect.objectContaining({
+          error: expect.objectContaining({ code: 'AUTH_REQUIRED', retriable: false }),
+          status: 'disconnected',
+        }),
+      );
+    });
+  });
+
+  describe('auth_failed handling', () => {
+    it('should refresh once and reconnect while the gateway remains enabled', async () => {
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+      const firstClient = MockGatewayClient.lastInstance!;
+
+      firstClient.simulateAuthFailed('expired token');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockRemoteServerConfigCtr.refreshAccessToken).toHaveBeenCalledTimes(1);
+      expect(MockGatewayClient.lastInstance).not.toBe(firstClient);
+      expect((await ctr.getConnectionStatus()).enabled).toBe(true);
+    });
+
+    it('should require login when authentication still fails after refresh', async () => {
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+      const firstClient = MockGatewayClient.lastInstance!;
+      MockGatewayClient.nextConnectResult = {
+        code: 'AUTH_FAILED',
+        error: 'invalid refreshed token',
+        success: false,
+      };
+
+      firstClient.simulateAuthFailed('expired token');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(await ctr.getConnectionStatus()).toEqual(
+        expect.objectContaining({
+          enabled: true,
+          error: {
+            code: 'AUTH_REQUIRED',
+            message: 'invalid refreshed token',
+            retriable: false,
+          },
+          status: 'disconnected',
+        }),
+      );
     });
   });
 
@@ -1216,14 +1344,29 @@ describe('GatewayConnectionCtr', () => {
 
   describe('getConnectionStatus', () => {
     it('should return current status', async () => {
-      expect(await ctr.getConnectionStatus()).toEqual({ status: 'disconnected' });
+      expect(await ctr.getConnectionStatus()).toEqual({
+        enabled: true,
+        error: undefined,
+        retryAt: undefined,
+        status: 'disconnected',
+      });
 
       ctr.afterAppReady();
       await vi.advanceTimersByTimeAsync(0);
-      expect(await ctr.getConnectionStatus()).toEqual({ status: 'connecting' });
+      expect(await ctr.getConnectionStatus()).toEqual({
+        enabled: true,
+        error: undefined,
+        retryAt: undefined,
+        status: 'connecting',
+      });
 
       MockGatewayClient.lastInstance!.simulateConnected();
-      expect(await ctr.getConnectionStatus()).toEqual({ status: 'connected' });
+      expect(await ctr.getConnectionStatus()).toEqual({
+        enabled: true,
+        error: undefined,
+        retryAt: undefined,
+        status: 'connected',
+      });
     });
   });
 

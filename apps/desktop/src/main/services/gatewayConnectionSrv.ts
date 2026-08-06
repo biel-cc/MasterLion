@@ -13,7 +13,12 @@ import type {
 import { GatewayClient } from '@lobechat/device-gateway-client';
 import type { IdentitySource } from '@lobechat/device-identity';
 import { deriveDeviceId } from '@lobechat/device-identity';
-import type { GatewayConnectionStatus } from '@lobechat/electron-client-ipc';
+import type {
+  GatewayConnectionError,
+  GatewayConnectionErrorCode,
+  GatewayConnectionState,
+  GatewayConnectionStatus,
+} from '@lobechat/electron-client-ipc';
 import { app, powerSaveBlocker } from 'electron';
 
 import { isDev } from '@/const/env';
@@ -113,6 +118,10 @@ export default class GatewayConnectionService extends ServiceModule {
   private status: GatewayConnectionStatus = 'disconnected';
   private deviceId: string | null = null;
   private powerSaveBlockerId: number | null = null;
+  private connectionError: GatewayConnectionError | undefined;
+  private retryAt: number | undefined;
+  private authRefreshAttempted = false;
+  private authRecoveryPromise: Promise<void> | null = null;
 
   private identitySource: IdentitySource | null = null;
 
@@ -250,6 +259,15 @@ export default class GatewayConnectionService extends ServiceModule {
     return this.status;
   }
 
+  getState(): GatewayConnectionState {
+    return {
+      enabled: Boolean(this.app.storeManager.get('gatewayEnabled')),
+      error: this.connectionError,
+      retryAt: this.retryAt,
+      status: this.status,
+    };
+  }
+
   getDeviceInfo() {
     return {
       description: this.getDeviceDescription(),
@@ -284,6 +302,8 @@ export default class GatewayConnectionService extends ServiceModule {
     if (this.status === 'connected' || this.status === 'connecting') {
       return { success: true };
     }
+    this.authRefreshAttempted = false;
+    this.setConnectionError(undefined);
     return this.doConnect();
   }
 
@@ -292,11 +312,16 @@ export default class GatewayConnectionService extends ServiceModule {
       await this.client.disconnect();
       this.client = null;
     }
+    this.retryAt = undefined;
+    this.setConnectionError(undefined);
     this.setStatus('disconnected');
     return { success: true };
   }
 
-  private async doConnect(): Promise<{ error?: string; success: boolean }> {
+  private async doConnect(
+    verifiedUserId?: string,
+    identityRetry = false,
+  ): Promise<{ error?: string; success: boolean }> {
     // Clean up any existing client
     if (this.client) {
       await this.client.disconnect();
@@ -305,41 +330,38 @@ export default class GatewayConnectionService extends ServiceModule {
 
     if (!this.tokenProvider) {
       logger.warn('Cannot connect: no token provider configured');
+      this.failConnection('CONFIG_MISSING', 'No token provider configured', false);
       return { error: 'No token provider configured', success: false };
     }
 
     if (!this.serverUrlProvider) {
       logger.warn('Cannot connect: no server URL provider configured');
+      this.failConnection('CONFIG_MISSING', 'No server URL provider configured', false);
       return { error: 'No server URL provider configured', success: false };
     }
 
     const [token, serverUrl] = await Promise.all([this.tokenProvider(), this.serverUrlProvider()]);
     if (!token) {
       logger.warn('Cannot connect: no access token');
+      this.failConnection('AUTH_REQUIRED', 'No access token available', false);
       return { error: 'No access token available', success: false };
     }
     if (!serverUrl) {
       logger.warn('Cannot connect: no remote server URL');
+      this.failConnection('CONFIG_MISSING', 'No remote server URL available', false);
       return { error: 'No remote server URL available', success: false };
     }
 
     const gatewayUrl = this.getGatewayUrl();
-    const userId = this.extractUserIdFromToken(token);
-    logger.info(`Connecting to device gateway: ${gatewayUrl}, userId: ${userId || 'unknown'}`);
+    const userId = verifiedUserId || this.extractUserIdFromToken(token);
+    logger.info(
+      `Connecting to device gateway: ${gatewayUrl}, identityAvailable: ${Boolean(userId)}`,
+    );
 
-    // Resolve the stable, user-scoped device id and register with the server
-    // registry before opening the WS, so the device row exists by the time the
-    // gateway reports it online.
+    // Resolve the stable user-scoped id before opening the socket when the JWT
+    // subject is available. The gateway still verifies the subject and owns routing.
     if (userId) {
-      const identity = this.resolveDeviceIdentity(userId);
-      await this.deviceRegistrar?.({
-        deviceId: identity.deviceId,
-        hostname: os.hostname(),
-        identitySource: identity.identitySource,
-        platform: process.platform,
-      }).catch((err) => {
-        logger.warn(`Device registration failed (non-fatal): ${(err as Error).message}`);
-      });
+      this.resolveDeviceIdentity(userId);
     }
 
     const client = new GatewayClient({
@@ -356,13 +378,129 @@ export default class GatewayConnectionService extends ServiceModule {
     this.setupClientEvents(client);
     this.client = client;
 
-    await client.connect();
+    let initialConnectPending = true;
+    let expectedAuthenticatedUserId = userId || undefined;
+    client.on('connected', (reauthenticatedUserId) => {
+      if (initialConnectPending) return;
+      void this.handleReauthenticatedClient(
+        client,
+        reauthenticatedUserId,
+        expectedAuthenticatedUserId,
+        identityRetry,
+      );
+    });
+
+    const result = await client.connect();
+    initialConnectPending = false;
+    // Older mocked/embedded clients returned void after starting a connection.
+    if (result && !result.success) {
+      this.setConnectionError({
+        code: result.code,
+        message: result.error,
+        retriable: result.code !== 'AUTH_FAILED',
+      });
+      return { error: result.error, success: false };
+    }
+
+    const authenticatedUserId = result?.userId || userId;
+    expectedAuthenticatedUserId = authenticatedUserId || undefined;
+    if (result?.userId && userId && result.userId !== userId) {
+      await client.disconnect();
+      this.failConnection('AUTH_FAILED', 'Authenticated user does not match token subject', false);
+      return { error: 'Authenticated user does not match token subject', success: false };
+    }
+
+    // A legacy token may not be locally decodable even though the gateway can
+    // verify it. Reconnect once with the verified identity so deviceId remains
+    // stable and the live socket matches the registered device row.
+    if (!userId && authenticatedUserId && !identityRetry) {
+      await client.disconnect();
+      if (this.client === client) this.client = null;
+      return this.doConnect(authenticatedUserId, true);
+    }
+
+    if (authenticatedUserId) {
+      const identity = this.resolveDeviceIdentity(authenticatedUserId);
+      await this.deviceRegistrar?.({
+        deviceId: identity.deviceId,
+        hostname: os.hostname(),
+        identitySource: identity.identitySource,
+        platform: process.platform,
+      }).catch((err) => {
+        logger.warn(`Device registration failed (non-fatal): ${(err as Error).message}`);
+      });
+    }
+
+    this.authRefreshAttempted = false;
+    this.retryAt = undefined;
+    this.setConnectionError(undefined);
     return { success: true };
+  }
+
+  private async handleReauthenticatedClient(
+    client: GatewayClient,
+    authenticatedUserId: string | undefined,
+    expectedUserId: string | undefined,
+    identityRetry: boolean,
+  ) {
+    if (client !== this.client) return;
+    if (!authenticatedUserId) {
+      logger.warn('Gateway auth_success did not include a verified user id');
+      return;
+    }
+    if (expectedUserId && authenticatedUserId !== expectedUserId) {
+      await client.disconnect();
+      this.failConnection('AUTH_FAILED', 'Authenticated user does not match token subject', false);
+      return;
+    }
+
+    const identity = this.resolveDeviceIdentity(authenticatedUserId);
+    if (identity.deviceId !== client.currentDeviceId) {
+      await client.disconnect();
+      if (this.client === client) this.client = null;
+      if (identityRetry) {
+        this.failConnection('AUTH_FAILED', 'Authenticated device identity changed', false);
+        return;
+      }
+      await this.doConnect(authenticatedUserId, true);
+      return;
+    }
+
+    await this.deviceRegistrar?.({
+      deviceId: identity.deviceId,
+      hostname: os.hostname(),
+      identitySource: identity.identitySource,
+      platform: process.platform,
+    }).catch((err) => {
+      logger.warn(
+        `Device registration failed after reconnect (non-fatal): ${(err as Error).message}`,
+      );
+    });
+    this.authRefreshAttempted = false;
+    this.retryAt = undefined;
+    this.setConnectionError(undefined);
   }
 
   private setupClientEvents(client: GatewayClient) {
     client.on('status_changed', (status) => {
       this.setStatus(status);
+      if (status === 'connected') {
+        this.retryAt = undefined;
+        this.setConnectionError(undefined);
+      }
+    });
+
+    client.on('reconnecting', (delay) => {
+      this.retryAt = Date.now() + delay;
+      this.setConnectionError({
+        code: 'NETWORK',
+        message: 'Connection interrupted',
+        retriable: true,
+      });
+    });
+
+    client.on('auth_failed', (reason) => {
+      this.recoverAuthentication(client, reason);
     });
 
     client.on('tool_call_request', (request) => {
@@ -392,6 +530,37 @@ export default class GatewayConnectionService extends ServiceModule {
 
     client.on('error', (error) => {
       logger.error('WebSocket error:', error.message);
+      const code: GatewayConnectionErrorCode =
+        /unexpected server response|status code|handshake/i.test(error.message)
+          ? 'HANDSHAKE_REJECTED'
+          : 'NETWORK';
+      this.setConnectionError({ code, message: error.message, retriable: true });
+    });
+  }
+
+  private recoverAuthentication(client: GatewayClient, reason: string) {
+    if (client !== this.client || this.authRecoveryPromise) return;
+
+    this.authRecoveryPromise = (async () => {
+      if (this.authRefreshAttempted || !this.tokenRefresher) {
+        this.failConnection('AUTH_REQUIRED', reason, false);
+        return;
+      }
+
+      this.authRefreshAttempted = true;
+      this.setConnectionError({ code: 'AUTH_FAILED', message: reason, retriable: true });
+      const refreshResult = await this.tokenRefresher();
+      if (!refreshResult.success) {
+        this.failConnection('AUTH_REQUIRED', refreshResult.error || reason, false);
+        return;
+      }
+      if (!this.app.storeManager.get('gatewayEnabled')) return;
+      const reconnectResult = await this.doConnect();
+      if (!reconnectResult.success) {
+        this.failConnection('AUTH_REQUIRED', reconnectResult.error || reason, false);
+      }
+    })().finally(() => {
+      this.authRecoveryPromise = null;
     });
   }
 
@@ -406,7 +575,7 @@ export default class GatewayConnectionService extends ServiceModule {
 
     if (!this.tokenRefresher) {
       logger.error('No token refresher configured, cannot handle auth_expired');
-      this.setStatus('disconnected');
+      this.failConnection('AUTH_REQUIRED', 'No token refresher configured', false);
       return;
     }
 
@@ -418,7 +587,7 @@ export default class GatewayConnectionService extends ServiceModule {
       await this.doConnect();
     } else {
       logger.error('Token refresh failed:', result.error);
-      this.setStatus('disconnected');
+      this.failConnection('AUTH_REQUIRED', result.error || 'Token refresh failed', false);
     }
   }
 
@@ -629,7 +798,10 @@ export default class GatewayConnectionService extends ServiceModule {
   // ─── Status Broadcasting ───
 
   private setStatus(status: GatewayConnectionStatus) {
-    if (this.status === status) return;
+    if (this.status === status) {
+      this.broadcastState();
+      return;
+    }
 
     logger.info(`Connection status: ${this.status} → ${status}`);
     this.status = status;
@@ -642,7 +814,25 @@ export default class GatewayConnectionService extends ServiceModule {
       this.stopPowerSaveBlocker();
     }
 
-    this.app.browserManager.broadcastToAllWindows('gatewayConnectionStatusChanged', { status });
+    this.broadcastState();
+  }
+
+  private setConnectionError(error: GatewayConnectionError | undefined) {
+    this.connectionError = error;
+    this.broadcastState();
+  }
+
+  private failConnection(code: GatewayConnectionErrorCode, message: string, retriable: boolean) {
+    this.connectionError = { code, message, retriable };
+    this.retryAt = undefined;
+    this.setStatus('disconnected');
+  }
+
+  private broadcastState() {
+    this.app.browserManager.broadcastToAllWindows(
+      'gatewayConnectionStatusChanged',
+      this.getState(),
+    );
   }
 
   // ─── Gateway URL ───
@@ -658,7 +848,8 @@ export default class GatewayConnectionService extends ServiceModule {
 
   /**
    * Extract userId (sub claim) from JWT without verification.
-   * The token will be verified server-side; we just need the userId for routing.
+   * The token will be verified server-side; this local hint is used only to
+   * derive the stable device id before authentication completes.
    */
   private extractUserIdFromToken(token: string): string | null {
     try {

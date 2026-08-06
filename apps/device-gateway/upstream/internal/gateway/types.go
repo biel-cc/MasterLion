@@ -34,6 +34,11 @@ type authMessage struct {
 	Type      string `json:"type"`
 }
 
+type authSuccessMessage struct {
+	Type   string `json:"type"`
+	UserID string `json:"userId"`
+}
+
 type rpcEnvelope struct {
 	OperationID string          `json:"operationId,omitempty"`
 	Reason      string          `json:"reason,omitempty"`

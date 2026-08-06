@@ -18,3 +18,16 @@ Only files required to compile `device-gateway-go` are included. Original Git bl
 | `internal/gateway/server.go`     | `3112f2cc6021d262572afc5001b7b08771a15bb0` |
 | `internal/gateway/types.go`      | `db71dc6739efa5c354d80491eb081184643790c3` |
 | `internal/gateway/ws.go`         | `3b21ca34a019083a730236b3a7b02198216bf006` |
+
+## Masterino patches
+
+The vendored server intentionally differs from the upstream blobs above:
+
+- WebSocket connections remain unauthenticated and outside all user hubs until the first `auth`
+  message is verified.
+- JWT and API-key clients no longer need to put `userId` in the WebSocket URL. A legacy value is
+  treated only as a consistency assertion; service-token clients still require it.
+- `auth_success` returns the verified `userId`, and structured logs contain connection metadata but
+  never credentials or the user id.
+- `internal/gateway/server_test.go` is a Masterino-owned protocol regression suite and has no
+  upstream blob SHA.
