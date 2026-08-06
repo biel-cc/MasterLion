@@ -52,6 +52,50 @@ export interface ExportFileParams {
   path: string;
 }
 
+// ==================== Office Document Params ====================
+
+export type OfficeDocumentFormat = 'docx' | 'pptx' | 'xlsx';
+
+export type OfficeDocumentInspectMode = 'html' | 'issues' | 'outline' | 'screenshot';
+
+export interface OfficeDocumentOperation {
+  command: 'add' | 'move' | 'remove' | 'set' | 'swap';
+  from?: string;
+  index?: number;
+  path: string;
+  props?: Record<string, unknown>;
+  to?: string;
+  type?: string;
+}
+
+export interface CreateOfficeDocumentParams {
+  format: OfficeDocumentFormat;
+  locale?: string;
+  path: string;
+}
+
+export interface BatchOfficeDocumentParams {
+  operations: OfficeDocumentOperation[];
+  path: string;
+}
+
+export interface MergeOfficeTemplateParams {
+  data: Record<string, unknown>;
+  outputPath: string;
+  templatePath: string;
+}
+
+export interface InspectOfficeDocumentParams {
+  mode: OfficeDocumentInspectMode;
+  outputPath?: string;
+  page?: string;
+  path: string;
+}
+
+export interface ValidateOfficeDocumentParams {
+  path: string;
+}
+
 // ==================== Code Execution Params ====================
 
 export interface ExecuteCodeParams {

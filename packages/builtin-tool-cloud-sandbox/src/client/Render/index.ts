@@ -4,6 +4,7 @@ import { RunCommandRender } from '@lobechat/shared-tool-ui/renders';
 import { CloudSandboxApiName } from '../../types';
 import ExecuteCode from './ExecuteCode';
 import ExportFile from './ExportFile';
+import OfficeDocument from './OfficeDocument';
 
 /**
  * Cloud Sandbox Render Components Registry
@@ -15,14 +16,19 @@ import ExportFile from './ExportFile';
  * messages with apiName like 'readLocalFile' still render after the rename.
  */
 export const CloudSandboxRenders = {
+  [CloudSandboxApiName.batchOfficeDocument]: OfficeDocument,
+  [CloudSandboxApiName.createOfficeDocument]: OfficeDocument,
   [CloudSandboxApiName.editFile]: LocalSystemRenders.editFile,
   [CloudSandboxApiName.executeCode]: ExecuteCode,
   [CloudSandboxApiName.exportFile]: ExportFile,
   [CloudSandboxApiName.listFiles]: LocalSystemRenders.listFiles,
   [CloudSandboxApiName.moveFiles]: LocalSystemRenders.moveFiles,
+  [CloudSandboxApiName.inspectOfficeDocument]: OfficeDocument,
   [CloudSandboxApiName.readFile]: LocalSystemRenders.readFile,
   [CloudSandboxApiName.runCommand]: RunCommandRender,
   [CloudSandboxApiName.searchFiles]: LocalSystemRenders.searchFiles,
+  [CloudSandboxApiName.mergeOfficeTemplate]: OfficeDocument,
+  [CloudSandboxApiName.validateOfficeDocument]: OfficeDocument,
   [CloudSandboxApiName.writeFile]: LocalSystemRenders.writeFile,
   // Legacy aliases — keep these so historical messages keep rendering
   editLocalFile: LocalSystemRenders.editFile,

@@ -11,6 +11,7 @@ export const getSandboxConfig = () => {
       ONLYBOXES_JIT_SIGNING_KEY: process.env.ONLYBOXES_JIT_SIGNING_KEY,
       ONLYBOXES_JIT_TTL_SEC: process.env.ONLYBOXES_JIT_TTL_SEC,
       ONLYBOXES_LEASE_TTL_SEC: process.env.ONLYBOXES_LEASE_TTL_SEC,
+      OFFICECLI_ENABLED: process.env.OFFICECLI_ENABLED,
       SANDBOX_PROVIDER: process.env.SANDBOX_PROVIDER,
     },
     server: {
@@ -22,6 +23,13 @@ export const getSandboxConfig = () => {
         z.coerce.number().int().positive().optional(),
       ),
       ONLYBOXES_LEASE_TTL_SEC: z.preprocess(emptyStringToUndefined, z.coerce.number().optional()),
+      OFFICECLI_ENABLED: z.preprocess(
+        emptyStringToUndefined,
+        z
+          .enum(['0', '1', 'false', 'true'])
+          .transform((value) => value === '1' || value === 'true')
+          .optional(),
+      ),
       SANDBOX_PROVIDER: z.preprocess(
         emptyStringToUndefined,
         z.enum(['market', 'onlyboxes']).optional(),

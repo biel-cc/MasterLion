@@ -8,6 +8,100 @@ export const CloudSandboxIdentifier = 'lobe-cloud-sandbox';
 export const CloudSandboxManifest: BuiltinToolManifest = {
   api: [
     {
+      defaultTimeoutMs: 180_000,
+      description:
+        'Create a new Word (.docx), Excel (.xlsx), or PowerPoint (.pptx) file with the pinned OfficeCLI runtime. Use batchOfficeDocument next to add content.',
+      name: CloudSandboxApiName.createOfficeDocument,
+      parameters: {
+        properties: {
+          format: { enum: ['docx', 'xlsx', 'pptx'], type: 'string' },
+          locale: { description: 'BCP-47 locale, normally zh-CN or en-US', type: 'string' },
+          path: {
+            description: 'Output path inside the current sandbox workspace',
+            type: 'string',
+          },
+        },
+        required: ['format', 'path'],
+        type: 'object',
+      },
+    },
+    {
+      defaultTimeoutMs: 180_000,
+      description:
+        'Apply an atomic OfficeCLI batch to an Office document. All operations roll back when any operation fails.',
+      name: CloudSandboxApiName.batchOfficeDocument,
+      parameters: {
+        properties: {
+          operations: {
+            items: {
+              properties: {
+                command: { enum: ['add', 'set', 'remove', 'move', 'swap'], type: 'string' },
+                from: { type: 'string' },
+                index: { type: 'number' },
+                path: { type: 'string' },
+                props: { additionalProperties: true, type: 'object' },
+                to: { type: 'string' },
+                type: { type: 'string' },
+              },
+              required: ['command', 'path'],
+              type: 'object',
+            },
+            maxItems: 500,
+            minItems: 1,
+            type: 'array',
+          },
+          path: { description: 'Office document path in the sandbox workspace', type: 'string' },
+        },
+        required: ['path', 'operations'],
+        type: 'object',
+      },
+    },
+    {
+      defaultTimeoutMs: 180_000,
+      description:
+        'Create a new Office document by replacing {{key}} placeholders in a sandbox template with JSON data.',
+      name: CloudSandboxApiName.mergeOfficeTemplate,
+      parameters: {
+        properties: {
+          data: { additionalProperties: true, type: 'object' },
+          outputPath: { type: 'string' },
+          templatePath: { type: 'string' },
+        },
+        required: ['templatePath', 'outputPath', 'data'],
+        type: 'object',
+      },
+    },
+    {
+      defaultTimeoutMs: 180_000,
+      description:
+        'Inspect an Office document using OfficeCLI outline, issues, HTML, or screenshot views. Use outline/issues before validation and screenshot for visual QA.',
+      name: CloudSandboxApiName.inspectOfficeDocument,
+      parameters: {
+        properties: {
+          mode: { enum: ['outline', 'issues', 'html', 'screenshot'], type: 'string' },
+          outputPath: {
+            description: 'Required output path for html or screenshot mode',
+            type: 'string',
+          },
+          page: { description: 'Optional page or slide range such as 1-3', type: 'string' },
+          path: { type: 'string' },
+        },
+        required: ['path', 'mode'],
+        type: 'object',
+      },
+    },
+    {
+      defaultTimeoutMs: 180_000,
+      description:
+        'Validate a generated .docx, .xlsx, or .pptx with OfficeCLI before exporting it. Do not export a document when validation fails.',
+      name: CloudSandboxApiName.validateOfficeDocument,
+      parameters: {
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        type: 'object',
+      },
+    },
+    {
       description:
         'Execute code directly in the sandbox environment. Supports Python, JavaScript, and TypeScript. Returns execution output, errors, and exit code.',
       humanIntervention: 'required',

@@ -39,6 +39,7 @@ describe('OnlyboxesSandboxProvider', () => {
         ONLYBOXES_JIT_SIGNING_KEY: 'jit-signing-key',
         ONLYBOXES_JIT_TTL_SEC: 900,
         ONLYBOXES_LEASE_TTL_SEC: 120,
+        OFFICECLI_ENABLED: true,
       },
     }));
   });
@@ -298,6 +299,57 @@ describe('OnlyboxesSandboxProvider', () => {
     expect(secondCallBody.command).toContain("path.open('ab')");
     expect(firstCallBody.command).not.toContain('hello world');
     expect(secondCallBody.command).not.toContain('hello world');
+  });
+
+  it('runs OfficeCLI through the fixed JSON wrapper without interpolating document content', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            exit_code: 0,
+            session_id: 'lobe-user-1-topic-1',
+            stderr: '',
+            stdout: JSON.stringify({
+              format: 'pptx',
+              path: '/tmp/masterino-office/季度报告.pptx',
+              success: true,
+            }),
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    const result = await provider.callTool('batchOfficeDocument', {
+      operations: [
+        {
+          command: 'add',
+          path: '/',
+          props: { text: "季度报告'; touch /tmp/pwned; #" },
+          type: 'slide',
+        },
+      ],
+      path: '/tmp/masterino-office/季度报告.pptx',
+    });
+
+    expect(result).toMatchObject({
+      result: { format: 'pptx', success: true },
+      success: true,
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as { command: string };
+    expect(body.command).toContain("main('");
+    expect(body.command).toContain('subprocess.run(');
+    expect(body.command).toContain("ALLOWED_COMMANDS = {'add', 'set', 'remove', 'move', 'swap'}");
+    expect(body.command).not.toContain('touch /tmp/pwned');
+    expect(body.command).not.toContain('季度报告');
   });
 
   it('ensures a terminal session exists before exporting files through terminalResource', async () => {

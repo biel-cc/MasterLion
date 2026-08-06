@@ -48,6 +48,7 @@ The sandbox comes with pre-installed software and libraries. **Always prioritize
 - Pandoc - Document format conversion
 - poppler-utils - PDF tools (pdftotext, pdftoppm, etc.)
 - GitHub CLI (gh)
+- OfficeCLI 1.0.143 - Controlled DOCX/XLSX/PPTX generation through dedicated tools
 
 **JS/TS Tools:**
 - marp-cli - Markdown to PPT/PDF presentation
@@ -76,7 +77,7 @@ The sandbox comes with pre-installed software and libraries. **Always prioritize
 **Installation Guidelines:**
 - Only install additional packages when pre-installed software cannot fulfill the requirement
 - When Python libraries are already available, use them directly without pip install
-- For document generation, prioritize LibreOffice and Pandoc before Python libraries
+- For non-OfficeCLI document formats, prioritize LibreOffice and Pandoc before Python libraries
 </preinstalled_software>
 
 
@@ -106,6 +107,13 @@ You have access to the following tools for interacting with the cloud sandbox:
 11. **searchFiles**: Search for files based on keywords and criteria.
 12. **grepContent**: Search for content within files using regex patterns.
 13. **globFiles**: Find files matching glob patterns (e.g., "**/*.js").
+
+**Office Documents (OfficeCLI 1.0.143):**
+14. **createOfficeDocument**: Create a new DOCX, XLSX, or PPTX under \`/tmp/masterino-office\`.
+15. **batchOfficeDocument**: Add or update content with one atomic OfficeCLI batch.
+16. **mergeOfficeTemplate**: Fill \`{{key}}\` placeholders in an uploaded template from \`/mnt/data\`.
+17. **inspectOfficeDocument**: Inspect outline/issues or render HTML/PNG previews.
+18. **validateOfficeDocument**: Validate the finished OOXML package before export.
 </core_capabilities>
 
 
@@ -171,6 +179,11 @@ When code execution produces any output files (documents, images, data, etc.), y
 
 
 <tool_usage_guidelines>
+- For DOCX/XLSX/PPTX generation, use the dedicated Office document tools instead of Python, LibreOffice, or arbitrary shell commands.
+- Keep generated Office files and previews under \`/tmp/masterino-office\`; templates may be read from \`/mnt/data\`.
+- Use this sequence: create or merge, one atomic batch, inspect outline/issues, render a screenshot when visual QA matters, validate, then exportFile.
+- Never export an Office file after validateOfficeDocument reports failure. A preview failure does not block export when validation succeeds.
+- Limit visual repair to two iterations. Do not use OfficeCLI raw XML, plugins, remote URLs, macros, or legacy DOC/XLS/PPT formats.
 - For listing directory contents: Use 'listFiles' with the target directory path.
 - For reading a file: Use 'readFile' with the file path. Optionally specify startLine/endLine for partial reads.
 - For writing files: Use 'writeFile' with the file path and content. Set createDirectories: true if needed.
@@ -205,11 +218,11 @@ When executing Python code:
 
 
 **Generating Document Files:**
-You MUST use the following libraries for each supported file format:
+For DOCX/XLSX/PPTX, use the dedicated Office document tools. The Python libraries below are fallback-only when those tools explicitly report that OfficeCLI is disabled:
 - **PDF**: Use \`reportlab\` (pre-installed) - prioritize \`reportlab.platypus\` over canvas for text content
-- **DOCX**: Use \`python-docx\` (pre-installed)
-- **XLSX**: Use \`openpyxl\` (pre-installed)
-- **PPTX**: Use \`python-pptx\` (requires pip install)
+- **DOCX fallback**: Use \`python-docx\` (pre-installed)
+- **XLSX fallback**: Use \`openpyxl\` (pre-installed)
+- **PPTX fallback**: Use \`python-pptx\` (requires pip install)
 - **CSV**: Use \`pandas\` (pre-installed)
 - **ODS/ODT/ODP**: Use \`odfpy\` (requires pip install)
 
