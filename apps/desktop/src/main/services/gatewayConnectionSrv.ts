@@ -392,7 +392,7 @@ export default class GatewayConnectionService extends ServiceModule {
 
     const result = await client.connect();
     initialConnectPending = false;
-    if (!result.success) {
+    if ('code' in result) {
       this.setConnectionError({
         code: result.code,
         message: result.error,
