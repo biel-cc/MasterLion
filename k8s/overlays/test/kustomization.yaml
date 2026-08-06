@@ -24,6 +24,26 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
+          name: SANDBOX_PROVIDER
+          value: onlyboxes
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_BASE_URL
+          value: https://onlyboxes.internal.bielcrystal.com
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_JIT_ISSUER
+          value: https://mlai-test.bielcrystal.com
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OFFICECLI_ENABLED
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
           name: ONLYBOXES_JIT_SIGNING_KEY
           valueFrom:
             secretKeyRef:

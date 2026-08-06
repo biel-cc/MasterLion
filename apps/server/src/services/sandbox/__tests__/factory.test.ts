@@ -53,6 +53,10 @@ describe('sandbox service factory', () => {
       shell: true,
       skillScripts: true,
     });
+
+    expect(() => createSandboxService({ topicId: 'topic-1', userId: 'user-1' })).toThrow(
+      'MarketService is required when SANDBOX_PROVIDER=market',
+    );
   });
 
   it('uses the onlyboxes provider when configured', async () => {
@@ -70,7 +74,7 @@ describe('sandbox service factory', () => {
     }));
 
     const { createSandboxService } = await import('../factory');
-    const service = createSandboxService(baseOptions);
+    const service = createSandboxService({ topicId: 'topic-1', userId: 'user-1' });
 
     expect(service.kind).toBe('onlyboxes');
     expect(service.capabilities.languages).toEqual(['python', 'javascript', 'typescript']);
@@ -85,7 +89,7 @@ describe('sandbox service factory', () => {
     }));
 
     const { createSandboxService, isSandboxConfigured } = await import('../factory');
-    const service = createSandboxService(baseOptions);
+    const service = createSandboxService({ topicId: 'topic-1', userId: 'user-1' });
 
     expect(isSandboxConfigured()).toBe(false);
     expect(service.kind).toBe('disabled');

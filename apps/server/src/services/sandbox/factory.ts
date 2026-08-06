@@ -38,7 +38,10 @@ const createSandboxProvider = (options: SandboxServiceOptions): SandboxProvider 
     }
 
     case 'market': {
-      return new MarketSandboxProvider(options);
+      if (!options.marketService) {
+        throw new Error('MarketService is required when SANDBOX_PROVIDER=market');
+      }
+      return new MarketSandboxProvider({ ...options, marketService: options.marketService });
     }
   }
 };

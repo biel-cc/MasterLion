@@ -293,6 +293,20 @@ case "$COMMAND" in
         printf '%s\n' "$rendered" | grep -Fq "$invariant" \
           || fail "test OfficeCLI configuration is missing required value: $invariant"
       done
+      pinned_sandbox_env=(
+        'SANDBOX_PROVIDER|value: onlyboxes'
+        'ONLYBOXES_BASE_URL|value: https://onlyboxes.internal.bielcrystal.com'
+        'ONLYBOXES_JIT_ISSUER|value: https://mlai-test.bielcrystal.com'
+        'OFFICECLI_ENABLED|value: "true"'
+      )
+      for invariant in "${pinned_sandbox_env[@]}"; do
+        name="${invariant%%|*}"
+        value="${invariant#*|}"
+        printf '%s\n' "$rendered" \
+          | grep -A1 -F "name: $name" \
+          | grep -Fq "$value" \
+          || fail "test Deployment must pin $name directly to $value"
+      done
       printf '%s\n' "$rendered" \
         | grep -A1 -F 'name: MEMORY_QUEUE_WORKER_ENABLED' \
         | grep -Fq 'value: "1"' \
