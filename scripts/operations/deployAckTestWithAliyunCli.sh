@@ -119,6 +119,13 @@ prepare_secret_files() {
     return
   fi
 
+  if kubectl -n "$NAMESPACE" get secret masterino-secret > /dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get secret masterino-bridge-secret > /dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get secret masterino-market-secret > /dev/null 2>&1; then
+    echo "Existing application, Bridge and Market Secrets will be preserved."
+    return
+  fi
+
   local required=(
     KEY_VAULTS_SECRET
     AUTH_SECRET
@@ -358,14 +365,21 @@ case "$ACK_TEST_ACTION" in
     prepare_secret_files
     prepare_searxng_secret_file
     bash ./deploy.sh --env test bootstrap
-    create_secret_args=("$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE")
+    create_secret_args=()
+    if [[ -s "$APP_SECRET_FILE" && -s "$BRIDGE_SECRET_FILE" ]]; then
+      create_secret_args+=("$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE")
+    fi
     if [[ -s "$SEARXNG_SECRET_FILE" ]]; then
       create_secret_args+=("$SEARXNG_SECRET_FILE")
     else
       create_secret_args+=("")
     fi
-    create_secret_args+=("$MARKET_SECRET_FILE")
-    bash ./deploy.sh --env test create-secret "${create_secret_args[@]}"
+    if [[ -s "$APP_SECRET_FILE" && -s "$BRIDGE_SECRET_FILE" && -s "$MARKET_SECRET_FILE" ]]; then
+      bash ./deploy.sh --env test create-secret \
+        "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
+    elif [[ -s "$SEARXNG_SECRET_FILE" ]]; then
+      bash ./deploy.sh --env test create-searxng-secret "$SEARXNG_SECRET_FILE"
+    fi
     bash ./deploy.sh --env test deploy
     bash ./deploy.sh --env test rollout
     check_aihub_authorization
