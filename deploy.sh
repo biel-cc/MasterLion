@@ -78,6 +78,7 @@ case "$ENVIRONMENT" in
     SOURCE_VERIFICATION_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-verification-ingress.yaml"
     SOURCE_INGRESS_NAME="masterlion-test-ingress"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-$DEFAULT_TEST_CONTEXT}"
+    ACR_PULL_SECRET_NAME="masterino-acr-fixed"
     ;;
   production)
     NAMESPACE="masterino"
@@ -185,6 +186,14 @@ check_secret() {
   [[ "$app_token" == "$bridge_token" ]] || fail \
     "AIHUB_BRIDGE_TOKEN differs between application and bridge Secrets"
   if [[ "$ENVIRONMENT" == "test" ]]; then
+    "${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-onlyboxes-secret is missing in namespace '$NAMESPACE'"
+    value="$("${KUBE[@]}" get secret masterino-onlyboxes-secret -n "$NAMESPACE" \
+      -o jsonpath='{.data.ONLYBOXES_JIT_SIGNING_KEY}')"
+    [[ -n "$value" ]] || fail \
+      "masterino-onlyboxes-secret is missing key: ONLYBOXES_JIT_SIGNING_KEY"
+    "${KUBE[@]}" get configmap masterino-onlyboxes-ca -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-onlyboxes-ca is missing in namespace '$NAMESPACE'"
     "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterlion-searxng-secret is missing in namespace '$NAMESPACE'"
     for key in "${required_searxng_secret_keys[@]}"; do
@@ -240,7 +249,13 @@ case "$COMMAND" in
     printf '%s\n' "$rendered" | grep -q "image: ${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      printf '%s\n' "$rendered" | grep -q 'name: masterino-test-essd-retain'
+      printf '%s\n' "$rendered" | grep -q 'storageClassName: masterino-test-essd-retain'
+      if printf '%s\n' "$rendered" | grep -q '^kind: Namespace$'; then
+        fail "test runtime manifests must not reapply the bootstrap Namespace"
+      fi
+      if printf '%s\n' "$rendered" | grep -q '^kind: StorageClass$'; then
+        fail "test runtime manifests must not reapply the immutable bootstrap StorageClass"
+      fi
       printf '%s\n' "$rendered" | grep -q 'name: masterino-memory-worker'
       printf '%s\n' "$rendered" | grep -Eq 'name: masterino-memory-config-[a-z0-9]{10}$' \
         || fail "test memory ConfigMap must use a content hash so configuration changes roll Pods"
@@ -259,6 +274,17 @@ case "$COMMAND" in
       for invariant in "${memory_config_invariants[@]}"; do
         printf '%s\n' "$rendered" | grep -Fq "$invariant" \
           || fail "test memory configuration is missing required value: $invariant"
+      done
+      office_invariants=(
+        'OFFICECLI_ENABLED: "true"'
+        'ONLYBOXES_BASE_URL: https://onlyboxes.internal.bielcrystal.com'
+        'name: masterino-onlyboxes-secret'
+        'name: masterino-onlyboxes-ca'
+        'mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt'
+      )
+      for invariant in "${office_invariants[@]}"; do
+        printf '%s\n' "$rendered" | grep -Fq "$invariant" \
+          || fail "test OfficeCLI configuration is missing required value: $invariant"
       done
       printf '%s\n' "$rendered" \
         | grep -A1 -F 'name: MEMORY_QUEUE_WORKER_ENABLED' \
@@ -359,8 +385,6 @@ case "$COMMAND" in
       "TLS secret '$TLS_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
-    "${KUBE[@]}" get secret "$ACR_PULL_SECRET_NAME" -n "$NAMESPACE" > /dev/null 2>&1 || fail \
-      "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     deploy_overlay="$OVERLAY_DIR"
     cutover_complete="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/cutover-complete}')"
     if [[ "$cutover_complete" == "true" ]]; then
@@ -372,9 +396,11 @@ case "$COMMAND" in
       echo "Migration mode: Masterino will remain at zero replicas with no public Ingress."
     fi
     render_manifests "$deploy_overlay" \
-      | "${KUBE[@]}" apply --server-side --field-manager=kubectl --dry-run=server -f - > /dev/null
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
+        --force-conflicts --dry-run=server -f - > /dev/null
     render_manifests "$deploy_overlay" \
-      | "${KUBE[@]}" apply --server-side --field-manager=kubectl -f -
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
+        --force-conflicts -f -
     ;;
   start)
     verify_target mutation
