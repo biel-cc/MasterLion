@@ -2,14 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const originalOfficialCloudServer = process.env.OFFICIAL_CLOUD_SERVER;
 const originalDisableAppUpdate = process.env.DISABLE_APP_UPDATE;
+const originalDeviceGatewayUrl = process.env.DEVICE_GATEWAY_URL;
 
 beforeEach(() => {
   vi.resetModules();
+  delete process.env.DEVICE_GATEWAY_URL;
   delete process.env.DISABLE_APP_UPDATE;
   delete process.env.OFFICIAL_CLOUD_SERVER;
 });
 
 afterEach(() => {
+  if (originalDeviceGatewayUrl === undefined) {
+    delete process.env.DEVICE_GATEWAY_URL;
+  } else {
+    process.env.DEVICE_GATEWAY_URL = originalDeviceGatewayUrl;
+  }
+
   if (originalDisableAppUpdate === undefined) {
     delete process.env.DISABLE_APP_UPDATE;
   } else {
@@ -43,4 +51,13 @@ describe('desktop environment', () => {
 
     expect(getDesktopEnv().DISABLE_APP_UPDATE).toBe(true);
   });
+  it('preserves the build-time device gateway override in the runtime env', async () => {
+    process.env.DEVICE_GATEWAY_URL = 'https://mlai-test.bielcrystal.com/device-gateway';
+    const { getDesktopEnv } = await import('./env');
+
+    expect(getDesktopEnv().DEVICE_GATEWAY_URL).toBe(
+      'https://mlai-test.bielcrystal.com/device-gateway',
+    );
+  });
+
 });
