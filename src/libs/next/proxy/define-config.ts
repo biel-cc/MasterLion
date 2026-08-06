@@ -182,6 +182,7 @@ export function defineConfig() {
   const isPublicRoute = createRouteMatcher([
     // backend api
     '/api/v1(.*)', // OpenAPI routes should use OpenAPI auth (API Key/OIDC), not BetterAuth session
+    '/api/healthz',
     '/api/auth(.*)',
     '/api/webhooks(.*)',
     '/api/workflows(.*)',

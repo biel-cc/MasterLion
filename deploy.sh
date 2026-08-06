@@ -37,6 +37,8 @@ Commands:
   bootstrap                  Create the namespace and test StorageClass.
   create-secret [app-env] [bridge-env] [searxng-env] [market-env]
                               Create/update isolated app, bridge, SearXNG and Market Secrets.
+  create-searxng-secret [searxng-env]
+                              Create/update only the isolated test SearXNG Secret.
   create-gateway-secret [gateway-env]
                               Create/update the isolated test Device Gateway Secret.
   deploy                     Server dry-run and apply the selected overlay.
@@ -551,6 +553,18 @@ case "$COMMAND" in
         --from-env-file="$market_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     fi
     check_secret
+    ;;
+  create-searxng-secret)
+    [[ "$ENVIRONMENT" == "test" ]] || fail "create-searxng-secret is only used for test"
+    verify_target mutation
+    searxng_secret_file="${1:-}"
+    [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
+    grep -q 'CHANGE_ME' "$searxng_secret_file" && fail "SearXNG secret env file contains CHANGE_ME"
+    for key in "${required_searxng_secret_keys[@]}"; do
+      grep -Eq "^${key}=.+" "$searxng_secret_file" || fail "SearXNG secret env file is missing key: $key"
+    done
+    "${KUBE[@]}" create secret generic masterino-searxng-secret -n "$NAMESPACE" \
+      --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     ;;
   create-gateway-secret)
     [[ "$ENVIRONMENT" == "test" ]] || fail "create-gateway-secret is only used for the test environment"

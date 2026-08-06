@@ -4,7 +4,19 @@ import { pathToFileURL } from 'node:url';
 
 import YAML from 'yaml';
 
-const { parseAllDocuments } = YAML;
+const parseResources = (yaml) => {
+  if (typeof YAML.parseAllDocuments === 'function') {
+    return YAML.parseAllDocuments(yaml).map((document) => document.toJSON());
+  }
+
+  const parse = YAML.parse || YAML.eval;
+  assert.equal(typeof parse, 'function', 'installed yaml package does not provide a parser');
+  return yaml
+    .split(/^\s*---\s*$/mu)
+    .map((document) => document.trim())
+    .filter(Boolean)
+    .map((document) => parse(document));
+};
 
 const namespacedKinds = new Set([
   'ConfigMap',
@@ -20,7 +32,7 @@ const find = (resources, kind, name) =>
   resources.find((resource) => resource.kind === kind && resource.metadata?.name === name);
 
 export const verifyAckTestManifests = (yaml) => {
-  const resources = parseAllDocuments(yaml).map((document) => document.toJSON());
+  const resources = parseResources(yaml);
 
   for (const resource of resources) {
     if (namespacedKinds.has(resource.kind)) {
@@ -97,8 +109,8 @@ export const verifyAckTestManifests = (yaml) => {
     '/api/healthz',
   );
   assert.equal(
-    bridge.spec.template.spec.containers[0].readinessProbe.httpGet.path,
-    '/health',
+    bridge.spec.template.spec.containers[0].readinessProbe.tcpSocket.port,
+    'http',
   );
   assert.equal(
     searxng.spec.template.spec.containers[0].readinessProbe.httpGet.path,

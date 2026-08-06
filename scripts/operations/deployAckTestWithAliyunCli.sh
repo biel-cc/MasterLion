@@ -365,15 +365,6 @@ case "$ACK_TEST_ACTION" in
     prepare_secret_files
     prepare_searxng_secret_file
     bash ./deploy.sh --env test bootstrap
-    create_secret_args=()
-    if [[ -s "$APP_SECRET_FILE" && -s "$BRIDGE_SECRET_FILE" ]]; then
-      create_secret_args+=("$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE")
-    fi
-    if [[ -s "$SEARXNG_SECRET_FILE" ]]; then
-      create_secret_args+=("$SEARXNG_SECRET_FILE")
-    else
-      create_secret_args+=("")
-    fi
     if [[ -s "$APP_SECRET_FILE" && -s "$BRIDGE_SECRET_FILE" && -s "$MARKET_SECRET_FILE" ]]; then
       bash ./deploy.sh --env test create-secret \
         "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"

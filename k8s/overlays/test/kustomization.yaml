@@ -37,6 +37,7 @@ patches:
         value:
           name: POSTGRES_DB
           value: lobechat
+          valueFrom: null
   - target:
       kind: Deployment
       name: masterino-aihub-db-bridge
@@ -50,23 +51,6 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/4/valueFrom/configMapKeyRef/name
         value: masterino-bridge-config
-      - op: replace
-        path: /spec/template/spec/containers/0/readinessProbe
-        value:
-          httpGet:
-            path: /health
-            port: http
-          periodSeconds: 10
-          failureThreshold: 3
-      - op: replace
-        path: /spec/template/spec/containers/0/livenessProbe
-        value:
-          httpGet:
-            path: /health
-            port: http
-          initialDelaySeconds: 30
-          periodSeconds: 30
-          failureThreshold: 3
   - target:
       kind: Deployment
       name: masterino
@@ -96,6 +80,7 @@ patches:
           httpGet:
             path: /api/healthz
             port: http
+          tcpSocket: null
           periodSeconds: 10
           failureThreshold: 30
       - op: replace
@@ -104,6 +89,7 @@ patches:
           httpGet:
             path: /api/healthz
             port: http
+          tcpSocket: null
           periodSeconds: 5
           failureThreshold: 6
       - op: replace
@@ -112,6 +98,7 @@ patches:
           httpGet:
             path: /api/healthz
             port: http
+          tcpSocket: null
           periodSeconds: 30
           failureThreshold: 3
       - op: add

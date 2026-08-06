@@ -47,6 +47,12 @@ describe('defineConfig locale path-traversal hardening', () => {
     expect(rewrite).toBeNull();
   });
 
+  it('does not protect the Kubernetes health endpoint', async () => {
+    const rewrite = await run('http://localhost:3010/api/healthz');
+
+    expect(rewrite).toBeNull();
+  });
+
   it('redirects protected routes to signin on the current request origin when dynamic origins are enabled', async () => {
     vi.stubEnv('APP_URL_DYNAMIC', '1');
     vi.stubEnv('APP_URL_ALLOWED_HOSTS', '*');
