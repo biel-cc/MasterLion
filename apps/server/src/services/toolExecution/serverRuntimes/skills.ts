@@ -25,7 +25,11 @@ import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
-import { createSandboxService, normalizeSandboxCommandResult } from '@/server/services/sandbox';
+import {
+  createSandboxService,
+  getSandboxProviderKind,
+  normalizeSandboxCommandResult,
+} from '@/server/services/sandbox';
 import { SkillResourceService } from '@/server/services/skill/resource';
 import { preprocessLhCommand } from '@/server/services/toolExecution/preprocessLhCommand';
 
@@ -42,7 +46,7 @@ interface UserSettingsWithMarketToken {
 class SkillServerRuntimeService implements SkillRuntimeService {
   private resourceService: SkillResourceService;
   private skillModel: AgentSkillModel;
-  private marketService: MarketService;
+  private marketService?: MarketService;
   private fileService: FileService;
   private fileModel: FileModel;
   private serverDB: LobeChatDatabase;
@@ -52,7 +56,7 @@ class SkillServerRuntimeService implements SkillRuntimeService {
   constructor(options: {
     fileModel: FileModel;
     fileService: FileService;
-    marketService: MarketService;
+    marketService?: MarketService;
     resourceService: SkillResourceService;
     serverDB: LobeChatDatabase;
     skillModel: AgentSkillModel;
@@ -260,20 +264,24 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       throw new Error('userId is required for Skills execution');
     }
 
-    // Fetch market access token from user settings
+    const sandboxProvider = getSandboxProviderKind();
+
+    // Fetch Market identity only for the Market-backed sandbox provider.
     let marketAccessToken: string | undefined;
-    try {
-      const userModel = new UserModel(context.serverDB, context.userId);
-      const userSettings = await userModel.getUserSettings();
-      marketAccessToken = (userSettings as UserSettingsWithMarketToken | undefined)?.market
-        ?.accessToken;
-      log(
-        'Fetched market accessToken for user %s: %s',
-        context.userId,
-        marketAccessToken ? 'exists' : 'not found',
-      );
-    } catch (error) {
-      log('Failed to fetch market accessToken for user %s: %O', context.userId, error);
+    if (sandboxProvider === 'market') {
+      try {
+        const userModel = new UserModel(context.serverDB, context.userId);
+        const userSettings = await userModel.getUserSettings();
+        marketAccessToken = (userSettings as UserSettingsWithMarketToken | undefined)?.market
+          ?.accessToken;
+        log(
+          'Fetched market accessToken for user %s: %s',
+          context.userId,
+          marketAccessToken ? 'exists' : 'not found',
+        );
+      } catch (error) {
+        log('Failed to fetch market accessToken for user %s: %O', context.userId, error);
+      }
     }
 
     const skillModel = new AgentSkillModel(context.serverDB, context.userId, context.workspaceId);
@@ -282,10 +290,13 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       context.userId,
       context.workspaceId,
     );
-    const marketService = new MarketService({
-      accessToken: marketAccessToken,
-      userInfo: { userId: context.userId },
-    });
+    const marketService =
+      sandboxProvider === 'market'
+        ? new MarketService({
+            accessToken: marketAccessToken,
+            userInfo: { userId: context.userId },
+          })
+        : undefined;
     const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
     const fileModel = new FileModel(context.serverDB, context.userId, context.workspaceId);
 

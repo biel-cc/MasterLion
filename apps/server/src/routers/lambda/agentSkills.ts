@@ -64,10 +64,6 @@ const skillProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
 
   return opts.next({
     ctx: {
-      fileModel: new FileModel(ctx.serverDB, ctx.userId, workspaceId),
-      fileService: new FileService(ctx.serverDB, ctx.userId, workspaceId),
-      marketService: new MarketService({ userInfo: { userId: ctx.userId } }),
-      skillImporter: new SkillImporter(ctx.serverDB, ctx.userId, workspaceId),
       skillModel,
     },
   });
@@ -80,6 +76,35 @@ const skillProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
 // which was overly restrictive (member should be able to manage skills they
 // own, per the role-permission matrix in @lobechat/const/rbac).
 const skillWriteProcedure = skillProcedure.use(withScopedPermission('agent:update'));
+
+const skillImportProcedure = skillWriteProcedure.use(async (opts) => {
+  const { ctx } = opts;
+  return opts.next({
+    ctx: {
+      skillImporter: new SkillImporter(ctx.serverDB, ctx.userId, ctx.workspaceId ?? undefined),
+    },
+  });
+});
+
+const marketSkillImportProcedure = skillImportProcedure.use(async (opts) => {
+  const { ctx } = opts;
+  return opts.next({
+    ctx: {
+      marketService: new MarketService({ userInfo: { userId: ctx.userId } }),
+    },
+  });
+});
+
+const skillFileProcedure = skillProcedure.use(async (opts) => {
+  const { ctx } = opts;
+  const workspaceId = ctx.workspaceId ?? undefined;
+  return opts.next({
+    ctx: {
+      fileModel: new FileModel(ctx.serverDB, ctx.userId, workspaceId),
+      fileService: new FileService(ctx.serverDB, ctx.userId, workspaceId),
+    },
+  });
+});
 
 const skillResourceProcedure = skillProcedure.use(async (opts) => {
   const { ctx } = opts;
@@ -115,7 +140,7 @@ const updateSkillSchema = z.object({
 export const agentSkillsRouter = router({
   // ===== Create =====
 
-  create: skillWriteProcedure.input(createSkillSchema).mutation(async ({ ctx, input }) => {
+  create: skillImportProcedure.input(createSkillSchema).mutation(async ({ ctx, input }) => {
     try {
       return await ctx.skillImporter.createUserSkill(input);
     } catch (error) {
@@ -137,7 +162,7 @@ export const agentSkillsRouter = router({
     return ctx.skillModel.findById(input.id);
   }),
 
-  getByIdWithZipUrl: skillProcedure
+  getByIdWithZipUrl: skillFileProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
       const skill = await ctx.skillModel.findById(input.id);
@@ -168,7 +193,7 @@ export const agentSkillsRouter = router({
     return ctx.skillModel.findByName(input.name);
   }),
 
-  importFromGitHub: skillWriteProcedure
+  importFromGitHub: skillImportProcedure
     .input(
       z.object({
         branch: z.string().optional(),
@@ -183,7 +208,7 @@ export const agentSkillsRouter = router({
       }
     }),
 
-  importFromUrl: skillWriteProcedure
+  importFromUrl: skillImportProcedure
     .input(z.object({ url: z.string().url() }))
     .mutation(async ({ ctx, input }) => {
       try {
@@ -193,7 +218,7 @@ export const agentSkillsRouter = router({
       }
     }),
 
-  importFromZip: skillWriteProcedure
+  importFromZip: skillImportProcedure
     .input(z.object({ zipFileId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {
@@ -203,17 +228,15 @@ export const agentSkillsRouter = router({
       }
     }),
 
-  importFromMarket: skillWriteProcedure
+  importFromMarket: marketSkillImportProcedure
     .input(z.object({ identifier: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {
-        // Get download URL from market service
-        const downloadUrl = ctx.marketService.getSkillDownloadUrl(input.identifier);
-        // Import using the download URL
-        return await ctx.skillImporter.importFromUrl(
-          { url: downloadUrl },
-          { identifier: input.identifier, source: 'market' },
-        );
+        const archive = await ctx.marketService.downloadSkill(input.identifier);
+        return await ctx.skillImporter.importFromMarketArchive({
+          buffer: Buffer.from(archive.buffer),
+          identifier: input.identifier,
+        });
       } catch (error) {
         handleSkillImportError(error);
       }

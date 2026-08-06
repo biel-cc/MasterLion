@@ -1,0 +1,190 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: masterino-test
+resources:
+  - ../../base/market
+  - database-bootstrap.yaml
+images:
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market
+    newTag: v1.1.0
+patches:
+  - target:
+      kind: Ingress
+      name: masterino-market
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: masterino-market
+  - target:
+      kind: Service
+      name: masterino-market-runner
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: masterino-market-runner
+  - target:
+      kind: Deployment
+      name: masterino-market-runner
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: masterino-market-runner
+  - target:
+      kind: PodDisruptionBudget
+      name: masterino-market
+    patch: |-
+      $patch: delete
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: masterino-market
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: masterino-market
+    patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: masterino-market
+  - target:
+      kind: PodDisruptionBudget
+      name: masterino-market-runner
+    patch: |-
+      $patch: delete
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: masterino-market-runner
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: masterino-market-runner
+    patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: masterino-market-runner
+  - target:
+      kind: NetworkPolicy
+      name: masterino-market-runner-proxy-only-egress
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: masterino-market-runner-proxy-only-egress
+  - target:
+      kind: ConfigMap
+      name: masterino-market-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: masterino-market-config
+      data:
+        MARKET_OBJECT_STORAGE_ENDPOINT: https://oss-cn-shenzhen.aliyuncs.com
+        MARKET_OBJECT_STORAGE_BUCKET: masterino-market-test-bielcrystal
+        MARKET_OBJECT_STORAGE_REGION: cn-shenzhen
+        MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: '0'
+        MARKET_PUBLIC_BASE_URL: https://mlai-test.bielcrystal.com/market
+        MARKET_OAUTH_REDIRECT_ORIGINS: https://mlai-test.bielcrystal.com
+        MARKET_TRUSTED_CLIENT_IDS: masterino
+  - target:
+      kind: Deployment
+      name: masterino-market
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: masterino-acr-fixed
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          seccompProfile:
+            type: RuntimeDefault
+  - target:
+      kind: Job
+      name: masterino-market-migrate
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: masterino-acr-fixed
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          seccompProfile:
+            type: RuntimeDefault
+  - target:
+      kind: NetworkPolicy
+      name: masterino-market-api-no-public-egress
+    patch: |-
+      - op: replace
+        path: /spec/ingress
+        value:
+          - from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: masterino
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: ingress-nginx
+            ports:
+              - protocol: TCP
+                port: 3220
+      - op: replace
+        path: /spec/egress
+        value:
+          - to:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: postgres
+            ports:
+              - protocol: TCP
+                port: 5432
+          - to:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: redis
+            ports:
+              - protocol: TCP
+                port: 6379
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+            ports:
+              - protocol: UDP
+                port: 53
+              - protocol: TCP
+                port: 53
+          - to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  except:
+                    - 10.0.0.0/8
+                    - 100.64.0.0/10
+                    - 127.0.0.0/8
+                    - 169.254.0.0/16
+                    - 172.16.0.0/12
+                    - 192.168.0.0/16
+            ports:
+              - protocol: TCP
+                port: 443

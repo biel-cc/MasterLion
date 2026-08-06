@@ -356,6 +356,41 @@ describe('SkillImporter', () => {
     });
   });
 
+  describe('importFromMarketArchive', () => {
+    it('imports an authenticated Market archive without remote URL fetching', async () => {
+      const archive = Buffer.from('trusted-market-archive');
+      mockParserInstance.parseZipPackage.mockResolvedValue({
+        content: '# Market Skill',
+        manifest: { description: 'Market skill', name: 'Market Skill' },
+        resources: new Map(),
+        zipHash: undefined,
+      });
+
+      const result = await importer.importFromMarketArchive({
+        buffer: archive,
+        identifier: 'office-documents',
+      });
+
+      expect(result.status).toBe('created');
+      expect(result.skill).toMatchObject({
+        identifier: 'office-documents',
+        source: 'market',
+      });
+      expect(mockParserInstance.parseZipPackage).toHaveBeenCalledWith(archive);
+      expect(mockSsrfSafeFetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects Market archives larger than 16 MiB before parsing', async () => {
+      await expect(
+        importer.importFromMarketArchive({
+          buffer: Buffer.alloc(16 * 1024 * 1024 + 1),
+          identifier: 'oversized-market-skill',
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_FAILED' });
+      expect(mockParserInstance.parseZipPackage).not.toHaveBeenCalled();
+    });
+  });
+
   describe('importFromGitHub', () => {
     it('should import skill from GitHub repository', async () => {
       mockGitHubInstance.parseRepoUrl.mockReturnValue({

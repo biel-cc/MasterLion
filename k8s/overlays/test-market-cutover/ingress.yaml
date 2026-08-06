@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: masterino-market
+  namespace: masterino-test
+  labels:
+    app.kubernetes.io/name: masterino-market
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: test
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: 'true'
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-body-size: '100m'
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '300'
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mlai-test.bielcrystal.com
+      secretName: 20261122bielcrystal.com
+  rules:
+    - host: mlai-test.bielcrystal.com
+      http:
+        paths:
+          - path: /market(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: masterino-market
+                port:
+                  number: 3220

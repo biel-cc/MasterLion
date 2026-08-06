@@ -151,7 +151,7 @@ const MarketSkillDetail = memo<MarketSkillDetailProps>(({ identifier }) => {
   const [zipContentMap, setZipContentMap] = useState<Record<string, string>>({});
   const [zipTree, setZipTree] = useState<SkillResourceTreeNode[]>([]);
 
-  const downloadUrl = marketApiService.getSkillDownloadUrl(encodeURIComponent(identifier));
+  const downloadUrl = marketApiService.getSkillDownloadUrl(identifier);
 
   useEffect(() => {
     if (installedSkill) return;

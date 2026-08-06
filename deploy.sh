@@ -8,6 +8,7 @@ EXPECTED_ACK_REGION="cn-shenzhen"
 DEFAULT_TEST_CONTEXT="ack-c23ea84b-masterlion-test"
 MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
+MARKET_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market"
 IMAGE_TAG_MARKER="v1.1.0"
 TLS_SECRET_NAME="20261122bielcrystal.com"
 ACR_PULL_SECRET_NAME="acr-credential-secret-aggregation"
@@ -27,14 +28,15 @@ Required for mutating commands:
   ACK_API_SERVER             Exact API server URL printed by the preflight command.
   MASTERINO_IMAGE_DIGEST     Immutable sha256: digest for the reviewed Masterino image.
   BRIDGE_IMAGE_DIGEST        Immutable sha256: digest for the reviewed Aihub DB Bridge image.
+  MARKET_IMAGE_DIGEST        Immutable sha256: digest for the reviewed Market image (test only).
 
 Commands:
   preflight                  Read-only ACK capability and identity checks.
   render                     Render manifests with immutable image digests.
   validate                   Client-side validation of rendered manifests.
   bootstrap                  Create the namespace and test StorageClass.
-  create-secret [app-env] [bridge-env] [searxng-env]
-                              Create/update isolated app, bridge and SearXNG Secrets.
+  create-secret [app-env] [bridge-env] [searxng-env] [market-env]
+                              Create/update isolated app, bridge, SearXNG and Market Secrets.
   deploy                     Server dry-run and apply the selected overlay.
   start                      Scale Masterino to one replica for private validation.
   cutover                    Move the test Ingress from the old namespace to Masterino.
@@ -74,6 +76,8 @@ case "$ENVIRONMENT" in
     OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test"
     CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-cutover"
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-migration"
+    MARKET_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market"
+    MARKET_CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market-cutover"
     ROLLBACK_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-ingress.yaml"
     SOURCE_VERIFICATION_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-verification-ingress.yaml"
     SOURCE_INGRESS_NAME="masterlion-test-ingress"
@@ -150,6 +154,14 @@ render_manifests() {
     -e "s|${BRIDGE_IMAGE}:${IMAGE_TAG_MARKER}|${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}|g"
 }
 
+render_market_manifests() {
+  local render_dir="${1:-$MARKET_OVERLAY_DIR}"
+  require_digest MARKET_IMAGE_DIGEST "${MARKET_IMAGE_DIGEST:-}"
+
+  kubectl kustomize "$render_dir" | sed \
+    -e "s|${MARKET_IMAGE}:${IMAGE_TAG_MARKER}|${MARKET_IMAGE}@${MARKET_IMAGE_DIGEST}|g"
+}
+
 required_secret_keys=(
   KEY_VAULTS_SECRET AUTH_SECRET JWKS_KEY POSTGRES_PASSWORD DATABASE_URL
   REDIS_PASSWORD REDIS_URL S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
@@ -157,7 +169,7 @@ required_secret_keys=(
 )
 
 if [[ "$ENVIRONMENT" == "test" ]]; then
-  required_secret_keys+=(AUTH_SSO_PROVIDERS)
+  required_secret_keys+=(AUTH_SSO_PROVIDERS MARKET_TRUSTED_CLIENT_SECRET)
 fi
 
 if [[ "$ENVIRONMENT" == "production" ]]; then
@@ -166,6 +178,13 @@ fi
 
 required_bridge_secret_keys=(AIHUB_BRIDGE_TOKEN AIHUB_READONLY_DATABASE_URL)
 required_searxng_secret_keys=(SEARXNG_SECRET)
+required_market_secret_keys=(
+  MARKET_DATABASE_PASSWORD MARKET_DATABASE_URL MARKET_REDIS_URL
+  MARKET_TRUSTED_CLIENT_SECRET MARKET_CREDENTIAL_ENCRYPTION_KEY
+  MARKET_IMPORT_SIGNING_KEY MARKET_RUNNER_INTERNAL_TOKEN
+  MARKET_OBJECT_STORAGE_ACCESS_KEY_ID MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY
+  MARKET_OAUTH_CLIENTS_JSON MARKET_ADMIN_USER_IDS
+)
 
 searxng_enabled() {
   [[ "$ENVIRONMENT" == "test" ]] || return 1
@@ -199,6 +218,18 @@ check_secret() {
       "masterino-onlyboxes-secret is missing key: ONLYBOXES_JIT_SIGNING_KEY"
     "${KUBE[@]}" get configmap masterino-onlyboxes-ca -n "$NAMESPACE" > /dev/null 2>&1 || fail \
       "masterino-onlyboxes-ca is missing in namespace '$NAMESPACE'"
+    "${KUBE[@]}" get secret masterino-market-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+      "masterino-market-secret is missing in namespace '$NAMESPACE'"
+    for key in "${required_market_secret_keys[@]}"; do
+      value="$("${KUBE[@]}" get secret masterino-market-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+      [[ -n "$value" ]] || fail "masterino-market-secret is missing key: $key"
+    done
+    app_market_secret="$("${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" \
+      -o jsonpath='{.data.MARKET_TRUSTED_CLIENT_SECRET}')"
+    market_market_secret="$("${KUBE[@]}" get secret masterino-market-secret -n "$NAMESPACE" \
+      -o jsonpath='{.data.MARKET_TRUSTED_CLIENT_SECRET}')"
+    [[ "$app_market_secret" == "$market_market_secret" ]] || fail \
+      "MARKET_TRUSTED_CLIENT_SECRET differs between application and Market Secrets"
   fi
   if searxng_enabled; then
     "${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
@@ -250,12 +281,43 @@ case "$COMMAND" in
     ;;
   render)
     render_manifests
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      render_market_manifests
+    fi
     ;;
   validate)
     rendered="$(render_manifests)"
     printf '%s\n' "$rendered" | grep -q "image: ${MASTERINO_IMAGE}@${MASTERINO_IMAGE_DIGEST}"
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
+      market_rendered="$(render_market_manifests)"
+      printf '%s\n' "$market_rendered" | grep -q "image: ${MARKET_IMAGE}@${MARKET_IMAGE_DIGEST}"
+      printf '%s\n' "$market_rendered" | grep -q 'name: masterino-market-db-bootstrap'
+      printf '%s\n' "$market_rendered" | grep -q 'name: masterino-market-migrate'
+      printf '%s\n' "$market_rendered" | grep -q 'replicas: 1'
+      if printf '%s\n' "$market_rendered" | grep -q 'name: masterino-market-runner'; then
+        fail "test Market must not deploy Connector Runner"
+      fi
+      if printf '%s\n' "$market_rendered" | grep -q '^kind: Ingress$'; then
+        fail "test Market staging manifests unexpectedly contain an Ingress"
+      fi
+      market_cutover_rendered="$(render_market_manifests "$MARKET_CUTOVER_OVERLAY_DIR")"
+      printf '%s\n' "$market_cutover_rendered" | grep -q 'host: mlai-test.bielcrystal.com'
+      printf '%s\n' "$market_cutover_rendered" | grep -Fq 'path: /market(/|$)(.*)'
+      market_config_invariants=(
+        'MARKET_BASE_URL: http://masterino-market:3220'
+        'NEXT_PUBLIC_MARKET_BASE_URL: https://mlai-test.bielcrystal.com/market'
+        'MARKET_TRUSTED_CLIENT_ID: masterino'
+        'AGENTS_INDEX_URL: http://masterino-market:3220/indexes/agents'
+        'PLUGINS_INDEX_URL: http://masterino-market:3220/indexes/plugins'
+      )
+      for invariant in "${market_config_invariants[@]}"; do
+        printf '%s\n' "$rendered" | grep -Fq "$invariant" \
+          || fail "test Market configuration is missing required value: $invariant"
+      done
+      if printf '%s\n' "$rendered" | grep -q 'MARKET_ALLOW_EXTERNAL_FALLBACK'; then
+        fail "test application must not enable external Market fallback"
+      fi
       printf '%s\n' "$rendered" | grep -q 'storageClassName: masterino-test-essd-retain'
       if printf '%s\n' "$rendered" | grep -q '^kind: Namespace$'; then
         fail "test runtime manifests must not reapply the bootstrap Namespace"
@@ -361,13 +423,18 @@ case "$COMMAND" in
     secret_file="${1:-$OVERLAY_DIR/secret.env}"
     bridge_secret_file="${2:-$OVERLAY_DIR/bridge-secret.env}"
     searxng_secret_file="${3:-$OVERLAY_DIR/searxng-secret.env}"
+    market_secret_file="${4:-$OVERLAY_DIR/market-secret.env}"
     [[ -f "$secret_file" ]] || fail "secret env file does not exist: $secret_file"
     [[ -f "$bridge_secret_file" ]] || fail "bridge secret env file does not exist: $bridge_secret_file"
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
+      if searxng_enabled; then
+        [[ -f "$searxng_secret_file" ]] || fail "SearXNG secret env file does not exist: $searxng_secret_file"
+      fi
+      [[ -f "$market_secret_file" ]] || fail "Market secret env file does not exist: $market_secret_file"
     fi
     if grep -q 'CHANGE_ME' "$secret_file" || grep -q 'CHANGE_ME' "$bridge_secret_file" \
-      || { [[ "$ENVIRONMENT" == "test" ]] && grep -q 'CHANGE_ME' "$searxng_secret_file"; }; then
+      || { [[ "$ENVIRONMENT" == "test" ]] && { { searxng_enabled && grep -q 'CHANGE_ME' "$searxng_secret_file"; } \
+        || grep -q 'CHANGE_ME' "$market_secret_file"; }; }; then
       fail "a secret env file still contains CHANGE_ME placeholders"
     fi
     for key in "${required_secret_keys[@]}"; do
@@ -377,9 +444,26 @@ case "$COMMAND" in
       grep -Eq "^${key}=.+" "$bridge_secret_file" || fail "bridge secret env file is missing key: $key"
     done
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      for key in "${required_searxng_secret_keys[@]}"; do
-        grep -Eq "^${key}=.+" "$searxng_secret_file" || fail "SearXNG secret env file is missing key: $key"
+      if searxng_enabled; then
+        for key in "${required_searxng_secret_keys[@]}"; do
+          grep -Eq "^${key}=.+" "$searxng_secret_file" || fail "SearXNG secret env file is missing key: $key"
+        done
+      fi
+      for key in "${required_market_secret_keys[@]}"; do
+        grep -Eq "^${key}=.+" "$market_secret_file" || fail "Market secret env file is missing key: $key"
       done
+      app_market_secret="$(sed -n 's/^MARKET_TRUSTED_CLIENT_SECRET=//p' "$secret_file")"
+      market_market_secret="$(sed -n 's/^MARKET_TRUSTED_CLIENT_SECRET=//p' "$market_secret_file")"
+      [[ "$app_market_secret" == "$market_market_secret" ]] || fail \
+        "MARKET_TRUSTED_CLIENT_SECRET must match in application and Market env files"
+      [[ "$app_market_secret" =~ ^lobehub-market_tcs_[0-9a-fA-F]{64}$ ]] || fail \
+        "MARKET_TRUSTED_CLIENT_SECRET must be lobehub-market_tcs_ followed by 64 hex characters"
+      market_database_password="$(sed -n 's/^MARKET_DATABASE_PASSWORD=//p' "$market_secret_file")"
+      [[ "$market_database_password" =~ ^[A-Za-z0-9_-]+$ ]] || fail \
+        "MARKET_DATABASE_PASSWORD must be URL-safe"
+      market_database_url="$(sed -n 's/^MARKET_DATABASE_URL=//p' "$market_secret_file")"
+      [[ "$market_database_url" == "postgresql://masterino_market:${market_database_password}@masterino-postgres:5432/masterino_market" ]] || fail \
+        "MARKET_DATABASE_URL must use the dedicated masterino_market role and database"
     fi
     s3_key="$(sed -n 's/^S3_ACCESS_KEY=//p' "$secret_file")"
     s3_key_id="$(sed -n 's/^S3_ACCESS_KEY_ID=//p' "$secret_file")"
@@ -394,8 +478,12 @@ case "$COMMAND" in
     "${KUBE[@]}" create secret generic masterino-bridge-secret -n "$NAMESPACE" \
       --from-env-file="$bridge_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     if [[ "$ENVIRONMENT" == "test" ]]; then
-      "${KUBE[@]}" create secret generic masterlion-searxng-secret -n "$NAMESPACE" \
-        --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+      if searxng_enabled; then
+        "${KUBE[@]}" create secret generic masterlion-searxng-secret -n "$NAMESPACE" \
+          --from-env-file="$searxng_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+      fi
+      "${KUBE[@]}" create secret generic masterino-market-secret -n "$NAMESPACE" \
+        --from-env-file="$market_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     fi
     check_secret
     ;;
@@ -408,6 +496,34 @@ case "$COMMAND" in
       "ACR pull secret '$ACR_PULL_SECRET_NAME' is missing in namespace '$NAMESPACE'"
     deploy_overlay="$OVERLAY_DIR"
     cutover_complete="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/cutover-complete}')"
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      # Jobs have immutable Pod templates. Recreate only these exact, retained-data
+      # jobs so each reviewed Market image runs its bootstrap and migrations.
+      "${KUBE[@]}" delete job masterino-market-db-bootstrap masterino-market-migrate \
+        -n "$NAMESPACE" --ignore-not-found --wait=true
+      "${KUBE[@]}" apply -n "$NAMESPACE" -f "$MARKET_OVERLAY_DIR/database-bootstrap.yaml"
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-db-bootstrap --timeout=5m
+
+      render_market_manifests "$MARKET_OVERLAY_DIR" \
+        | "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts --dry-run=server -f - > /dev/null
+      render_market_manifests "$MARKET_OVERLAY_DIR" \
+        | "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts -f -
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-migrate --timeout=10m
+      "${KUBE[@]}" rollout status deployment/masterino-market -n "$NAMESPACE" --timeout=10m
+
+      # Expose the TLS route only after /ready has made the API rollout healthy.
+      if [[ "$cutover_complete" == "true" ]]; then
+        "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts --dry-run=server \
+          -f "$MARKET_CUTOVER_OVERLAY_DIR/ingress.yaml" > /dev/null
+        "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts -f "$MARKET_CUTOVER_OVERLAY_DIR/ingress.yaml"
+      fi
+    fi
     if [[ "$cutover_complete" == "true" ]]; then
       if [[ "$ENVIRONMENT" == "test" ]]; then
         deploy_overlay="$CUTOVER_OVERLAY_DIR"
@@ -497,6 +613,11 @@ case "$COMMAND" in
       "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
     fi
     if [[ "$ENVIRONMENT" == "test" ]]; then
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-db-bootstrap --timeout=5m
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-migrate --timeout=10m
+      "${KUBE[@]}" rollout status deployment/masterino-market -n "$NAMESPACE" --timeout=10m
       worker_replicas="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')"
       if [[ "$worker_replicas" != "0" ]]; then
         "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
