@@ -32,7 +32,7 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
       this.emit('status_changed', 'connecting');
       const result = _MockGatewayClient.nextConnectResult;
       _MockGatewayClient.nextConnectResult = undefined;
-      return result;
+      return result ?? { success: true };
     });
 
     disconnect = vi.fn(async () => {

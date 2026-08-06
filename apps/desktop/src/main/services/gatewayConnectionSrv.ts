@@ -392,8 +392,7 @@ export default class GatewayConnectionService extends ServiceModule {
 
     const result = await client.connect();
     initialConnectPending = false;
-    // Older mocked/embedded clients returned void after starting a connection.
-    if (result && !result.success) {
+    if (!result.success) {
       this.setConnectionError({
         code: result.code,
         message: result.error,
@@ -402,9 +401,9 @@ export default class GatewayConnectionService extends ServiceModule {
       return { error: result.error, success: false };
     }
 
-    const authenticatedUserId = result?.userId || userId;
+    const authenticatedUserId = result.userId || userId;
     expectedAuthenticatedUserId = authenticatedUserId || undefined;
-    if (result?.userId && userId && result.userId !== userId) {
+    if (result.userId && userId && result.userId !== userId) {
       await client.disconnect();
       this.failConnection('AUTH_FAILED', 'Authenticated user does not match token subject', false);
       return { error: 'Authenticated user does not match token subject', success: false };
