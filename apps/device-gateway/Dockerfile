@@ -1,4 +1,6 @@
-FROM golang:1.26-alpine AS builder
+ARG BASE_REGISTRY="docker.io/library"
+
+FROM ${BASE_REGISTRY}/golang:1.26-alpine AS builder
 
 ARG GATEWAY_COMMIT=1abeb8a551fbb5d017ae2031ded775a129555834
 ARG GATEWAY_SOURCE_SHA256=f6d8dbe3e39569587b42ea67c683bc50903b6a30bc6b6f6d05666c72c8794444
@@ -14,7 +16,7 @@ RUN set -eux; \
     CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
       -o /out/device-gateway-go ./cmd/device-gateway-go
 
-FROM alpine:3.24
+FROM ${BASE_REGISTRY}/alpine:3.24
 
 RUN apk add --no-cache ca-certificates \
   && adduser -D -H -u 10001 appuser
