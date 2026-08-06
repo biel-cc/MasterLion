@@ -256,6 +256,7 @@ case "$COMMAND" in
     if [[ "$ENVIRONMENT" == "test" ]]; then
       printf '%s\n' "$rendered" \
         | grep -q "image: ${DEVICE_GATEWAY_IMAGE}@sha256:140fef6157de6505536c0689f409ca87dbcf1547470ad2301293cd199fb9029e"
+      printf '%s\n' "$rendered" | grep -q 'runAsUser: 10001'
       printf '%s\n' "$rendered" | grep -q 'name: masterino-device-gateway'
       printf '%s\n' "$rendered" | grep -q 'DEVICE_GATEWAY_URL: http://masterino-device-gateway:8788'
       printf '%s\n' "$rendered" \
