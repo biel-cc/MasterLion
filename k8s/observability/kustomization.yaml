@@ -6,11 +6,10 @@ resources:
   - clickhouse.yaml
   - langfuse.yaml
   - network-policy.yaml
-  - backup.yaml
   - ingress.yaml
 configMapGenerator:
   - name: langfuse-config
     envs:
-      - langfuse.env
+      - langfuse-config.properties
 generatorOptions:
   disableNameSuffixHash: true

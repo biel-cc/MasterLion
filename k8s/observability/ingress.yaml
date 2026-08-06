@@ -7,10 +7,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: [langfuse.internal.bielcrystal.com]
+    - hosts: [langfuse-internal.bielcrystal.com]
       secretName: 20261122bielcrystal.com
   rules:
-    - host: langfuse.internal.bielcrystal.com
+    - host: langfuse-internal.bielcrystal.com
       http:
         paths:
           - path: /

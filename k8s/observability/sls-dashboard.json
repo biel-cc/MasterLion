@@ -1,0 +1,94 @@
+{
+  "attribute": {
+    "type": "grid"
+  },
+  "charts": [
+    {
+      "action": {},
+      "display": {
+        "displayName": "24 小时事件总数",
+        "height": 2,
+        "width": 2.5,
+        "xAxis": ["events"],
+        "xPos": 0,
+        "yAxis": ["events"],
+        "yPos": 0
+      },
+      "search": {
+        "end": "now",
+        "logstore": "product-events",
+        "query": "* | select count(1) as events",
+        "start": "-86400s",
+        "topic": ""
+      },
+      "title": "events-total",
+      "type": "number"
+    },
+    {
+      "action": {},
+      "display": {
+        "displayName": "24 小时活跃用户",
+        "height": 2,
+        "width": 2.5,
+        "xAxis": ["users"],
+        "xPos": 2.5,
+        "yAxis": ["users"],
+        "yPos": 0
+      },
+      "search": {
+        "end": "now",
+        "logstore": "product-events",
+        "query": "* | select approx_distinct(userId) as users",
+        "start": "-86400s",
+        "topic": ""
+      },
+      "title": "active-users",
+      "type": "number"
+    },
+    {
+      "action": {},
+      "display": {
+        "displayName": "7 天事件趋势",
+        "height": 4,
+        "width": 5,
+        "xAxis": ["time"],
+        "xPos": 0,
+        "yAxis": ["events"],
+        "yPos": 2
+      },
+      "search": {
+        "end": "now",
+        "logstore": "product-events",
+        "query": "* | select time_series(__time__, '1h', '%m-%d %H', '0') as time, count(1) as events group by time order by time",
+        "start": "-604800s",
+        "topic": ""
+      },
+      "title": "event-trend",
+      "type": "linepro"
+    },
+    {
+      "action": {},
+      "display": {
+        "displayName": "事件类型 Top 20",
+        "height": 4,
+        "width": 5,
+        "xAxis": ["name"],
+        "xPos": 5,
+        "yAxis": ["events"],
+        "yPos": 2
+      },
+      "search": {
+        "end": "now",
+        "logstore": "product-events",
+        "query": "* | select name, count(1) as events group by name order by events desc limit 20",
+        "start": "-604800s",
+        "topic": ""
+      },
+      "title": "event-breakdown",
+      "type": "table"
+    }
+  ],
+  "dashboardName": "masterino-product-telemetry",
+  "description": "产品行为事件、活跃用户和跨系统 traceId 查看入口",
+  "displayName": "Masterino 产品遥测"
+}

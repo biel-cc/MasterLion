@@ -1,0 +1,48 @@
+{
+  "configName": "masterino-product-events",
+  "inputDetail": {
+    "adjustTimezone": false,
+    "advanced": {
+      "k8s": {
+        "K8sContainerRegex": "^masterino$",
+        "K8sNamespaceRegex": "^masterlion$"
+      }
+    },
+    "delayAlarmBytes": 0,
+    "delaySkipBytes": 0,
+    "discardNonUtf8": false,
+    "discardUnmatch": false,
+    "dockerFile": true,
+    "enableRawLog": false,
+    "fileEncoding": "utf8",
+    "filePattern": "product-events.jsonl",
+    "filterKey": [],
+    "filterRegex": [],
+    "localStorage": true,
+    "logBeginRegex": ".*",
+    "logPath": "/var/log/masterino",
+    "logTimezone": "",
+    "logType": "json_log",
+    "maxDepth": 0,
+    "maxSendRate": -1,
+    "mergeType": "topic",
+    "preserve": true,
+    "preserveDepth": 0,
+    "priority": 0,
+    "sendRateExpire": 0,
+    "sensitive_keys": [],
+    "tailExisted": false,
+    "timeFormat": "",
+    "timeKey": "",
+    "topicFormat": "none"
+  },
+  "inputType": "file",
+  "logSample": "",
+  "outputDetail": {
+    "endpoint": "cn-shenzhen-b-intranet.log.aliyuncs.com",
+    "logstoreName": "product-events",
+    "region": "cn-shenzhen-b",
+    "telemetryType": "logs"
+  },
+  "outputType": "LogService"
+}

@@ -37,6 +37,11 @@ try {
 
   $bundle | kubectl apply -f -
   if ($LASTEXITCODE -ne 0) { throw 'kubectl apply failed' }
+
+  kubectl -n kube-system patch deployment clickhouse-operator `
+    --type merge `
+    --patch '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"acr-credential-secret-aggregation"}]}}}}'
+  if ($LASTEXITCODE -ne 0) { throw 'Failed to configure the operator ACR image pull secret' }
 } finally {
   Remove-Item -LiteralPath $bundlePath -Force -ErrorAction SilentlyContinue
 }

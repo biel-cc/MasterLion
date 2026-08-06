@@ -2,6 +2,8 @@
 
 This overlay deploys Langfuse v3 web/worker and a one-shard, one-replica ClickHouse 25.8 LTS instance in `masterino-observability`. Production PostgreSQL is reached through the existing private `DATABASE_URL`; Redis remains in the historical `masterlion` namespace. Masterino does not depend on this stack for chat availability.
 
+The UI is available inside the ACK VPC at `https://langfuse-internal.bielcrystal.com`. Its PrivateZone record targets the ingress NLB's private addresses; it is not published in public DNS.
+
 ## Prerequisites
 
 1. Install the ClickHouse operator CRDs/controller used by `ClickHouseInstallation`. This overlay deliberately uses the mature Altinity operator: unlike the new `clickhouse.com/v1alpha1` operator, it supports the approved single-node/no-Keeper topology. The installer verifies the official `release-0.27.0` bundle checksum and rewrites both controller images to immutable ACR digests:
@@ -20,6 +22,26 @@ This overlay deploys Langfuse v3 web/worker and a one-shard, one-replica ClickHo
 
 5. Create the shared PostgreSQL roles/databases by deploying the production overlay's `langfuse-db-bootstrap` Job after adding its two passwords to `masterino-secret`.
 
+6. Apply the versioned SLS collector configuration and product dashboard with the local `aliyun` CLI. This deliberately avoids the cluster's unhealthy telemetry-operator webhook:
+
+   ```powershell
+   .\scripts\operations\applySlsTelemetryDefinitions.ps1 `
+     -Project k8s-log-c23ea84b986c446d5b3fa9227962e77f4 `
+     -MachineGroup k8s-group-c23ea84b986c446d5b3fa9227962e77f4
+   ```
+
+   The definitions are `sls-product-events-config.json` and `sls-dashboard.json`. The script creates or updates them and binds the collector configuration to the machine group.
+
+7. If the ACK enterprise DNS resolver cannot reach the SLS project endpoints, configure only the managed LoongCollector pods (not cluster-wide DNS) and mount the custom machine-group identifier required by LoongCollector 3.x:
+
+   ```powershell
+   .\scripts\operations\configureAckLoongCollector.ps1 `
+     -ClusterId c23ea84b986c446d5b3fa9227962e77f4 `
+     -Project k8s-log-c23ea84b986c446d5b3fa9227962e77f4
+   ```
+
+   The SLS machine group must use `machineIdentifyType=userdefined`, an empty `groupType`, and `k8s-group-<clusterId>` as its sole machine identifier.
+
 ## Secrets and rendering
 
 Create the secret without committing its source file:
@@ -32,7 +54,7 @@ kubectl -n masterino-observability create secret generic langfuse-secret --from-
 
 Use `scripts/operations/renderAckObservability.ps1` with four verified ACR image digests. The script only renders; review the output before applying through the existing guarded ACK workflow.
 
-The Redis connection string ends in `/1`, isolating Langfuse from Masterino DB 0. Do not set `REDIS_KEY_PREFIX`: current Langfuse BullMQ/ioredis queues do not safely support the generic ioredis key-prefix option. DB 1 is the enforced isolation boundary.
+The Redis connection string ends in `/1`, isolating Langfuse from Masterino DB 0. `REDIS_KEY_PREFIX=langfuse:` adds a second collision boundary supported by current Langfuse releases.
 
 ## Existing PostgreSQL capacity
 
@@ -41,8 +63,8 @@ The live production PostgreSQL endpoint is external to ACK. Its CPU, memory, and
 ## Retention and operations
 
 - Langfuse headless initialization creates one organization/project and configures project retention to 90 days.
-- The daily and weekly ClickHouse backup CronJobs upload to separate OSS prefixes. Run a quarterly restore into an isolated namespace and record row counts/checksums.
-- Configure ARMS/CloudMonitor alarms for PostgreSQL connections/disk, Redis memory/rejected writes/AOF/queue length, ClickHouse disk/merge backlog, Langfuse worker backlog, failed backup Jobs, and SLS ingestion/storage cost.
+- The ClickHouse backup sidecar shares `/var/lib/clickhouse` with the server and uses `server --watch` to create daily incremental backups with a weekly full baseline. The OSS lifecycle removes backup objects after 30 days. Run a quarterly restore into an isolated namespace and record row counts/checksums.
+- Configure ARMS/CloudMonitor alarms for PostgreSQL connections/disk, Redis memory/rejected writes/AOF/queue length, ClickHouse disk/merge backlog, Langfuse worker backlog, backup API failures, and SLS ingestion/storage cost.
 - At 70 GiB ClickHouse disk use, sustained insert latency, or stronger availability requirements, stop expanding this topology and plan the three-replica migration.
 
 ## Release checks

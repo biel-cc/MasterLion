@@ -7,7 +7,6 @@ resources:
   - aliases.yaml
   - memory-worker.yaml
   - langfuse-db-bootstrap.yaml
-  - product-telemetry-log.yaml
   - pdb.yaml
   - searxng.yaml
   - wecom-verification.yaml
@@ -23,7 +22,7 @@ generatorOptions:
 images:
   - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
     newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino
-    digest: sha256:6352b10ed6735be154b536b7d60223bde5e18534bdd844f6dc71e89c3f86e39d
+    digest: sha256:1ea602487e3667b608b9420afa5ad577c6312c774d4ca0155eed8cd913147c94
   - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge
     newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge
     digest: sha256:21bcc3e917e55f2a889b5bfda771c1f4b94a8d97a4a9e573b2e350fe1434f426
@@ -96,6 +95,9 @@ patches:
       kind: Deployment
       name: masterino
     patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
       - op: add
         path: /spec/strategy
         value:

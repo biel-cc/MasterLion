@@ -30,6 +30,8 @@ spec:
         app.kubernetes.io/part-of: masterino-observability
     spec:
       automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: acr-credential-secret-aggregation
       containers:
         - name: web
           image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/langfuse-web:3-digest-marker
@@ -72,6 +74,8 @@ spec:
         app.kubernetes.io/part-of: masterino-observability
     spec:
       automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: acr-credential-secret-aggregation
       containers:
         - name: worker
           image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/langfuse-worker:3-digest-marker

@@ -10,6 +10,16 @@ metadata:
     app.kubernetes.io/part-of: masterino-observability
 spec:
   configuration:
+    users:
+      langfuse/access_management: 1
+      langfuse/networks/ip: '::/0'
+      langfuse/password:
+        valueFrom:
+          secretKeyRef:
+            name: langfuse-secret
+            key: CLICKHOUSE_PASSWORD
+      langfuse/profile: default
+      langfuse/quota: default
     clusters:
       - name: langfuse
         layout:
@@ -26,22 +36,12 @@ spec:
     podTemplates:
       - name: clickhouse
         spec:
+          imagePullSecrets:
+            - name: acr-credential-secret-aggregation
           containers:
             - name: clickhouse
               image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/clickhouse-server:25.8-lts-digest-marker
               imagePullPolicy: IfNotPresent
-              env:
-                - name: CLICKHOUSE_DB
-                  value: default
-                - name: CLICKHOUSE_USER
-                  value: langfuse
-                - name: CLICKHOUSE_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: langfuse-secret
-                      key: CLICKHOUSE_PASSWORD
-                - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
-                  value: '1'
               resources:
                 requests:
                   cpu: '2'
@@ -49,6 +49,45 @@ spec:
                 limits:
                   cpu: '2'
                   memory: 8Gi
+            # clickhouse-backup must share ClickHouse's data directory. Running it
+            # in a remote CronJob would only produce schema-only backups.
+            - name: clickhouse-backup
+              image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/clickhouse-backup:2.7.0-digest-marker
+              imagePullPolicy: IfNotPresent
+              command: [clickhouse-backup]
+              args:
+                - server
+                - --watch
+                - --watch-interval=24h
+                - --full-interval=168h
+                - --watch-delete-source
+              env:
+                - { name: CLICKHOUSE_HOST, value: localhost }
+                - { name: CLICKHOUSE_PORT, value: '9000' }
+                - { name: CLICKHOUSE_USERNAME, value: langfuse }
+                - name: CLICKHOUSE_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: langfuse-secret, key: CLICKHOUSE_PASSWORD }
+                - { name: REMOTE_STORAGE, value: s3 }
+                - { name: S3_ENDPOINT, value: https://oss-cn-shenzhen.aliyuncs.com }
+                - { name: S3_REGION, value: cn-shenzhen }
+                - { name: S3_BUCKET, value: masterino-langfuse-backups-1574541762075655 }
+                - { name: S3_PATH, value: clickhouse }
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: langfuse-secret, key: S3_ACCESS_KEY }
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef: { name: langfuse-secret, key: S3_SECRET_KEY }
+                - { name: BACKUPS_TO_KEEP_LOCAL, value: '-1' }
+                - { name: API_LISTEN, value: '0.0.0.0:7171' }
+              ports:
+                - { name: backup-api, containerPort: 7171 }
+              resources:
+                requests: { cpu: 250m, memory: 256Mi }
+                limits: { cpu: '1', memory: 1Gi }
+              volumeMounts:
+                - { name: data, mountPath: /var/lib/clickhouse }
     volumeClaimTemplates:
       - name: data
         reclaimPolicy: Retain
@@ -76,3 +115,6 @@ spec:
     - name: native
       port: 9000
       targetPort: 9000
+    - name: backup-api
+      port: 7171
+      targetPort: 7171

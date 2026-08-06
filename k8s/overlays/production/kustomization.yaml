@@ -12,7 +12,6 @@ resources:
   - oidc-token-ingress.yaml
   - pdb.yaml
   - storageclass.yaml
-  - product-telemetry-log.yaml
   - webapi-trace-ingress.yaml
 replicas:
   - name: masterino
