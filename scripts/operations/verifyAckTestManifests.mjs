@@ -71,19 +71,29 @@ export const verifyAckTestManifests = (yaml, { namespaceOnly = false } = {}) => 
 
   const appConfig = resources.find(
     (resource) =>
-      resource.kind === 'ConfigMap' && resource.metadata?.name?.startsWith('masterino-config-'),
+      resource.kind === 'ConfigMap' &&
+      resource.metadata?.name?.startsWith('masterino-runtime-config-'),
   );
+  const fallbackAppConfig = find(resources, 'ConfigMap', 'masterino-config');
   const bridgeConfig = resources.find(
     (resource) =>
       resource.kind === 'ConfigMap' &&
       resource.metadata?.name?.startsWith('masterino-bridge-config-'),
   );
   assert(appConfig, 'content-hashed Masterino ConfigMap is missing');
+  assert(fallbackAppConfig, 'restart-compatible Masterino ConfigMap is missing');
   assert(bridgeConfig, 'content-hashed Bridge ConfigMap is missing');
   assert.equal(appConfig.data.SEARCH_PROVIDERS, 'searxng');
   assert.equal(appConfig.data.SEARXNG_URL, 'http://masterino-searxng:8080');
   assert.equal(appConfig.data.CRAWLER_IMPLS, 'naive,jina');
   assert.equal(appConfig.data.DEVICE_GATEWAY_URL, 'http://masterino-device-gateway:8788');
+  for (const key of ['SEARCH_PROVIDERS', 'SEARXNG_URL', 'CRAWLER_IMPLS']) {
+    assert.equal(
+      fallbackAppConfig.data[key],
+      appConfig.data[key],
+      `restart-compatible Masterino ConfigMap has drifted for ${key}`,
+    );
+  }
 
   const appConfigRef = app.spec.template.spec.containers[0].envFrom.find(
     ({ configMapRef }) => configMapRef?.name === appConfig.metadata.name,

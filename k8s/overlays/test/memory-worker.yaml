@@ -33,7 +33,7 @@ spec:
             - secretRef:
                 name: masterino-secret
             - configMapRef:
-                name: masterino-config
+                name: masterino-runtime-config
             - configMapRef:
                 name: masterino-memory-config
           env:

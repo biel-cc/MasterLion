@@ -3,11 +3,12 @@ kind: Kustomization
 namespace: masterino-test
 resources:
   - ../../base
+  - configmap.yaml
   - device-gateway.yaml
   - memory-worker.yaml
   - searxng.yaml
 configMapGenerator:
-  - name: masterino-config
+  - name: masterino-runtime-config
     envs:
       - app.properties
   - name: masterino-bridge-config
@@ -55,6 +56,9 @@ patches:
       kind: Deployment
       name: masterino
     patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/1/configMapRef/name
+        value: masterino-runtime-config
       - op: add
         path: /spec/minReadySeconds
         value: 10

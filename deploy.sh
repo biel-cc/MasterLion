@@ -739,6 +739,16 @@ case "$COMMAND" in
     verify_target read
     "${KUBE[@]}" exec -n "$NAMESPACE" deployment/masterino -- //bin/node --input-type=module -e '
       import { connect } from "node:net";
+      const expectedConfig = {
+        CRAWLER_IMPLS: "naive,jina",
+        SEARCH_PROVIDERS: "searxng",
+        SEARXNG_URL: "http://masterino-searxng:8080",
+      };
+      for (const [key, expected] of Object.entries(expectedConfig)) {
+        if (process.env[key] !== expected) {
+          throw new Error(`${key} runtime configuration drifted from the test ConfigMap`);
+        }
+      }
       const checks = [
         ["Masterino", "http://masterino:3210/api/healthz", (response, body) => response.ok && body === "ok"],
         ["SearXNG", "http://masterino-searxng:8080/healthz", (response) => response.ok],
