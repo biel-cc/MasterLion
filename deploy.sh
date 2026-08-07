@@ -197,19 +197,25 @@ searxng_enabled() {
 }
 
 normalize_workload_schema_transitions() {
-  local legacy_probe postgres_db_value
+  local probe_handler postgres_db_ref postgres_db_value
 
   if "${KUBE[@]}" get deployment masterino -n "$NAMESPACE" > /dev/null 2>&1; then
-    legacy_probe="$(
-      "${KUBE[@]}" get deployment masterino -n "$NAMESPACE" \
-        -o jsonpath='{.spec.template.spec.containers[?(@.name=="masterino")].readinessProbe.httpGet.path}{.spec.template.spec.containers[?(@.name=="masterino")].livenessProbe.httpGet.path}{.spec.template.spec.containers[?(@.name=="masterino")].startupProbe.httpGet.path}'
-    )"
-    if [[ -n "$legacy_probe" ]]; then
-      # Probe handlers are mutually exclusive. Server-side apply merges object
-      # fields, so explicitly remove the legacy HTTP handlers while installing
-      # the desired TCP handlers in the same valid strategic-merge patch.
-      "${KUBE[@]}" patch deployment masterino -n "$NAMESPACE" --type=strategic --patch \
-        '{"spec":{"template":{"spec":{"containers":[{"name":"masterino","readinessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"livenessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"startupProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}}}]}}}}'
+    if [[ "$ENVIRONMENT" == "test" ]]; then
+      probe_handler="$("${KUBE[@]}" get deployment masterino -n "$NAMESPACE" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="masterino")].readinessProbe.tcpSocket.port}')"
+      if [[ -n "$probe_handler" ]]; then
+        # Probe handlers are mutually exclusive. Remove the legacy TCP handler
+        # before server-side apply installs the public-safe HTTP health route.
+        "${KUBE[@]}" patch deployment masterino -n "$NAMESPACE" --type=strategic --patch \
+          '{"spec":{"template":{"spec":{"containers":[{"name":"masterino","readinessProbe":{"tcpSocket":null,"httpGet":{"path":"/api/healthz","port":"http"}},"livenessProbe":{"tcpSocket":null,"httpGet":{"path":"/api/healthz","port":"http"}},"startupProbe":{"tcpSocket":null,"httpGet":{"path":"/api/healthz","port":"http"}}}]}}}}'
+      fi
+    else
+      probe_handler="$("${KUBE[@]}" get deployment masterino -n "$NAMESPACE" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="masterino")].readinessProbe.httpGet.path}')"
+      if [[ -n "$probe_handler" ]]; then
+        "${KUBE[@]}" patch deployment masterino -n "$NAMESPACE" --type=strategic --patch \
+          '{"spec":{"template":{"spec":{"containers":[{"name":"masterino","readinessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"livenessProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}},"startupProbe":{"httpGet":null,"exec":null,"grpc":null,"tcpSocket":{"port":"http"}}}]}}}}'
+      fi
     fi
   fi
 
@@ -218,9 +224,12 @@ normalize_workload_schema_transitions() {
       "${KUBE[@]}" get statefulset masterino-postgres -n "$NAMESPACE" \
         -o jsonpath='{.spec.template.spec.containers[?(@.name=="postgres")].env[?(@.name=="POSTGRES_DB")].value}'
     )"
-    if [[ -n "$postgres_db_value" ]]; then
-      # EnvVar.value and EnvVar.valueFrom are mutually exclusive. Replace the
-      # legacy literal with the reviewed ConfigMap reference atomically.
+    postgres_db_ref="$("${KUBE[@]}" get statefulset masterino-postgres -n "$NAMESPACE" \
+      -o jsonpath='{.spec.template.spec.containers[?(@.name=="postgres")].env[?(@.name=="POSTGRES_DB")].valueFrom.configMapKeyRef.name}')"
+    if [[ "$ENVIRONMENT" == "test" && -n "$postgres_db_ref" ]]; then
+      "${KUBE[@]}" patch statefulset masterino-postgres -n "$NAMESPACE" --type=strategic --patch \
+        '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","env":[{"name":"POSTGRES_DB","value":"lobechat","valueFrom":null}]}]}}}}'
+    elif [[ "$ENVIRONMENT" != "test" && -n "$postgres_db_value" ]]; then
       "${KUBE[@]}" patch statefulset masterino-postgres -n "$NAMESPACE" --type=strategic --patch \
         '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","env":[{"name":"POSTGRES_DB","value":null,"valueFrom":{"configMapKeyRef":{"name":"masterino-config","key":"LOBE_DB_NAME"}}}]}]}}}}'
     fi
@@ -333,6 +342,7 @@ case "$COMMAND" in
     printf '%s\n' "$rendered" | grep -q "image: ${BRIDGE_IMAGE}@${BRIDGE_IMAGE_DIGEST}"
     if [[ "$ENVIRONMENT" == "test" ]]; then
       market_rendered="$(render_market_manifests)"
+      printf '%s\n' "$market_rendered" | node "$SCRIPT_DIR/scripts/operations/verifyAckTestManifests.mjs" --namespace-only
       printf '%s\n' "$market_rendered" | grep -q "image: ${MARKET_IMAGE}@${MARKET_IMAGE_DIGEST}"
       printf '%s\n' "$market_rendered" | grep -q 'name: masterino-market-db-bootstrap'
       printf '%s\n' "$market_rendered" | grep -q 'name: masterino-market-migrate'
@@ -344,6 +354,7 @@ case "$COMMAND" in
         fail "test Market staging manifests unexpectedly contain an Ingress"
       fi
       market_cutover_rendered="$(render_market_manifests "$MARKET_CUTOVER_OVERLAY_DIR")"
+      printf '%s\n' "$market_cutover_rendered" | node "$SCRIPT_DIR/scripts/operations/verifyAckTestManifests.mjs" --namespace-only
       printf '%s\n' "$market_cutover_rendered" | grep -q 'host: mlai-test.bielcrystal.com'
       printf '%s\n' "$market_cutover_rendered" | grep -Fq 'path: /market(/|$)(.*)'
       market_config_invariants=(

@@ -18,24 +18,24 @@ const parseResources = (yaml) => {
     .map((document) => parse(document));
 };
 
-const namespacedKinds = new Set([
-  'ConfigMap',
-  'Deployment',
-  'Ingress',
-  'PersistentVolumeClaim',
-  'Secret',
-  'Service',
-  'StatefulSet',
+const clusterScopedKinds = new Set([
+  'ClusterRole',
+  'ClusterRoleBinding',
+  'CustomResourceDefinition',
+  'Namespace',
+  'Node',
+  'PersistentVolume',
+  'StorageClass',
 ]);
 
 const find = (resources, kind, name) =>
   resources.find((resource) => resource.kind === kind && resource.metadata?.name === name);
 
-export const verifyAckTestManifests = (yaml) => {
+export const verifyAckTestManifests = (yaml, { namespaceOnly = false } = {}) => {
   const resources = parseResources(yaml);
 
   for (const resource of resources) {
-    if (namespacedKinds.has(resource.kind)) {
+    if (resource?.kind && !clusterScopedKinds.has(resource.kind)) {
       assert.equal(
         resource.metadata?.namespace,
         'masterino-test',
@@ -53,6 +53,8 @@ export const verifyAckTestManifests = (yaml) => {
 
   assert.doesNotMatch(yaml, /\.masterlion-test\.svc(?:\.|:|\/)/);
   assert.doesNotMatch(yaml, /masterlion-searxng/);
+
+  if (namespaceOnly) return resources;
 
   const app = find(resources, 'Deployment', 'masterino');
   const bridge = find(resources, 'Deployment', 'masterino-aihub-db-bridge');
@@ -132,6 +134,8 @@ export const verifyAckTestManifests = (yaml) => {
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  verifyAckTestManifests(readFileSync(0, 'utf8'));
+  verifyAckTestManifests(readFileSync(0, 'utf8'), {
+    namespaceOnly: process.argv.includes('--namespace-only'),
+  });
   console.log('ACK test namespace and deployment invariants passed.');
 }
