@@ -80,7 +80,7 @@ const createRepository = () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('Market SDK compatibility', () => {
-  it('redirects the public service root to the Masterino skill market', async () => {
+  it('redirects the public service root to the available skill management page', async () => {
     const app = createMarketApp({
       config,
       redis: { ping: vi.fn(async () => 'PONG') } as any,
@@ -91,7 +91,7 @@ describe('Market SDK compatibility', () => {
     const response = await app.request('/');
 
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('https://masterino.example.com/community/skill');
+    expect(response.headers.get('location')).toBe('https://masterino.example.com/settings/skill');
   });
 
   it('serves the SDK agent list and detail routes with trusted-client identity', async () => {
