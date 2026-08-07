@@ -1,7 +1,8 @@
 'use client';
 
 import { Flexbox, Grid, Tag, Text } from '@lobehub/ui';
-import { Input, Pagination } from 'antd';
+import { Button, Input, Pagination } from 'antd';
+import { Plus } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -74,12 +75,11 @@ const WorkspaceSkillList = memo<WorkspaceSkillListProps>(({ rows = 4, pageSize =
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             )}
-            {/* Skill upload to community is temporarily disabled
             {canEdit && (
               <Button icon={<Plus size={14} />} onClick={() => setSubmitModalOpen(true)}>
                 {t('user.submitRepo')}
               </Button>
-            )} */}
+            )}
           </Flexbox>
         </Flexbox>
         {skills.length > 0 ? (

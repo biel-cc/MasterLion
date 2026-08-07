@@ -77,6 +77,7 @@ case "$ENVIRONMENT" in
     CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-cutover"
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-migration"
     MARKET_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market"
+    MARKET_SEED_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market-seed"
     MARKET_CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/test-market-cutover"
     ROLLBACK_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-ingress.yaml"
     SOURCE_VERIFICATION_INGRESS="$SCRIPT_DIR/k8s/compat/masterlion-test-verification-ingress.yaml"
@@ -176,6 +177,7 @@ if [[ "$ENVIRONMENT" == "test" ]]; then
     AUTH_WECOM_AGENT_ID
     AUTH_WECOM_CORP_ID
     AUTH_WECOM_CORP_SECRET
+    MARKET_GITHUB_TOKEN
     MARKET_TRUSTED_CLIENT_SECRET
   )
 fi
@@ -340,6 +342,10 @@ case "$COMMAND" in
       if printf '%s\n' "$market_rendered" | grep -q '^kind: Ingress$'; then
         fail "test Market staging manifests unexpectedly contain an Ingress"
       fi
+      market_seed_rendered="$(render_market_manifests "$MARKET_SEED_OVERLAY_DIR")"
+      printf '%s\n' "$market_seed_rendered" | grep -q "image: ${MARKET_IMAGE}@${MARKET_IMAGE_DIGEST}"
+      printf '%s\n' "$market_seed_rendered" | grep -q 'name: masterino-market-seed'
+      printf '%s\n' "$market_seed_rendered" | grep -q '/api/internal/curated-seed'
       market_cutover_rendered="$(render_market_manifests "$MARKET_CUTOVER_OVERLAY_DIR")"
       printf '%s\n' "$market_cutover_rendered" | grep -q 'host: mlai-test.bielcrystal.com'
       printf '%s\n' "$market_cutover_rendered" | grep -Fq 'path: /market(/|$)(.*)'
@@ -559,7 +565,7 @@ case "$COMMAND" in
     if [[ "$ENVIRONMENT" == "test" ]]; then
       # Jobs have immutable Pod templates. Recreate only these exact, retained-data
       # jobs so each reviewed Market image runs its bootstrap and migrations.
-      "${KUBE[@]}" delete job masterino-market-db-bootstrap masterino-market-migrate \
+      "${KUBE[@]}" delete job masterino-market-db-bootstrap masterino-market-migrate masterino-market-seed \
         -n "$NAMESPACE" --ignore-not-found --wait=true
       "${KUBE[@]}" apply -n "$NAMESPACE" -f "$MARKET_OVERLAY_DIR/database-bootstrap.yaml"
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
@@ -574,6 +580,15 @@ case "$COMMAND" in
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
         job/masterino-market-migrate --timeout=10m
       "${KUBE[@]}" rollout status deployment/masterino-market -n "$NAMESPACE" --timeout=10m
+
+      render_market_manifests "$MARKET_SEED_OVERLAY_DIR" \
+        | "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts --dry-run=server -f - > /dev/null
+      render_market_manifests "$MARKET_SEED_OVERLAY_DIR" \
+        | "${KUBE[@]}" apply --server-side --field-manager=masterino-market-deploy \
+          --force-conflicts -f -
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-seed --timeout=10m
 
       # Expose the TLS route only after /ready has made the API rollout healthy.
       if [[ "$cutover_complete" == "true" ]]; then
@@ -678,6 +693,8 @@ case "$COMMAND" in
         job/masterino-market-db-bootstrap --timeout=5m
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
         job/masterino-market-migrate --timeout=10m
+      "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
+        job/masterino-market-seed --timeout=10m
       "${KUBE[@]}" rollout status deployment/masterino-market -n "$NAMESPACE" --timeout=10m
       worker_replicas="$("${KUBE[@]}" get deployment masterino-memory-worker -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')"
       if [[ "$worker_replicas" != "0" ]]; then

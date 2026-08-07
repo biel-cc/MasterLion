@@ -16,8 +16,7 @@ import { useWorkspaceDetailContext } from './DetailProvider';
 import WorkspaceAgentList from './WorkspaceAgentList';
 import WorkspaceGroupList from './WorkspaceGroupList';
 import WorkspacePluginList from './WorkspacePluginList';
-// Skill upload for organizations is not yet available, so the section is hidden for now.
-// import WorkspaceSkillList from './WorkspaceSkillList';
+import WorkspaceSkillList from './WorkspaceSkillList';
 
 const WorkspaceContent = memo(() => {
   const { t } = useTranslation('discover');
@@ -76,7 +75,7 @@ const WorkspaceContent = memo(() => {
       <Flexbox gap={32}>
         <WorkspaceAgentList />
         <WorkspaceGroupList />
-        {/* <WorkspaceSkillList /> */}
+        <WorkspaceSkillList />
         <WorkspacePluginList />
       </Flexbox>
     </UserDetailProvider>

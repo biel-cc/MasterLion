@@ -18,10 +18,21 @@ export interface GitHubRawFileInfo extends GitHubRepoInfo {
 }
 
 export class GitHub {
+  private readonly token?: string;
   private readonly userAgent: string;
 
-  constructor(options?: { userAgent?: string }) {
+  constructor(options?: { token?: string; userAgent?: string }) {
+    this.token = options?.token;
     this.userAgent = options?.userAgent || 'Masterino';
+  }
+
+  private get headers() {
+    return {
+      'Accept': 'application/vnd.github+json',
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      'User-Agent': this.userAgent,
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
   }
 
   /**
@@ -131,7 +142,33 @@ export class GitHub {
    * Build the ZIP download URL for a GitHub repository
    */
   buildRepoZipUrl(info: GitHubRepoInfo): string {
+    if (/^[a-f\d]{40}$/i.test(info.branch)) {
+      return `https://github.com/${info.owner}/${info.repo}/archive/${info.branch}.zip`;
+    }
     return `https://github.com/${info.owner}/${info.repo}/archive/refs/heads/${info.branch}.zip`;
+  }
+
+  /** Resolve a mutable branch or tag to an immutable commit SHA. */
+  async resolveCommit(info: GitHubRepoInfo): Promise<GitHubRepoInfo> {
+    const response = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(info.owner)}/${encodeURIComponent(info.repo)}/commits/${encodeURIComponent(info.branch)}`,
+      { headers: this.headers },
+    );
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new GitHubNotFoundError(
+          `Repository ref not found: ${info.owner}/${info.repo}@${info.branch}`,
+        );
+      }
+      throw new GitHubDownloadError(
+        `Failed to resolve repository ref: ${response.status} ${response.statusText}`,
+      );
+    }
+    const data = (await response.json()) as { sha?: string };
+    if (!data.sha || !/^[a-f\d]{40}$/i.test(data.sha)) {
+      throw new GitHubDownloadError('GitHub returned an invalid commit SHA');
+    }
+    return { ...info, branch: data.sha };
   }
 
   /**
@@ -149,9 +186,7 @@ export class GitHub {
     log('downloadRepoZip: fetching url=%s', zipUrl);
 
     const response = await fetch(zipUrl, {
-      headers: {
-        'User-Agent': this.userAgent,
-      },
+      headers: this.headers,
     });
 
     log('downloadRepoZip: response status=%d, ok=%s', response.status, response.ok);
@@ -169,8 +204,15 @@ export class GitHub {
       );
     }
 
+    const contentLength = Number(response.headers?.get?.('content-length') || 0);
+    if (contentLength > 16 * 1024 * 1024) {
+      throw new GitHubDownloadError('Repository archive exceeds the 16 MiB limit');
+    }
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    if (buffer.length > 16 * 1024 * 1024) {
+      throw new GitHubDownloadError('Repository archive exceeds the 16 MiB limit');
+    }
     log('downloadRepoZip: downloaded %d bytes', buffer.length);
     return buffer;
   }
@@ -182,9 +224,7 @@ export class GitHub {
     const rawUrl = this.buildRawFileUrl(info);
 
     const response = await fetch(rawUrl, {
-      headers: {
-        'User-Agent': this.userAgent,
-      },
+      headers: this.headers,
     });
 
     if (!response.ok) {
@@ -208,9 +248,7 @@ export class GitHub {
     const rawUrl = this.buildRawFileUrl(info);
 
     const response = await fetch(rawUrl, {
-      headers: {
-        'User-Agent': this.userAgent,
-      },
+      headers: this.headers,
     });
 
     if (!response.ok) {

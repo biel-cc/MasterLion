@@ -5,6 +5,7 @@ import { matchRoutes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { desktopRoutes } from './desktopRouter.config';
+import { mobileRoutes } from './mobileRouter.config';
 
 /**
  * Known path pairs that intentionally differ between web and desktop (Electron).
@@ -63,6 +64,46 @@ async function readDesktopRouterSources() {
 }
 
 describe('desktopRouter config sync', () => {
+  it.each([
+    ['/community/model', desktopRoutes],
+    ['/community/model/example', desktopRoutes],
+    ['/community/provider', desktopRoutes],
+    ['/community/provider/example', desktopRoutes],
+    ['/community/model', mobileRoutes],
+    ['/community/model/example', mobileRoutes],
+    ['/community/provider', mobileRoutes],
+    ['/community/provider/example', mobileRoutes],
+  ])('redirects hidden community catalog route %s to community home', (route, routes) => {
+    const match = matchRoutes(routes, route)?.at(-1);
+
+    expect((match?.route.element as any)?.props?.to).toBe('/community');
+  });
+
+  it('registers mobile community home and Skill list/detail routes', () => {
+    expect(matchRoutes(mobileRoutes, '/community')?.at(-1)?.route.index).toBe(true);
+    expect(matchRoutes(mobileRoutes, '/community/skill')?.at(-1)?.route.path).toBe('skill');
+    expect(matchRoutes(mobileRoutes, '/community/skill/example')?.at(-1)?.route.path).toBe(
+      'skill/:slug',
+    );
+  });
+
+  it('keeps models and providers out of desktop and mobile community navigation', async () => {
+    const [desktopNav, sharedNav] = await Promise.all([
+      readFile(
+        path.join(process.cwd(), 'src/routes/(main)/community/_layout/Sidebar/Header/Nav.tsx'),
+        'utf8',
+      ),
+      readFile(path.join(process.cwd(), 'src/routes/(main)/community/features/useNav.tsx'), 'utf8'),
+    ]);
+
+    for (const source of [desktopNav, sharedNav]) {
+      expect(source).not.toContain("key: 'model'");
+      expect(source).not.toContain("key: 'provider'");
+      expect(source).not.toContain('/community/model');
+      expect(source).not.toContain('/community/provider');
+    }
+  });
+
   it('personal memory settings route is not shadowed by workspace memory route', () => {
     const matches = matchRoutes(desktopRoutes, '/settings/memory');
     const paths = matches?.map((match) => match.route.path);

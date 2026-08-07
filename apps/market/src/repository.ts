@@ -42,6 +42,7 @@ const itemFromRow = (row: Record<string, any>) => ({
   isOfficial: Boolean(row.metadata?.isOfficial),
   likeCount: asNumber(row.like_count || 0),
   manifest: row.manifest || {},
+  metadata: row.metadata || {},
   name: row.name,
   ownerId: asNumber(row.owner_account_id),
   status: row.status,

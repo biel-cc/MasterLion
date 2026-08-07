@@ -1,11 +1,13 @@
 'use client';
 
 import { Flexbox, Grid, Tag, Text } from '@lobehub/ui';
-import { Input, Pagination } from 'antd';
+import { Button, Input, Pagination } from 'antd';
+import { Plus } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useUserDetailContext } from './DetailProvider';
+import SubmitMcpModal from './SubmitMcpModal';
 import UserPluginCard from './UserPluginCard';
 
 interface UserPluginListProps {
@@ -15,9 +17,10 @@ interface UserPluginListProps {
 
 const UserPluginList = memo<UserPluginListProps>(({ rows = 4, pageSize = 8 }) => {
   const { t } = useTranslation('discover');
-  const { plugins = [], isOwner } = useUserDetailContext();
+  const { plugins = [], isOwner, onRefreshProfile } = useUserDetailContext();
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [submitModalOpen, setSubmitModalOpen] = useState(false);
 
   const filteredPlugins = useMemo(() => {
     let allPlugins = [...plugins];
@@ -45,46 +48,60 @@ const UserPluginList = memo<UserPluginListProps>(({ rows = 4, pageSize = 8 }) =>
     setCurrentPage(1);
   }, [searchQuery]);
 
-  if (plugins.length === 0) return null;
+  if (plugins.length === 0 && !isOwner) return null;
 
   const showPagination = filteredPlugins.length > pageSize;
 
   return (
-    <Flexbox gap={16}>
-      <Flexbox horizontal align={'center'} gap={8} justify={'space-between'}>
-        <Flexbox horizontal align={'center'} gap={8}>
-          <Text fontSize={16} weight={500}>
-            {t('user.plugins')}
-          </Text>
-          {plugins.length > 0 && <Tag>{filteredPlugins.length}</Tag>}
+    <>
+      <Flexbox gap={16}>
+        <Flexbox horizontal align={'center'} gap={8} justify={'space-between'}>
+          <Flexbox horizontal align={'center'} gap={8}>
+            <Text fontSize={16} weight={500}>
+              {t('user.plugins')}
+            </Text>
+            {plugins.length > 0 && <Tag>{filteredPlugins.length}</Tag>}
+          </Flexbox>
+          <Flexbox horizontal gap={8}>
+            {isOwner && plugins.length > 0 && (
+              <Input.Search
+                allowClear
+                placeholder={t('user.searchPlaceholder')}
+                style={{ width: 200 }}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            )}
+            {isOwner && (
+              <Button icon={<Plus size={14} />} onClick={() => setSubmitModalOpen(true)}>
+                {t('user.submitMcp')}
+              </Button>
+            )}
+          </Flexbox>
         </Flexbox>
-        {isOwner && plugins.length > 0 && (
-          <Input.Search
-            allowClear
-            placeholder={t('user.searchPlaceholder')}
-            style={{ width: 200 }}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <Grid rows={rows} width={'100%'}>
+          {paginatedPlugins.map((item, index) => (
+            <UserPluginCard key={item.identifier || index} {...item} />
+          ))}
+        </Grid>
+        {showPagination && (
+          <Flexbox align={'center'} justify={'center'}>
+            <Pagination
+              current={currentPage}
+              pageSize={pageSize}
+              showSizeChanger={false}
+              total={filteredPlugins.length}
+              onChange={(page) => setCurrentPage(page)}
+            />
+          </Flexbox>
         )}
       </Flexbox>
-      <Grid rows={rows} width={'100%'}>
-        {paginatedPlugins.map((item, index) => (
-          <UserPluginCard key={item.identifier || index} {...item} />
-        ))}
-      </Grid>
-      {showPagination && (
-        <Flexbox align={'center'} justify={'center'}>
-          <Pagination
-            current={currentPage}
-            pageSize={pageSize}
-            showSizeChanger={false}
-            total={filteredPlugins.length}
-            onChange={(page) => setCurrentPage(page)}
-          />
-        </Flexbox>
-      )}
-    </Flexbox>
+      <SubmitMcpModal
+        open={submitModalOpen}
+        onClose={() => setSubmitModalOpen(false)}
+        onSuccess={onRefreshProfile}
+      />
+    </>
   );
 });
 

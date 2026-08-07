@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/number-literal-case */
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -11,6 +12,77 @@ import matter from 'gray-matter';
 import { sha256 } from 'js-sha256';
 
 import { SkillManifestError, SkillParseError } from './errors';
+
+const MAX_SKILL_ZIP_BYTES = 16 * 1024 * 1024;
+const MAX_SKILL_ZIP_FILES = 2000;
+const MAX_SKILL_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+const forbiddenSkillFile = /\.(?:bat|cmd|com|dll|docm|exe|msi|ps1|scr|sh|xlsm)$/i;
+
+const assertSafeZipArchive = (archive: Buffer) => {
+  if (archive.length > MAX_SKILL_ZIP_BYTES) {
+    throw new SkillParseError('Skill ZIP exceeds the 16 MiB limit');
+  }
+  const eocd = archive.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (eocd < 0 || eocd + 22 > archive.length) {
+    throw new SkillParseError('Failed to unzip buffer: invalid ZIP archive');
+  }
+  const entryCount = archive.readUInt16LE(eocd + 10);
+  if (entryCount > MAX_SKILL_ZIP_FILES) {
+    throw new SkillParseError('Skill ZIP contains too many files');
+  }
+  let cursor = archive.readUInt32LE(eocd + 16);
+  let totalUncompressed = 0;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + 46 > archive.length || archive.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new SkillParseError('Skill ZIP central directory is malformed');
+    }
+    const flags = archive.readUInt16LE(cursor + 8);
+    const compressedSize = archive.readUInt32LE(cursor + 20);
+    const uncompressedSize = archive.readUInt32LE(cursor + 24);
+    const filenameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const externalAttributes = archive.readUInt32LE(cursor + 38);
+    const end = cursor + 46 + filenameLength + extraLength + commentLength;
+    if (end > archive.length) throw new SkillParseError('Skill ZIP entry exceeds file boundary');
+    const path = archive
+      .subarray(cursor + 46, cursor + 46 + filenameLength)
+      .toString('utf8')
+      .replaceAll('\\', '/');
+    const segments = path.split('/').filter(Boolean);
+    if (
+      !path ||
+      path.startsWith('/') ||
+      /^[a-z]:\//i.test(path) ||
+      segments.includes('..') ||
+      path.includes('\0')
+    ) {
+      throw new SkillParseError(`Unsafe path in Skill ZIP: ${path || '<empty>'}`);
+    }
+    if (((externalAttributes >>> 16) & 0o170000) === 0o120000) {
+      throw new SkillParseError(`Symbolic links are forbidden in Skill ZIP: ${path}`);
+    }
+    if (flags & 1) throw new SkillParseError(`Encrypted Skill ZIP entry is forbidden: ${path}`);
+    if (forbiddenSkillFile.test(path)) {
+      throw new SkillParseError(`Executable or macro-enabled Skill file is forbidden: ${path}`);
+    }
+    if (uncompressedSize > 25 * 1024 * 1024) {
+      throw new SkillParseError(`Skill ZIP entry is too large: ${path}`);
+    }
+    if (
+      uncompressedSize > 1024 * 1024 &&
+      compressedSize > 0 &&
+      uncompressedSize / compressedSize > 200
+    ) {
+      throw new SkillParseError(`Suspicious Skill ZIP compression ratio: ${path}`);
+    }
+    totalUncompressed += uncompressedSize;
+    cursor = end;
+  }
+  if (totalUncompressed > MAX_SKILL_UNCOMPRESSED_BYTES) {
+    throw new SkillParseError('Skill ZIP expands beyond the 100 MiB safety limit');
+  }
+};
 
 export interface ParseZipOptions {
   /**
@@ -76,6 +148,7 @@ export class SkillParser {
    */
   async parseZipPackage(buffer: Buffer, options?: ParseZipOptions): Promise<ParsedZipSkill> {
     try {
+      assertSafeZipArchive(buffer);
       const unzipped = await this.unzipBuffer(buffer);
 
       // Find SKILL.md (support root directory, first-level subdirectory, or specified basePath)

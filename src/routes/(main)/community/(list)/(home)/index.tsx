@@ -4,18 +4,20 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useDiscoverStore } from '@/store/discover';
-import { AssistantSorts, McpSorts } from '@/types/discover';
+import { AssistantSorts, McpSorts, SkillSorts } from '@/types/discover';
 
+import ListLoading from '../../components/ListLoading';
 import Title from '../../components/Title';
 import AssistantList from '../agent/features/List';
 import McpList from '../mcp/features/List';
+import SkillList from '../skill/features/List';
 import CreatorRewardBanner from './features/CreatorRewardBanner';
-import Loading from './loading';
 
 const HomePage = memo(() => {
   const { t } = useTranslation('discover');
   const useAssistantList = useDiscoverStore((s) => s.useAssistantList);
   const useMcpList = useDiscoverStore((s) => s.useFetchMcpList);
+  const useSkillList = useDiscoverStore((s) => s.useFetchSkillList);
 
   const { data: assistantList, isLoading: assistantLoading } = useAssistantList({
     page: 1,
@@ -23,13 +25,17 @@ const HomePage = memo(() => {
     sort: AssistantSorts.Recommended,
   });
 
-  const { data: mcpList, isLoading: pluginLoading } = useMcpList({
+  const { data: skillList, isLoading: skillLoading } = useSkillList({
+    page: 1,
+    pageSize: 12,
+    sort: SkillSorts.InstallCount,
+  });
+
+  const { data: mcpList, isLoading: mcpLoading } = useMcpList({
     page: 1,
     pageSize: 12,
     sort: McpSorts.Recommended,
   });
-
-  if (assistantLoading || pluginLoading || !assistantList || !mcpList) return <Loading />;
 
   return (
     <>
@@ -37,12 +43,29 @@ const HomePage = memo(() => {
       <Title more={t('home.more')} moreLink={'/community/agent'}>
         {t('home.featuredAssistants')}
       </Title>
-      <AssistantList data={assistantList.items} rows={4} />
+      {assistantLoading ? (
+        <ListLoading length={8} rows={4} />
+      ) : (
+        <AssistantList data={assistantList?.items} rows={4} />
+      )}
+      <div />
+      <Title more={t('home.more')} moreLink={'/community/skill'}>
+        {t('home.featuredSkills')}
+      </Title>
+      {skillLoading ? (
+        <ListLoading length={8} rows={4} />
+      ) : (
+        <SkillList data={skillList?.items} rows={4} />
+      )}
       <div />
       <Title more={t('home.more')} moreLink={'/community/mcp'}>
         {t('home.featuredTools')}
       </Title>
-      <McpList data={mcpList.items} rows={4} />
+      {mcpLoading ? (
+        <ListLoading length={8} rows={4} />
+      ) : (
+        <McpList data={mcpList?.items} rows={4} />
+      )}
     </>
   );
 });
