@@ -88,7 +88,7 @@ describe('useNavLayout', () => {
     expect(entries.find((item) => item.key === 'tasks')).toMatchObject({ disabled: true });
     expect(entries.find((item) => item.key === 'pages')).toMatchObject({ disabled: true });
     expect(entries.find((item) => item.key === 'image')).toMatchObject({ disabled: false });
-    expect(entries.find((item) => item.key === 'community')).toMatchObject({ disabled: true });
+    expect(entries.find((item) => item.key === 'community')).toMatchObject({ disabled: false });
     expect(entries.find((item) => item.key === 'resource')).toMatchObject({ disabled: true });
     expect(entries.find((item) => item.key === 'memory')).toMatchObject({ disabled: false });
   });
