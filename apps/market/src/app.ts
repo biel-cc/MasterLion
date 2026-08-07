@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { type Context, Hono } from 'hono';
 import { Redis } from 'ioredis';
@@ -21,6 +21,7 @@ import {
 } from './crypto.js';
 import { MarketObjectStorage } from './objectStorage.js';
 import type { Account, MarketRepository } from './repository.js';
+import { runCuratedSeed } from './seed.js';
 import { CredentialVault } from './vault.js';
 
 interface AppEnv extends AuthEnv {
@@ -75,7 +76,7 @@ export const createMarketApp = (options: {
   >;
   const oauthRedirectOrigins = splitCsv(config.MARKET_OAUTH_REDIRECT_ORIGINS);
   const publicBaseUrl = config.MARKET_PUBLIC_BASE_URL.replace(/\/$/, '');
-  const marketUiUrl = new URL('/community/skill', publicBaseUrl).toString();
+  const marketUiUrl = new URL('/community', publicBaseUrl).toString();
   const app = new Hono<AppEnv>();
 
   app.onError((error, c) => {
@@ -90,6 +91,14 @@ export const createMarketApp = (options: {
 
   app.get('/', (c) => c.redirect(marketUiUrl));
   app.get('/health', (c) => c.json({ service: 'masterino-market', status: 'ok' }));
+  app.post('/api/internal/curated-seed', async (c) => {
+    const supplied = Buffer.from(c.req.header('x-market-internal-token') || '');
+    const expected = Buffer.from(config.MARKET_RUNNER_INTERNAL_TOKEN);
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    return c.json({ counts: await runCuratedSeed(config), success: true });
+  });
   app.get('/connect/success', (c) => c.json({ status: 'connected', success: true }));
   app.get('/connect/:provider/start', async (c) => {
     const code = c.req.query('code');
@@ -656,7 +665,7 @@ export const createMarketApp = (options: {
   );
   for (const [path, type] of [
     ['skills', 'skill'],
-    ['plugins', 'plugin'],
+    ['plugins', 'mcp'],
   ] as const) {
     app.get(`/api/v1/user/${path}`, async (c) => {
       const result = await repository.list(
@@ -693,12 +702,12 @@ export const createMarketApp = (options: {
     const existing = await repository
       .getPool()
       .query(
-        `SELECT 1 FROM market_resources WHERE type='plugin' AND identifier=$1 AND owner_account_id=$2`,
+        `SELECT 1 FROM market_resources WHERE type='mcp' AND identifier=$1 AND owner_account_id=$2`,
         [c.req.param('identifier'), c.get('account').id],
       );
     if (!existing.rowCount)
       await repository.createResource(
-        'plugin',
+        'mcp',
         {
           ...input,
           identifier: c.req.param('identifier'),
@@ -708,7 +717,7 @@ export const createMarketApp = (options: {
       );
     return c.json(
       await repository.createVersion(
-        'plugin',
+        'mcp',
         { ...input, identifier: c.req.param('identifier') },
         ...(Object.values(actorScope(c)) as [Account, string | undefined]),
       ),
@@ -719,7 +728,9 @@ export const createMarketApp = (options: {
     const form = await c.req.formData();
     const file = form.get('file');
     if (!(file instanceof File)) return c.json({ error: 'skill_zip_required' }, 400);
+    if (file.size > 16 * 1024 * 1024) return c.json({ error: 'skill_zip_too_large' }, 413);
     const manifest = JSON.parse(String(form.get('manifest') || '{}')) as Record<string, unknown>;
+    const metadata = JSON.parse(String(form.get('metadata') || '{}')) as Record<string, unknown>;
     const manifestErrors = validateArtifactManifest(manifest);
     if (!Array.isArray(manifest.files) || manifestErrors.length)
       return c.json({ error: 'unsafe_or_missing_manifest', details: manifestErrors }, 400);
@@ -738,12 +749,31 @@ export const createMarketApp = (options: {
         `SELECT 1 FROM market_resources WHERE type='skill' AND identifier=$1 AND owner_account_id=$2`,
         [identifier, c.get('account').id],
       );
-    if (!existing.rowCount)
+    if (!existing.rowCount) {
       await repository.createResource(
         'skill',
-        { identifier, manifest, name: String(form.get('name') || identifier) },
+        {
+          description: String(form.get('description') || ''),
+          identifier,
+          manifest,
+          metadata,
+          name: String(form.get('name') || identifier),
+        },
         ...(Object.values(actorScope(c)) as [Account, string | undefined]),
       );
+    } else {
+      await repository.getPool().query(
+        `UPDATE market_resources SET metadata=$1, name=$2, description=$3, updated_at=now()
+         WHERE type='skill' AND identifier=$4 AND owner_account_id=$5`,
+        [
+          JSON.stringify(metadata),
+          String(form.get('name') || identifier),
+          String(form.get('description') || ''),
+          identifier,
+          c.get('account').id,
+        ],
+      );
+    }
     const created = await repository.createVersion(
       'skill',
       { identifier, manifest, version },
@@ -1447,9 +1477,12 @@ export const createMarketApp = (options: {
 
   app.get('/api/internal/reviews', requireRole('reviewer', 'admin'), async (c) => {
     const result = await repository.getPool().query(
-      `SELECT r.type, r.identifier, r.name, v.version, v.workflow_state AS "workflowState", v.scan_result AS "scanResult",
-        v.config AS "currentConfig",
-        (SELECT pv.config FROM market_versions pv WHERE pv.resource_id=r.id AND pv.id<>v.id ORDER BY pv.created_at DESC LIMIT 1) AS "previousConfig",
+      `SELECT r.type, r.identifier, r.name, r.metadata, v.version,
+        v.workflow_state AS "workflowState", v.scan_result AS "scanResult",
+        jsonb_build_object('config', v.config, 'manifest', v.manifest) AS "currentConfig",
+        (SELECT jsonb_build_object('config', pv.config, 'manifest', pv.manifest)
+         FROM market_versions pv WHERE pv.resource_id=r.id AND pv.id<>v.id
+         ORDER BY pv.created_at DESC LIMIT 1) AS "previousConfig",
         v.submitted_at AS "submittedAt", a.name AS "ownerName"
        FROM market_resources r JOIN market_versions v ON v.id=r.current_version_id JOIN market_accounts a ON a.id=r.owner_account_id
        WHERE v.workflow_state IN ('submitted','scanning','in_review','approved','rejected') ORDER BY v.created_at`,

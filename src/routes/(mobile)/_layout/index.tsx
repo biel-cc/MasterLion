@@ -19,10 +19,9 @@ const MOBILE_NAV_ROUTES = new Set([
   '/',
   '/community',
   '/community/agent',
+  '/community/skill',
   '/community/mcp',
   '/community/plugin',
-  '/community/model',
-  '/community/provider',
   '/messages',
   '/me',
 ]);

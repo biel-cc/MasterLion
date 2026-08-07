@@ -215,6 +215,46 @@ describe('GitHub', () => {
     });
   });
 
+  describe('resolveCommit', () => {
+    const mockFetch = vi.fn();
+
+    beforeEach(() => {
+      vi.stubGlobal('fetch', mockFetch);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('resolves a mutable ref to an immutable commit using authenticated headers', async () => {
+      const commit = '0123456789abcdef0123456789abcdef01234567';
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ sha: commit }),
+        ok: true,
+      });
+      const gh = new GitHub({ token: 'read-only-token' });
+
+      const result = await gh.resolveCommit({ branch: 'v1.2.3', owner: 'owner', repo: 'repo' });
+
+      expect(result.branch).toBe(commit);
+      expect(gh.buildRepoZipUrl(result)).toBe(
+        `https://github.com/owner/repo/archive/${commit}.zip`,
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.github.com/repos/owner/repo/commits/v1.2.3',
+        { headers: expect.objectContaining({ Authorization: 'Bearer read-only-token' }) },
+      );
+    });
+
+    it('rejects an invalid SHA returned by GitHub', async () => {
+      mockFetch.mockResolvedValueOnce({ json: async () => ({ sha: 'main' }), ok: true });
+
+      await expect(
+        new GitHub().resolveCommit({ branch: 'main', owner: 'owner', repo: 'repo' }),
+      ).rejects.toThrow(GitHubDownloadError);
+    });
+  });
+
   describe('downloadRepoZip', () => {
     const gh = new GitHub();
     const mockFetch = vi.fn();
@@ -243,11 +283,7 @@ describe('GitHub', () => {
       expect(result).toBeInstanceOf(Buffer);
       expect(mockFetch).toHaveBeenCalledWith(
         'https://github.com/lobehub/lobe-chat/archive/refs/heads/main.zip',
-        {
-          headers: {
-            'User-Agent': 'Masterino',
-          },
-        },
+        { headers: expect.objectContaining({ 'User-Agent': 'Masterino' }) },
       );
     });
 
@@ -298,9 +334,7 @@ describe('GitHub', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(expect.any(String), {
-        headers: {
-          'User-Agent': 'CustomAgent/1.0',
-        },
+        headers: expect.objectContaining({ 'User-Agent': 'CustomAgent/1.0' }),
       });
     });
   });
@@ -335,9 +369,7 @@ describe('GitHub', () => {
       expect(mockFetch).toHaveBeenCalledWith(
         'https://raw.githubusercontent.com/lobehub/lobe-chat/main/README.md',
         {
-          headers: {
-            'User-Agent': 'Masterino',
-          },
+          headers: expect.objectContaining({ 'User-Agent': 'Masterino' }),
         },
       );
     });

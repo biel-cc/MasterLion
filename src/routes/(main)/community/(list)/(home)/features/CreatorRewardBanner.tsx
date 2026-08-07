@@ -5,6 +5,7 @@ import { createStaticStyles, cx, responsive } from 'antd-style';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { useIsDark } from '@/hooks/useIsDark';
 
 const styles = createStaticStyles(({ css }) => ({
@@ -96,9 +97,9 @@ const CreatorRewardBanner = memo(() => {
           {t('home.creatorReward.subtitle')}
         </p>
         <div style={{ marginBlockStart: 4 }}>
-          <a href={'https://aihub.bielcrystal.com/creator?utm_source=lobehub'} rel={'noopener noreferrer'} target={'_blank'}>
+          <WorkspaceLink to={'/community/workspace?tab=skills'}>
             <Button type={'primary'}>{t('home.creatorReward.action')}</Button>
-          </a>
+          </WorkspaceLink>
         </div>
       </Flexbox>
       <div className={styles.symbols} />

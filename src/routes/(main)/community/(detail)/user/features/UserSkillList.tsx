@@ -17,7 +17,7 @@ interface UserSkillListProps {
 
 const UserSkillList = memo<UserSkillListProps>(({ rows = 4, pageSize = 8 }) => {
   const { t } = useTranslation('discover');
-  const { skills = [], isOwner } = useUserDetailContext();
+  const { skills = [], isOwner, onRefreshProfile } = useUserDetailContext();
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
@@ -102,7 +102,11 @@ const UserSkillList = memo<UserSkillListProps>(({ rows = 4, pageSize = 8 }) => {
           </Flexbox>
         )}
       </Flexbox>
-      <SubmitRepoModal open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} />
+      <SubmitRepoModal
+        open={submitModalOpen}
+        onClose={() => setSubmitModalOpen(false)}
+        onSuccess={onRefreshProfile}
+      />
     </>
   );
 });

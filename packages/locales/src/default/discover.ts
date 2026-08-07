@@ -172,9 +172,10 @@ export default {
 
   'groupAgents.underReview': 'Under Review',
 
-  'home.creatorReward.action': 'Apply Now',
-  'home.creatorReward.subtitle': '2026 Creator Reward Program is officially live.',
-  'home.creatorReward.title': 'Create. Share. Get Paid.',
+  'home.creatorReward.action': 'Submit a resource',
+  'home.creatorReward.subtitle':
+    'Share trusted agents, skills, and MCP services with your organization. Submissions are reviewed before publishing.',
+  'home.creatorReward.title': 'Build the Masterino Community together',
 
   'home.communityAgents': 'Community Agents',
 
@@ -185,6 +186,7 @@ export default {
   'home.featuredPlugins': 'Featured Skills',
 
   'home.featuredProviders': 'Featured Providers',
+  'home.featuredSkills': 'Curated Skills',
 
   'home.featuredTools': 'Featured Skills',
 
@@ -1301,12 +1303,26 @@ export default {
   'user.githubUrl': 'GitHub Repository URL',
   'user.githubUrlInvalid': 'Please enter a valid GitHub repository URL',
   'user.githubUrlRequired': 'Please enter a GitHub repository URL',
+  'user.mcpAuth': 'Authorization',
+  'user.mcpAuthNone': 'No authorization',
+  'user.mcpDescription': 'Description',
+  'user.mcpName': 'MCP name',
+  'user.mcpUrl': 'Remote MCP URL',
+  'user.mcpUrlHttps': 'The remote MCP URL must use HTTPS',
   'user.submit': 'Submit',
-  'user.submitRepo': 'Submit Repo',
+  'user.submitMcp': 'Submit MCP',
+  'user.submitMcpError': 'Failed to submit MCP. Please try again.',
+  'user.submitMcpSuccess': 'MCP submitted. It will be available after review.',
+  'user.submitMcpTitle': 'Submit an MCP server',
+  'user.submitRepo': 'Submit Skill',
   'user.submitRepoDescription':
-    'Submit your GitHub repository to import your Skills or MCPs to the community.',
+    'Submit a Skill from a GitHub repository or a ZIP package for community review.',
   'user.submitRepoError': 'Failed to submit repository. Please try again.',
-  'user.submitRepoHint': 'The repository will be reviewed before being published.',
+  'user.submitRepoHint': 'The Skill will be scanned and reviewed before being published.',
   'user.submitRepoSuccess': 'Repository submitted successfully! It will be reviewed shortly.',
-  'user.submitRepoTitle': 'Submit Your Repository',
+  'user.submitRepoTitle': 'Submit a Skill',
+  'user.submitZip': 'Upload ZIP',
+  'user.zipRequired': 'Upload a Skill ZIP package first.',
+  'user.zipTooLarge': 'The Skill ZIP package must not exceed 16 MiB.',
+  'user.zipUploadHint': 'Drop a ZIP package containing SKILL.md here, or click to select one.',
 };

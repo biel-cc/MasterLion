@@ -112,13 +112,16 @@ const UserDetailPage = memo<UserDetailPageProps>(({ mobile }) => {
       isOwner,
       mobile,
       onEditProfile: handleEditProfile,
+      onRefreshProfile: async () => {
+        await mutate();
+      },
       onStatusChange: isOwner ? handleStatusChange : undefined,
       plugins: plugins || [],
       skills: skills || [],
       totalInstalls,
       user,
     };
-  }, [data, handleEditProfile, handleStatusChange, isOwner, mobile]);
+  }, [data, handleEditProfile, handleStatusChange, isOwner, mobile, mutate]);
 
   if (isLoading) return <Loading />;
   if (!contextConfig) return <NotFound />;

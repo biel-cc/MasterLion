@@ -397,12 +397,12 @@ export function defineConfig(config: CustomNextConfig) {
         source: '/community/plugins',
       },
       {
-        destination: '/community/model',
+        destination: '/community',
         permanent: true,
         source: '/community/models',
       },
       {
-        destination: '/community/provider',
+        destination: '/community',
         permanent: true,
         source: '/community/providers',
       },

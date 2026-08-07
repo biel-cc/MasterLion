@@ -1,0 +1,196 @@
+import { createHash } from 'node:crypto';
+
+import type { MarketConfig } from './config.js';
+import { CURATED_SEED_BATCH, curatedResources } from './curatedCatalog.js';
+import { createPool } from './db.js';
+import { MarketObjectStorage } from './objectStorage.js';
+import { MarketRepository } from './repository.js';
+import { createStoredZip } from './zip.js';
+
+const scanResult = (artifactSha256: string) => ({
+  artifactSha256,
+  checkedAt: new Date().toISOString(),
+  checks: ['archive-paths', 'embedded-secrets', 'installers', 'license', 'manual-review'],
+  seedBatchId: CURATED_SEED_BATCH,
+  source: 'masterino-curated-seed',
+  status: 'passed',
+});
+
+export interface CuratedSeedDependencies {
+  pool?: ReturnType<typeof createPool>;
+  repository?: MarketRepository;
+  storage?: MarketObjectStorage;
+}
+
+export const runCuratedSeed = async (
+  config: MarketConfig,
+  dependencies: CuratedSeedDependencies = {},
+) => {
+  const pool = dependencies.pool || createPool(config.MARKET_DATABASE_URL);
+  const repository = dependencies.repository || new MarketRepository(pool);
+  const storage = dependencies.storage || new MarketObjectStorage(config);
+  const account = await repository.syncAccount(
+    {
+      clientId: 'masterino-curated-seed',
+      name: 'Masterino 官方精选',
+      nonce: CURATED_SEED_BATCH,
+      timestamp: Date.now(),
+      userId: 'masterino-curated-seed',
+    },
+    new Set(['masterino-curated-seed']),
+  );
+  const created: Array<{ identifier: string; type: string }> = [];
+
+  try {
+    await Promise.all([repository.ping(), storage.ping()]);
+    for (const entry of curatedResources) {
+      const artifact = entry.artifact ? createStoredZip(entry.artifact.files) : undefined;
+      const artifactHash = artifact
+        ? createHash('sha256').update(artifact).digest('hex')
+        : createHash('sha256').update(JSON.stringify(entry.resource)).digest('hex');
+      const idempotencyKey = `${CURATED_SEED_BATCH}:${entry.type}:${entry.resource.identifier}:${entry.resource.version}:${artifactHash}`;
+      const existing = await pool.query(
+        `SELECT r.id, r.status, r.metadata, r.owner_account_id, v.id AS version_id, v.version,
+          v.workflow_state, v.artifact_sha256
+         FROM market_resources r LEFT JOIN market_versions v ON v.id=r.current_version_id
+         WHERE r.type=$1 AND r.identifier=$2`,
+        [entry.type, entry.resource.identifier],
+      );
+      const current = existing.rows[0];
+      const previousHash = current?.artifact_sha256 || current?.metadata?.artifactSha256;
+
+      if (
+        current?.status === 'published' &&
+        current.version === entry.resource.version &&
+        previousHash === artifactHash &&
+        current.workflow_state === 'published'
+      ) {
+        console.info(`seed skip ${entry.type}:${entry.resource.identifier}`);
+        continue;
+      }
+      if (current && Number(current.owner_account_id) !== account.id) {
+        throw new Error(
+          `Curated identifier is already owned by another account: ${entry.resource.identifier}`,
+        );
+      }
+      if (
+        current?.version === entry.resource.version &&
+        previousHash &&
+        previousHash !== artifactHash
+      ) {
+        throw new Error(
+          `Curated resource ${entry.type}:${entry.resource.identifier} changed without a version bump`,
+        );
+      }
+
+      const metadata = {
+        ...entry.resource.metadata,
+        artifactSha256: artifactHash,
+        idempotencyKey,
+        seedBatchId: CURATED_SEED_BATCH,
+      };
+      if (!current) {
+        await repository.createResource(entry.type, { ...entry.resource, metadata }, account);
+        created.push({ identifier: entry.resource.identifier, type: entry.type });
+      } else {
+        await pool.query(
+          `UPDATE market_resources SET metadata=$1, name=$2, description=$3, category=$4, tags=$5,
+            updated_at=now() WHERE type=$6 AND identifier=$7`,
+          [
+            JSON.stringify(metadata),
+            entry.resource.name,
+            entry.resource.description,
+            entry.resource.category,
+            JSON.stringify(entry.resource.tags || []),
+            entry.type,
+            entry.resource.identifier,
+          ],
+        );
+      }
+
+      let version =
+        current?.version === entry.resource.version
+          ? { id: Number(current.version_id), version: entry.resource.version }
+          : undefined;
+      let workflow = current?.workflow_state || 'draft';
+      if (workflow === 'deprecated' && version) {
+        await pool.query(
+          `UPDATE market_versions SET workflow_state='draft', review_reason=NULL WHERE id=$1`,
+          [version.id],
+        );
+        await pool.query(`UPDATE market_resources SET status='draft' WHERE id=$1`, [current.id]);
+        workflow = 'draft';
+      }
+      if (!version) {
+        version = await repository.createVersion(
+          entry.type,
+          { ...entry.resource, metadata },
+          account,
+        );
+        workflow = 'draft';
+      }
+
+      if (artifact) {
+        const artifactKey = `${entry.type}/${entry.resource.identifier}/${entry.resource.version}/${artifactHash}.zip`;
+        await storage.put(artifactKey, artifact, artifactHash);
+        await pool.query(
+          `UPDATE market_versions SET artifact_key=$1, artifact_sha256=$2 WHERE id=$3`,
+          [artifactKey, artifactHash, version.id],
+        );
+      } else {
+        await pool.query(
+          `UPDATE market_resources SET metadata=jsonb_set(metadata, '{artifactSha256}', to_jsonb($1::text))
+           WHERE type=$2 AND identifier=$3`,
+          [artifactHash, entry.type, entry.resource.identifier],
+        );
+      }
+
+      const transitions: Record<string, string[]> = {
+        approved: ['publish'],
+        draft: ['submit', 'scan-start', 'scan-passed', 'approve', 'publish'],
+        in_review: ['approve', 'publish'],
+        scanning: ['scan-passed', 'approve', 'publish'],
+        submitted: ['scan-start', 'scan-passed', 'approve', 'publish'],
+      };
+      for (const action of transitions[workflow] || []) {
+        await repository.review(
+          entry.type,
+          entry.resource.identifier,
+          action,
+          undefined,
+          account,
+          action === 'scan-passed' ? scanResult(artifactHash) : undefined,
+        );
+      }
+      console.info(`seed publish ${entry.type}:${entry.resource.identifier}`);
+    }
+
+    const counts = await pool.query(
+      `SELECT type, count(*)::int AS count FROM market_resources
+       WHERE status='published' AND metadata->>'seedBatchId'=$1 GROUP BY type ORDER BY type`,
+      [CURATED_SEED_BATCH],
+    );
+    const actual = Object.fromEntries(counts.rows.map((row) => [row.type, Number(row.count)]));
+    if (actual.agent !== 5 || actual.skill !== 5 || actual.mcp !== 5) {
+      throw new Error(`Curated seed count mismatch: ${JSON.stringify(actual)}`);
+    }
+    console.info(`Masterino curated community seed complete: ${JSON.stringify(actual)}`);
+    return actual;
+  } catch (error) {
+    for (const item of created) {
+      await pool.query(
+        `UPDATE market_resources SET status='deprecated', updated_at=now()
+         WHERE type=$1 AND identifier=$2 AND metadata->>'seedBatchId'=$3`,
+        [item.type, item.identifier, CURATED_SEED_BATCH],
+      );
+      await pool.query(
+        `UPDATE market_versions SET workflow_state='deprecated'
+         WHERE resource_id=(SELECT id FROM market_resources WHERE type=$1 AND identifier=$2)`,
+        [item.type, item.identifier],
+      );
+    }
+    throw error;
+  } finally {
+    await pool.end();
+  }
+};

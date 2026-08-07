@@ -92,13 +92,6 @@ export const sharedMainAreaChildren: RouteObject[] = [
     children: [
       {
         element: dynamicElement(
-          () => import('@/routes/(mobile)/community'),
-          'Mobile > Discover > Coming Soon',
-        ),
-        index: true,
-      },
-      {
-        element: dynamicElement(
           () => import('@/routes/(main)/community/(detail)/workspace/settings'),
           'Mobile > Discover > Workspace > Settings',
         ),
@@ -107,6 +100,13 @@ export const sharedMainAreaChildren: RouteObject[] = [
       // List routes (with ListLayout)
       {
         children: [
+          {
+            element: dynamicElement(
+              () => import('@/routes/(main)/community/(list)/(home)'),
+              'Mobile > Discover > Home',
+            ),
+            index: true,
+          },
           {
             children: [
               {
@@ -118,23 +118,14 @@ export const sharedMainAreaChildren: RouteObject[] = [
               },
             ],
           },
-          {
-            children: [
-              {
-                element: dynamicElement(
-                  () => import('@/routes/(main)/community/(list)/model'),
-                  'Mobile > Discover > List > Model',
-                ),
-                path: 'model',
-              },
-            ],
-          },
+          { element: redirectElement('/community'), path: 'model' },
+          { element: redirectElement('/community'), path: 'provider' },
           {
             element: dynamicElement(
-              () => import('@/routes/(main)/community/(list)/provider'),
-              'Mobile > Discover > List > Provider',
+              () => import('@/routes/(main)/community/(list)/skill'),
+              'Mobile > Discover > List > Skill',
             ),
-            path: 'provider',
+            path: 'skill',
           },
           {
             children: [
@@ -176,23 +167,15 @@ export const sharedMainAreaChildren: RouteObject[] = [
             ),
             path: 'agent/:slug',
           },
+          { element: redirectElement('/community'), path: 'model/:slug' },
+          { element: redirectElement('/community'), path: 'provider/:slug' },
           {
             element: dynamicElement(
               () =>
-                import('@/routes/(main)/community/(detail)/model').then((m) => m.MobileModelPage),
-              'Mobile > Discover > Detail > Model',
+                import('@/routes/(main)/community/(detail)/skill').then((m) => m.MobileSkillPage),
+              'Mobile > Discover > Detail > Skill',
             ),
-            path: 'model/:slug',
-          },
-          {
-            element: dynamicElement(
-              () =>
-                import('@/routes/(main)/community/(detail)/provider').then(
-                  (m) => m.MobileProviderPage,
-                ),
-              'Mobile > Discover > Detail > Provider',
-            ),
-            path: 'provider/:slug',
+            path: 'skill/:slug',
           },
           {
             element: dynamicElement(
