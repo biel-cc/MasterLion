@@ -171,7 +171,13 @@ required_secret_keys=(
 )
 
 if [[ "$ENVIRONMENT" == "test" ]]; then
-  required_secret_keys+=(AUTH_SSO_PROVIDERS MARKET_TRUSTED_CLIENT_SECRET)
+  required_secret_keys+=(
+    AUTH_SSO_PROVIDERS
+    AUTH_WECOM_AGENT_ID
+    AUTH_WECOM_CORP_ID
+    AUTH_WECOM_CORP_SECRET
+    MARKET_TRUSTED_CLIENT_SECRET
+  )
 fi
 
 if [[ "$ENVIRONMENT" == "production" ]]; then

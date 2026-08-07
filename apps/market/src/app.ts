@@ -75,7 +75,7 @@ export const createMarketApp = (options: {
   >;
   const oauthRedirectOrigins = splitCsv(config.MARKET_OAUTH_REDIRECT_ORIGINS);
   const publicBaseUrl = config.MARKET_PUBLIC_BASE_URL.replace(/\/$/, '');
-  const skillManagementUrl = new URL('/settings/skill', publicBaseUrl).toString();
+  const marketUiUrl = new URL('/community/skill', publicBaseUrl).toString();
   const app = new Hono<AppEnv>();
 
   app.onError((error, c) => {
@@ -88,7 +88,7 @@ export const createMarketApp = (options: {
     return c.json({ error: error.message }, status);
   });
 
-  app.get('/', (c) => c.redirect(skillManagementUrl));
+  app.get('/', (c) => c.redirect(marketUiUrl));
   app.get('/health', (c) => c.json({ service: 'masterino-market', status: 'ok' }));
   app.get('/connect/success', (c) => c.json({ status: 'connected', success: true }));
   app.get('/connect/:provider/start', async (c) => {
