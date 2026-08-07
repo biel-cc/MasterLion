@@ -2,7 +2,7 @@
 
 This overlay deploys Langfuse v3 web/worker and a one-shard, one-replica ClickHouse 25.8 LTS instance in `masterino-observability`. Production PostgreSQL is reached through the existing private `DATABASE_URL`; Redis remains in the historical `masterlion` namespace. Masterino does not depend on this stack for chat availability.
 
-The UI is available at `https://langfuse-internal.bielcrystal.com`. Configure a CNAME for that host to `nlb-pkheesf2fnmqr7yil7.cn-shenzhen.nlb.aliyuncsslb.com`; do not pin the NLB's current A records because their addresses can change. The Langfuse Ingress allows only source addresses in `10.0.0.0/8`; the shared NLB must retain the original client address.
+The UI is available at `https://langfuse-internal.bielcrystal.com`. Configure a CNAME for that host to `nlb-pkheesf2fnmqr7yil7.cn-shenzhen.nlb.aliyuncsslb.com`; do not pin the NLB's current A records because their addresses can change. The Langfuse Ingress allows only source addresses in `10.0.0.0/8` and the corporate egress address `120.234.229.243/32`; the shared NLB must retain the original client address.
 
 ## Prerequisites
 
