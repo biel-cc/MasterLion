@@ -45,6 +45,7 @@ cleanup() {
   [[ -n "${ACK_RESPONSE_FILE:-}" ]] && rm -f -- "$ACK_RESPONSE_FILE"
   [[ -n "${APP_SECRET_FILE:-}" ]] && rm -f -- "$APP_SECRET_FILE"
   [[ -n "${BRIDGE_SECRET_FILE:-}" ]] && rm -f -- "$BRIDGE_SECRET_FILE"
+  [[ -n "${SEARXNG_SECRET_FILE:-}" ]] && rm -f -- "$SEARXNG_SECRET_FILE"
   [[ -n "${MARKET_SECRET_FILE:-}" ]] && rm -f -- "$MARKET_SECRET_FILE"
   [[ -n "${TEMP_DIR:-}" ]] && rmdir -- "$TEMP_DIR" 2> /dev/null
 }
@@ -101,20 +102,24 @@ prepare_kubeconfig() {
 }
 
 prepare_secret_files() {
-  if [[ -n "${ACK_TEST_APP_SECRET_FILE:-}" || -n "${ACK_TEST_BRIDGE_SECRET_FILE:-}" || -n "${ACK_TEST_MARKET_SECRET_FILE:-}" ]]; then
+  if [[ -n "${ACK_TEST_APP_SECRET_FILE:-}" || -n "${ACK_TEST_BRIDGE_SECRET_FILE:-}" || -n "${ACK_TEST_SEARXNG_SECRET_FILE:-}" || -n "${ACK_TEST_MARKET_SECRET_FILE:-}" ]]; then
     require_env ACK_TEST_APP_SECRET_FILE
     require_env ACK_TEST_BRIDGE_SECRET_FILE
+    require_env ACK_TEST_SEARXNG_SECRET_FILE
     require_env ACK_TEST_MARKET_SECRET_FILE
     [[ -f "$ACK_TEST_APP_SECRET_FILE" ]] \
       || fail "application secret file does not exist: $ACK_TEST_APP_SECRET_FILE"
     [[ -f "$ACK_TEST_BRIDGE_SECRET_FILE" ]] \
       || fail "bridge secret file does not exist: $ACK_TEST_BRIDGE_SECRET_FILE"
+    [[ -f "$ACK_TEST_SEARXNG_SECRET_FILE" ]] \
+      || fail "SearXNG secret file does not exist: $ACK_TEST_SEARXNG_SECRET_FILE"
     [[ -f "$ACK_TEST_MARKET_SECRET_FILE" ]] \
       || fail "Market secret file does not exist: $ACK_TEST_MARKET_SECRET_FILE"
     cp -- "$ACK_TEST_APP_SECRET_FILE" "$APP_SECRET_FILE"
     cp -- "$ACK_TEST_BRIDGE_SECRET_FILE" "$BRIDGE_SECRET_FILE"
+    cp -- "$ACK_TEST_SEARXNG_SECRET_FILE" "$SEARXNG_SECRET_FILE"
     cp -- "$ACK_TEST_MARKET_SECRET_FILE" "$MARKET_SECRET_FILE"
-    chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$MARKET_SECRET_FILE"
+    chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
     return
   fi
 
@@ -126,6 +131,7 @@ prepare_secret_files() {
     REDIS_PASSWORD
     S3_ACCESS_KEY_ID
     S3_SECRET_ACCESS_KEY
+    SEARXNG_SECRET
     AIHUB_BRIDGE_TOKEN
     AIHUB_READONLY_DATABASE_URL
     AUTH_WECOM_AGENT_ID
@@ -204,6 +210,9 @@ prepare_secret_files() {
   write_env "$BRIDGE_SECRET_FILE" AIHUB_READONLY_DATABASE_URL \
     "$AIHUB_READONLY_DATABASE_URL"
 
+  : > "$SEARXNG_SECRET_FILE"
+  write_env "$SEARXNG_SECRET_FILE" SEARXNG_SECRET "$SEARXNG_SECRET"
+
   local market_oauth_clients_json='{}'
   if [[ -n "${MARKET_OAUTH_CLIENTS_JSON:-}" ]]; then
     market_oauth_clients_json="$MARKET_OAUTH_CLIENTS_JSON"
@@ -226,7 +235,7 @@ prepare_secret_files() {
     "$MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY"
   write_env "$MARKET_SECRET_FILE" MARKET_OAUTH_CLIENTS_JSON "$market_oauth_clients_json"
   write_env "$MARKET_SECRET_FILE" MARKET_ADMIN_USER_IDS "$MARKET_ADMIN_USER_IDS"
-  chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$MARKET_SECRET_FILE"
+  chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
 }
 
 check_aihub_authorization() {
@@ -316,6 +325,7 @@ KUBECONFIG_FILE="$TEMP_DIR/kubeconfig"
 ACK_RESPONSE_FILE="$TEMP_DIR/ack-response.json"
 APP_SECRET_FILE="$TEMP_DIR/secret.env"
 BRIDGE_SECRET_FILE="$TEMP_DIR/bridge-secret.env"
+SEARXNG_SECRET_FILE="$TEMP_DIR/searxng-secret.env"
 MARKET_SECRET_FILE="$TEMP_DIR/market-secret.env"
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -352,7 +362,7 @@ case "$ACK_TEST_ACTION" in
     prepare_secret_files
     bash ./deploy.sh --env test bootstrap
     bash ./deploy.sh --env test create-secret \
-      "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$TEMP_DIR/searxng-secret.env" "$MARKET_SECRET_FILE"
+      "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
     bash ./deploy.sh --env test deploy
     bash ./deploy.sh --env test rollout
     check_aihub_authorization
