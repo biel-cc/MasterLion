@@ -37,6 +37,7 @@ import {
   AssistantSorts,
   CacheRevalidate,
   CacheTag,
+  isPublicAssistantCategory,
   McpCategory,
   McpSorts,
   ModelSorts,
@@ -62,15 +63,17 @@ import {
 } from '@lobehub/market-types';
 import dayjs from 'dayjs';
 import debug from 'debug';
-import { cloneDeep, countBy, isString, merge, uniq, uniqBy } from 'es-toolkit/compat';
-import matter from 'gray-matter';
-import urlJoin from 'url-join';
+import { cloneDeep, countBy, isString, merge } from 'es-toolkit/compat';
 
 import { type TrustedClientUserInfo } from '@/libs/trusted-client';
 import { normalizeLocale } from '@/locales/resources';
 import { AssistantStore } from '@/server/modules/AssistantStore';
 import { PluginStore } from '@/server/modules/PluginStore';
 import { MarketService } from '@/server/services/market';
+import {
+  normalizeMarketAuthor,
+  normalizeMarketListAuthors,
+} from '@/server/services/market/normalizeAuthor';
 import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 const log = debug('lobe-server:discover');
@@ -295,37 +298,7 @@ export class DiscoverService {
     return result;
   };
 
-  private normalizeAuthorField = (
-    author: unknown,
-  ): { name: string; ownerType?: 'user' | 'organization'; userName?: string } => {
-    if (!author) return { name: '' };
-
-    if (typeof author === 'string') return { name: author };
-
-    if (typeof author === 'object') {
-      const { avatar, url, name, userName, type } = author as {
-        avatar?: unknown;
-        name?: unknown;
-        type?: unknown;
-        url?: unknown;
-        userName?: unknown;
-      };
-
-      const authorName =
-        (typeof name === 'string' && name.length > 0 && name) ||
-        (typeof avatar === 'string' && avatar.length > 0 && avatar) ||
-        (typeof url === 'string' && url.length > 0 && url) ||
-        '';
-
-      return {
-        name: authorName,
-        ownerType: type === 'organization' ? 'organization' : 'user',
-        userName: typeof userName === 'string' ? userName : undefined,
-      };
-    }
-
-    return { name: '' };
-  };
+  private normalizeAuthorField = normalizeMarketAuthor;
 
   private isLegacySource = (source?: AssistantMarketSource) => source === 'legacy';
 
@@ -541,8 +514,14 @@ export class DiscoverService {
         locale: normalizedLocale,
         q,
       });
-      log('getAssistantCategories: returning %d categories from market SDK', categories.length);
-      return categories;
+      const publicCategories = categories.filter((item: CategoryItem) =>
+        isPublicAssistantCategory(item.category),
+      );
+      log(
+        'getAssistantCategories: returning %d public categories from market SDK',
+        publicCategories.length,
+      );
+      return publicCategories;
     } catch (error) {
       log('getAssistantCategories: error fetching from market SDK: %O', error);
       return [];
@@ -695,6 +674,10 @@ export class DiscoverService {
       category as AssistantCategory,
     );
 
+    if (category && !shouldOmitCategory && !isPublicAssistantCategory(category)) {
+      return { currentPage: page, items: [], pageSize, totalCount: 0, totalPages: 0 };
+    }
+
     try {
       const normalizedLocale = normalizeLocale(locale);
 
@@ -741,31 +724,36 @@ export class DiscoverService {
         visibility: 'public',
       } as any);
 
-      const transformedItems: DiscoverAssistantItem[] = (data.items || []).map((item: any) => {
-        const normalizedAuthor = this.normalizeAuthorField(item.author);
-        return {
-          author:
-            normalizedAuthor.name || (item.ownerId !== null ? `User${item.ownerId}` : 'Unknown'),
-          avatar: item.avatar || normalizedAuthor.name || '',
-          category: item.category || 'general',
-          config: item.config || {},
-          createdAt: item.createdAt || item.updatedAt || new Date().toISOString(),
-          description: item.description || item.summary || '',
-          forkCount: item.forkCount,
-          homepage: item.homepage || `https://aihub.bielcrystal.com/discover/assistant/${item.identifier}`,
-          identifier: item.identifier,
-          installCount: item.installCount,
-          knowledgeCount: item.knowledgeCount ?? item.config?.knowledgeBases?.length ?? 0,
-          pluginCount: item.pluginCount ?? item.config?.plugins?.length ?? 0,
-          schemaVersion: item.schemaVersion ?? 1,
-          tags: item.tags || [],
-          title: item.name || item.identifier,
-          tokenUsage: item.tokenUsage || 0,
-          type: item.type,
-          updatedAt: item.updatedAt,
-          userName: normalizedAuthor.userName,
-        };
-      });
+      const transformedItems: DiscoverAssistantItem[] = (data.items || [])
+        .filter((item: any) => isPublicAssistantCategory(item.category))
+        .map((item: any) => {
+          const normalizedAuthor = this.normalizeAuthorField(item.author);
+          return {
+            author:
+              normalizedAuthor.name || (item.ownerId !== null ? `User${item.ownerId}` : 'Unknown'),
+            authorAvatar: normalizedAuthor.avatar,
+            avatar: item.avatar || normalizedAuthor.name || '',
+            category: item.category || 'general',
+            config: item.config || {},
+            createdAt: item.createdAt || item.updatedAt || new Date().toISOString(),
+            description: item.description || item.summary || '',
+            forkCount: item.forkCount,
+            homepage:
+              item.homepage ||
+              `https://aihub.bielcrystal.com/discover/assistant/${item.identifier}`,
+            identifier: item.identifier,
+            installCount: item.installCount,
+            knowledgeCount: item.knowledgeCount ?? item.config?.knowledgeBases?.length ?? 0,
+            pluginCount: item.pluginCount ?? item.config?.plugins?.length ?? 0,
+            schemaVersion: item.schemaVersion ?? 1,
+            tags: item.tags || [],
+            title: item.name || item.identifier,
+            tokenUsage: item.tokenUsage || 0,
+            type: item.type,
+            updatedAt: item.updatedAt,
+            userName: normalizedAuthor.userName,
+          };
+        });
 
       const result: AssistantListResponse = {
         currentPage: data.currentPage || page,
@@ -784,13 +772,9 @@ export class DiscoverService {
       return result;
     } catch (error) {
       log('getAssistantList: error fetching from market SDK: %O', error);
-      return {
-        currentPage: page,
-        items: [],
-        pageSize,
-        totalCount: 0,
-        totalPages: 0,
-      };
+      throw new Error('Assistant catalog is temporarily unavailable; please retry', {
+        cause: error,
+      });
     }
   };
 
@@ -870,8 +854,13 @@ export class DiscoverService {
         },
       },
     );
-    log('getMcpList: returning %d items on page %d', result.items.length, result.currentPage);
-    return result;
+    const normalized = normalizeMarketListAuthors(result);
+    log(
+      'getMcpList: returning %d items on page %d',
+      normalized.items.length,
+      normalized.currentPage,
+    );
+    return normalized as McpListResponse;
   };
 
   getMcpManifest = async (params: { identifier: string; locale?: string; version?: string }) => {
@@ -1306,7 +1295,9 @@ export class DiscoverService {
 
   private _getProviderList = async (): Promise<DiscoverProviderItem[]> => {
     log('_getProviderList: fetching provider list');
-    const response = await this.fetchInternalCatalog<{ items: any[] }>('/api/v1/providers?pageSize=100');
+    const response = await this.fetchInternalCatalog<{ items: any[] }>(
+      '/api/v1/providers?pageSize=100',
+    );
     const result = response.items.map((item) => {
       const models = item.config?.models || item.manifest?.models || [];
       return merge(cloneDeep(DEFAULT_DISCOVER_PROVIDER_ITEM), {
@@ -1340,7 +1331,9 @@ export class DiscoverService {
       pageSize: 7,
     });
 
-    const detail = await this.fetchInternalCatalog<any>(`/api/v1/providers/${encodeURIComponent(identifier)}`);
+    const detail = await this.fetchInternalCatalog<any>(
+      `/api/v1/providers/${encodeURIComponent(identifier)}`,
+    );
     const readme = withReadme ? detail.config?.readme || detail.manifest?.readme : undefined;
 
     const result = {
@@ -1434,7 +1427,9 @@ export class DiscoverService {
 
   private _getRawModelList = async (): Promise<DiscoverModelItem[]> => {
     log('_getRawModelList: fetching raw model list');
-    const response = await this.fetchInternalCatalog<{ items: any[] }>('/api/v1/models?pageSize=100');
+    const response = await this.fetchInternalCatalog<{ items: any[] }>(
+      '/api/v1/models?pageSize=100',
+    );
     const result = response.items.map((item) => {
       const config = item.config || {};
       const providers = config.providers || item.manifest?.providers || [];

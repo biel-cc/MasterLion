@@ -26,6 +26,7 @@ import { createLLMGenerationTracingHook } from '@/server/services/llmGenerationT
 
 import { KeyVaultsGateKeeper } from '../KeyVaultsEncrypt';
 import apiKeyManager from './apiKeyManager';
+import { withTransientDatabaseReadRetry } from './databaseReadRetry';
 import { assertModelProviderEndpointAllowed } from './endpointPolicy';
 
 export * from './trace';
@@ -454,9 +455,8 @@ export const initModelRuntimeFromDB = async (
   const aiProviderModel = new AiProviderModel(db, userId);
 
   // Use getAiProviderById with KeyVaultsGateKeeper.getUserKeyVaults as decryptor
-  const providerConfig = await aiProviderModel.getAiProviderById(
-    provider,
-    KeyVaultsGateKeeper.getUserKeyVaults,
+  const providerConfig = await withTransientDatabaseReadRetry(() =>
+    aiProviderModel.getAiProviderById(provider, KeyVaultsGateKeeper.getUserKeyVaults),
   );
 
   // 2. Resolve the runtime provider for custom providers

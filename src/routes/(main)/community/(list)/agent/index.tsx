@@ -2,20 +2,27 @@
 
 import { Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
+import { Navigate } from 'react-router-dom';
 
+import SafeBoundary, { AlertFallback } from '@/components/ErrorBoundary';
 import { useQuery } from '@/hooks/useQuery';
 import { useDiscoverStore } from '@/store/discover';
 import { type AssistantQueryParams } from '@/types/discover';
-import { AssistantSorts, DiscoverTab } from '@/types/discover';
+import {
+  AssistantCategory,
+  AssistantSorts,
+  DiscoverTab,
+  isPublicAssistantCategory,
+} from '@/types/discover';
 
 import Pagination from '../features/Pagination';
 import List from './features/List';
 import Loading from './loading';
 
-const AssistantPage = memo(() => {
+const AssistantListPage = memo(() => {
   const { q, page, category, sort, order, source } = useQuery() as AssistantQueryParams;
   const useAssistantList = useDiscoverStore((s) => s.useAssistantList);
-  const { data, isLoading } = useAssistantList({
+  const { data, error, isLoading, mutate } = useAssistantList({
     category,
     includeAgentGroup: true,
     order,
@@ -26,13 +33,18 @@ const AssistantPage = memo(() => {
     source,
   });
 
+  if (error) {
+    return <AlertFallback error={error} resetErrorBoundary={() => void mutate()} />;
+  }
   if (isLoading || !data) return <Loading />;
 
   const { items, currentPage, pageSize, totalCount } = data;
 
   return (
     <Flexbox gap={32} width={'100%'}>
-      <List data={items} />
+      <SafeBoundary minHeight={240} variant="alert">
+        <List data={items} />
+      </SafeBoundary>
       <Pagination
         currentPage={currentPage}
         pageSize={pageSize}
@@ -41,6 +53,19 @@ const AssistantPage = memo(() => {
       />
     </Flexbox>
   );
+});
+
+const AssistantPage = memo(() => {
+  const { category } = useQuery() as AssistantQueryParams;
+  const isSystemCategory = [AssistantCategory.All, AssistantCategory.Discover].includes(
+    category as AssistantCategory,
+  );
+
+  if (category && !isSystemCategory && !isPublicAssistantCategory(category)) {
+    return <Navigate replace to="/community/agent" />;
+  }
+
+  return <AssistantListPage />;
 });
 
 export default AssistantPage;

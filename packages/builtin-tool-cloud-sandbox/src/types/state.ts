@@ -55,6 +55,7 @@ export interface ExecuteCodeState {
 export interface OfficeToolError {
   code?: string;
   message: string;
+  retryable?: boolean;
 }
 
 export interface OfficeToolState {

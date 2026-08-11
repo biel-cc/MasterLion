@@ -3,6 +3,7 @@
 import { Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
 
+import SafeBoundary, { AlertFallback } from '@/components/ErrorBoundary';
 import { useQuery } from '@/hooks/useQuery';
 import { useDiscoverStore } from '@/store/discover';
 import { type SkillQueryParams } from '@/types/discover';
@@ -15,7 +16,7 @@ import Loading from './loading';
 const SkillPage = memo(() => {
   const { q, page, category, sort, order } = useQuery() as SkillQueryParams;
   const useSkillList = useDiscoverStore((s) => s.useFetchSkillList);
-  const { data, isLoading } = useSkillList({
+  const { data, error, isLoading, mutate } = useSkillList({
     category,
     order,
     page,
@@ -24,13 +25,18 @@ const SkillPage = memo(() => {
     sort: sort ?? SkillSorts.InstallCount,
   });
 
+  if (error) {
+    return <AlertFallback error={error} resetErrorBoundary={() => void mutate()} />;
+  }
   if (isLoading || !data) return <Loading />;
 
   const { items, currentPage, pageSize, totalCount } = data;
 
   return (
     <Flexbox gap={32} width={'100%'}>
-      <List data={items} />
+      <SafeBoundary minHeight={240} variant="alert">
+        <List data={items} />
+      </SafeBoundary>
       <Pagination
         currentPage={currentPage}
         pageSize={pageSize}

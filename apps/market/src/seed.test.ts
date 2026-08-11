@@ -34,14 +34,14 @@ const createRepository = () => ({
 const countResult = {
   rowCount: 3,
   rows: [
-    { count: 5, type: 'agent' },
+    { count: 50, type: 'agent' },
     { count: 5, type: 'mcp' },
     { count: 5, type: 'skill' },
   ],
 };
 
 describe('runCuratedSeed', () => {
-  it('publishes exactly 5 assistants, 5 skills and 5 MCPs on first run', async () => {
+  it('publishes exactly 50 assistants, 5 skills and 5 MCPs on first run', async () => {
     const pool = {
       end: vi.fn(async () => undefined),
       query: vi.fn(async (sql: string) => {
@@ -59,10 +59,10 @@ describe('runCuratedSeed', () => {
       storage: storage as never,
     });
 
-    expect(result).toEqual({ agent: 5, mcp: 5, skill: 5 });
-    expect(repository.createResource).toHaveBeenCalledTimes(15);
-    expect(repository.createVersion).toHaveBeenCalledTimes(15);
-    expect(repository.review).toHaveBeenCalledTimes(75);
+    expect(result).toEqual({ agent: 50, mcp: 5, skill: 5 });
+    expect(repository.createResource).toHaveBeenCalledTimes(60);
+    expect(repository.createVersion).toHaveBeenCalledTimes(60);
+    expect(repository.review).toHaveBeenCalledTimes(300);
     expect(storage.put).toHaveBeenCalledTimes(5);
   });
 
@@ -179,7 +179,7 @@ describe('runCuratedSeed', () => {
     const rollbackQueries = pool.query.mock.calls.filter(([sql]) =>
       String(sql).includes("status='deprecated'"),
     );
-    expect(rollbackQueries).toHaveLength(6);
+    expect(rollbackQueries).toHaveLength(51);
     expect(pool.end).toHaveBeenCalledOnce();
     expect(
       (pool.query.mock.calls as unknown as Array<[string, unknown[]?]>).some(([, params]) =>

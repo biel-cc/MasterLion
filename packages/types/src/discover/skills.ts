@@ -62,6 +62,7 @@ export enum SkillNavKey {
 }
 
 export interface DiscoverSkillItem extends Omit<MarketSkillListItem, 'commentCount'> {
+  authorAvatar?: string;
   commentCount?: number;
   homepage?: string;
   ratingAvg?: number;

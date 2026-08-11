@@ -49,7 +49,7 @@ export enum McpConnectionType {
   stdio = 'stdio',
 }
 
-export type DiscoverMcpItem = PluginItem;
+export type DiscoverMcpItem = PluginItem & { authorAvatar?: string };
 
 export interface McpQueryParams {
   category?: string;
