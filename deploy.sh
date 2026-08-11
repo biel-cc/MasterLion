@@ -182,7 +182,7 @@ check_onlyboxes_workers() {
   printf '%s' "$workers_response" | node -e '
     const fs = require("node:fs");
     const payload = JSON.parse(fs.readFileSync(0, "utf8"));
-    const workers = Array.isArray(payload) ? payload : payload.workers;
+    const workers = Array.isArray(payload) ? payload : payload.items || payload.workers;
     if (!Array.isArray(workers)) process.exit(2);
     const names = (worker) => (Array.isArray(worker.capabilities) ? worker.capabilities : [])
       .map((capability) => typeof capability === "string"
