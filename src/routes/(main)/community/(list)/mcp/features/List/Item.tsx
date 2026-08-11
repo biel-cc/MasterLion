@@ -28,6 +28,7 @@ import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { discoverService } from '@/services/discover';
 import { type DiscoverMcpItem } from '@/types/discover';
 
+import { displayAuthor } from '../../../../features/displayAuthor';
 import ConnectionTypeTag from './ConnectionTypeTag';
 import MetaInfo from './MetaInfo';
 
@@ -86,6 +87,7 @@ const McpItem = memo<DiscoverMcpItem>(
     installCount,
     github,
   }) => {
+    const authorName = displayAuthor(author);
     const { t } = useTranslation('discover');
     const navigate = useWorkspaceAwareNavigate();
     const link = urlJoin('/community/mcp', identifier);
@@ -160,7 +162,7 @@ const McpItem = memo<DiscoverMcpItem>(
                   </Tooltip>
                 )}
               </Flexbox>
-              {author && <div className={styles.author}>{author}</div>}
+              {authorName && <div className={styles.author}>{authorName}</div>}
             </Flexbox>
           </Flexbox>
           <Flexbox horizontal align={'center'} gap={4}>

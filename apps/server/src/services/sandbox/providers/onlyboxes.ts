@@ -28,6 +28,44 @@ const DEFAULT_JIT_TTL_SEC = 1800;
 const JIT_TOKEN_PREFIX = 'obx_jit_v1.';
 const WRITE_FILE_CHUNK_BYTES = 48 * 1024;
 const SKILL_ARCHIVE_CACHE_DIR = '/tmp/lobe-skills';
+const OFFICE_RETRY_DELAYS_MS = [2000, 5000, 10_000] as const;
+
+class OnlyboxesRequestError extends Error {
+  code?: string;
+  retryable: boolean;
+  status?: number;
+
+  constructor({
+    code,
+    message,
+    retryable,
+    status,
+  }: {
+    code?: string;
+    message: string;
+    retryable: boolean;
+    status?: number;
+  }) {
+    super(message);
+    this.name = 'OnlyboxesRequestError';
+    this.code = code;
+    this.retryable = retryable;
+    this.status = status;
+  }
+}
+
+const isRetryableWorkerError = (code: string | undefined, message: string) => {
+  const value = `${code || ''} ${message}`.toLowerCase();
+
+  return (
+    value.includes('no online worker capacity') ||
+    value.includes('no online worker supports') ||
+    value.includes('no compatible worker') ||
+    value.includes('no_worker') ||
+    value.includes('worker_offline') ||
+    value.includes('capacity_exhausted')
+  );
+};
 
 interface OnlyboxesTaskResponse {
   error?: { code?: string; message?: string };
@@ -95,7 +133,7 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
             return this.errorResult('OfficeCLI document tools are disabled');
           }
 
-          return this.runJsonScript(
+          return await this.runOfficeJsonScriptWithRetry(
             officeCliScript,
             { ...params, action: toolName },
             Math.min(Math.max(this.timeout(params), OFFICE_TIMEOUT_MS), 300_000),
@@ -188,6 +226,10 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       }
     } catch (error) {
       log('Onlyboxes tool %s failed: %O', toolName, error);
+      if (error instanceof OnlyboxesRequestError) {
+        return this.errorResult(error.message, error.name, error.code, error.retryable);
+      }
+
       return this.errorResult((error as Error).message, (error as Error).name);
     }
   }
@@ -672,6 +714,30 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     }
   }
 
+  private async runOfficeJsonScriptWithRetry(
+    script: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<SandboxCallToolResult> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.runJsonScript(script, params, timeoutMs);
+      } catch (error) {
+        const retryable = error instanceof OnlyboxesRequestError && error.retryable;
+        const retryDelay = OFFICE_RETRY_DELAYS_MS[attempt];
+
+        if (!retryable || retryDelay === undefined) throw error;
+
+        log(
+          'Onlyboxes Office worker unavailable; retrying attempt %d in %dms',
+          attempt + 2,
+          retryDelay,
+        );
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+
   private async execTerminal(command: string, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return this.request<TerminalExecResult>('/api/v1/commands/terminal', {
       body: JSON.stringify({
@@ -716,7 +782,12 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       headers,
     });
     const body = await response.text();
-    const json = body ? JSON.parse(body) : {};
+    let json: any;
+    try {
+      json = body ? JSON.parse(body) : {};
+    } catch {
+      json = {};
+    }
 
     if (!response.ok) {
       const message =
@@ -725,7 +796,13 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
           : typeof json?.error?.message === 'string'
             ? json.error.message
             : `Onlyboxes request failed with HTTP ${response.status}`;
-      throw new Error(message);
+      const code = typeof json?.error?.code === 'string' ? json.error.code : undefined;
+      throw new OnlyboxesRequestError({
+        code,
+        message,
+        retryable: isRetryableWorkerError(code, message),
+        status: response.status,
+      });
     }
 
     return json as T;
@@ -749,9 +826,14 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_TIMEOUT_MS;
   }
 
-  private errorResult(message: string, name?: string): SandboxCallToolResult {
+  private errorResult(
+    message: string,
+    name?: string,
+    code?: string,
+    retryable?: boolean,
+  ): SandboxCallToolResult {
     return {
-      error: { message, name },
+      error: { code, message, name, retryable },
       result: null,
       success: false,
     };

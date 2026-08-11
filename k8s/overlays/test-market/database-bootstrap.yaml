@@ -35,6 +35,10 @@ spec:
               SELECT 'CREATE DATABASE masterino_market OWNER masterino_market'
                 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'masterino_market') \gexec
               GRANT ALL PRIVILEGES ON DATABASE masterino_market TO masterino_market;
+              SELECT format('ALTER DATABASE %I SET paradedb.enable_join_custom_scan = off', datname)
+                FROM pg_database WHERE datname = 'lobechat' \gexec
+              SELECT format('ALTER DATABASE %I SET paradedb.enable_aggregate_custom_scan = off', datname)
+                FROM pg_database WHERE datname = 'lobechat' \gexec
               SQL
           env:
             - name: PGPASSWORD

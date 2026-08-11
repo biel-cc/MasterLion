@@ -7,6 +7,8 @@ import { type TrustedClientUserInfo } from '@/libs/trusted-client';
 import { generateTrustedClientToken, getTrustedClientTokenForSession } from '@/libs/trusted-client';
 import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
+import { normalizeMarketListAuthors } from './normalizeAuthor';
+
 const log = debug('lobe-server:market-service');
 
 // ============================== Helper Functions ==============================
@@ -445,7 +447,7 @@ export class MarketService {
 
     log('searchSkill response: %O', result);
 
-    return result;
+    return normalizeMarketListAuthors(result);
   }
 
   /**

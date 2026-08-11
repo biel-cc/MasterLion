@@ -352,6 +352,128 @@ describe('OnlyboxesSandboxProvider', () => {
     expect(body.command).not.toContain('季度报告');
   });
 
+  it('retries transient Office worker capacity failures with bounded backoff', async () => {
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void) => {
+      handler();
+      return 0;
+    }) as typeof setTimeout);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 'capacity_exhausted', message: 'no online worker capacity' },
+          }),
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 'no_worker', message: 'no online worker supports requested capability' },
+          }),
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            exit_code: 0,
+            session_id: 'lobe-user-1-topic-1',
+            stderr: '',
+            stdout: JSON.stringify({ format: 'pptx', path: '/tmp/report.pptx', success: true }),
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+    const resultPromise = provider.callTool('createOfficeDocument', {
+      format: 'pptx',
+      path: '/tmp/report.pptx',
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      result: { format: 'pptx', success: true },
+      success: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry non-transient Office request errors', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { code: 'invalid_input', message: 'invalid Office request' } }),
+          { status: 400 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await expect(
+      provider.callTool('createOfficeDocument', {
+        format: 'pptx',
+        path: '/tmp/report.pptx',
+      }),
+    ).resolves.toMatchObject({
+      error: { code: 'invalid_input', message: 'invalid Office request', retryable: false },
+      success: false,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('returns a structured retryable error after transient retries are exhausted', async () => {
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void) => {
+      handler();
+      return 0;
+    }) as typeof setTimeout);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: { code: 'capacity_exhausted', message: 'no online worker capacity' },
+          }),
+          { status: 503 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await expect(
+      provider.callTool('createOfficeDocument', {
+        format: 'pptx',
+        path: '/tmp/report.pptx',
+      }),
+    ).resolves.toMatchObject({
+      error: {
+        code: 'capacity_exhausted',
+        message: 'no online worker capacity',
+        retryable: true,
+      },
+      success: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it('ensures a terminal session exists before exporting files through terminalResource', async () => {
     const fetchMock = vi
       .fn()

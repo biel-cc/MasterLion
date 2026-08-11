@@ -1,14 +1,9 @@
 import {
-  BadgeDollarSignIcon,
   BriefcaseIcon,
-  Coffee,
   CompassIcon,
-  DramaIcon,
-  GamepadIcon,
   GraduationCapIcon,
   ImageIcon,
   LanguagesIcon,
-  LaughIcon,
   Layers,
   LayoutPanelTop,
   MicroscopeIcon,
@@ -62,34 +57,9 @@ export const useCategory = () => {
         label: t('category.assistant.education'),
       },
       {
-        icon: LaughIcon,
-        key: AssistantCategory.Emotions,
-        label: t('category.assistant.emotions'),
-      },
-      {
-        icon: DramaIcon,
-        key: AssistantCategory.Entertainment,
-        label: t('category.assistant.entertainment'),
-      },
-      {
-        icon: GamepadIcon,
-        key: AssistantCategory.Games,
-        label: t('category.assistant.games'),
-      },
-      {
         icon: Layers,
         key: AssistantCategory.General,
         label: t('category.assistant.general'),
-      },
-      {
-        icon: Coffee,
-        key: AssistantCategory.Life,
-        label: t('category.assistant.life'),
-      },
-      {
-        icon: BadgeDollarSignIcon,
-        key: AssistantCategory.Marketing,
-        label: t('category.assistant.marketing'),
       },
       {
         icon: PrinterIcon,

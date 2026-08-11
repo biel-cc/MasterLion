@@ -15,6 +15,7 @@ import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { discoverService } from '@/services/discover';
 import { type DiscoverSkillItem } from '@/types/discover';
 
+import { displayAuthor } from '../../../../features/displayAuthor';
 import MetaInfo from './MetaInfo';
 
 const styles = createStaticStyles(({ css, cssVar }) => {
@@ -60,11 +61,11 @@ const SkillItem = memo<DiscoverSkillItem>(
     updatedAt,
     installCount,
     github,
-    homepage,
     ratingAvg,
     commentCount,
     resourcesCount = 0,
   }) => {
+    const authorName = displayAuthor(author);
     const { t } = useTranslation('discover');
     const navigate = useWorkspaceAwareNavigate();
     const link = urlJoin('/community/skill', identifier);
@@ -141,7 +142,7 @@ const SkillItem = memo<DiscoverSkillItem>(
                     {ratingAvg?.toFixed(1)}
                   </Flexbox>
                 )}
-                {author && <div>{author}</div>}
+                {authorName && <div>{authorName}</div>}
               </Flexbox>
             </Flexbox>
           </Flexbox>

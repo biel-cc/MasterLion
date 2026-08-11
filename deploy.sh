@@ -165,6 +165,44 @@ render_market_manifests() {
     -e "s|${MARKET_IMAGE}:${IMAGE_TAG_MARKER}|${MARKET_IMAGE}@${MARKET_IMAGE_DIGEST}|g"
 }
 
+check_onlyboxes_workers() {
+  [[ "$ENVIRONMENT" == "test" ]] || return 0
+  [[ -n "${ONLYBOXES_CONTROL_API_KEY:-}" ]] || fail \
+    "ONLYBOXES_CONTROL_API_KEY is required for the test Onlyboxes worker guard"
+  command -v curl > /dev/null 2>&1 || fail "curl is required for the Onlyboxes worker guard"
+  command -v node > /dev/null 2>&1 || fail "node is required for the Onlyboxes worker guard"
+
+  local workers_response
+  workers_response="$(
+    curl --fail --silent --show-error \
+      --header "Authorization: Bearer ${ONLYBOXES_CONTROL_API_KEY}" \
+      "${ONLYBOXES_CONTROL_BASE_URL:-https://onlyboxes.internal.bielcrystal.com}/api/v1/workers"
+  )" || fail "Onlyboxes worker inventory request failed"
+
+  printf '%s' "$workers_response" | node -e '
+    const fs = require("node:fs");
+    const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+    const workers = Array.isArray(payload) ? payload : payload.workers;
+    if (!Array.isArray(workers)) process.exit(2);
+    const names = (worker) => (Array.isArray(worker.capabilities) ? worker.capabilities : [])
+      .map((capability) => typeof capability === "string"
+        ? capability
+        : capability?.name || capability?.capability)
+      .filter(Boolean);
+    const ready = workers.filter((worker) => {
+      const status = String(worker.status || worker.state || "").toLowerCase();
+      const capabilities = names(worker);
+      return ["online", "ready", "healthy"].includes(status)
+        && capabilities.includes("terminalExec")
+        && capabilities.includes("terminalResource");
+    });
+    if (ready.length < 2) {
+      process.stderr.write(`Onlyboxes requires two ready Office workers; found ${ready.length}\n`);
+      process.exit(3);
+    }
+  ' || fail "Onlyboxes worker guard failed"
+}
+
 required_secret_keys=(
   KEY_VAULTS_SECRET AUTH_SECRET JWKS_KEY POSTGRES_PASSWORD DATABASE_URL
   REDIS_PASSWORD REDIS_URL S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
@@ -364,6 +402,12 @@ case "$COMMAND" in
         fail "test application must not enable external Market fallback"
       fi
       printf '%s\n' "$rendered" | grep -q 'storageClassName: masterino-test-essd-retain'
+      printf '%s\n' "$rendered" | grep -q 'memory: 4Gi' \
+        || fail "test PostgreSQL memory limit must be 4Gi"
+      printf '%s\n' "$market_rendered" | grep -Fq 'paradedb.enable_join_custom_scan = off' \
+        || fail "test database bootstrap must disable ParadeDB join custom scans"
+      printf '%s\n' "$market_rendered" | grep -Fq 'paradedb.enable_aggregate_custom_scan = off' \
+        || fail "test database bootstrap must disable ParadeDB aggregate custom scans"
       if printf '%s\n' "$rendered" | grep -q '^kind: Namespace$'; then
         fail "test runtime manifests must not reapply the bootstrap Namespace"
       fi
@@ -563,6 +607,12 @@ case "$COMMAND" in
     deploy_overlay="$OVERLAY_DIR"
     cutover_complete="$("${KUBE[@]}" get namespace "$NAMESPACE" -o jsonpath='{.metadata.annotations.masterino\.io/cutover-complete}')"
     if [[ "$ENVIRONMENT" == "test" ]]; then
+      # Apply and wait for PostgreSQL independently before database jobs or app traffic.
+      render_manifests "$OVERLAY_DIR" \
+        | "${KUBE[@]}" apply --server-side --field-manager=masterino-postgres-deploy \
+          --force-conflicts --selector app.kubernetes.io/name=postgres -f -
+      "${KUBE[@]}" rollout status statefulset/masterino-postgres -n "$NAMESPACE" --timeout=10m
+
       # Jobs have immutable Pod templates. Recreate only these exact, retained-data
       # jobs so each reviewed Market image runs its bootstrap and migrations.
       "${KUBE[@]}" delete job masterino-market-db-bootstrap masterino-market-migrate masterino-market-seed \
@@ -589,6 +639,9 @@ case "$COMMAND" in
           --force-conflicts -f -
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
         job/masterino-market-seed --timeout=10m
+
+      # Do not roll application traffic until two Office-capable workers are healthy.
+      check_onlyboxes_workers
 
       # Expose the TLS route only after /ready has made the API rollout healthy.
       if [[ "$cutover_complete" == "true" ]]; then
