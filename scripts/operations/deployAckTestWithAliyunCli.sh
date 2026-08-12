@@ -356,9 +356,7 @@ case "$ACK_TEST_ACTION" in
     require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
     require_digest MARKET_IMAGE_DIGEST
-    require_env ONLYBOXES_CONTROL_API_KEY
     export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST MARKET_IMAGE_DIGEST
-    export ONLYBOXES_CONTROL_API_KEY
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     prepare_secret_files
