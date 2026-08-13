@@ -2,7 +2,7 @@ import { autoUpdater } from 'electron-updater';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { verifyArtifact } from '@/modules/updater/artifactDownloader';
-import { verifySignedManifest } from '@/modules/updater/signedManifest';
+import { selectUpdateArtifact, verifySignedManifest } from '@/modules/updater/signedManifest';
 import { netFetch } from '@/utils/net-fetch';
 
 import type { App as AppCore } from '../../App';
@@ -70,7 +70,7 @@ vi.mock('@/modules/updater/artifactDownloader', async (importOriginal) => {
 });
 vi.mock('@/modules/updater/signedManifest', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/modules/updater/signedManifest')>();
-  return { ...actual, verifySignedManifest: vi.fn() };
+  return { ...actual, selectUpdateArtifact: vi.fn(), verifySignedManifest: vi.fn() };
 });
 vi.mock('@/utils/logger', () => ({
   createLogger: () => ({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }),
@@ -111,6 +111,7 @@ describe('UpdaterManager signed OSS flow', () => {
       url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
     } as any);
     vi.mocked(verifySignedManifest).mockReturnValue(manifest);
+    vi.mocked(selectUpdateArtifact).mockReturnValue(artifact);
     vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
     vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([
       'C:/updates/Masterino-1.1.4-setup.exe',
