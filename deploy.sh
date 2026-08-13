@@ -401,12 +401,23 @@ case "$COMMAND" in
         if (Object.keys(key).some((field) => privateFields.has(field))) process.exit(1);
       }
     ' || fail "JWKS_PUBLIC_KEY must contain public-only RS256 signing keys"
+    # kubectl's dotenv reader removes the unescaped quotes from inline JSON
+    # values. Passing the validated values literally preserves JWKS_PUBLIC_KEY
+    # byte-for-byte in the Secret.
     "${KUBE[@]}" create secret generic masterino-device-gateway-secret -n "$NAMESPACE" \
-      --from-env-file="$gateway_secret_file" --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
+      --from-literal="SERVICE_TOKEN=$gateway_service_token" \
+      --from-literal="JWKS_PUBLIC_KEY=$gateway_public_jwks" \
+      --dry-run=client -o yaml | "${KUBE[@]}" apply -f -
     for key in "${required_gateway_secret_keys[@]}"; do
       value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
       [[ -n "$value" ]] || fail "created gateway Secret is missing key: $key"
     done
+    stored_gateway_public_jwks="$({
+      "${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" \
+        -o 'jsonpath={.data.JWKS_PUBLIC_KEY}' | base64 --decode
+    })"
+    [[ "$stored_gateway_public_jwks" == "$gateway_public_jwks" ]] || fail \
+      "created gateway Secret did not preserve JWKS_PUBLIC_KEY byte-for-byte"
     ;;
   deploy)
     verify_target mutation
