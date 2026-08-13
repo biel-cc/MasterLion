@@ -1,28 +1,25 @@
 import { autoUpdater } from 'electron-updater';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { verifyArtifact } from '@/modules/updater/artifactDownloader';
+import { verifySignedManifest } from '@/modules/updater/signedManifest';
+import { netFetch } from '@/utils/net-fetch';
 
 import type { App as AppCore } from '../../App';
 import { UpdaterManager } from '../UpdaterManager';
 
-// Use vi.hoisted to ensure mocks work with require()
-const { mockGetAllWindows, mockReleaseSingleInstanceLock } = vi.hoisted(() => ({
-  mockGetAllWindows: vi.fn().mockReturnValue([]),
-  mockReleaseSingleInstanceLock: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  broadcast: vi.fn(),
+  releaseSingleInstanceLock: vi.fn(),
+  shellOpenPath: vi.fn(),
+  storeGet: vi.fn(),
+  storeSet: vi.fn(),
 }));
 
-// Mock electron-log
 vi.mock('electron-log', () => ({
-  default: {
-    transports: {
-      file: {
-        level: 'info',
-        getFile: vi.fn().mockReturnValue({ path: '/mock/log/path' }),
-      },
-    },
-  },
+  default: { transports: { file: { level: 'info' } } },
 }));
 
-// Mock electron-updater
 vi.mock('electron-updater', () => ({
   autoUpdater: {
     allowDowngrade: false,
@@ -31,574 +28,218 @@ vi.mock('electron-updater', () => ({
     autoInstallOnAppQuit: false,
     channel: 'stable',
     checkForUpdates: vi.fn(),
-    currentVersion: undefined as any,
     downloadUpdate: vi.fn(),
     forceDevUpdateConfig: false,
-    logger: null as any,
+    logger: null,
     on: vi.fn(),
     quitAndInstall: vi.fn(),
     setFeedURL: vi.fn(),
   },
 }));
 
-// Mock electron - uses hoisted functions for require() compatibility
+vi.mock('builder-util-runtime', () => ({
+  CancellationToken: class {
+    cancel = vi.fn();
+  },
+}));
+
 vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: mockGetAllWindows,
-  },
   app: {
-    getVersion: vi.fn().mockReturnValue('0.0.0'),
-    releaseSingleInstanceLock: mockReleaseSingleInstanceLock,
+    getPath: vi.fn().mockReturnValue('C:/updates'),
+    getVersion: vi.fn().mockReturnValue('1.1.3'),
+    releaseSingleInstanceLock: mocks.releaseSingleInstanceLock,
   },
+  shell: { openPath: mocks.shellOpenPath },
 }));
 
-// Mock logger
-vi.mock('@/utils/logger', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-  }),
-}));
-
-// Mock updater configs
+vi.mock('@/const/env', () => ({ isDev: false, isWindows: true }));
+vi.mock('@/env', () => ({ getDesktopEnv: () => ({ FORCE_DEV_UPDATE_CONFIG: false }) }));
 vi.mock('@/modules/updater/configs', () => ({
-  resolveInitialUpdateChannel: (channel?: string | null) =>
-    channel === 'canary' ? 'canary' : 'stable',
-  UPDATE_CHANNEL: 'stable',
-  UPDATE_SERVER_URL: 'https://mock.update.server',
+  resolveInitialUpdateChannel: (channel?: string) => (channel === 'canary' ? 'canary' : 'stable'),
+  UPDATE_CHANNEL: 'canary',
+  UPDATE_SERVER_URL: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases',
   updaterConfig: {
-    app: {
-      autoCheckUpdate: false,
-      autoDownloadUpdate: false,
-      checkUpdateInterval: 60 * 60 * 1000,
-    },
+    app: { autoCheckUpdate: false, checkUpdateInterval: 3_600_000 },
     enableAppUpdate: true,
   },
 }));
-
-// Mock env
-vi.mock('@/env', () => ({
-  getDesktopEnv: () => ({
-    FORCE_DEV_UPDATE_CONFIG: false,
-  }),
+vi.mock('@/utils/net-fetch', () => ({ netFetch: vi.fn() }));
+vi.mock('@/modules/updater/artifactDownloader', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/updater/artifactDownloader')>();
+  return { ...actual, downloadArtifact: vi.fn(), verifyArtifact: vi.fn() };
+});
+vi.mock('@/modules/updater/signedManifest', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/updater/signedManifest')>();
+  return { ...actual, verifySignedManifest: vi.fn() };
+});
+vi.mock('@/utils/logger', () => ({
+  createLogger: () => ({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }),
 }));
 
-// Mock isDev
-vi.mock('@/const/env', () => ({
-  isDev: false,
-}));
+const artifact = {
+  arch: 'x64' as const,
+  path: 'canary/1.1.4/Masterino-1.1.4-setup.exe',
+  platform: 'win32' as const,
+  sha512: 'signed-sha512',
+  size: 100,
+};
+const manifest = {
+  artifacts: [artifact],
+  channel: 'canary' as const,
+  releaseDate: '2026-08-13T00:00:00.000Z',
+  releaseNotes: 'Automatic update',
+  version: '1.1.4',
+};
 
-describe('UpdaterManager', () => {
-  let updaterManager: UpdaterManager;
-  let mockApp: AppCore;
-  let mockBroadcast: ReturnType<typeof vi.fn>;
-  let registeredEvents: Map<string, (...args: any[]) => void>;
+describe('UpdaterManager signed OSS flow', () => {
+  let manager: UpdaterManager;
+  let events: Map<string, (...args: any[]) => void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
-
-    // Reset autoUpdater state
-    (autoUpdater as any).autoDownload = false;
-    (autoUpdater as any).autoInstallOnAppQuit = false;
-    (autoUpdater as any).channel = 'stable';
-    (autoUpdater as any).allowPrerelease = false;
-    (autoUpdater as any).allowDowngrade = false;
-    (autoUpdater as any).forceDevUpdateConfig = false;
-    (autoUpdater as any).currentVersion = undefined;
-
-    // Capture registered events
-    registeredEvents = new Map();
-    vi.mocked(autoUpdater.on).mockImplementation((event: string, handler: any) => {
-      registeredEvents.set(event, handler);
+    events = new Map();
+    vi.mocked(autoUpdater.on).mockImplementation((name: string, handler: any) => {
+      events.set(name, handler);
       return autoUpdater;
     });
-
-    // Mock broadcast function
-    mockBroadcast = vi.fn();
-
-    // Create mock App
-    mockApp = {
+    mocks.storeGet.mockImplementation((key: string) => (key === 'updateChannel' ? 'canary' : true));
+    vi.mocked(netFetch).mockResolvedValue({
+      headers: new Headers(),
+      json: vi.fn().mockResolvedValue({}),
+      ok: true,
+      status: 200,
+      url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
+    } as any);
+    vi.mocked(verifySignedManifest).mockReturnValue(manifest);
+    vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
+    vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([
+      'C:/updates/Masterino-1.1.4-setup.exe',
+    ]);
+    vi.mocked(verifyArtifact).mockResolvedValue(undefined);
+    const app = {
       browserManager: {
-        getMainWindow: vi.fn().mockReturnValue({
-          broadcast: mockBroadcast,
+        getMainWindow: () => ({
+          broadcast: mocks.broadcast,
+          webContents: { getURL: () => 'https://masterino.bielcrystal.com/' },
         }),
       },
       isQuiting: false,
-      menuManager: {
-        rebuildAppMenu: vi.fn(),
-      },
-      storeManager: {
-        get: vi.fn().mockReturnValue('stable'),
-        set: vi.fn(),
-      },
+      menuManager: { rebuildAppMenu: vi.fn() },
+      storeManager: { get: mocks.storeGet, set: mocks.storeSet },
     } as unknown as AppCore;
-
-    updaterManager = new UpdaterManager(mockApp);
+    manager = new UpdaterManager(app);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  it('checks the signed OSS manifest before configuring the immutable NSIS feed', async () => {
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
 
-  describe('constructor', () => {
-    it('should set up electron-log for autoUpdater', () => {
-      expect(autoUpdater.logger).not.toBeNull();
-    });
-  });
-
-  describe('initialize', () => {
-    it('should configure autoUpdater properties', async () => {
-      await updaterManager.initialize();
-
-      expect(autoUpdater.autoDownload).toBe(false);
-      expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
-      expect(autoUpdater.channel).toBe('stable');
-      expect(autoUpdater.allowPrerelease).toBe(false);
-      expect(autoUpdater.allowDowngrade).toBe(false);
-    });
-
-    it('should register all event listeners', async () => {
-      await updaterManager.initialize();
-
-      expect(autoUpdater.on).toHaveBeenCalledWith('checking-for-update', expect.any(Function));
-      expect(autoUpdater.on).toHaveBeenCalledWith('update-available', expect.any(Function));
-      expect(autoUpdater.on).toHaveBeenCalledWith('update-not-available', expect.any(Function));
-      expect(autoUpdater.on).toHaveBeenCalledWith('error', expect.any(Function));
-      expect(autoUpdater.on).toHaveBeenCalledWith('download-progress', expect.any(Function));
-      expect(autoUpdater.on).toHaveBeenCalledWith('update-downloaded', expect.any(Function));
+    expect(netFetch).toHaveBeenCalledWith(
+      new URL(
+        'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
+      ),
+      { redirect: 'manual' },
+    );
+    expect(verifySignedManifest).toHaveBeenCalled();
+    expect(autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: 'generic',
+      url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4',
     });
   });
 
-  describe('checkForUpdates', () => {
-    beforeEach(async () => {
-      await updaterManager.initialize();
-      vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-    });
-
-    it('should call autoUpdater.checkForUpdates', async () => {
-      await updaterManager.checkForUpdates();
-
-      expect(autoUpdater.checkForUpdates).toHaveBeenCalled();
-    });
-
-    it('should broadcast updaterStateChanged with checking stage when checking', async () => {
-      await updaterManager.checkForUpdates({ manual: true });
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'checking' }),
-      );
-    });
-
-    it('should broadcast updaterStateChanged for auto check', async () => {
-      await updaterManager.checkForUpdates({ manual: false });
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'checking' }),
-      );
-    });
-
-    it('should ignore duplicate check requests while checking', async () => {
-      // Start first check but don't resolve
-      vi.mocked(autoUpdater.checkForUpdates).mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000)) as any,
-      );
-
-      const firstCheck = updaterManager.checkForUpdates();
-      const secondCheck = updaterManager.checkForUpdates();
-
-      await vi.advanceTimersByTimeAsync(1000);
-      await Promise.all([firstCheck, secondCheck]);
-
-      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
-    });
-
-    it('should broadcast updaterStateChanged with error stage when check fails', async () => {
-      const error = new Error('Network error');
-      vi.mocked(autoUpdater.checkForUpdates).mockRejectedValue(error);
-
-      await updaterManager.checkForUpdates({ manual: true });
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'error', errorMessage: 'Network error' }),
-      );
-    });
-
-    it('should set stage to latest when missing manifest 404 (gap period)', async () => {
-      const error = new Error(
-        'Cannot find latest-mac.yml in the latest release artifacts (https://aihub.bielcrystal.com/releases/download/v2.0.0-next.311/latest-mac.yml): HttpError: 404',
-      );
-      vi.mocked(autoUpdater.checkForUpdates).mockRejectedValueOnce(error);
-
-      await updaterManager.checkForUpdates({ manual: true });
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'latest' }),
-      );
-      expect(mockBroadcast).not.toHaveBeenCalledWith('updateError', expect.anything());
+  it('automatically downloads and verifies the Windows installer', async () => {
+    await manager.initialize();
+    await manager.checkForUpdates();
+    await events.get('update-available')?.({ version: '1.1.4' });
+    await vi.waitFor(() =>
+      expect(verifyArtifact).toHaveBeenCalledWith(expect.any(String), artifact),
+    );
+    expect(netFetch).toHaveBeenCalledWith(
+      new URL(
+        'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/Masterino-1.1.4-setup.exe',
+      ),
+      { method: 'HEAD', redirect: 'manual' },
+    );
+    expect(manager.getUpdaterState()).toMatchObject({
+      autoDownloadEnabled: true,
+      installMode: 'restart',
+      stage: 'downloaded',
     });
   });
 
-  describe('downloadUpdate', () => {
-    beforeEach(async () => {
-      await updaterManager.initialize();
-      vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([] as any);
-
-      // Simulate update available
-      const updateAvailableHandler = registeredEvents.get('update-available');
-      updateAvailableHandler?.({ version: '2.0.0' });
-    });
-
-    it('should call autoUpdater.downloadUpdate', async () => {
-      await updaterManager.downloadUpdate();
-
-      expect(autoUpdater.downloadUpdate).toHaveBeenCalled();
-    });
-
-    it('should ignore download request when no update available', async () => {
-      // Create fresh manager without update available
-      const freshManager = new UpdaterManager(mockApp);
-      await freshManager.initialize();
-
-      await freshManager.downloadUpdate();
-
-      // Reset call count since downloadUpdate might have been called in beforeEach
-      vi.mocked(autoUpdater.downloadUpdate).mockClear();
-      await freshManager.downloadUpdate();
-
-      // downloadUpdate should not be called on autoUpdater for fresh manager
-      expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
-    });
-
-    it('should ignore duplicate download requests while downloading', async () => {
-      vi.mocked(autoUpdater.downloadUpdate).mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 1000)) as any,
-      );
-
-      const firstDownload = updaterManager.downloadUpdate();
-      const secondDownload = updaterManager.downloadUpdate();
-
-      await vi.advanceTimersByTimeAsync(1000);
-      await Promise.all([firstDownload, secondDownload]);
-
-      expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
-    });
-
-    it('should broadcast updaterStateChanged with downloading stage when download starts', async () => {
-      const freshManager = new UpdaterManager(mockApp);
-      await freshManager.initialize();
-
-      (freshManager as any).updateAvailable = true;
-      mockBroadcast.mockClear();
-
-      vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([] as any);
-      await freshManager.downloadUpdate();
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'downloading' }),
-      );
-    });
-
-    it('should broadcast updaterStateChanged with error stage when download fails', async () => {
-      const freshManager = new UpdaterManager(mockApp);
-      await freshManager.initialize();
-
-      (freshManager as any).updateAvailable = true;
-      mockBroadcast.mockClear();
-
-      vi.mocked(autoUpdater.downloadUpdate).mockRejectedValue(new Error('Download failed'));
-
-      await freshManager.downloadUpdate();
-
-      expect(mockBroadcast).toHaveBeenCalledWith(
-        'updaterStateChanged',
-        expect.objectContaining({ stage: 'error', errorMessage: 'Download failed' }),
-      );
+  it('keeps the update available when automatic downloads are disabled', async () => {
+    mocks.storeGet.mockImplementation((key: string) =>
+      key === 'updateChannel' ? 'canary' : false,
+    );
+    await manager.initialize();
+    await manager.checkForUpdates();
+    await events.get('update-available')?.({ version: '1.1.4' });
+    expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+    expect(manager.getUpdaterState()).toMatchObject({
+      autoDownloadEnabled: false,
+      stage: 'available',
     });
   });
 
-  describe('installNow', () => {
-    // Note: installNow uses require('electron') which is difficult to mock in vitest.
-    // These tests are skipped because vi.mock doesn't work with dynamic require().
-    // The functionality should be tested in integration tests or E2E tests.
+  it('cancels an active automatic download when disabled', async () => {
+    let finishDownload!: (paths: string[]) => void;
+    vi.mocked(autoUpdater.downloadUpdate).mockReturnValue(
+      new Promise((resolve) => {
+        finishDownload = resolve;
+      }),
+    );
+    await manager.initialize();
+    await manager.checkForUpdates();
+    events.get('update-available')?.({ version: '1.1.4' });
+    await vi.waitFor(() => expect(manager.getUpdaterState().stage).toBe('downloading'));
 
-    it.skip('should set app.isQuiting to true', () => {
-      updaterManager.installNow();
-      expect(mockApp.isQuiting).toBe(true);
-    });
-
-    it.skip('should close all windows', () => {
-      const mockWindow1 = { close: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
-      const mockWindow2 = { close: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) };
-      mockGetAllWindows.mockReturnValue([mockWindow1, mockWindow2]);
-      updaterManager.installNow();
-      expect(mockWindow1.close).toHaveBeenCalled();
-      expect(mockWindow2.close).toHaveBeenCalled();
-    });
-
-    it.skip('should not close destroyed windows', () => {
-      const mockWindow = { close: vi.fn(), isDestroyed: vi.fn().mockReturnValue(true) };
-      mockGetAllWindows.mockReturnValue([mockWindow]);
-      updaterManager.installNow();
-      expect(mockWindow.close).not.toHaveBeenCalled();
-    });
-
-    it.skip('should release single instance lock', () => {
-      updaterManager.installNow();
-      expect(mockReleaseSingleInstanceLock).toHaveBeenCalled();
-    });
-
-    it.skip('should call quitAndInstall with correct parameters after delay', async () => {
-      updaterManager.installNow();
-      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
-    });
+    await manager.setAutoDownloadEnabled(false);
+    finishDownload(['C:/updates/Masterino-1.1.4-setup.exe']);
+    await vi.waitFor(() =>
+      expect(manager.getUpdaterState()).toMatchObject({
+        autoDownloadEnabled: false,
+        stage: 'available',
+      }),
+    );
+    expect(verifyArtifact).not.toHaveBeenCalled();
   });
 
-  describe('captureRestoreRoute', () => {
-    const callCapture = () => (updaterManager as any).captureRestoreRoute();
-
-    it('stores the derived route from the main window URL', () => {
-      (mockApp.browserManager.getMainWindow as any).mockReturnValue({
-        webContents: { getURL: () => 'app://renderer/agent/abc' },
-      });
-
-      callCapture();
-
-      expect(mockApp.storeManager.set).toHaveBeenCalledWith('pendingRestoreRoute', '/agent/abc');
+  it('surfaces manifest verification failures without configuring a download feed', async () => {
+    vi.mocked(verifySignedManifest).mockImplementation(() => {
+      throw new Error('signature invalid');
     });
-
-    it('stores nothing when the URL is not a restorable route', () => {
-      (mockApp.browserManager.getMainWindow as any).mockReturnValue({
-        webContents: { getURL: () => 'app://renderer/' },
-      });
-
-      callCapture();
-
-      expect(mockApp.storeManager.set).not.toHaveBeenCalled();
-    });
-
-    it('stores nothing when there is no webContents', () => {
-      (mockApp.browserManager.getMainWindow as any).mockReturnValue({ webContents: null });
-
-      callCapture();
-
-      expect(mockApp.storeManager.set).not.toHaveBeenCalled();
-    });
-
-    it('does not throw when reading the URL fails', () => {
-      (mockApp.browserManager.getMainWindow as any).mockReturnValue({
-        webContents: {
-          getURL: () => {
-            throw new Error('boom');
-          },
-        },
-      });
-
-      expect(() => callCapture()).not.toThrow();
-      expect(mockApp.storeManager.set).not.toHaveBeenCalled();
-    });
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
+    expect(manager.getUpdaterState()).toMatchObject({ errorCode: 'unknown', stage: 'error' });
+    expect(autoUpdater.setFeedURL).not.toHaveBeenCalled();
   });
 
-  describe('installLater', () => {
-    it('should set autoInstallOnAppQuit to true', () => {
-      updaterManager.installLater();
-
-      expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
-    });
-
-    it('should broadcast updateWillInstallLater', () => {
-      updaterManager.installLater();
-
-      expect(mockBroadcast).toHaveBeenCalledWith('updateWillInstallLater');
-    });
+  it('rejects an artifact redirect before electron-updater downloads it', async () => {
+    await manager.initialize();
+    await manager.checkForUpdates();
+    vi.mocked(netFetch).mockResolvedValueOnce({
+      headers: new Headers(),
+      ok: false,
+      status: 302,
+      url: 'https://example.com/update.exe',
+    } as any);
+    events.get('update-available')?.({ version: '1.1.4' });
+    await vi.waitFor(() =>
+      expect(manager.getUpdaterState()).toMatchObject({
+        errorCode: 'signature',
+        stage: 'error',
+      }),
+    );
+    expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
   });
 
-  describe('event handlers', () => {
-    beforeEach(async () => {
-      await updaterManager.initialize();
-    });
-
-    describe('update-available', () => {
-      it('should expose the update without downloading it automatically', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: true });
-
-        vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([] as any);
-
-        const updateInfo = { version: '2.0.0' };
-        const handler = registeredEvents.get('update-available');
-        handler?.(updateInfo);
-
-        expect(mockBroadcast).toHaveBeenCalledWith(
-          'updaterStateChanged',
-          expect.objectContaining({
-            stage: 'available',
-            updateInfo: expect.objectContaining({ version: '2.0.0' }),
-          }),
-        );
-        expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
-      });
-
-      it('should not auto download when an automatic check finds an update', async () => {
-        // Trigger auto check first
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: false });
-
-        vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([] as any);
-
-        const handler = registeredEvents.get('update-available');
-        handler?.({ version: '2.0.0' });
-
-        expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('update-not-available', () => {
-      it('should broadcast updaterStateChanged with latest stage when manual check', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: true });
-
-        const info = { version: '1.0.0' };
-        const handler = registeredEvents.get('update-not-available');
-        handler?.(info);
-
-        expect(mockBroadcast).toHaveBeenCalledWith(
-          'updaterStateChanged',
-          expect.objectContaining({ stage: 'latest' }),
-        );
-      });
-
-      it('should broadcast updaterStateChanged when auto check finds no update', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: false });
-
-        const handler = registeredEvents.get('update-not-available');
-        handler?.({ version: '1.0.0' });
-
-        expect(mockBroadcast).toHaveBeenCalledWith(
-          'updaterStateChanged',
-          expect.objectContaining({ stage: 'latest' }),
-        );
-      });
-    });
-
-    describe('download-progress', () => {
-      it('should broadcast progress when manual check', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: true });
-
-        const progressObj = {
-          bytesPerSecond: 1024,
-          percent: 50,
-          total: 1024 * 1024,
-          transferred: 512 * 1024,
-        };
-        const handler = registeredEvents.get('download-progress');
-        handler?.(progressObj);
-
-        expect(mockBroadcast).toHaveBeenCalledWith('updateDownloadProgress', progressObj);
-      });
-    });
-
-    describe('update-downloaded', () => {
-      it('should broadcast updateDownloaded', async () => {
-        await updaterManager.initialize();
-
-        const info = { version: '2.0.0' };
-        const handler = registeredEvents.get('update-downloaded');
-        handler?.(info);
-
-        expect(mockBroadcast).toHaveBeenCalledWith('updateDownloaded', info);
-      });
-    });
-
-    describe('error', () => {
-      it('should broadcast updateError when manual check', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: true });
-
-        vi.mocked(autoUpdater.checkForUpdates).mockRejectedValueOnce(new Error('Fallback failed'));
-
-        const error = new Error('Update error');
-        const handler = registeredEvents.get('error');
-        await handler?.(error);
-
-        expect(mockBroadcast).toHaveBeenCalledWith('updateError', 'Update error');
-      });
-
-      it('should broadcast updateError when auto check has non-manifest error', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: false });
-
-        const error = new Error('Update error');
-        const handler = registeredEvents.get('error');
-        handler?.(error);
-
-        expect(mockBroadcast).toHaveBeenCalledWith('updateError', 'Update error');
-      });
-
-      it('should set stage to latest (not error) for missing manifest 404 (gap period)', async () => {
-        vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
-        await updaterManager.checkForUpdates({ manual: true });
-
-        const error = new Error(
-          'Cannot find latest-mac.yml in the latest release artifacts (https://aihub.bielcrystal.com/releases/download/v2.0.0-next.311/latest-mac.yml): HttpError: 404',
-        );
-        const handler = registeredEvents.get('error');
-        await handler?.(error);
-
-        expect(mockBroadcast).toHaveBeenCalledWith(
-          'updaterStateChanged',
-          expect.objectContaining({ stage: 'latest' }),
-        );
-        expect(mockBroadcast).not.toHaveBeenCalledWith('updateError', expect.anything());
-      });
-    });
-  });
-
-  describe('simulation methods (dev mode)', () => {
-    it('simulateUpdateAvailable should do nothing when not in dev mode', () => {
-      // Current mock has isDev = false
-      updaterManager.simulateUpdateAvailable();
-
-      // Should not broadcast anything since isDev is false
-      expect(mockBroadcast).not.toHaveBeenCalledWith(
-        'manualUpdateAvailable',
-        expect.objectContaining({ version: '1.0.0' }),
-      );
-    });
-
-    it('simulateUpdateDownloaded should do nothing when not in dev mode', () => {
-      updaterManager.simulateUpdateDownloaded();
-
-      expect(mockBroadcast).not.toHaveBeenCalledWith(
-        'updateDownloaded',
-        expect.objectContaining({ version: '1.0.0' }),
-      );
-    });
-
-    it('simulateDownloadProgress should do nothing when not in dev mode', () => {
-      updaterManager.simulateDownloadProgress();
-
-      expect(mockBroadcast).not.toHaveBeenCalledWith('updateDownloadStart');
-    });
-  });
-
-  describe('mainWindow getter', () => {
-    it('should return main window from browserManager', () => {
-      const mainWindow = updaterManager['mainWindow'];
-
-      expect(mockApp.browserManager.getMainWindow).toHaveBeenCalled();
-      expect(mainWindow.broadcast).toBe(mockBroadcast);
-    });
+  it('enables install on quit only after a verified download', async () => {
+    await manager.initialize();
+    await manager.checkForUpdates();
+    await events.get('update-available')?.({ version: '1.1.4' });
+    await vi.waitFor(() => expect(manager.getUpdaterState().stage).toBe('downloaded'));
+    manager.installLater();
+    expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+    expect(mocks.broadcast).toHaveBeenCalledWith('updateWillInstallLater');
   });
 });

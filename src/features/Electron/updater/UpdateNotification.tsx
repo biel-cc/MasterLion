@@ -8,7 +8,6 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { autoUpdateService } from '@/services/electron/autoUpdate';
-import { electronSystemService } from '@/services/electron/system';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
@@ -31,7 +30,10 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
 export const UpdateNotification: React.FC = () => {
   const { t } = useTranslation('electron');
-  const [updaterState, setUpdaterState] = useState<UpdaterState>({ stage: 'idle' });
+  const [updaterState, setUpdaterState] = useState<UpdaterState>({
+    autoDownloadEnabled: true,
+    stage: 'idle',
+  });
   const [detailVisible, setDetailVisible] = useState(false);
   const [isActing, setIsActing] = useState(false);
 
@@ -45,12 +47,12 @@ export const UpdateNotification: React.FC = () => {
   useWatchBroadcast('updaterStateChanged', setUpdaterState);
 
   useWatchBroadcast('updateDownloaded', (info: UpdateInfo) => {
-    setUpdaterState({ stage: 'downloaded', updateInfo: info });
+    setUpdaterState((state) => ({ ...state, stage: 'downloaded', updateInfo: info }));
     setDetailVisible(false);
   });
 
   useWatchBroadcast('updateWillInstallLater', () => {
-    setUpdaterState({ stage: 'idle' });
+    setUpdaterState((state) => ({ ...state, stage: 'idle' }));
     setDetailVisible(false);
   });
 
@@ -58,10 +60,13 @@ export const UpdateNotification: React.FC = () => {
   const updateDownloaded = updaterState.stage === 'downloaded';
   const updateInfo = updaterState.updateInfo;
 
-  if (!updateAvailable && !updateDownloaded) return null;
+  const updateDownloading = updaterState.stage === 'downloading';
+  const updateFailed = updaterState.stage === 'error';
+
+  if (!updateAvailable && !updateDownloaded && !updateDownloading && !updateFailed) return null;
 
   const dismiss = () => {
-    setUpdaterState({ stage: 'idle' });
+    setUpdaterState((state) => ({ ...state, stage: 'idle' }));
     setDetailVisible(false);
   };
 
@@ -69,13 +74,17 @@ export const UpdateNotification: React.FC = () => {
     setIsActing(true);
     try {
       if (updateAvailable) {
-        if (updaterState.downloadUrl) {
-          await electronSystemService.openExternalLink(updaterState.downloadUrl);
-        }
+        await autoUpdateService.downloadUpdate();
         return;
       }
 
-      await autoUpdateService.installNow();
+      if (updateFailed) {
+        if (updateInfo) await autoUpdateService.downloadUpdate();
+        else await autoUpdateService.checkUpdate();
+        return;
+      }
+
+      await autoUpdateService.applyDownloadedUpdate();
     } finally {
       setIsActing(false);
     }
@@ -99,21 +108,47 @@ export const UpdateNotification: React.FC = () => {
         >
           <Icon icon={CircleFadingArrowUp} style={{ fontSize: 16 }} />
           <div style={{ cursor: 'pointer', fontSize: 12 }} onClick={() => setDetailVisible(true)}>
-            {t(updateAvailable ? 'updater.newVersionAvailable' : 'updater.updateReady')}
+            {updateFailed
+              ? t(`updater.error.${updaterState.errorCode ?? 'unknown'}`)
+              : t(
+                  updateDownloading
+                    ? 'updater.downloadingUpdate'
+                    : updateAvailable
+                      ? 'updater.newVersionAvailable'
+                      : 'updater.updateReady',
+                )}
             {updateInfo?.version ? ` · ${updateInfo.version}` : ''}
+            {updateDownloading && updaterState.progress
+              ? ` · ${t('updater.downloadProgress', { percent: Math.round(updaterState.progress.percent) })}`
+              : ''}
           </div>
           <div style={{ flex: 1 }} />
-          <Button size="small" type="text" onClick={dismiss}>
+          <Button disabled={updateDownloading} size="small" type="text" onClick={dismiss}>
             {t('updater.later')}
           </Button>
+          {updateDownloaded && updaterState.installMode === 'restart' && (
+            <Button size="small" type="text" onClick={() => void autoUpdateService.installLater()}>
+              {t('updater.installLater')}
+            </Button>
+          )}
           <Button
-            disabled={updateAvailable && !updaterState.downloadUrl}
+            disabled={updateDownloading}
             loading={isActing}
             size="small"
             type="primary"
             onClick={() => void runPrimaryAction()}
           >
-            {t(updateAvailable ? 'updater.downloadNewVersion' : 'updater.upgradeNow')}
+            {t(
+              updateDownloading
+                ? 'updater.downloadingUpdate'
+                : updateFailed
+                  ? 'updater.retry'
+                  : updateAvailable
+                    ? 'updater.downloadNewVersion'
+                    : updaterState.installMode === 'open-dmg'
+                      ? 'updater.openInstaller'
+                      : 'updater.upgradeNow',
+            )}
           </Button>
         </div>
       </div>
@@ -121,7 +156,13 @@ export const UpdateNotification: React.FC = () => {
       <Modal
         footer={null}
         open={detailVisible}
-        title={t(updateAvailable ? 'updater.newVersionAvailable' : 'updater.updateReady')}
+        title={t(
+          updateFailed
+            ? 'updater.updateError'
+            : updateAvailable
+              ? 'updater.newVersionAvailable'
+              : 'updater.updateReady',
+        )}
         width={520}
         onCancel={() => setDetailVisible(false)}
       >
@@ -142,17 +183,32 @@ export const UpdateNotification: React.FC = () => {
               </div>
             ))}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <Button size="small" onClick={dismiss}>
+            <Button disabled={updateDownloading} size="small" onClick={dismiss}>
               {t('updater.later')}
             </Button>
+            {updateDownloaded && updaterState.installMode === 'restart' && (
+              <Button size="small" onClick={() => void autoUpdateService.installLater()}>
+                {t('updater.installLater')}
+              </Button>
+            )}
             <Button
-              disabled={updateAvailable && !updaterState.downloadUrl}
+              disabled={updateDownloading}
               loading={isActing}
               size="small"
               type="primary"
               onClick={() => void runPrimaryAction()}
             >
-              {t(updateAvailable ? 'updater.downloadNewVersion' : 'updater.restartAndInstall')}
+              {t(
+                updateDownloading
+                  ? 'updater.downloadingUpdate'
+                  : updateFailed
+                    ? 'updater.retry'
+                    : updateAvailable
+                      ? 'updater.downloadNewVersion'
+                      : updaterState.installMode === 'open-dmg'
+                        ? 'updater.openInstaller'
+                        : 'updater.restartAndInstall',
+              )}
             </Button>
           </div>
         </Flexbox>

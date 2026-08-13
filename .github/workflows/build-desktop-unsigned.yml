@@ -12,7 +12,7 @@ on:
         description: Stable SemVer greater than the current OSS canary version
         required: true
         type: string
-        default: 1.1.2
+        default: 1.1.4
 
 concurrency:
   group: unsigned-desktop-${{ github.ref }}
@@ -52,7 +52,7 @@ jobs:
 
           semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           if [[ ! "$INPUT_VERSION" =~ $semver_pattern ]]; then
-            echo "Version must be a stable SemVer such as 1.1.2" >&2
+            echo "Version must be a stable SemVer such as 1.1.4" >&2
             exit 1
           fi
 
@@ -137,6 +137,18 @@ jobs:
         uses: ./.github/actions/desktop-build-setup
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate OSS-only updater configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eiq "provider:[[:space:]]*['\"]github|github\.com/.*/releases" \
+            apps/desktop/electron-builder.mjs \
+            apps/desktop/src/main/core/infrastructure/UpdaterManager.ts \
+            apps/desktop/src/main/modules/updater/configs.ts; then
+            echo "Desktop updater configuration must not contain a GitHub fallback" >&2
+            exit 1
+          fi
 
       - name: Set desktop package version
         env:
@@ -281,6 +293,8 @@ jobs:
           key-prefix: ${{ env.DESKTOP_OSS_PREFIX }}
           public-base-url: ${{ env.DESKTOP_UPDATE_SERVER_URL }}
           region: cn-shenzhen
+          release-notes: ${{ inputs.release_notes }}
+          signing-private-key-b64: ${{ secrets.DESKTOP_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           version: ${{ needs.validate-version.outputs.version }}
 
       - name: Create draft GitHub release
@@ -313,7 +327,9 @@ jobs:
             echo "- 更新通道：canary"
             echo "- macOS：未使用 Developer ID 签名或公证，需通过右键打开或移除 quarantine。"
             echo "- Windows：未使用 Authenticode 签名，可能出现 SmartScreen 提示。"
-            echo "- 客户端仅检测新版本并打开 OSS 下载地址，不会自动安装。"
+            echo "- 更新源：客户端仅访问阿里云 OSS，不使用 GitHub Release 作为更新源。"
+            echo "- Windows：默认后台下载，完整性校验通过后可立即重启安装或退出时安装。"
+            echo "- macOS：默认后台下载并校验 DMG，需用户手动打开安装包替换应用。"
           } > "$notes_file"
 
           gh release create "$tag" "${assets[@]}" \

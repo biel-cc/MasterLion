@@ -29,10 +29,12 @@ vi.mock('electron', () => ({
 // Mock App and its dependencies
 const mockCheckForUpdates = vi.fn();
 const mockDownloadUpdate = vi.fn();
+const mockApplyDownloadedUpdate = vi.fn();
 const mockInstallNow = vi.fn();
 const mockInstallLater = vi.fn();
 const mockGetUpdaterState = vi.fn();
 const mockSwitchChannel = vi.fn();
+const mockSetAutoDownloadEnabled = vi.fn();
 const mockStoreGet = vi.fn();
 const mockStoreSet = vi.fn();
 
@@ -42,11 +44,13 @@ const mockApp = {
     set: mockStoreSet,
   },
   updaterManager: {
+    applyDownloadedUpdate: mockApplyDownloadedUpdate,
     checkForUpdates: mockCheckForUpdates,
     downloadUpdate: mockDownloadUpdate,
     getUpdaterState: mockGetUpdaterState,
     installNow: mockInstallNow,
     installLater: mockInstallLater,
+    setAutoDownloadEnabled: mockSetAutoDownloadEnabled,
     switchChannel: mockSwitchChannel,
   },
 } as unknown as App;
@@ -73,6 +77,26 @@ describe('UpdaterCtr', () => {
     it('should call updaterManager.downloadUpdate', async () => {
       await updaterCtr.downloadUpdate();
       expect(mockDownloadUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe('automatic downloads', () => {
+    it('returns the stored preference and defaults to enabled', async () => {
+      mockStoreGet.mockReturnValueOnce(false);
+      await expect(updaterCtr.getAutoDownloadEnabled()).resolves.toBe(false);
+      mockStoreGet.mockReturnValueOnce(undefined);
+      await expect(updaterCtr.getAutoDownloadEnabled()).resolves.toBe(true);
+    });
+
+    it('persists and applies the preference', async () => {
+      await updaterCtr.setAutoDownloadEnabled(false);
+      expect(mockStoreSet).toHaveBeenCalledWith('autoDownloadUpdates', false);
+      expect(mockSetAutoDownloadEnabled).toHaveBeenCalledWith(false);
+    });
+
+    it('applies a verified downloaded update', () => {
+      updaterCtr.applyDownloadedUpdate();
+      expect(mockApplyDownloadedUpdate).toHaveBeenCalled();
     });
   });
 

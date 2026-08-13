@@ -44,8 +44,7 @@ const isCanary = channel === 'canary';
 const stripChannelSuffix = (url) => url.replace(/\/(stable|nightly|canary|beta)\/?$/, '');
 
 // 根据 channel 配置 publish provider
-// - 所有渠道 + UPDATE_SERVER_URL: 使用 generic (S3)
-// - 无 UPDATE_SERVER_URL: 回退到 GitHub (本地开发)
+// 所有桌面更新只允许使用国内 OSS generic provider。
 const getPublishConfig = () => {
   const channelPath = isStable ? 'stable' : isNightly ? 'nightly' : channel || 'stable';
 
@@ -61,15 +60,12 @@ const getPublishConfig = () => {
     ];
   }
 
-  // 本地开发无 S3 时回退到 GitHub
-  console.info(`📦 ${channelPath} channel: No UPDATE_SERVER_URL, falling back to GitHub provider`);
-  return [
-    {
-      owner: 'chaaak6',
-      provider: 'github',
-      repo: 'Masterino',
-    },
-  ];
+  if (process.env.CI) {
+    throw new Error('UPDATE_SERVER_URL is required for desktop release builds');
+  }
+
+  console.warn('UPDATE_SERVER_URL is not set; app updates are disabled for this local build');
+  return null;
 };
 
 // Keep only these Electron Framework localization folders (*.lproj)

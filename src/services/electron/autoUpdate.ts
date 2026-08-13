@@ -11,6 +11,10 @@ class AutoUpdateService {
     return ensureElectronIpc().autoUpdate.quitAndInstallUpdate();
   };
 
+  applyDownloadedUpdate = async () => {
+    return ensureElectronIpc().autoUpdate.applyDownloadedUpdate();
+  };
+
   installLater = async () => {
     return ensureElectronIpc().autoUpdate.installLater();
   };
@@ -21,6 +25,14 @@ class AutoUpdateService {
 
   getUpdateChannel = async (): Promise<UpdateChannel> => {
     return ensureElectronIpc().autoUpdate.getUpdateChannel();
+  };
+
+  getAutoDownloadEnabled = async (): Promise<boolean> => {
+    return ensureElectronIpc().autoUpdate.getAutoDownloadEnabled();
+  };
+
+  setAutoDownloadEnabled = async (enabled: boolean): Promise<void> => {
+    return ensureElectronIpc().autoUpdate.setAutoDownloadEnabled(enabled);
   };
 
   getBuildChannel = async (): Promise<string> => {

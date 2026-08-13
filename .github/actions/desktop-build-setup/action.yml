@@ -87,7 +87,7 @@ runs:
         NODE
 
         echo "CLOUD_DESKTOP=1" >> "$GITHUB_ENV"
-        echo "✅ Cloud repository overlaid at $cloud_root"
+        echo "Cloud repository overlaid at $cloud_root"
 
     - name: Install dependencies
       shell: bash
@@ -98,7 +98,7 @@ runs:
         fi
         pnpm install --node-linker=hoisted
 
-    # 移除国内 electron 镜像配置，GitHub Actions 使用官方源更快
+    # GitHub-hosted runners use the official Electron download source.
     - name: Remove China electron mirror from .npmrc
       shell: bash
       run: |
@@ -106,7 +106,7 @@ runs:
         if [ -f "$NPMRC_FILE" ]; then
           sed -i.bak '/^electron_mirror=/d; /^electron_builder_binaries_mirror=/d' "$NPMRC_FILE"
           rm -f "${NPMRC_FILE}.bak"
-          echo "✅ Removed electron mirror config from .npmrc"
+          echo "Removed Electron mirror config from .npmrc"
         fi
 
     - name: Install deps on Desktop

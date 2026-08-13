@@ -1126,6 +1126,9 @@ When I am ___, I need ___
   'tab.about': 'About',
   'tab.advanced': 'Advanced',
   'tab.advanced.appUpdates.title': 'App updates',
+  'tab.advanced.autoDownloadUpdates.desc':
+    'Download verified updates from Alibaba Cloud OSS in the background. You will still choose when to install.',
+  'tab.advanced.autoDownloadUpdates.title': 'Automatically download updates',
   'tab.advanced.gatewayMode.desc':
     'Run supported agent tasks through the cloud Gateway by default. Individual agents can override this from the chat menu.',
   'tab.advanced.gatewayMode.title': 'Gateway Mode',
