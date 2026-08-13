@@ -286,6 +286,7 @@ export default defineConfig({
     define: {
       'process.env.DESKTOP_BUILD_FLAVOR': JSON.stringify(process.env.DESKTOP_BUILD_FLAVOR),
       'process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS': JSON.stringify(externalNavigationHosts),
+      'process.env.DEVICE_GATEWAY_URL': JSON.stringify(process.env.DEVICE_GATEWAY_URL),
       'process.env.DISABLE_APP_UPDATE': JSON.stringify(
         isTestDesktopBuild ? '1' : process.env.DISABLE_APP_UPDATE,
       ),

@@ -39,6 +39,14 @@ values with ad hoc `kubectl set env` commands: the next declarative deploy would
 `deploy.sh --env test validate` fails if the memory flag, model selection, concurrency, worker
 enablement, or the content-hashed memory ConfigMap is removed.
 
+The test Device Gateway is a single-replica deployment because version 0.3.1 keeps live
+connections in memory. `overlays/test-cutover` exposes it at
+`https://mlai-test.bielcrystal.com/device-gateway` and rewrites the prefix before forwarding HTTP
+and WebSocket traffic. Create `masterino-device-gateway-secret` from a random `SERVICE_TOKEN` and a
+public-only JWKS derived from `masterino-secret/JWKS_KEY`; never copy private RSA fields into the
+gateway Secret.
+The test overlay pins the ACR image by digest; update the digest only after a reviewed ACR build.
+
 Before deploying the test rollout:
 
 1. Copy `overlays/test/secret.env.example` to the ignored `secret.env`. No QStash or other

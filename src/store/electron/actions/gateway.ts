@@ -1,4 +1,7 @@
-import type { GatewayConnectionStatus } from '@lobechat/electron-client-ipc';
+import type {
+  GatewayConnectionState,
+  GatewayConnectionStatus,
+} from '@lobechat/electron-client-ipc';
 import { type SWRResponse } from 'swr';
 import useSWR from 'swr';
 
@@ -32,22 +35,30 @@ export class ElectronGatewayActionImpl {
   }
 
   connectGateway = async (): Promise<void> => {
-    this.#set({ gatewayConnectionStatus: 'connecting' });
+    this.#set({
+      gatewayConnectionState: { enabled: true, status: 'connecting' },
+      gatewayConnectionStatus: 'connecting',
+    });
     try {
       const result = await gatewayConnectionService.connect();
       if (!result.success) {
-        this.#set({ gatewayConnectionStatus: 'disconnected' });
+        const state = await gatewayConnectionService.getConnectionStatus();
+        this.setGatewayConnectionState(state);
       }
     } catch (error) {
       console.error('Gateway connect failed:', error);
-      this.#set({ gatewayConnectionStatus: 'disconnected' });
+      const state = await gatewayConnectionService.getConnectionStatus();
+      this.setGatewayConnectionState(state);
     }
   };
 
   disconnectGateway = async (): Promise<void> => {
     try {
       await gatewayConnectionService.disconnect();
-      this.#set({ gatewayConnectionStatus: 'disconnected' });
+      this.#set({
+        gatewayConnectionState: { enabled: false, status: 'disconnected' },
+        gatewayConnectionStatus: 'disconnected',
+      });
     } catch (error) {
       console.error('Gateway disconnect failed:', error);
     }
@@ -58,7 +69,22 @@ export class ElectronGatewayActionImpl {
   };
 
   setGatewayConnectionStatus = (status: GatewayConnectionStatus): void => {
-    this.#set({ gatewayConnectionStatus: status }, false, 'setGatewayConnectionStatus');
+    this.#set(
+      (state) => ({
+        gatewayConnectionState: { ...state.gatewayConnectionState, status },
+        gatewayConnectionStatus: status,
+      }),
+      false,
+      'setGatewayConnectionStatus',
+    );
+  };
+
+  setGatewayConnectionState = (state: GatewayConnectionState): void => {
+    this.#set(
+      { gatewayConnectionState: state, gatewayConnectionStatus: state.status },
+      false,
+      'setGatewayConnectionState',
+    );
   };
 
   updateDeviceDescription = async (description: string): Promise<void> => {
@@ -91,13 +117,13 @@ export class ElectronGatewayActionImpl {
     );
   };
 
-  useFetchGatewayStatus = (): SWRResponse<{ status: GatewayConnectionStatus }> => {
-    return useSWR<{ status: GatewayConnectionStatus }>(
+  useFetchGatewayStatus = (): SWRResponse<GatewayConnectionState> => {
+    return useSWR<GatewayConnectionState>(
       'electron:getGatewayConnectionStatus',
       async () => gatewayConnectionService.getConnectionStatus(),
       {
         onSuccess: (data) => {
-          this.#set({ gatewayConnectionStatus: data.status }, false, 'setGatewayConnectionStatus');
+          this.setGatewayConnectionState(data);
         },
       },
     );

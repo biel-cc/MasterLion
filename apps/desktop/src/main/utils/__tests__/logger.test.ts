@@ -6,6 +6,16 @@ import { getDesktopEnv } from '@/env';
 
 import { createLogger } from '../logger';
 
+const electronState = vi.hoisted(() => ({ isPackaged: false }));
+
+vi.mock('electron', () => ({
+  app: {
+    get isPackaged() {
+      return electronState.isPackaged;
+    },
+  },
+}));
+
 vi.mock('debug');
 
 vi.mock('electron-log', () => ({
@@ -38,6 +48,7 @@ describe('logger', () => {
   const mockDebugLogger = vi.fn();
 
   beforeEach(() => {
+    electronState.isPackaged = false;
     vi.mocked(debug).mockReturnValue(mockDebugLogger as any);
     mockGetDesktopEnv.mockReturnValue({
       NODE_ENV: undefined,
@@ -154,6 +165,18 @@ describe('logger', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
       expect(electronLog.error).not.toHaveBeenCalled();
 
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should write packaged errors to electron-log even when NODE_ENV is not set', () => {
+      electronState.isPackaged = true;
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logger = createLogger('test:packaged');
+
+      logger.error('gateway failed');
+
+      expect(electronLog.error).toHaveBeenCalledWith('gateway failed');
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
     });
   });

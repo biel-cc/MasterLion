@@ -19,6 +19,7 @@ data:
   AGENTS_INDEX_URL: 'http://masterino-market:3220/indexes/agents'
   PLUGINS_INDEX_URL: 'http://masterino-market:3220/indexes/plugins'
   INTERNAL_APP_URL: 'http://masterino:3210'
+  DEVICE_GATEWAY_URL: 'http://masterino-device-gateway:8788'
   DATABASE_DRIVER: 'node'
   LOBE_DB_NAME: 'lobechat'
   S3_ENDPOINT: 'https://oss-cn-shenzhen.aliyuncs.com'

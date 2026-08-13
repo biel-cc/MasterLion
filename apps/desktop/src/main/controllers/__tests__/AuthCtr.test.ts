@@ -195,7 +195,7 @@ describe('AuthCtr', () => {
         expect(authUrl).toContain('client_id=lobehub-desktop');
         expect(authUrl).toContain('response_type=code');
         expect(authUrl).toContain('code_challenge_method=S256');
-        expect(authUrl).toContain('scope=profile%20email%20offline_access');
+        expect(authUrl).toContain('scope=openid%20profile%20email%20offline_access');
       });
 
       it('should start polling after authorization request', async () => {

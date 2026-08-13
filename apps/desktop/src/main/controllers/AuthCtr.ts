@@ -448,7 +448,7 @@ export default class AuthCtr extends ControllerModule {
         // https://aihub.bielcrystal.com/pull/8450
         resource: 'urn:lobehub:chat',
         response_type: 'code',
-        scope: 'profile email offline_access',
+        scope: 'openid profile email offline_access',
         state,
       });
 

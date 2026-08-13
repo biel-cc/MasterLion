@@ -13,6 +13,17 @@ export const BUILD_CHANNEL: string = rawChannel;
 export const UPDATE_CHANNEL: UpdateChannel =
   rawChannel === 'canary' || rawChannel === 'beta' ? 'canary' : 'stable';
 
+export const resolveInitialUpdateChannel = (
+  storedChannel?: string | null,
+  buildChannel: UpdateChannel = UPDATE_CHANNEL,
+): UpdateChannel => {
+  // An unsigned canary package must keep following canary even when an older
+  // stable build persisted its default channel before the first canary install.
+  if (buildChannel === 'canary') return 'canary';
+
+  return coerceStoredUpdateChannel(storedChannel ?? buildChannel);
+};
+
 // S3 base URL for all channels
 // e.g., https://aihub.bielcrystal.com/releases
 // Each channel resolves to {base}/{channel}/

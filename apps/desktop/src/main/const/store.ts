@@ -5,6 +5,7 @@ import { DEFAULT_ELECTRON_DESKTOP_SHORTCUTS } from '@lobechat/const/desktopGloba
 import type { NetworkProxySettings } from '@lobechat/electron-client-ipc';
 
 import { appStorageDir } from '@/const/dir';
+import { DEFAULT_GATEWAY_URL } from '@/modules/gateway/configs';
 import { UPDATE_CHANNEL } from '@/modules/updater/configs';
 import type { ElectronMainStore } from '@/types/store';
 
@@ -33,7 +34,7 @@ export const STORE_DEFAULTS: ElectronMainStore = {
   gatewayDeviceId: '',
   gatewayDeviceName: '',
   gatewayEnabled: true,
-  gatewayUrl: 'https://aihub.bielcrystal.com',
+  gatewayUrl: DEFAULT_GATEWAY_URL,
   heteroTracingEnabled: false,
   imessageBridgeConfigs: [],
   locale: 'auto',

@@ -77,6 +77,64 @@ describe('GatewayClient', () => {
   });
 
   describe('connect', () => {
+    it('should resolve only after gateway authentication succeeds', async () => {
+      const pending = client.connect();
+      await vi.advanceTimersByTimeAsync(1);
+
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      (client as any).handleMessage(
+        JSON.stringify({ type: 'auth_success', userId: 'verified-user' }),
+      );
+      await expect(pending).resolves.toEqual({ success: true, userId: 'verified-user' });
+    });
+
+    it('should return a structured authentication failure', async () => {
+      const pending = client.connect();
+      await vi.advanceTimersByTimeAsync(1);
+      (client as any).handleMessage(
+        JSON.stringify({ reason: 'invalid token', type: 'auth_failed' }),
+      );
+
+      await expect(pending).resolves.toEqual({
+        code: 'AUTH_FAILED',
+        error: 'invalid token',
+        success: false,
+      });
+    });
+
+    it('should time out when authentication never completes', async () => {
+      const pending = client.connect();
+      await vi.advanceTimersByTimeAsync(15_001);
+
+      await expect(pending).resolves.toMatchObject({ code: 'TIMEOUT', success: false });
+      expect(client.connectionStatus).toBe('disconnected');
+      expect((client as any).ws).toBeNull();
+    });
+
+    it('should schedule recovery after a timeout when auto reconnect is enabled', async () => {
+      const reconnectingClient = new GatewayClient({
+        autoReconnect: true,
+        gatewayUrl: 'https://gateway.test.com',
+        token: 'test-token',
+      });
+      const reconnecting = vi.fn();
+      reconnectingClient.on('reconnecting', reconnecting);
+
+      const pending = reconnectingClient.connect();
+      await vi.advanceTimersByTimeAsync(15_001);
+
+      await expect(pending).resolves.toMatchObject({ code: 'TIMEOUT', success: false });
+      expect(reconnectingClient.connectionStatus).toBe('reconnecting');
+      expect(reconnecting).toHaveBeenCalledWith(1000);
+      await reconnectingClient.disconnect();
+    });
+
     it('should transition to connecting then authenticating on open', async () => {
       const statusChanges: string[] = [];
       client.on('status_changed', (s) => statusChanges.push(s));
@@ -154,6 +212,7 @@ describe('GatewayClient', () => {
       const c = new GatewayClient({ autoReconnect: false, token: 'tok' });
       c.connect();
       const ws = (c as any).ws;
+      expect(ws.url).toContain('wss://masterino.bielcrystal.com/device-gateway/ws');
       expect(ws.url).toContain(`connectionId=${c.currentConnectionId}`);
       expect(ws.url).not.toContain('channel=');
       c.disconnect();
@@ -689,12 +748,14 @@ describe('GatewayClient', () => {
 
       // Update token and reconnect
       client.updateToken('new-token');
-      await client.reconnect();
+      const reconnect = client.reconnect();
       await vi.advanceTimersByTimeAsync(1);
 
       expect(client.connectionStatus).toBe('authenticating');
       const ws = (client as any).ws;
       expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"token":"new-token"'));
+      (client as any).handleMessage(JSON.stringify({ type: 'auth_success', userId: 'user-1' }));
+      await expect(reconnect).resolves.toEqual({ success: true, userId: 'user-1' });
     });
 
     it('should reset reconnect delay', async () => {
@@ -714,7 +775,7 @@ describe('GatewayClient', () => {
       expect((reconnectClient as any).reconnectDelay).toBe(4000);
 
       // reconnect() should reset
-      await reconnectClient.reconnect();
+      void reconnectClient.reconnect();
       expect((reconnectClient as any).reconnectDelay).toBe(1000);
 
       reconnectClient.disconnect();

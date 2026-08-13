@@ -59,6 +59,7 @@ const getRuntimeEnv = () => {
   return {
     ...process.env,
     DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
+    DEVICE_GATEWAY_URL: process.env.DEVICE_GATEWAY_URL,
     DISABLE_APP_UPDATE: process.env.DISABLE_APP_UPDATE,
     OFFICIAL_CLOUD_SERVER: officialCloudServer,
     UPDATE_CHANNEL: process.env.UPDATE_CHANNEL,

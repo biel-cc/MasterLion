@@ -4,6 +4,7 @@ namespace: masterino-test
 resources:
   - ../../base
   - configmap.yaml
+  - device-gateway.yaml
   - memory-worker.yaml
 configMapGenerator:
   - name: masterino-memory-config
@@ -14,6 +15,10 @@ generatorOptions:
   labels:
     app.kubernetes.io/part-of: masterino
     masterino.io/environment: test
+images:
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    digest: sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d
 patches:
   - path: memory-config-patch.yaml
   - path: storage-patch.yaml
@@ -21,6 +26,14 @@ patches:
       kind: Deployment
       name: masterino
     patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DEVICE_GATEWAY_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: masterino-device-gateway-secret
+              key: SERVICE_TOKEN
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:

@@ -1,6 +1,6 @@
 import { useWatchBroadcast } from '@lobechat/electron-client-ipc';
 import { ActionIcon, Flexbox } from '@lobehub/ui';
-import { Input, Popover, Switch } from 'antd';
+import { Button, Input, Popover, Switch } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import { HardDrive } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
@@ -45,25 +45,33 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     font-weight: 500;
     color: ${cssVar.colorText};
   `,
+  statusText: css`
+    font-size: 12px;
+    color: ${cssVar.colorTextDescription};
+  `,
+  statusError: css`
+    font-size: 12px;
+    color: ${cssVar.colorError};
+  `,
 }));
 
-const DeviceGateway = memo(() => {
+export const DeviceGateway = memo(() => {
   const { t } = useTranslation('electron');
   const [
-    gatewayStatus,
+    gatewayState,
     connectGateway,
     disconnectGateway,
-    setGatewayConnectionStatus,
+    setGatewayConnectionState,
     useFetchGatewayStatus,
     useFetchGatewayDeviceInfo,
     updateDeviceName,
     updateDeviceDescription,
     gatewayDeviceInfo,
   ] = useElectronStore((s) => [
-    s.gatewayConnectionStatus,
+    s.gatewayConnectionState,
     s.connectGateway,
     s.disconnectGateway,
-    s.setGatewayConnectionStatus,
+    s.setGatewayConnectionState,
     s.useFetchGatewayStatus,
     s.useFetchGatewayDeviceInfo,
     s.updateDeviceName,
@@ -74,12 +82,32 @@ const DeviceGateway = memo(() => {
   useFetchGatewayStatus();
   useFetchGatewayDeviceInfo();
 
-  useWatchBroadcast('gatewayConnectionStatusChanged', ({ status }) => {
-    setGatewayConnectionStatus(status);
+  useWatchBroadcast('gatewayConnectionStatusChanged', (state) => {
+    setGatewayConnectionState(state);
   });
 
+  const gatewayStatus = gatewayState.status;
   const isConnected = gatewayStatus === 'connected';
-  const isConnecting = gatewayStatus === 'connecting' || gatewayStatus === 'reconnecting';
+  const isConnecting =
+    gatewayStatus === 'connecting' ||
+    gatewayStatus === 'authenticating' ||
+    gatewayStatus === 'reconnecting';
+
+  const statusLabel = (() => {
+    if (gatewayState.error?.code === 'AUTH_REQUIRED') return t('gateway.errorAuthRequired');
+    if (gatewayState.error?.code === 'AUTH_FAILED') return t('gateway.errorAuthFailed');
+    if (gatewayState.error?.code === 'CONFIG_MISSING') return t('gateway.errorConfigMissing');
+    if (gatewayState.error?.code === 'HANDSHAKE_REJECTED')
+      return t('gateway.errorHandshakeRejected');
+    if (gatewayState.error?.code === 'TIMEOUT') return t('gateway.errorTimeout');
+    if (gatewayState.error?.code === 'NETWORK') return t('gateway.errorNetwork');
+    if (gatewayState.error) return t('gateway.errorUnknown');
+    if (gatewayStatus === 'connected') return t('gateway.statusConnected');
+    if (gatewayStatus === 'authenticating') return t('gateway.statusAuthenticating');
+    if (gatewayStatus === 'reconnecting') return t('gateway.statusReconnecting');
+    if (gatewayStatus === 'connecting') return t('gateway.statusConnecting');
+    return t('gateway.statusDisconnected');
+  })();
 
   const [localName, setLocalName] = useState<string | undefined>();
   const [localDescription, setLocalDescription] = useState<string | undefined>();
@@ -113,12 +141,18 @@ const DeviceGateway = memo(() => {
     <Flexbox className={styles.popoverContent} gap={16}>
       <Flexbox horizontal align="center" justify="space-between">
         <span className={styles.statusTitle}>{t('gateway.enableConnection')}</span>
-        <Switch
-          checked={isConnected || isConnecting}
-          loading={isConnecting}
-          size="small"
-          onChange={handleSwitchChange}
-        />
+        <Switch checked={gatewayState.enabled} size="small" onChange={handleSwitchChange} />
+      </Flexbox>
+
+      <Flexbox horizontal align="center" gap={8} justify="space-between">
+        <span className={gatewayState.error ? styles.statusError : styles.statusText}>
+          {statusLabel}
+        </span>
+        {gatewayState.enabled && gatewayState.error?.retriable && (
+          <Button size="small" type="link" onClick={() => connectGateway()}>
+            {t('gateway.retryNow')}
+          </Button>
+        )}
       </Flexbox>
 
       <Flexbox gap={4}>
