@@ -13,6 +13,7 @@ import { useQuery } from '@/hooks/useQuery';
 import { discoverService } from '@/services/discover';
 import { type AssistantMarketSource, type DiscoverAssistantItem } from '@/types/discover';
 
+import { displayAuthor } from '../../../../features/displayAuthor';
 import TokenTag from './TokenTag';
 
 const styles = createStaticStyles(({ css, cssVar }) => {
@@ -72,6 +73,7 @@ const AssistantItem = memo<DiscoverAssistantItem>(
     userName,
     type,
   }) => {
+    const authorName = displayAuthor(author);
     const navigate = useWorkspaceAwareNavigate();
     const { source } = useQuery() as { source?: AssistantMarketSource };
     const isGroupAgent = type === 'agent-group';
@@ -182,13 +184,13 @@ const AssistantItem = memo<DiscoverAssistantItem>(
                   </Text>
                 </WorkspaceLink>
               </Flexbox>
-              {author && (
+              {authorName && (
                 <div
                   className={userName ? styles.author : undefined}
                   style={userName ? undefined : { color: 'inherit' }}
                   onClick={userName ? handleAuthorClick : undefined}
                 >
-                  {author}
+                  {authorName}
                 </div>
               )}
             </Flexbox>

@@ -104,8 +104,20 @@ describe('MarketService', () => {
   });
 
   describe('constructor', () => {
-    it('should create MarketSDK with no options by default', () => {
-      new MarketService();
+    it('should not require Market configuration until the SDK is used', () => {
+      vi.stubEnv('MARKET_BASE_URL', '');
+
+      const service = new MarketService();
+
+      expect(MarketSDK).not.toHaveBeenCalled();
+      expect(() => service.market).toThrow(
+        'MARKET_BASE_URL is required; external Market fallback is disabled',
+      );
+    });
+
+    it('should create MarketSDK with no options on first use', () => {
+      const service = new MarketService();
+      void service.market;
       expect(MarketSDK).toHaveBeenCalledWith(
         expect.objectContaining({
           accessToken: undefined,
@@ -115,12 +127,14 @@ describe('MarketService', () => {
     });
 
     it('should pass accessToken to MarketSDK', () => {
-      new MarketService({ accessToken: 'my-token' });
+      const service = new MarketService({ accessToken: 'my-token' });
+      void service.market;
       expect(MarketSDK).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'my-token' }));
     });
 
     it('should use provided trustedClientToken directly', () => {
-      new MarketService({ trustedClientToken: 'pre-generated-token' });
+      const service = new MarketService({ trustedClientToken: 'pre-generated-token' });
+      void service.market;
       expect(MarketSDK).toHaveBeenCalledWith(
         expect.objectContaining({ trustedClientToken: 'pre-generated-token' }),
       );
@@ -130,7 +144,8 @@ describe('MarketService', () => {
       const userInfo = { userId: 'user-1' } as any;
       (generateTrustedClientToken as any).mockReturnValue('generated-token');
 
-      new MarketService({ userInfo });
+      const service = new MarketService({ userInfo });
+      void service.market;
 
       expect(generateTrustedClientToken).toHaveBeenCalledWith(userInfo);
       expect(MarketSDK).toHaveBeenCalledWith(
@@ -141,7 +156,8 @@ describe('MarketService', () => {
     it('should prefer trustedClientToken over generating from userInfo', () => {
       const userInfo = { userId: 'user-1' } as any;
 
-      new MarketService({ trustedClientToken: 'explicit-token', userInfo });
+      const service = new MarketService({ trustedClientToken: 'explicit-token', userInfo });
+      void service.market;
 
       expect(generateTrustedClientToken).not.toHaveBeenCalled();
       expect(MarketSDK).toHaveBeenCalledWith(
@@ -150,9 +166,10 @@ describe('MarketService', () => {
     });
 
     it('should pass clientCredentials to MarketSDK', () => {
-      new MarketService({
+      const service = new MarketService({
         clientCredentials: { clientId: 'client-id', clientSecret: 'client-secret' },
       });
+      void service.market;
       expect(MarketSDK).toHaveBeenCalledWith(
         expect.objectContaining({
           clientId: 'client-id',
@@ -170,6 +187,7 @@ describe('MarketService', () => {
       (getTrustedClientTokenForSession as any).mockResolvedValue('session-trusted-token');
 
       const service = await MarketService.createFromRequest(req);
+      void service.market;
 
       expect(service).toBeInstanceOf(MarketService);
       expect(MarketSDK).toHaveBeenCalledWith(

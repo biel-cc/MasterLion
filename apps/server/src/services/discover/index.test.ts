@@ -153,7 +153,7 @@ const mockMarketAssistantList = [
     summary: 'First market assistant from new source',
     author: { name: 'Market Author 1', avatar: 'https://example.com/avatar1.png' },
     ownerId: 101,
-    category: 'productivity',
+    category: 'office',
     createdAt: '2024-02-01T00:00:00Z',
     updatedAt: '2024-02-02T00:00:00Z',
     avatar: 'https://example.com/avatar1.png',
@@ -172,7 +172,7 @@ const mockMarketAssistantList = [
     summary: 'Second market assistant from new source',
     author: 'Market Author 2',
     ownerId: 202,
-    category: 'creativity',
+    category: 'academic',
     createdAt: '2024-02-04T00:00:00Z',
     updatedAt: '2024-02-05T00:00:00Z',
     avatar: 'https://example.com/avatar2.png',
@@ -241,24 +241,69 @@ describe('DiscoverService', () => {
     vi.clearAllMocks();
     vi.stubEnv('MARKET_BASE_URL', 'http://masterlion-market:3220');
     const internalProviders = [
-      { config: { models: ['gpt-4'] }, description: 'OpenAI provider', identifier: 'openai', name: 'OpenAI' },
-      { config: { models: ['claude-3-opus'] }, description: 'Anthropic provider', identifier: 'anthropic', name: 'Anthropic' },
+      {
+        config: { models: ['gpt-4'] },
+        description: 'OpenAI provider',
+        identifier: 'openai',
+        name: 'OpenAI',
+      },
+      {
+        config: { models: ['claude-3-opus'] },
+        description: 'Anthropic provider',
+        identifier: 'anthropic',
+        name: 'Anthropic',
+      },
     ];
     const internalModels = [
-      { category: 'openai', config: { abilities: { files: true, functionCall: true, vision: true }, contextWindowTokens: 8192, displayName: 'GPT-4', id: 'gpt-4', providerId: 'openai', providers: ['openai'], releasedAt: '2023-03-01T00:00:00Z' }, description: 'OpenAI GPT-4 model', identifier: 'gpt-4', name: 'GPT-4' },
-      { category: 'anthropic', config: { abilities: { reasoning: true, vision: true }, contextWindowTokens: 200000, displayName: 'Claude 3 Opus', id: 'claude-3-opus', providerId: 'anthropic', providers: ['anthropic'], releasedAt: '2024-02-01T00:00:00Z' }, description: 'Anthropic Claude 3 Opus model', identifier: 'claude-3-opus', name: 'Claude 3 Opus' },
+      {
+        category: 'openai',
+        config: {
+          abilities: { files: true, functionCall: true, vision: true },
+          contextWindowTokens: 8192,
+          displayName: 'GPT-4',
+          id: 'gpt-4',
+          providerId: 'openai',
+          providers: ['openai'],
+          releasedAt: '2023-03-01T00:00:00Z',
+        },
+        description: 'OpenAI GPT-4 model',
+        identifier: 'gpt-4',
+        name: 'GPT-4',
+      },
+      {
+        category: 'anthropic',
+        config: {
+          abilities: { reasoning: true, vision: true },
+          contextWindowTokens: 200000,
+          displayName: 'Claude 3 Opus',
+          id: 'claude-3-opus',
+          providerId: 'anthropic',
+          providers: ['anthropic'],
+          releasedAt: '2024-02-01T00:00:00Z',
+        },
+        description: 'Anthropic Claude 3 Opus model',
+        identifier: 'claude-3-opus',
+        name: 'Claude 3 Opus',
+      },
     ];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = input.toString();
-      if (url.includes('/api/v1/providers/')) {
-        const identifier = decodeURIComponent(url.split('/').at(-1) || '');
-        const item = internalProviders.find((provider) => provider.identifier === identifier);
-        return new Response(JSON.stringify(item || { error: 'not_found' }), { status: item ? 200 : 404 });
-      }
-      if (url.includes('/api/v1/providers')) return new Response(JSON.stringify({ items: internalProviders }));
-      if (url.includes('/api/v1/models')) return new Response(JSON.stringify({ items: internalModels }));
-      return new Response('{}');
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes('/api/v1/providers/')) {
+          const identifier = decodeURIComponent(url.split('/').at(-1) || '');
+          const item = internalProviders.find((provider) => provider.identifier === identifier);
+          return new Response(JSON.stringify(item || { error: 'not_found' }), {
+            status: item ? 200 : 404,
+          });
+        }
+        if (url.includes('/api/v1/providers'))
+          return new Response(JSON.stringify({ items: internalProviders }));
+        if (url.includes('/api/v1/models'))
+          return new Response(JSON.stringify({ items: internalModels }));
+        return new Response('{}');
+      }),
+    );
 
     // Setup AssistantStore mock
     mockAssistantStore = {
@@ -290,8 +335,9 @@ describe('DiscoverService', () => {
         }),
         getAgentDetail: vi.fn().mockResolvedValue(mockMarketAgentDetail),
         getCategories: vi.fn().mockResolvedValue([
-          { category: 'productivity', count: 10 },
-          { category: 'creativity', count: 5 },
+          { category: 'office', count: 10 },
+          { category: 'academic', count: 5 },
+          { category: 'entertainment', count: 99 },
         ]),
         getPublishedIdentifiers: vi.fn().mockResolvedValue([
           { id: 'market-assistant-1', lastModified: '2024-02-02T00:00:00Z' },
@@ -337,6 +383,7 @@ describe('DiscoverService', () => {
       expect(mockMarket.agents.getAgentList).toHaveBeenCalled();
       expect(result.items[0]).toEqual(
         expect.objectContaining({
+          authorAvatar: 'https://example.com/avatar1.png',
           identifier: 'market-assistant-1',
           title: 'Market Assistant 1',
           author: 'Market Author 1',
@@ -372,9 +419,27 @@ describe('DiscoverService', () => {
         q: 'market',
       });
       expect(result).toEqual([
-        { category: 'productivity', count: 10 },
-        { category: 'creativity', count: 5 },
+        { category: 'office', count: 10 },
+        { category: 'academic', count: 5 },
       ]);
+    });
+
+    it('does not query or expose removed public categories', async () => {
+      const result = await service.getAssistantList({ category: 'entertainment' });
+
+      expect(result.items).toEqual([]);
+      expect(result.totalCount).toBe(0);
+      expect(mockMarket.agents.getAgentList).not.toHaveBeenCalled();
+    });
+
+    it('returns a sanitized retryable message when the catalog is unavailable', async () => {
+      mockMarket.agents.getAgentList.mockRejectedValueOnce(
+        new Error('internal upstream details should not be exposed'),
+      );
+
+      await expect(service.getAssistantList()).rejects.toThrow(
+        'Assistant catalog is temporarily unavailable; please retry',
+      );
     });
 
     it('getAssistantIdentifiers should read from market SDK', async () => {

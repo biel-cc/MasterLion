@@ -32,6 +32,8 @@ private temporary directory and never modifies the source files:
 ```bash
 export ACK_TEST_APP_SECRET_FILE=D:/MasterLion/k8s/overlays/test/secret.env
 export ACK_TEST_BRIDGE_SECRET_FILE=D:/MasterLion/k8s/overlays/test/bridge-secret.env
+export ACK_TEST_SEARXNG_SECRET_FILE=D:/MasterLion/k8s/overlays/test/searxng-secret.env
+export ACK_TEST_MARKET_SECRET_FILE=D:/MasterLion/k8s/overlays/test/market-secret.env
 ```
 
 Generate once and retain across deployments:
@@ -46,6 +48,7 @@ Generate once and retain across deployments:
 Platform-issued values:
 
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`: dedicated test OSS RAM credential.
+- `SEARXNG_SECRET`: retained test SearXNG instance secret.
 - `AIHUB_READONLY_DATABASE_URL`: read-only Aihub database account, available only to the bridge.
 
 Personal-memory background work uses the in-cluster Redis and

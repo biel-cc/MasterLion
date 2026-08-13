@@ -21,12 +21,51 @@ import type {
 const log = debug('lobe-server:sandbox:onlyboxes');
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const OFFICE_TIMEOUT_MS = 180_000;
 const EXPORT_TASK_WAIT_MS = 60_000;
 const DEFAULT_LEASE_TTL_SEC = 900;
 const DEFAULT_JIT_TTL_SEC = 1800;
 const JIT_TOKEN_PREFIX = 'obx_jit_v1.';
 const WRITE_FILE_CHUNK_BYTES = 48 * 1024;
 const SKILL_ARCHIVE_CACHE_DIR = '/tmp/lobe-skills';
+const OFFICE_RETRY_DELAYS_MS = [2000, 5000, 10_000] as const;
+
+class OnlyboxesRequestError extends Error {
+  code?: string;
+  retryable: boolean;
+  status?: number;
+
+  constructor({
+    code,
+    message,
+    retryable,
+    status,
+  }: {
+    code?: string;
+    message: string;
+    retryable: boolean;
+    status?: number;
+  }) {
+    super(message);
+    this.name = 'OnlyboxesRequestError';
+    this.code = code;
+    this.retryable = retryable;
+    this.status = status;
+  }
+}
+
+const isRetryableWorkerError = (code: string | undefined, message: string) => {
+  const value = `${code || ''} ${message}`.toLowerCase();
+
+  return (
+    value.includes('no online worker capacity') ||
+    value.includes('no online worker supports') ||
+    value.includes('no compatible worker') ||
+    value.includes('no_worker') ||
+    value.includes('worker_offline') ||
+    value.includes('capacity_exhausted')
+  );
+};
 
 interface OnlyboxesTaskResponse {
   error?: { code?: string; message?: string };
@@ -85,6 +124,22 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
 
     try {
       switch (toolName) {
+        case 'createOfficeDocument':
+        case 'batchOfficeDocument':
+        case 'mergeOfficeTemplate':
+        case 'inspectOfficeDocument':
+        case 'validateOfficeDocument': {
+          if (!sandboxEnv.OFFICECLI_ENABLED) {
+            return this.errorResult('OfficeCLI document tools are disabled');
+          }
+
+          return await this.runOfficeJsonScriptWithRetry(
+            officeCliScript,
+            { ...params, action: toolName },
+            Math.min(Math.max(this.timeout(params), OFFICE_TIMEOUT_MS), 300_000),
+          );
+        }
+
         case 'runCommand': {
           return this.runCommand(params);
         }
@@ -171,6 +226,10 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       }
     } catch (error) {
       log('Onlyboxes tool %s failed: %O', toolName, error);
+      if (error instanceof OnlyboxesRequestError) {
+        return this.errorResult(error.message, error.name, error.code, error.retryable);
+      }
+
       return this.errorResult((error as Error).message, (error as Error).name);
     }
   }
@@ -655,6 +714,30 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     }
   }
 
+  private async runOfficeJsonScriptWithRetry(
+    script: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<SandboxCallToolResult> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.runJsonScript(script, params, timeoutMs);
+      } catch (error) {
+        const retryable = error instanceof OnlyboxesRequestError && error.retryable;
+        const retryDelay = OFFICE_RETRY_DELAYS_MS[attempt];
+
+        if (!retryable || retryDelay === undefined) throw error;
+
+        log(
+          'Onlyboxes Office worker unavailable; retrying attempt %d in %dms',
+          attempt + 2,
+          retryDelay,
+        );
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+
   private async execTerminal(command: string, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return this.request<TerminalExecResult>('/api/v1/commands/terminal', {
       body: JSON.stringify({
@@ -699,7 +782,12 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       headers,
     });
     const body = await response.text();
-    const json = body ? JSON.parse(body) : {};
+    let json: any;
+    try {
+      json = body ? JSON.parse(body) : {};
+    } catch {
+      json = {};
+    }
 
     if (!response.ok) {
       const message =
@@ -708,7 +796,13 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
           : typeof json?.error?.message === 'string'
             ? json.error.message
             : `Onlyboxes request failed with HTTP ${response.status}`;
-      throw new Error(message);
+      const code = typeof json?.error?.code === 'string' ? json.error.code : undefined;
+      throw new OnlyboxesRequestError({
+        code,
+        message,
+        retryable: isRetryableWorkerError(code, message),
+        status: response.status,
+      });
     }
 
     return json as T;
@@ -732,9 +826,14 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_TIMEOUT_MS;
   }
 
-  private errorResult(message: string, name?: string): SandboxCallToolResult {
+  private errorResult(
+    message: string,
+    name?: string,
+    code?: string,
+    retryable?: boolean,
+  ): SandboxCallToolResult {
     return {
-      error: { message, name },
+      error: { code, message, name, retryable },
       result: null,
       success: false,
     };
@@ -973,4 +1072,186 @@ def main(encoded):
     pattern = args.get('pattern') or '*'
     files = glob.glob(os.path.join(directory, pattern), recursive=True)
     emit({'files': files, 'totalCount': len(files)})
+`;
+
+const officeCliScript = `${scriptPrelude}
+import subprocess, tempfile
+
+OFFICE_ROOT = Path('/tmp/masterino-office').resolve()
+UPLOAD_ROOT = Path('/mnt/data').resolve()
+OFFICE_EXTENSIONS = {'.docx', '.xlsx', '.pptx'}
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
+MAX_FILE_BYTES = 50 * 1024 * 1024
+MAX_OPERATIONS = 500
+ALLOWED_COMMANDS = {'add', 'set', 'remove', 'move', 'swap'}
+BLOCKED_FORMULA = re.compile(r'^\\s*=\\s*(WEBSERVICE|HYPERLINK|RTD|DDE)\\b', re.IGNORECASE)
+
+def inside(path, root):
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+def resolve_path(value, *, output=False, extensions=None):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('A sandbox path is required')
+    raw = Path(value)
+    path = (OFFICE_ROOT / raw if not raw.is_absolute() else raw).resolve()
+    allowed = inside(path, OFFICE_ROOT) or (not output and inside(path, UPLOAD_ROOT))
+    if not allowed:
+        raise ValueError('Office paths must stay inside /tmp/masterino-office or /mnt/data')
+    if output and not inside(path, OFFICE_ROOT):
+        raise ValueError('Office output paths must stay inside /tmp/masterino-office')
+    if extensions and path.suffix.lower() not in extensions:
+        raise ValueError(f'Unsupported file extension: {path.suffix}')
+    return path
+
+def validate_value(value, key=''):
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            validate_value(child, str(child_key))
+    elif isinstance(value, list):
+        for child in value:
+            validate_value(child, key)
+    elif isinstance(value, str):
+        if BLOCKED_FORMULA.search(value):
+            raise ValueError('External or executable Excel formulas are not allowed')
+        if key.lower() in {'src', 'source', 'image', 'imagepath', 'file', 'filepath'}:
+            if re.match(r'^[a-z][a-z0-9+.-]*://', value, re.IGNORECASE):
+                raise ValueError('External document resources are not allowed')
+            if '/' in value or '\\\\' in value:
+                resolve_path(value, extensions=IMAGE_EXTENSIONS | OFFICE_EXTENSIONS)
+
+def run_office(command):
+    env = os.environ.copy()
+    env['OFFICECLI_SKIP_UPDATE'] = '1'
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        cwd=str(OFFICE_ROOT),
+        env=env,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or 'OfficeCLI failed')
+    output = result.stdout.strip()
+    if not output:
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return output
+
+def format_of(path):
+    return path.suffix.lower().lstrip('.')
+
+def ensure_size(path):
+    if path.exists() and path.stat().st_size > MAX_FILE_BYTES:
+        path.unlink(missing_ok=True)
+        raise ValueError('Generated Office file exceeds the 50 MiB limit')
+
+def main(encoded):
+    args = load_args(encoded)
+    action = args.get('action')
+    OFFICE_ROOT.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if action == 'createOfficeDocument':
+            path = resolve_path(args.get('path'), output=True, extensions=OFFICE_EXTENSIONS)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            expected = str(args.get('format') or '').lower()
+            if expected not in {'docx', 'xlsx', 'pptx'} or path.suffix.lower() != f'.{expected}':
+                raise ValueError('format must match the output file extension')
+            command = ['officecli', 'create', str(path)]
+            locale = args.get('locale')
+            if locale:
+                command.extend(['--locale', str(locale)])
+            output = run_office(command)
+            ensure_size(path)
+            emit({'success': True, 'path': str(path), 'format': expected, 'output': output})
+            return
+
+        if action == 'batchOfficeDocument':
+            path = resolve_path(args.get('path'), output=True, extensions=OFFICE_EXTENSIONS)
+            operations = args.get('operations')
+            if not isinstance(operations, list) or not 1 <= len(operations) <= MAX_OPERATIONS:
+                raise ValueError('operations must contain between 1 and 500 items')
+            for operation in operations:
+                if not isinstance(operation, dict) or operation.get('command') not in ALLOWED_COMMANDS:
+                    raise ValueError('Unsupported Office batch operation')
+                if not isinstance(operation.get('path'), str):
+                    raise ValueError('Every Office operation requires a path')
+                validate_value(operation)
+            with tempfile.NamedTemporaryFile('w', suffix='.json', dir=OFFICE_ROOT, delete=False, encoding='utf-8') as file:
+                json.dump(operations, file, ensure_ascii=False)
+                batch_path = Path(file.name)
+            try:
+                output = run_office(['officecli', 'batch', str(path), '--input', str(batch_path), '--json'])
+            finally:
+                batch_path.unlink(missing_ok=True)
+            ensure_size(path)
+            emit({'success': True, 'path': str(path), 'format': format_of(path), 'output': output})
+            return
+
+        if action == 'mergeOfficeTemplate':
+            template = resolve_path(args.get('templatePath'), extensions=OFFICE_EXTENSIONS)
+            output_path = resolve_path(args.get('outputPath'), output=True, extensions=OFFICE_EXTENSIONS)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if template.suffix.lower() != output_path.suffix.lower():
+                raise ValueError('Template and output formats must match')
+            data = args.get('data')
+            if not isinstance(data, dict):
+                raise ValueError('Template data must be an object')
+            validate_value(data)
+            with tempfile.NamedTemporaryFile('w', suffix='.json', dir=OFFICE_ROOT, delete=False, encoding='utf-8') as file:
+                json.dump(data, file, ensure_ascii=False)
+                data_path = Path(file.name)
+            try:
+                output = run_office(['officecli', 'merge', str(template), str(output_path), '--data', str(data_path)])
+            finally:
+                data_path.unlink(missing_ok=True)
+            ensure_size(output_path)
+            emit({'success': True, 'path': str(output_path), 'format': format_of(output_path), 'output': output})
+            return
+
+        if action == 'inspectOfficeDocument':
+            path = resolve_path(args.get('path'), extensions=OFFICE_EXTENSIONS)
+            mode = args.get('mode')
+            if mode not in {'outline', 'issues', 'html', 'screenshot'}:
+                raise ValueError('Unsupported Office inspection mode')
+            command = ['officecli', 'view', str(path), str(mode)]
+            previews = []
+            if mode in {'html', 'screenshot'}:
+                default_suffix = '.html' if mode == 'html' else '.png'
+                output_path = resolve_path(
+                    args.get('outputPath') or f'{path.stem}-preview{default_suffix}',
+                    output=True,
+                    extensions={default_suffix},
+                )
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                command.extend(['-o', str(output_path)])
+                previews.append(str(output_path))
+            else:
+                command.append('--json')
+            if args.get('page'):
+                command.extend(['--page', str(args.get('page'))])
+            output = run_office(command)
+            issues = output if mode == 'issues' and isinstance(output, list) else []
+            emit({'success': True, 'path': str(path), 'format': format_of(path), 'issues': issues, 'previews': previews, 'output': output})
+            return
+
+        if action == 'validateOfficeDocument':
+            path = resolve_path(args.get('path'), extensions=OFFICE_EXTENSIONS)
+            output = run_office(['officecli', 'validate', str(path), '--json'])
+            ensure_size(path)
+            emit({'success': True, 'path': str(path), 'format': format_of(path), 'issues': [], 'output': output})
+            return
+
+        raise ValueError('Unsupported OfficeCLI action')
+    except subprocess.TimeoutExpired:
+        emit({'success': False, 'code': 'office_timeout', 'error': 'OfficeCLI exceeded the 180 second timeout'})
+    except Exception as error:
+        emit({'success': False, 'code': 'office_error', 'error': str(error)})
 `;

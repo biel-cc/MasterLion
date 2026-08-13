@@ -24,6 +24,7 @@ export interface UserDetailContextConfig {
   isOwner: boolean;
   mobile?: boolean;
   onEditProfile?: (onSuccess?: (profile: MarketUserProfile) => void) => void;
+  onRefreshProfile?: () => Promise<void>;
   onStatusChange?: (identifier: string, action: 'deprecate', type?: 'agent' | 'group') => void;
   plugins?: DiscoverPluginItem[];
   skills?: DiscoverSkillItem[];

@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/migrate.ts",
     "runner": "tsx src/runner.ts",
+    "seed:curated": "tsx src/seedCli.ts",
     "start": "node dist/index.js",
     "start:runner": "node dist/runner.js",
     "test": "vitest run --silent='passed-only'",

@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: masterino-market-seed
+  labels:
+    app.kubernetes.io/name: masterino-market-seed
+    app.kubernetes.io/part-of: masterino
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-market-seed
+        app.kubernetes.io/part-of: masterino
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: masterino-acr-fixed
+      restartPolicy: OnFailure
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seed
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market:v1.1.0
+          command:
+            - node
+            - -e
+            - >-
+              fetch('http://masterino-market:3220/api/internal/curated-seed',
+              {method:'POST',headers:{'x-market-internal-token':process.env.MARKET_RUNNER_INTERNAL_TOKEN}})
+              .then(async response => { const body = await response.text(); if (!response.ok)
+              throw new Error(`Seed failed (${response.status}): ${body}`); console.log(body); })
+          envFrom:
+            - secretRef:
+                name: masterino-market-secret
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: masterino-market-seed-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-market-seed
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: masterino-market
+      ports:
+        - { protocol: TCP, port: 3220 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

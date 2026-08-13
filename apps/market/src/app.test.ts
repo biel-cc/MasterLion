@@ -80,6 +80,34 @@ const createRepository = () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('Market SDK compatibility', () => {
+  it('rejects unauthenticated curated seed requests before touching storage', async () => {
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: createRepository() as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+
+    const response = await app.request('/api/internal/curated-seed', { method: 'POST' });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'unauthorized' });
+  });
+
+  it('redirects the public service root to the enabled skill market', async () => {
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: createRepository() as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+
+    const response = await app.request('/');
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('https://masterino.example.com/community');
+  });
+
   it('serves the SDK agent list and detail routes with trusted-client identity', async () => {
     const repository = createRepository();
     const app = createMarketApp({

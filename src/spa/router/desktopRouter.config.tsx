@@ -206,35 +206,8 @@ export const sharedMainAreaChildren: RouteObject[] = [
             ),
             path: 'agent',
           },
-          {
-            children: [
-              {
-                element: dynamicElement(
-                  () => import('@/routes/(main)/community/(list)/model'),
-                  'Desktop > Discover > List > Model',
-                ),
-                handle: {
-                  meta: routeMeta({ icon: ShapesIcon, titleKey: 'navigation.discoverModels' }),
-                },
-                index: true,
-              },
-            ],
-            element: dynamicElement(
-              () => import('@/routes/(main)/community/(list)/model/_layout'),
-              'Desktop > Discover > List > Model > Layout',
-            ),
-            path: 'model',
-          },
-          {
-            element: dynamicElement(
-              () => import('@/routes/(main)/community/(list)/provider'),
-              'Desktop > Discover > List > Provider',
-            ),
-            handle: {
-              meta: routeMeta({ icon: ShapesIcon, titleKey: 'navigation.discoverProviders' }),
-            },
-            path: 'provider',
-          },
+          { element: redirectElement('/community'), path: 'model' },
+          { element: redirectElement('/community'), path: 'provider' },
           {
             children: [
               {
@@ -313,20 +286,8 @@ export const sharedMainAreaChildren: RouteObject[] = [
             ),
             path: 'group_agent/:slug',
           },
-          {
-            element: dynamicElement(
-              () => import('@/routes/(main)/community/(detail)/model'),
-              'Desktop > Discover > Detail > Model',
-            ),
-            path: 'model/:slug',
-          },
-          {
-            element: dynamicElement(
-              () => import('@/routes/(main)/community/(detail)/provider'),
-              'Desktop > Discover > Detail > Provider',
-            ),
-            path: 'provider/:slug',
-          },
+          { element: redirectElement('/community'), path: 'model/:slug' },
+          { element: redirectElement('/community'), path: 'provider/:slug' },
           {
             element: dynamicElement(
               () => import('@/routes/(main)/community/(detail)/skill'),

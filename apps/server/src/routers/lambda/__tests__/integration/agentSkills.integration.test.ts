@@ -80,7 +80,7 @@ vi.mock('@/server/services/skill/parser', () => ({
 }));
 
 const mockMarketServiceInstance = {
-  getSkillDownloadUrl: vi.fn(),
+  downloadSkill: vi.fn(),
 };
 vi.mock('@/server/services/market', () => ({
   MarketService: vi.fn().mockImplementation(() => mockMarketServiceInstance),
@@ -100,10 +100,7 @@ describe('Skill Router Integration Tests', () => {
   let userId: string;
 
   beforeEach(async () => {
-    vi.stubEnv(
-      'SKILL_IMPORT_ALLOWED_ORIGINS',
-      'https://example.com,https://market.lobehub.com',
-    );
+    vi.stubEnv('SKILL_IMPORT_ALLOWED_ORIGINS', 'https://example.com,https://market.lobehub.com');
     serverDB = await getTestDB();
     testDB = serverDB;
     userId = await createTestUser(serverDB);
@@ -875,24 +872,13 @@ description: A skill from URL
   describe('importFromMarket', () => {
     beforeEach(() => {
       mockSsrfSafeFetch.mockReset();
-      mockMarketServiceInstance.getSkillDownloadUrl.mockReset();
+      mockMarketServiceInstance.downloadSkill.mockReset();
     });
 
     it('should keep the market identifier stable when re-importing from market', async () => {
-      mockMarketServiceInstance.getSkillDownloadUrl
-        .mockReturnValueOnce('https://market.lobehub.com/api/v1/skills/github.owner.repo/download')
-        .mockReturnValueOnce(
-          'https://market.lobehub.com/api/v1/skills/github.owner.repo/download?version=1.0.0',
-        );
-
-      mockSsrfSafeFetch.mockResolvedValue({
-        arrayBuffer: async () => new ArrayBuffer(8),
-        headers: {
-          get: (key: string) => (key === 'content-type' ? 'application/zip' : null),
-        },
-        ok: true,
-        status: 200,
-        statusText: 'OK',
+      mockMarketServiceInstance.downloadSkill.mockResolvedValue({
+        buffer: Buffer.from('market-skill'),
+        filename: 'github.owner.repo.zip',
       });
 
       let callCount = 0;
@@ -921,6 +907,8 @@ description: A skill from URL
       expect(second!.skill.identifier).toBe('github.owner.repo');
       expect(second!.skill.name).toBe('Updated Name');
       expect(second!.skill.content).toBe('# Updated');
+      expect(mockMarketServiceInstance.downloadSkill).toHaveBeenCalledTimes(2);
+      expect(mockSsrfSafeFetch).not.toHaveBeenCalled();
     });
   });
 

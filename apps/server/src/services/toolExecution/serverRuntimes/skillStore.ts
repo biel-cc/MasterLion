@@ -215,12 +215,13 @@ class SkillStoreServerRuntimeService implements SkillStoreRuntimeService {
     log('Importing skill from market: %s', identifier);
 
     try {
-      const downloadUrl = this.marketService.getSkillDownloadUrl(identifier);
-      log('Download URL: %s', downloadUrl);
-
-      const result = await this.importFromZipUrl(downloadUrl);
+      const archive = await this.marketService.downloadSkill(identifier);
+      const result = await this.importer.importFromMarketArchive({
+        buffer: Buffer.from(archive.buffer),
+        identifier,
+      });
       log('Import from market result: %O', result);
-      return result;
+      return { skill: { id: result.skill.id, name: result.skill.name }, status: result.status };
     } catch (error) {
       log('Error importing skill from market: %O', error);
       throw error;

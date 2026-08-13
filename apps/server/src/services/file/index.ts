@@ -461,10 +461,14 @@ export class FileService {
 
   async downloadFileToLocal(
     fileId: string,
+    options?: { maxBytes?: number },
   ): Promise<{ cleanup: () => void; file: FileItem; filePath: string }> {
     const file = await this.fileModel.findById(fileId);
     if (!file) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'File not found' });
+    }
+    if (options?.maxBytes && Number(file.size) > options.maxBytes) {
+      throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'File exceeds the allowed size' });
     }
 
     let content: Uint8Array | undefined;
@@ -480,6 +484,9 @@ export class FileService {
     }
 
     if (!content) throw new TRPCError({ code: 'BAD_REQUEST', message: 'File content is empty' });
+    if (options?.maxBytes && content.byteLength > options.maxBytes) {
+      throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'File exceeds the allowed size' });
+    }
 
     const dir = nanoid();
     const tempManager = new TempFileManager(dir);

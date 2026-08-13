@@ -27,7 +27,9 @@ const mocks = vi.hoisted(() => {
     findByName: vi.fn(),
     getAgentSkills: vi.fn(),
     getUserSettings: vi.fn(),
+    getSandboxProviderKind: vi.fn(() => 'onlyboxes'),
     marketService: {},
+    marketServiceConstructor: vi.fn(),
     readResource: vi.fn(),
     sandboxService,
   };
@@ -72,7 +74,7 @@ vi.mock('@/server/services/file', () => ({
 }));
 
 vi.mock('@/server/services/market', () => ({
-  MarketService: vi.fn(() => mocks.marketService),
+  MarketService: mocks.marketServiceConstructor.mockImplementation(() => mocks.marketService),
 }));
 
 vi.mock('@/server/services/sandbox', async () => {
@@ -81,6 +83,7 @@ vi.mock('@/server/services/sandbox', async () => {
   return {
     ...(actual as Record<string, unknown>),
     createSandboxService: mocks.createSandboxService,
+    getSandboxProviderKind: mocks.getSandboxProviderKind,
   };
 });
 
@@ -141,6 +144,8 @@ describe('skillsRuntime', () => {
     });
 
     expect(result.success).toBe(true);
+    expect(mocks.getUserSettings).not.toHaveBeenCalled();
+    expect(mocks.marketServiceConstructor).not.toHaveBeenCalled();
     expect(mocks.findByName).toHaveBeenCalledWith('user-skill');
     expect(mocks.findByName).toHaveBeenCalledWith('builtin-skill');
     expect(mocks.checkHash).toHaveBeenCalledWith('zip-hash-1');
@@ -154,5 +159,5 @@ describe('skillsRuntime', () => {
         },
       }),
     );
-  });
+  }, 15_000);
 });

@@ -17,6 +17,11 @@ const Loading = memo(() => {
       </Title>
       <ListLoading length={8} rows={4} />
       <div />
+      <Title more={t('home.more')} moreLink={'/community/skill'}>
+        {t('home.featuredSkills')}
+      </Title>
+      <ListLoading length={8} rows={4} />
+      <div />
       <Title more={t('home.more')} moreLink={'/community/mcp'}>
         {t('home.featuredTools')}
       </Title>

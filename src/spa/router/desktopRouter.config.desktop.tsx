@@ -61,9 +61,7 @@ import CommunityDetailLayout from '@/routes/(main)/community/(detail)/_layout';
 import CommunityDetailAgentPage from '@/routes/(main)/community/(detail)/agent';
 import CommunityDetailGroupAgentPage from '@/routes/(main)/community/(detail)/group_agent';
 import CommunityDetailMcpPage from '@/routes/(main)/community/(detail)/mcp';
-import CommunityDetailModelPage from '@/routes/(main)/community/(detail)/model';
 import CommunityDetailOrganizationPage from '@/routes/(main)/community/(detail)/organization';
-import CommunityDetailProviderPage from '@/routes/(main)/community/(detail)/provider';
 import CommunityDetailSkillPage from '@/routes/(main)/community/(detail)/skill';
 import CommunityDetailUserPage from '@/routes/(main)/community/(detail)/user';
 import CommunityDetailWorkspacePage from '@/routes/(main)/community/(detail)/workspace';
@@ -74,9 +72,6 @@ import CommunityListAgentPage from '@/routes/(main)/community/(list)/agent';
 import CommunityListAgentLayout from '@/routes/(main)/community/(list)/agent/_layout';
 import CommunityListMcpPage from '@/routes/(main)/community/(list)/mcp';
 import CommunityListMcpLayout from '@/routes/(main)/community/(list)/mcp/_layout';
-import CommunityListModelPage from '@/routes/(main)/community/(list)/model';
-import CommunityListModelLayout from '@/routes/(main)/community/(list)/model/_layout';
-import CommunityListProviderPage from '@/routes/(main)/community/(list)/provider';
 import CommunityListSkillPage from '@/routes/(main)/community/(list)/skill';
 import CommunityListSkillLayout from '@/routes/(main)/community/(list)/skill/_layout';
 import DevtoolsIndexPage from '@/routes/(main)/devtools';
@@ -254,26 +249,8 @@ export const sharedMainAreaChildren: RouteObject[] = [
             element: <CommunityListAgentLayout />,
             path: 'agent',
           },
-          {
-            children: [
-              {
-                element: <CommunityListModelPage />,
-                handle: {
-                  meta: routeMeta({ icon: ShapesIcon, titleKey: 'navigation.discoverModels' }),
-                },
-                index: true,
-              },
-            ],
-            element: <CommunityListModelLayout />,
-            path: 'model',
-          },
-          {
-            element: <CommunityListProviderPage />,
-            handle: {
-              meta: routeMeta({ icon: ShapesIcon, titleKey: 'navigation.discoverProviders' }),
-            },
-            path: 'provider',
-          },
+          { element: redirectElement('/community'), path: 'model' },
+          { element: redirectElement('/community'), path: 'provider' },
           {
             children: [
               {
@@ -325,14 +302,8 @@ export const sharedMainAreaChildren: RouteObject[] = [
             element: <CommunityDetailGroupAgentPage />,
             path: 'group_agent/:slug',
           },
-          {
-            element: <CommunityDetailModelPage />,
-            path: 'model/:slug',
-          },
-          {
-            element: <CommunityDetailProviderPage />,
-            path: 'provider/:slug',
-          },
+          { element: redirectElement('/community'), path: 'model/:slug' },
+          { element: redirectElement('/community'), path: 'provider/:slug' },
           {
             element: <CommunityDetailSkillPage />,
             path: 'skill/:slug',

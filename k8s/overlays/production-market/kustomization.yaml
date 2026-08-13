@@ -71,7 +71,7 @@ patches:
       metadata:
         name: masterino-market-config
       data:
-        MARKET_OBJECT_STORAGE_ENDPOINT: https://oss-cn-shenzhen.aliyuncs.com
+        MARKET_OBJECT_STORAGE_ENDPOINT: https://s3.oss-cn-shenzhen.aliyuncs.com
         MARKET_OBJECT_STORAGE_BUCKET: masterlion-prd
         MARKET_OBJECT_STORAGE_REGION: cn-shenzhen
         MARKET_OBJECT_STORAGE_FORCE_PATH_STYLE: '0'

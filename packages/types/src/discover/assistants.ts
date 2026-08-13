@@ -21,6 +21,21 @@ export enum AssistantCategory {
   Translation = 'translation',
 }
 
+export const PUBLIC_ASSISTANT_CATEGORIES = [
+  AssistantCategory.Academic,
+  AssistantCategory.Career,
+  AssistantCategory.CopyWriting,
+  AssistantCategory.Design,
+  AssistantCategory.Education,
+  AssistantCategory.General,
+  AssistantCategory.Office,
+  AssistantCategory.Programming,
+  AssistantCategory.Translation,
+] as const;
+
+export const isPublicAssistantCategory = (category?: string): category is AssistantCategory =>
+  PUBLIC_ASSISTANT_CATEGORIES.includes(category as (typeof PUBLIC_ASSISTANT_CATEGORIES)[number]);
+
 export enum AssistantSorts {
   HaveSkills = 'haveSkills',
   MostUsage = 'mostUsage',
@@ -42,6 +57,7 @@ export type AgentType = 'agent' | 'agent-group';
 
 export interface DiscoverAssistantItem extends Omit<LobeAgentSettings, 'meta'>, MetaData {
   author: string;
+  authorAvatar?: string;
   category?: AssistantCategory;
   createdAt: string;
   /**

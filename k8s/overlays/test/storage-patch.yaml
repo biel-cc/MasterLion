@@ -3,11 +3,22 @@ kind: StatefulSet
 metadata:
   name: masterino-postgres
 spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: '2'
+              memory: 4Gi
   volumeClaimTemplates:
     - metadata:
         name: postgres-data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: ['ReadWriteOnce']
         storageClassName: masterino-test-essd-retain
         resources:
           requests:
@@ -22,7 +33,7 @@ spec:
     - metadata:
         name: redis-data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: ['ReadWriteOnce']
         storageClassName: masterino-test-essd-retain
         resources:
           requests:

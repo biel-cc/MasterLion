@@ -57,7 +57,7 @@ jobs:
           fi
 
           desktop_version="$(node -p "require('./apps/desktop/package.json').version")"
-          current_version="$desktop_version"
+          current_version=""
           manifest_url="${DESKTOP_UPDATE_SERVER_URL}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
           manifest_file="$RUNNER_TEMP/current-desktop-manifest.yml"
           manifest_key="${DESKTOP_OSS_PREFIX}/${DESKTOP_CHANNEL}/${DESKTOP_CHANNEL}.yml"
@@ -96,18 +96,22 @@ jobs:
             current_version="$oss_version"
           fi
 
-          if [[ ! "$current_version" =~ $semver_pattern ]]; then
-            echo "Current desktop version is not a stable SemVer: $current_version" >&2
-            exit 1
-          fi
-
-          if ! CURRENT_VERSION="$current_version" node -e "const current=process.env.CURRENT_VERSION.split('.').map(Number); const next=process.env.INPUT_VERSION.split('.').map(Number); const changed=next.findIndex((part,index)=>part!==current[index]); process.exit(changed>=0&&next[changed]>current[changed]?0:1)"; then
-            echo "Version $INPUT_VERSION must be greater than current version $current_version" >&2
+          if [ -n "$current_version" ]; then
+            if [[ ! "$current_version" =~ $semver_pattern ]]; then
+              echo "Current OSS desktop version is not a stable SemVer: $current_version" >&2
+              exit 1
+            fi
+            if ! CURRENT_VERSION="$current_version" node -e "const current=process.env.CURRENT_VERSION.split('.').map(Number); const next=process.env.INPUT_VERSION.split('.').map(Number); const changed=next.findIndex((part,index)=>part!==current[index]); process.exit(changed>=0&&next[changed]>current[changed]?0:1)"; then
+              echo "Version $INPUT_VERSION must be greater than current OSS version $current_version" >&2
+              exit 1
+            fi
+          elif ! CURRENT_VERSION="$desktop_version" node -e "const current=process.env.CURRENT_VERSION.split('.').map(Number); const next=process.env.INPUT_VERSION.split('.').map(Number); const changed=next.findIndex((part,index)=>part!==current[index]); process.exit(changed<0||next[changed]>current[changed]?0:1)"; then
+            echo "First OSS version $INPUT_VERSION must not be lower than source version $desktop_version" >&2
             exit 1
           fi
 
           echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Validated desktop version $INPUT_VERSION (current: $current_version)"
+          echo "Validated desktop version $INPUT_VERSION (current OSS: ${current_version:-none}; source: $desktop_version)"
 
   build:
     name: Build ${{ matrix.name }}

@@ -46,6 +46,8 @@ cleanup() {
   [[ -n "${ACK_RESPONSE_FILE:-}" ]] && rm -f -- "$ACK_RESPONSE_FILE"
   [[ -n "${APP_SECRET_FILE:-}" ]] && rm -f -- "$APP_SECRET_FILE"
   [[ -n "${BRIDGE_SECRET_FILE:-}" ]] && rm -f -- "$BRIDGE_SECRET_FILE"
+  [[ -n "${SEARXNG_SECRET_FILE:-}" ]] && rm -f -- "$SEARXNG_SECRET_FILE"
+  [[ -n "${MARKET_SECRET_FILE:-}" ]] && rm -f -- "$MARKET_SECRET_FILE"
   [[ -n "${TEMP_DIR:-}" ]] && rmdir -- "$TEMP_DIR" 2> /dev/null
 }
 
@@ -101,16 +103,24 @@ prepare_kubeconfig() {
 }
 
 prepare_secret_files() {
-  if [[ -n "${ACK_TEST_APP_SECRET_FILE:-}" || -n "${ACK_TEST_BRIDGE_SECRET_FILE:-}" ]]; then
+  if [[ -n "${ACK_TEST_APP_SECRET_FILE:-}" || -n "${ACK_TEST_BRIDGE_SECRET_FILE:-}" || -n "${ACK_TEST_SEARXNG_SECRET_FILE:-}" || -n "${ACK_TEST_MARKET_SECRET_FILE:-}" ]]; then
     require_env ACK_TEST_APP_SECRET_FILE
     require_env ACK_TEST_BRIDGE_SECRET_FILE
+    require_env ACK_TEST_SEARXNG_SECRET_FILE
+    require_env ACK_TEST_MARKET_SECRET_FILE
     [[ -f "$ACK_TEST_APP_SECRET_FILE" ]] \
       || fail "application secret file does not exist: $ACK_TEST_APP_SECRET_FILE"
     [[ -f "$ACK_TEST_BRIDGE_SECRET_FILE" ]] \
       || fail "bridge secret file does not exist: $ACK_TEST_BRIDGE_SECRET_FILE"
+    [[ -f "$ACK_TEST_SEARXNG_SECRET_FILE" ]] \
+      || fail "SearXNG secret file does not exist: $ACK_TEST_SEARXNG_SECRET_FILE"
+    [[ -f "$ACK_TEST_MARKET_SECRET_FILE" ]] \
+      || fail "Market secret file does not exist: $ACK_TEST_MARKET_SECRET_FILE"
     cp -- "$ACK_TEST_APP_SECRET_FILE" "$APP_SECRET_FILE"
     cp -- "$ACK_TEST_BRIDGE_SECRET_FILE" "$BRIDGE_SECRET_FILE"
-    chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE"
+    cp -- "$ACK_TEST_SEARXNG_SECRET_FILE" "$SEARXNG_SECRET_FILE"
+    cp -- "$ACK_TEST_MARKET_SECRET_FILE" "$MARKET_SECRET_FILE"
+    chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
     return
   fi
 
@@ -122,8 +132,21 @@ prepare_secret_files() {
     REDIS_PASSWORD
     S3_ACCESS_KEY_ID
     S3_SECRET_ACCESS_KEY
+    SEARXNG_SECRET
     AIHUB_BRIDGE_TOKEN
     AIHUB_READONLY_DATABASE_URL
+    AUTH_WECOM_AGENT_ID
+    AUTH_WECOM_CORP_ID
+    AUTH_WECOM_CORP_SECRET
+    MARKET_GITHUB_TOKEN
+    MARKET_DATABASE_PASSWORD
+    MARKET_TRUSTED_CLIENT_SECRET
+    MARKET_CREDENTIAL_ENCRYPTION_KEY
+    MARKET_IMPORT_SIGNING_KEY
+    MARKET_RUNNER_INTERNAL_TOKEN
+    MARKET_OBJECT_STORAGE_ACCESS_KEY_ID
+    MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY
+    MARKET_ADMIN_USER_IDS
   )
   local name
   for name in "${required[@]}"; do
@@ -136,6 +159,16 @@ prepare_secret_files() {
     || fail "POSTGRES_PASSWORD must be URL-safe"
   [[ "$REDIS_PASSWORD" =~ ^[A-Za-z0-9_-]+$ ]] \
     || fail "REDIS_PASSWORD must be URL-safe"
+  [[ "$MARKET_DATABASE_PASSWORD" =~ ^[A-Za-z0-9_-]+$ ]] \
+    || fail "MARKET_DATABASE_PASSWORD must be URL-safe"
+  [[ "$MARKET_TRUSTED_CLIENT_SECRET" =~ ^lobehub-market_tcs_[0-9a-fA-F]{64}$ ]] \
+    || fail "MARKET_TRUSTED_CLIENT_SECRET must use the trusted-client key format"
+  [[ ${#MARKET_CREDENTIAL_ENCRYPTION_KEY} -ge 32 ]] \
+    || fail "MARKET_CREDENTIAL_ENCRYPTION_KEY must be at least 32 characters"
+  [[ ${#MARKET_IMPORT_SIGNING_KEY} -ge 32 ]] \
+    || fail "MARKET_IMPORT_SIGNING_KEY must be at least 32 characters"
+  [[ ${#MARKET_RUNNER_INTERNAL_TOKEN} -ge 32 ]] \
+    || fail "MARKET_RUNNER_INTERNAL_TOKEN must be at least 32 characters"
   local key_vault_bytes
   key_vault_bytes="$(
     printf '%s' "$KEY_VAULTS_SECRET" | base64 --decode 2> /dev/null | wc -c
@@ -165,13 +198,45 @@ prepare_secret_files() {
   write_env "$APP_SECRET_FILE" S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
   write_env "$APP_SECRET_FILE" S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
   write_env "$APP_SECRET_FILE" AIHUB_BRIDGE_TOKEN "$AIHUB_BRIDGE_TOKEN"
+  write_env "$APP_SECRET_FILE" MARKET_TRUSTED_CLIENT_SECRET \
+    "$MARKET_TRUSTED_CLIENT_SECRET"
   write_env "$APP_SECRET_FILE" AUTH_SSO_PROVIDERS "${AUTH_SSO_PROVIDERS:-wecom}"
+  write_env "$APP_SECRET_FILE" AUTH_WECOM_AGENT_ID "$AUTH_WECOM_AGENT_ID"
+  write_env "$APP_SECRET_FILE" AUTH_WECOM_CORP_ID "$AUTH_WECOM_CORP_ID"
+  write_env "$APP_SECRET_FILE" AUTH_WECOM_CORP_SECRET "$AUTH_WECOM_CORP_SECRET"
+  write_env "$APP_SECRET_FILE" MARKET_GITHUB_TOKEN "$MARKET_GITHUB_TOKEN"
 
   : > "$BRIDGE_SECRET_FILE"
   write_env "$BRIDGE_SECRET_FILE" AIHUB_BRIDGE_TOKEN "$AIHUB_BRIDGE_TOKEN"
   write_env "$BRIDGE_SECRET_FILE" AIHUB_READONLY_DATABASE_URL \
     "$AIHUB_READONLY_DATABASE_URL"
-  chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE"
+
+  : > "$SEARXNG_SECRET_FILE"
+  write_env "$SEARXNG_SECRET_FILE" SEARXNG_SECRET "$SEARXNG_SECRET"
+
+  local market_oauth_clients_json='{}'
+  if [[ -n "${MARKET_OAUTH_CLIENTS_JSON:-}" ]]; then
+    market_oauth_clients_json="$MARKET_OAUTH_CLIENTS_JSON"
+  fi
+  : > "$MARKET_SECRET_FILE"
+  write_env "$MARKET_SECRET_FILE" MARKET_DATABASE_PASSWORD "$MARKET_DATABASE_PASSWORD"
+  write_env "$MARKET_SECRET_FILE" MARKET_DATABASE_URL \
+    "postgresql://masterino_market:${MARKET_DATABASE_PASSWORD}@masterino-postgres:5432/masterino_market"
+  write_env "$MARKET_SECRET_FILE" MARKET_REDIS_URL \
+    "redis://:${REDIS_PASSWORD}@masterino-redis:6379/0"
+  write_env "$MARKET_SECRET_FILE" MARKET_TRUSTED_CLIENT_SECRET \
+    "$MARKET_TRUSTED_CLIENT_SECRET"
+  write_env "$MARKET_SECRET_FILE" MARKET_CREDENTIAL_ENCRYPTION_KEY \
+    "$MARKET_CREDENTIAL_ENCRYPTION_KEY"
+  write_env "$MARKET_SECRET_FILE" MARKET_IMPORT_SIGNING_KEY "$MARKET_IMPORT_SIGNING_KEY"
+  write_env "$MARKET_SECRET_FILE" MARKET_RUNNER_INTERNAL_TOKEN "$MARKET_RUNNER_INTERNAL_TOKEN"
+  write_env "$MARKET_SECRET_FILE" MARKET_OBJECT_STORAGE_ACCESS_KEY_ID \
+    "$MARKET_OBJECT_STORAGE_ACCESS_KEY_ID"
+  write_env "$MARKET_SECRET_FILE" MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY \
+    "$MARKET_OBJECT_STORAGE_SECRET_ACCESS_KEY"
+  write_env "$MARKET_SECRET_FILE" MARKET_OAUTH_CLIENTS_JSON "$market_oauth_clients_json"
+  write_env "$MARKET_SECRET_FILE" MARKET_ADMIN_USER_IDS "$MARKET_ADMIN_USER_IDS"
+  chmod 600 "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
 }
 
 check_aihub_authorization() {
@@ -261,6 +326,8 @@ KUBECONFIG_FILE="$TEMP_DIR/kubeconfig"
 ACK_RESPONSE_FILE="$TEMP_DIR/ack-response.json"
 APP_SECRET_FILE="$TEMP_DIR/secret.env"
 BRIDGE_SECRET_FILE="$TEMP_DIR/bridge-secret.env"
+SEARXNG_SECRET_FILE="$TEMP_DIR/searxng-secret.env"
+MARKET_SECRET_FILE="$TEMP_DIR/market-secret.env"
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
@@ -279,7 +346,8 @@ case "$ACK_TEST_ACTION" in
   validate)
     require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
-    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
+    require_digest MARKET_IMAGE_DIGEST
+    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST MARKET_IMAGE_DIGEST
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     ;;
@@ -288,12 +356,14 @@ case "$ACK_TEST_ACTION" in
       || fail "set CONFIRM_ACK_TEST_DEPLOY=$NAMESPACE to authorize a test deployment"
     require_digest MASTERINO_IMAGE_DIGEST
     require_digest BRIDGE_IMAGE_DIGEST
-    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST
+    require_digest MARKET_IMAGE_DIGEST
+    export MASTERINO_IMAGE_DIGEST BRIDGE_IMAGE_DIGEST MARKET_IMAGE_DIGEST
     bash ./deploy.sh --env test preflight
     bash ./deploy.sh --env test validate
     prepare_secret_files
     bash ./deploy.sh --env test bootstrap
-    bash ./deploy.sh --env test create-secret "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE"
+    bash ./deploy.sh --env test create-secret \
+      "$APP_SECRET_FILE" "$BRIDGE_SECRET_FILE" "$SEARXNG_SECRET_FILE" "$MARKET_SECRET_FILE"
     bash ./deploy.sh --env test deploy
     bash ./deploy.sh --env test rollout
     check_aihub_authorization

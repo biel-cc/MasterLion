@@ -5,7 +5,7 @@ import {
 
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
-import { createSandboxService } from '@/server/services/sandbox';
+import { createSandboxService, getSandboxProviderKind } from '@/server/services/sandbox';
 
 import { type ServerRuntimeRegistration } from './types';
 
@@ -23,7 +23,10 @@ export const cloudSandboxRuntime: ServerRuntimeRegistration = {
       throw new Error('serverDB is required for Cloud Sandbox execution');
     }
 
-    const marketService = new MarketService({ userInfo: { userId: context.userId } });
+    const marketService =
+      getSandboxProviderKind() === 'market'
+        ? new MarketService({ userInfo: { userId: context.userId } })
+        : undefined;
     const fileService = new FileService(context.serverDB, context.userId, context.workspaceId);
     const sandboxService = createSandboxService({
       fileService,

@@ -4,7 +4,7 @@
  * Result of calling a sandbox tool
  */
 export interface SandboxCallToolResult {
-  error?: { message: string; name?: string };
+  error?: { code?: string; message: string; name?: string; retryable?: boolean };
   result: any;
   sessionExpiredAndRecreated?: boolean;
   success: boolean;

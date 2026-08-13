@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Office �ĵ�'
+  short_description: '���ɺ�У�� Word��Excel �� PowerPoint �ļ�'
+  default_prompt: 'ʹ�� OfficeCLI ��������鲢��������� Office �ĵ���'

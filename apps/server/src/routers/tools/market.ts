@@ -18,7 +18,7 @@ import {
   contentBlocksToString,
   processContentBlocks,
 } from '@/server/services/mcp/contentProcessor';
-import { createSandboxService } from '@/server/services/sandbox';
+import { createSandboxService, getSandboxProviderKind } from '@/server/services/sandbox';
 
 import { scheduleToolCallReport } from './_helpers';
 import {
@@ -74,6 +74,34 @@ const marketToolProcedure = wsCompatProcedure
           accessToken: ctx.marketAccessToken,
           userInfo: ctx.marketUserInfo,
         }),
+        userModel,
+        workspaceId: ctx.workspaceId,
+      },
+    });
+  });
+
+// Sandbox requests must select their configured provider before constructing
+// any provider-specific dependency. In particular, Onlyboxes does not require
+// MARKET_BASE_URL and must not initialize MarketService as a side effect.
+const sandboxToolProcedure = wsCompatProcedure
+  .use(serverDatabase)
+  .use(telemetry)
+  .use(marketUserInfo)
+  .use(async ({ ctx, next }) => {
+    const { UserModel } = await import('@/database/models/user');
+    const userModel = new UserModel(ctx.serverDB, ctx.userId);
+    const marketService =
+      getSandboxProviderKind() === 'market'
+        ? new MarketService({
+            accessToken: ctx.marketAccessToken,
+            userInfo: ctx.marketUserInfo,
+          })
+        : undefined;
+
+    return next({
+      ctx: {
+        fileService: new FileService(ctx.serverDB, ctx.userId, ctx.workspaceId ?? undefined),
+        marketService,
         userModel,
         workspaceId: ctx.workspaceId,
       },
@@ -177,7 +205,7 @@ const execInSandboxHandler = async ({
 }: {
   ctx: {
     fileService: FileService;
-    marketService: MarketService;
+    marketService?: MarketService;
     serverDB: any;
     userId: string;
     workspaceId?: string | null;
@@ -392,12 +420,12 @@ export const marketRouter = router({
     }),
 
   /** @deprecated Use execInSandbox instead. Will be removed in a future version. */
-  callCodeInterpreterTool: marketToolProcedure
+  callCodeInterpreterTool: sandboxToolProcedure
     .input(execInSandboxSchema)
     .mutation(({ input, ctx }) => execInSandboxHandler({ ctx, input })),
 
   // ============================== Sandbox Execution ==============================
-  execInSandbox: marketToolProcedure
+  execInSandbox: sandboxToolProcedure
     .input(execInSandboxSchema)
     .mutation(({ input, ctx }) => execInSandboxHandler({ ctx, input })),
 
@@ -660,7 +688,7 @@ export const marketRouter = router({
    * This combines the previous getExportFileUploadUrl + execInSandbox + createFileRecord flow
    * Returns a permanent /f/:id URL instead of a temporary pre-signed URL
    */
-  exportAndUploadFile: marketToolProcedure
+  exportAndUploadFile: sandboxToolProcedure
     .input(exportAndUploadFileSchema)
     .mutation(async ({ input, ctx }) => {
       const { path, filename, topicId } = input;

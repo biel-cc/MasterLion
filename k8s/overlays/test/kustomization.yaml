@@ -3,8 +3,6 @@ kind: Kustomization
 namespace: masterino-test
 resources:
   - ../../base
-  - namespace.yaml
-  - storageclass.yaml
   - configmap.yaml
   - device-gateway.yaml
   - memory-worker.yaml
@@ -36,6 +34,53 @@ patches:
             secretKeyRef:
               name: masterino-device-gateway-secret
               key: SERVICE_TOKEN
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: SANDBOX_PROVIDER
+          value: onlyboxes
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_BASE_URL
+          value: https://onlyboxes.internal.bielcrystal.com
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_JIT_ISSUER
+          value: https://mlai-test.bielcrystal.com
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OFFICECLI_ENABLED
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ONLYBOXES_JIT_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: masterino-onlyboxes-secret
+              key: ONLYBOXES_JIT_SIGNING_KEY
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: onlyboxes-ca
+            mountPath: /etc/ssl/certs/masterino-onlyboxes-ca.crt
+            subPath: onlyboxes-internal-ca.crt
+            readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: onlyboxes-ca
+            configMap:
+              name: masterino-onlyboxes-ca
+              defaultMode: 420
 replicas:
   - name: masterino
     count: 1

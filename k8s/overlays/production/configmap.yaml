@@ -43,6 +43,7 @@ data:
   SANDBOX_PROVIDER: 'onlyboxes'
   ONLYBOXES_BASE_URL: 'https://onlyboxes.internal.bielcrystal.com'
   ONLYBOXES_JIT_ISSUER: 'https://masterino.bielcrystal.com'
+  OFFICECLI_ENABLED: 'false'
   SEARCH_PROVIDERS: 'searxng'
   SEARXNG_URL: 'http://masterino-searxng:8080'
   REDIS_PREFIX: 'lobechat'
