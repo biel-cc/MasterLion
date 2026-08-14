@@ -35,6 +35,26 @@ function Stop-ComposeContainer {
     return
   }
   # 独立 compose 文件，只影响 masterino-hot 容器，不会触碰 ACK 依赖。
+  # down 也需要 ${MASTERLION_DEV_IMAGE} 等插值；从状态文件补上必要变量，避免
+  # 因镜像/令牌未记录而无法清理容器。
+  $devImageFile = Join-Path $STATE_DIR 'dev-image.json'
+  if (-not $env:MASTERLION_DEV_IMAGE -and (Test-Path $devImageFile)) {
+    try {
+      $state = Get-Content $devImageFile -Raw | ConvertFrom-Json
+      if ($state.image) { $env:MASTERLION_DEV_IMAGE = $state.image }
+    } catch { }
+  }
+  if (-not $env:MASTERLION_DEV_IMAGE) { $env:MASTERLION_DEV_IMAGE = 'placeholder:unused' }
+  if (Test-Path $ENV_FILE) {
+    # 环境文件仍是裸 KEY=VALUE 行，直接加载补全插值变量。
+    Get-Content $ENV_FILE | ForEach-Object {
+      if ($_ -match '^([A-Z0-9_]+)=(.*)$') {
+        if (-not (Test-Path "env:$($matches[1])")) {
+          Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+        }
+      }
+    }
+  }
   & docker compose -f $HOT_COMPOSE down --remove-orphans 2>&1 | ForEach-Object { Write-Log $_ }
   Write-Log 'masterino-hot container stopped'
 }
