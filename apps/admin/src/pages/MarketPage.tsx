@@ -111,7 +111,7 @@ export default function MarketPage() {
                 <Table
                   dataSource={resources.data?.items ?? []}
                   loading={resources.isLoading}
-                  rowKey={(record) => `${record.type}:${record.identifier}`}
+                  rowKey={(record: any) => `${record.type}:${record.identifier}`}
                   columns={[
                     { dataIndex: 'name', title: '资源' },
                     { dataIndex: 'type', title: '类型' },

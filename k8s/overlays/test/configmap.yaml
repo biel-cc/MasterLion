@@ -8,7 +8,7 @@ metadata:
 data:
   APP_URL: 'https://mlai-test.bielcrystal.com'
   APP_URL_DYNAMIC: '1'
-  APP_URL_ALLOWED_HOSTS: 'mlai-test.bielcrystal.com'
+  APP_URL_ALLOWED_HOSTS: 'mlai-test.bielcrystal.com,admin-mlai-test.bielcrystal.com'
   ENABLED_CSP: '1'
   OPENAPI_CORS_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com'
   AUTH_DISABLE_EMAIL_SIGNUP: '1'

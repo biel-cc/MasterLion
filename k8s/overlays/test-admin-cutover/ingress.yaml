@@ -1,0 +1,60 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: masterino-admin-ingress
+  labels:
+    app.kubernetes.io/name: masterino-admin
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: test
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: '100m'
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
+    nginx.ingress.kubernetes.io/proxy-request-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '300'
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - admin-mlai-test.bielcrystal.com
+      secretName: 20261122bielcrystal.com
+  rules:
+    - host: admin-mlai-test.bielcrystal.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino
+                port:
+                  number: 3210
+          - path: /trpc
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino
+                port:
+                  number: 3210
+          - path: /signin
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino
+                port:
+                  number: 3210
+          - path: /_spa-auth
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino
+                port:
+                  number: 3210
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: masterino-admin
+                port:
+                  number: 3020
