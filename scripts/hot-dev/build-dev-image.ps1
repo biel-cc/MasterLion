@@ -103,7 +103,7 @@ function New-DevBuildRule([string]$Branch, [string]$Tag) {
     '--push-type', 'GIT_BRANCH',
     '--push-name', $Branch,
     '--image-tag', $Tag,
-    '--dockerfile-location', '/',
+    '--dockerfile-location', '.',
     '--dockerfile-name', 'Dockerfile',
     '--platforms', 'linux/amd64'
   )
