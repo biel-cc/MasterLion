@@ -90,7 +90,7 @@
 | Masterino RepoId            | `crr-vrxmxr0vf4jkxd59`                                                    |
 | 测试 namespace              | `masterino-test`                                                          |
 | 测试部署前 Masterino digest | `sha256:6fb1c51e86c2e7ba1ab7fbbb93279af9e6873d367dfc7506dc8e4ab04e00f033` |
-| 测试部署后 Masterino digest | 发布完成后回填                                                            |
+| 测试部署后 Masterino digest | `sha256:acea845ad6bcb8c6221f5e0de7996686a635905fe172994e7e1a737c962431e5` |
 | Bridge digest               | `sha256:4c2c72cddc1fef5673f4974d29d91d82ebfad748a3525b19069b561fdc181cc5` |
 | Device Gateway digest       | `sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d` |
 | Market digest               | `sha256:53582abdb90b8672e8e2662ae0968530cb3fc13fb8d025e5c41501e2f9660242` |
@@ -118,12 +118,18 @@ Masterino 仓库已绑定 `chaaak6/Masterino`，`main` 分支规则
 
 实际记录：
 
-- Release commit：发布完成后回填
-- ACR BuildRecordId：发布完成后回填
-- ACR BuildStatus：发布完成后回填
-- 新 digest：发布完成后回填
-- ACK rollout：发布完成后回填
-- 站点验证：发布完成后回填
+- Release commit：`e4f0a759e850f88fbc70bfd3f09a7f8065e5093b`
+- Git Tag：`v1.2.0`，注释 Tag 已回读确认指向上述 commit
+- ACR BuildRecordId：`08de2281-6144-4d19-8a0d-2f0e03fb42022`
+- ACR BuildStatus：`SUCCESS`；构建日志确认拉取 `main e4f0a75`
+- ACR Tag：`v1.2.0`
+- 新 digest：`sha256:acea845ad6bcb8c6221f5e0de7996686a635905fe172994e7e1a737c962431e5`
+- ACK rollout：2026-08-14 10:56（Asia/Shanghai）完成；Masterino 与 Memory Worker 均为
+  `1/1 Ready`，新 Pod 重启次数为 0，两个 Deployment 使用相同新 digest
+- 资源边界：Bridge、Device Gateway、Market、PostgreSQL、Redis、SearXNG、Ingress、Secret
+  和存储未更新
+- 站点验证：匿名首页 HTTP 302 跳转登录；`/oauth/callback/success`、
+  `/device-gateway/health`、`/market/health` 均为 HTTP 200
 
 ## 5. 生产发布前置条件
 
