@@ -38,6 +38,7 @@ const mockBuiltinModels = vi.hoisted(() => [
 
 // Mock dependencies
 vi.mock('@/server/modules/ModelRuntime', () => ({
+  createTraceOptions: vi.fn(() => ({ callback: {}, headers: new Headers() })),
   initModelRuntimeFromDB: vi.fn().mockResolvedValue({
     // Emit a minimal non-empty completion so the call_llm empty-completion
     // guard doesn't treat the default mock as a "gave up" turn and
@@ -272,6 +273,29 @@ describe('RuntimeExecutors', () => {
           parentId: 'parent-msg-123',
         }),
       );
+    });
+
+    it('does not send an LLM request when projected input exceeds the remaining token budget', async () => {
+      const chat = vi.fn();
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        executionBudget: { maxDurationMs: 60_000, maxSteps: 10, maxTotalTokens: 1 },
+      });
+      const instruction = {
+        payload: {
+          messages: [{ content: 'This request is larger than one token', role: 'user' }],
+          model: 'gpt-4',
+          provider: 'openai',
+        },
+        type: 'call_llm' as const,
+      };
+
+      const result = await executors.call_llm!(instruction, state);
+
+      expect(chat).not.toHaveBeenCalled();
+      expect(result.newState.status).toBe('interrupted');
+      expect(result.newState.metadata?.executionBudgetCompletionReason).toBe('token_limit');
     });
 
     it('passes workspaceId to model runtime initialization', async () => {
@@ -1635,9 +1659,7 @@ describe('RuntimeExecutors', () => {
         );
 
         const engineInput = engineSpy.mock.calls[0][0];
-        expect(engineInput.messages[0].imageList[0].url).toBe(
-          'http://localhost:3210/f/file-local',
-        );
+        expect(engineInput.messages[0].imageList[0].url).toBe('http://localhost:3210/f/file-local');
 
         const chatMessages = mockChat.mock.calls[0][0].messages;
         const userMessage = chatMessages.find((message: any) => message.role === 'user');
@@ -2359,6 +2381,45 @@ describe('RuntimeExecutors', () => {
           tool_call_id: 'tool-call-1',
         }),
       );
+    });
+
+    it('interrupts after the same deterministic tool failure occurs twice', async () => {
+      mockToolExecutionService.executeTool.mockResolvedValue({
+        content: 'invalid arguments',
+        error: { kind: 'stop', message: 'invalid arguments' },
+        executionTime: 10,
+        state: {},
+        success: false,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const instruction = {
+        payload: {
+          parentMessageId: 'assistant-msg-123',
+          toolCalling: {
+            apiName: 'search',
+            arguments: '{}',
+            id: 'tool-call-1',
+            identifier: 'web-search',
+            type: 'default' as const,
+          },
+        },
+        type: 'call_tool' as const,
+      };
+
+      const first = await executors.call_tool!(instruction, createMockState());
+      const second = await executors.call_tool!(
+        {
+          ...instruction,
+          payload: {
+            ...instruction.payload,
+            toolCalling: { ...instruction.payload.toolCalling, id: 'tool-call-2' },
+          },
+        },
+        { ...first.newState, stepCount: 1 },
+      );
+
+      expect(second.newState.status).toBe('interrupted');
+      expect(second.newState.metadata?.executionBudgetCompletionReason).toBe('repeated_error');
     });
 
     it('should include all required fields when creating tool message', async () => {

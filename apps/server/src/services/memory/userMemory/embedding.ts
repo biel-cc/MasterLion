@@ -1,10 +1,87 @@
 import { DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS } from '@lobechat/const';
+import { agentExecutionEnv } from '@lobechat/env/agent';
 import type { ModelRuntime } from '@lobechat/model-runtime';
 import { RequestTrigger } from '@lobechat/types';
+import { LOBE_DEFAULT_MODEL_LIST } from 'model-bank';
 
-import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
 import { trimBasedOnBatchProbe } from '@/utils/chunkers';
 import { encodeAsync } from '@/utils/tokenizer';
+
+const UNKNOWN_MODEL_SAFE_LIMIT = 7500;
+const warnedEmbeddingLimits = new Set<string>();
+
+export class EmbeddingOutputCountMismatchError extends Error {
+  constructor(expected: number, received: number) {
+    super(`Embedding output count mismatch: expected ${expected}, received ${received}`);
+    this.name = 'EmbeddingOutputCountMismatchError';
+  }
+}
+
+export interface EmbeddingInputLimit {
+  configuredLimit: number;
+  effectiveLimit: number;
+  modelContextWindow?: number;
+  modelSafeInputLimit: number;
+}
+
+export const resolveEmbeddingInputLimit = ({
+  configuredLimit,
+  contextWindowTokens,
+}: {
+  configuredLimit: number;
+  contextWindowTokens?: number;
+}): EmbeddingInputLimit => {
+  const modelSafeInputLimit = contextWindowTokens
+    ? Math.max(1, contextWindowTokens - Math.max(512, Math.ceil(contextWindowTokens * 0.08)))
+    : UNKNOWN_MODEL_SAFE_LIMIT;
+
+  return {
+    configuredLimit,
+    effectiveLimit: Math.min(configuredLimit, modelSafeInputLimit),
+    modelContextWindow: contextWindowTokens,
+    modelSafeInputLimit,
+  };
+};
+
+export const getEmbeddingInputLimit = (model: string, provider?: string): EmbeddingInputLimit => {
+  const normalizedModel = model.toLowerCase();
+  const normalizedProvider = provider?.toLowerCase();
+  const embeddingModels = LOBE_DEFAULT_MODEL_LIST.filter(
+    (item) => item.type === 'embedding' && item.id.toLowerCase() === normalizedModel,
+  );
+  const modelCard =
+    embeddingModels.find(
+      (item) => !normalizedProvider || item.providerId.toLowerCase() === normalizedProvider,
+    ) ?? embeddingModels[0];
+  const limit = resolveEmbeddingInputLimit({
+    configuredLimit: agentExecutionEnv.MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT,
+    contextWindowTokens: modelCard?.contextWindowTokens,
+  });
+
+  if (limit.configuredLimit > limit.modelSafeInputLimit) {
+    const warningKey = [
+      provider ?? 'unknown',
+      model,
+      limit.configuredLimit,
+      limit.modelSafeInputLimit,
+    ]
+      .join(':')
+      .toLowerCase();
+    if (!warnedEmbeddingLimits.has(warningKey)) {
+      warnedEmbeddingLimits.add(warningKey);
+      console.warn('[user-memory] embedding input limit constrained by model capability', {
+        configuredLimit: limit.configuredLimit,
+        effectiveLimit: limit.effectiveLimit,
+        model,
+        modelContextWindow: limit.modelContextWindow,
+        modelSafeInputLimit: limit.modelSafeInputLimit,
+        provider,
+      });
+    }
+  }
+
+  return limit;
+};
 
 export interface UserMemoryEmbeddingRuntime {
   /**
@@ -31,6 +108,10 @@ export interface EmbedUserMemoryTextsParams {
    * Embedding model name passed to the runtime.
    */
   model: string;
+  /** Operation id for diagnostics when memory work belongs to an agent operation. */
+  operationId?: string;
+  /** Provider id used to disambiguate model-bank capability metadata. */
+  provider?: string;
   /**
    * Runtime that performs the provider request.
    */
@@ -63,9 +144,8 @@ export interface EmbedUserMemoryTextsParams {
 export const embedUserMemoryTexts = async (
   params: EmbedUserMemoryTextsParams,
 ): Promise<Array<number[] | undefined>> => {
-  const { embedding } = parseMemoryExtractionConfig();
-  // TODO: Prefer model-bank capability metadata for the embedding input window when available.
-  const tokenLimit = embedding.contextLimit;
+  const inputLimit = getEmbeddingInputLimit(params.model, params.provider);
+  const tokenLimit = inputLimit.effectiveLimit;
   const requests: Array<{ index: number; text: string }> = [];
 
   for (const [index, value] of params.input.entries()) {
@@ -74,26 +154,28 @@ export const embedUserMemoryTexts = async (
     const trimmedValue = value.trim();
     if (!trimmedValue) continue;
 
-    const text = tokenLimit ? await trimBasedOnBatchProbe(trimmedValue, tokenLimit) : trimmedValue;
+    const text = await trimBasedOnBatchProbe(trimmedValue, tokenLimit);
     const normalizedText = text.trim();
     if (!normalizedText) continue;
 
-    if (tokenLimit) {
-      const [originalTokens, trimmedTokens] = await Promise.all([
-        encodeAsync(trimmedValue),
-        encodeAsync(normalizedText),
-      ]);
+    const [originalTokens, trimmedTokens] = await Promise.all([
+      encodeAsync(trimmedValue),
+      encodeAsync(normalizedText),
+    ]);
 
-      if (trimmedTokens < originalTokens) {
-        console.warn('[user-memory] trimmed embedding input', {
-          limit: tokenLimit,
-          model: params.model,
-          originalTokens,
-          source: params.source,
-          trimmedTokens,
-          userId: params.userId,
-        });
-      }
+    if (trimmedTokens < originalTokens) {
+      console.warn('[user-memory] trimmed embedding input', {
+        configuredLimit: inputLimit.configuredLimit,
+        effectiveLimit: inputLimit.effectiveLimit,
+        model: params.model,
+        modelContextWindow: inputLimit.modelContextWindow,
+        operationId: params.operationId,
+        originalTokens,
+        provider: params.provider,
+        source: params.source,
+        trimmedTokens,
+        userId: params.userId,
+      });
     }
 
     requests.push({ index, text: normalizedText });
@@ -110,6 +192,10 @@ export const embedUserMemoryTexts = async (
     },
     { metadata: { trigger: RequestTrigger.Memory }, user: params.userId },
   );
+
+  if (!embeddings || embeddings.length !== requests.length) {
+    throw new EmbeddingOutputCountMismatchError(requests.length, embeddings?.length ?? 0);
+  }
 
   for (const [requestIndex, embeddingVector] of (embeddings ?? []).entries()) {
     const request = requests[requestIndex];

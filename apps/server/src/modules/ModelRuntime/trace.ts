@@ -8,13 +8,15 @@ import { TraceClient } from '@/libs/traces';
 
 export interface AgentChatOptions {
   enableTrace?: boolean;
+  includeInput?: boolean;
+  metadata?: Record<string, unknown>;
   provider: string;
   trace?: TracePayload;
 }
 
 export const createTraceOptions = (
   payload: ChatStreamPayload,
-  { trace: tracePayload, provider }: AgentChatOptions,
+  { includeInput = true, metadata, trace: tracePayload, provider }: AgentChatOptions,
 ) => {
   const { messages, model, tools, ...parameters } = payload;
   // create a trace to monitor the completion
@@ -24,8 +26,14 @@ export const createTraceOptions = (
 
   const trace = traceClient.createTrace({
     id: tracePayload?.traceId,
-    input: messages,
-    metadata: { messageLength, model, provider, systemRole, tools },
+    input: includeInput ? messages : undefined,
+    metadata: {
+      ...metadata,
+      messageLength,
+      model,
+      provider,
+      ...(includeInput ? { systemRole, tools } : {}),
+    },
     name: tracePayload?.traceName,
     sessionId: tracePayload?.topicId
       ? tracePayload.topicId
@@ -35,7 +43,7 @@ export const createTraceOptions = (
   });
 
   const generation = trace?.generation({
-    input: messages,
+    input: includeInput ? messages : undefined,
     metadata: { messageLength, model, provider },
     model,
     modelParameters: parameters as any,

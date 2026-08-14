@@ -28,6 +28,7 @@ import {
   type BotPlatformContext,
   buildStepSkillDelta,
   buildStepToolDelta,
+  countContextTokens,
   type LobeToolManifest,
   type OnboardingContext,
   type OperationToolSet,
@@ -68,6 +69,7 @@ import {
   type ExecSubAgentParams,
   type ExecVirtualSubAgentParams,
   type MessageToolCall,
+  TraceNameMap,
   type UIChatMessage,
 } from '@lobechat/types';
 import {
@@ -88,7 +90,7 @@ import { fileEnv } from '@/envs/file';
 import { type ExecutionPlan, isDeviceCapablePlan } from '@/helpers/executionTarget';
 import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering';
 import { type EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
-import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import type { HookDispatcher } from '@/server/services/agentRuntime/hooks/HookDispatcher';
 import type {
@@ -279,6 +281,19 @@ const getToolFailureKind = (result: ToolExecutionResultResponse): ToolFailureKin
 
 const shouldRetryTool = (kind: ToolFailureKind | undefined, attempt: number, maxRetries: number) =>
   kind === 'retry' && attempt <= maxRetries;
+
+const getDeterministicToolFailureKey = (
+  toolName: string,
+  result: ToolExecutionResultResponse,
+): string | undefined => {
+  if (result.success || getToolFailureKind(result) === 'retry') return;
+
+  try {
+    return `${toolName}:${JSON.stringify(result.error ?? result.content)}`;
+  } catch {
+    return `${toolName}:${String(result.error ?? result.content)}`;
+  }
+};
 
 const archiveRuntimeToolResult = async (
   result: ToolExecutionResultResponse,
@@ -728,6 +743,83 @@ const isOperationInterrupted = async (ctx: RuntimeExecutorContext) => {
     console.error('[RuntimeExecutors] Failed to load operation state for retry guard:', error);
     return false;
   }
+};
+
+type ExecutionBudgetReason = 'max_steps' | 'time_limit' | 'token_limit';
+type ExecutionStopReason = ExecutionBudgetReason | 'repeated_error';
+
+class ExecutionBudgetExceededError extends Error {
+  constructor(public readonly reason: ExecutionBudgetReason) {
+    super(`Execution budget exceeded: ${reason}`);
+    this.name = 'ExecutionBudgetExceededError';
+  }
+}
+
+const getExecutionBudgetReason = (
+  state: AgentState,
+  projectedInputTokens = 0,
+): ExecutionBudgetReason | undefined => {
+  const budget = state.executionBudget ?? state.metadata?.executionBudget;
+  if (!budget) return;
+
+  if (state.stepCount >= budget.maxSteps) return 'max_steps';
+
+  const createdAt = new Date(state.createdAt).getTime();
+  if (Number.isFinite(createdAt) && Date.now() - createdAt >= budget.maxDurationMs) {
+    return 'time_limit';
+  }
+
+  const consumedTokens = state.usage?.llm?.tokens?.total ?? 0;
+  if (consumedTokens + projectedInputTokens > budget.maxTotalTokens) return 'token_limit';
+};
+
+const getRemainingExecutionTimeMs = (state: AgentState): number | undefined => {
+  const budget = state.executionBudget ?? state.metadata?.executionBudget;
+  if (!budget) return;
+
+  const createdAt = new Date(state.createdAt).getTime();
+  if (!Number.isFinite(createdAt)) return budget.maxDurationMs;
+
+  return Math.max(0, budget.maxDurationMs - (Date.now() - createdAt));
+};
+
+const clampToolTimeoutToExecutionBudget = (state: AgentState, timeoutMs: number) => {
+  const remainingMs = getRemainingExecutionTimeMs(state);
+  return remainingMs === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs, remainingMs));
+};
+
+const interruptForExecutionGuard = (
+  state: AgentState,
+  reason: ExecutionStopReason,
+  interruptedInstruction?: AgentInstruction,
+) => {
+  const interruptedAt = new Date().toISOString();
+  const interruptionReason =
+    reason === 'repeated_error'
+      ? 'Repeated deterministic tool error'
+      : `Execution budget exceeded: ${reason}`;
+  const newState = structuredClone(state);
+  newState.status = 'interrupted';
+  newState.lastModified = interruptedAt;
+  newState.interruption = {
+    canResume: true,
+    interruptedAt,
+    interruptedInstruction,
+    reason: interruptionReason,
+  };
+  newState.metadata = { ...newState.metadata, executionBudgetCompletionReason: reason };
+
+  return {
+    events: [
+      {
+        canResume: true,
+        interruptedAt,
+        reason: interruptionReason,
+        type: 'interrupted' as const,
+      },
+    ],
+    newState,
+  };
 };
 
 const executeToolWithRetry = async (
@@ -1539,6 +1631,36 @@ export const createRuntimeExecutors = (
         }),
       };
 
+      // Hard-stop background operations before sending a request that cannot fit
+      // in the remaining token or wall-clock budget. Frontend chat operations do
+      // not carry executionBudget and therefore retain their existing behavior.
+      const projectedInputTokens = countContextTokens({
+        messages: providerMessages as UIChatMessage[],
+        tools,
+      }).adjustedTotal;
+      const preflightBudgetReason = getExecutionBudgetReason(state, projectedInputTokens);
+      if (preflightBudgetReason) {
+        return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
+      }
+      const runtimeTraceOptions = createTraceOptions(chatPayload as ChatStreamPayload, {
+        includeInput: false,
+        metadata: {
+          automationMode: state.metadata?.automationMode,
+          executionBudget: state.executionBudget ?? state.metadata?.executionBudget,
+          operationId,
+          stepIndex,
+          taskId: state.metadata?.taskId,
+          trigger: state.metadata?.trigger,
+        },
+        provider,
+        trace: {
+          topicId: state.metadata?.topicId ?? ctx.topicId,
+          traceId: operationId,
+          traceName: TraceNameMap.Conversation,
+          userId: ctx.userId,
+        },
+      });
+
       // Buffer: accumulate text and reasoning, send every 50ms
       const BUFFER_INTERVAL = 50;
       let textBuffer = '';
@@ -1715,7 +1837,11 @@ export const createRuntimeExecutors = (
               );
 
               // Call model-runtime chat
+              const remainingExecutionTimeMs = getRemainingExecutionTimeMs(state);
               const response = await modelRuntime.chat(chatPayload, {
+                ...(remainingExecutionTimeMs === undefined
+                  ? {}
+                  : { signal: AbortSignal.timeout(Math.max(1, remainingExecutionTimeMs)) }),
                 callback: {
                   onCompletion: async (data) => {
                     // Capture usage (may or may not include cost)
@@ -1732,7 +1858,9 @@ export const createRuntimeExecutors = (
                     if (data.finishReason) {
                       currentStepFinishReason = data.finishReason;
                     }
+                    await runtimeTraceOptions.callback.onCompletion?.(data);
                   },
+                  onFinal: runtimeTraceOptions.callback.onFinal,
                   onGrounding: async (groundingData) => {
                     log(`[${operationLogId}][grounding] %O`, groundingData);
                     grounding = groundingData;
@@ -1855,7 +1983,12 @@ export const createRuntimeExecutors = (
                       }, BUFFER_INTERVAL);
                     }
                   },
+                  onStart: runtimeTraceOptions.callback.onStart,
                   onToolsCalling: async ({ toolsCalling: raw }) => {
+                    await runtimeTraceOptions.callback.onToolsCalling?.({
+                      chunk: [],
+                      toolsCalling: raw,
+                    });
                     const resolvedCalls = new ToolNameResolver().resolve(raw, resolved.manifestMap);
                     // Attach source (origin) and executor (dispatch target) for routing.
                     // `arguments` are kept RAW here on purpose so the tool executor can
@@ -1894,6 +2027,7 @@ export const createRuntimeExecutors = (
                   topicId: state.metadata?.topicId,
                   trigger: state.metadata?.trigger,
                 },
+                headers: runtimeTraceOptions.headers,
                 user: ctx.userId,
               });
 
@@ -2169,6 +2303,11 @@ export const createRuntimeExecutors = (
             } catch (error) {
               clearAttemptBuffers();
 
+              const runtimeBudgetReason = getExecutionBudgetReason(state);
+              if (runtimeBudgetReason) {
+                throw new ExecutionBudgetExceededError(runtimeBudgetReason);
+              }
+
               const classified = classifyLLMError(error);
               const interrupted = await isOperationInterrupted(ctx);
 
@@ -2264,6 +2403,10 @@ export const createRuntimeExecutors = (
         chatSpan.end();
       }
     } catch (error) {
+      if (error instanceof ExecutionBudgetExceededError) {
+        return interruptForExecutionGuard(state, error.reason, instruction);
+      }
+
       // Publish error event
       await streamManager.publishStreamEvent(operationId, {
         data: formatErrorEventData(error, 'llm_execution'),
@@ -2599,6 +2742,11 @@ export const createRuntimeExecutors = (
     const { operationId, stepIndex, streamManager, toolExecutionService } = ctx;
     const events: AgentEvent[] = [];
 
+    const preflightBudgetReason = getExecutionBudgetReason(state);
+    if (preflightBudgetReason) {
+      return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
+    }
+
     const operationLogId = `${operationId}:${stepIndex}`;
     log(`[${operationLogId}] payload: %O`, payload);
 
@@ -2762,11 +2910,14 @@ export const createRuntimeExecutors = (
           };
         } else if (canDispatchToClient) {
           log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
-          const timeoutMs = resolveToolTimeoutMs({
-            apiName: chatToolPayload.apiName,
-            args: parsedArgs,
-            manifest: effectiveManifestMap[chatToolPayload.identifier],
-          });
+          const timeoutMs = clampToolTimeoutToExecutionBudget(
+            state,
+            resolveToolTimeoutMs({
+              apiName: chatToolPayload.apiName,
+              args: parsedArgs,
+              manifest: effectiveManifestMap[chatToolPayload.identifier],
+            }),
+          );
           const dispatchResult = await dispatchClientTool(chatToolPayload, {
             operationId,
             streamManager,
@@ -2780,11 +2931,14 @@ export const createRuntimeExecutors = (
             chatToolPayload.source = toolSource;
           }
 
-          const timeoutMs = resolveToolTimeoutMs({
-            apiName: chatToolPayload.apiName,
-            args: parsedArgs,
-            manifest: effectiveManifestMap[chatToolPayload.identifier],
-          });
+          const timeoutMs = clampToolTimeoutToExecutionBudget(
+            state,
+            resolveToolTimeoutMs({
+              apiName: chatToolPayload.apiName,
+              args: parsedArgs,
+              manifest: effectiveManifestMap[chatToolPayload.identifier],
+            }),
+          );
           // Execute tool using ToolExecutionService
           log(`[${operationLogId}] Executing tool ${toolName} ...`);
           execution = await executeToolWithRetry(
@@ -3015,6 +3169,26 @@ export const createRuntimeExecutors = (
         newState.usage = usage;
         if (cost) newState.cost = cost;
 
+        const deterministicFailureKey = getDeterministicToolFailureKey(toolName, executionResult);
+        if (deterministicFailureKey) {
+          const previousFailure = state.metadata?.deterministicToolFailure as
+            | { count: number; key: string }
+            | undefined;
+          const count =
+            previousFailure?.key === deterministicFailureKey ? previousFailure.count + 1 : 1;
+          newState.metadata = {
+            ...newState.metadata,
+            deterministicToolFailure: { count, key: deterministicFailureKey },
+          };
+
+          if (count >= 2) {
+            return interruptForExecutionGuard(newState, 'repeated_error', instruction);
+          }
+        } else if (newState.metadata?.deterministicToolFailure) {
+          const { deterministicToolFailure: _failure, ...metadata } = newState.metadata;
+          newState.metadata = metadata;
+        }
+
         // Persist ToolsActivator discovery results to state.activatedStepTools
         const discoveredTools = executionResult.state?.activatedTools as
           | Array<{ identifier: string }>
@@ -3171,6 +3345,11 @@ export const createRuntimeExecutors = (
     const { parentMessageId, toolsCalling } = payload;
     const { operationId, stepIndex, streamManager, toolExecutionService } = ctx;
     const events: AgentEvent[] = [];
+
+    const preflightBudgetReason = getExecutionBudgetReason(state);
+    if (preflightBudgetReason) {
+      return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
+    }
 
     const operationLogId = `${operationId}:${stepIndex}`;
     log(
@@ -3349,11 +3528,14 @@ export const createRuntimeExecutors = (
               };
             } else if (canDispatchToClient) {
               log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
-              const timeoutMs = resolveToolTimeoutMs({
-                apiName: chatToolPayload.apiName,
-                args: batchParsedArgs,
-                manifest: batchManifestMap[chatToolPayload.identifier],
-              });
+              const timeoutMs = clampToolTimeoutToExecutionBudget(
+                state,
+                resolveToolTimeoutMs({
+                  apiName: chatToolPayload.apiName,
+                  args: batchParsedArgs,
+                  manifest: batchManifestMap[chatToolPayload.identifier],
+                }),
+              );
               const dispatchResult = await dispatchClientTool(chatToolPayload, {
                 operationId,
                 streamManager,
@@ -3370,11 +3552,14 @@ export const createRuntimeExecutors = (
                 chatToolPayload.source = batchToolSource;
               }
 
-              const timeoutMs = resolveToolTimeoutMs({
-                apiName: chatToolPayload.apiName,
-                args: batchParsedArgs,
-                manifest: batchManifestMap[chatToolPayload.identifier],
-              });
+              const timeoutMs = clampToolTimeoutToExecutionBudget(
+                state,
+                resolveToolTimeoutMs({
+                  apiName: chatToolPayload.apiName,
+                  args: batchParsedArgs,
+                  manifest: batchManifestMap[chatToolPayload.identifier],
+                }),
+              );
 
               execution = await executeToolWithRetry(
                 () =>

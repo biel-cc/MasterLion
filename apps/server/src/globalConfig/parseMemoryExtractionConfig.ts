@@ -1,5 +1,6 @@
 import { DEFAULT_MINI_PROVIDER } from '@lobechat/business-const';
 import { DEFAULT_MINI_MODEL, DEFAULT_USER_MEMORY_EMBEDDING_MODEL_ITEM } from '@lobechat/const';
+import { agentExecutionEnv } from '@lobechat/env/agent';
 
 import {
   type GlobalMemoryExtractionConfig,
@@ -154,7 +155,7 @@ const parseEmbeddingAgent = (fallbackApiKey?: string): MemoryAgentConfig => {
     baseURL: process.env.MEMORY_USER_MEMORY_EMBEDDING_BASE_URL,
     // Embedding providers often have a smaller per-input limit than chat models.
     // Keep this below the provider's single-input embedding window.
-    contextLimit: parseTokenLimitEnv(process.env.MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT),
+    contextLimit: agentExecutionEnv.MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT,
     model,
     provider,
   };
