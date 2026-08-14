@@ -1,10 +1,15 @@
 # Masterino 单镜像本地热更新环境计划
 
-> 状态：已执行。实施产物：
+> 状态：已执行并验证（2026-08-14）。实施产物：
 >
 > - `docker-compose/deploy/docker-compose.hot.yml`（单服务独立 compose）
 > - `Dockerfile` 的 `dev` 阶段 + `FINAL_STAGE` 构建参数
 > - `scripts/hot-dev/build-dev-image.ps1`、`start-hot-dev.ps1`、`stop-hot-dev.ps1`
+>
+> 已验证：ACR 云端构建 dev 镜像 `dev-2d3903ff`
+> （`sha256:ba028bc0f39440b7585defb35d461a7a54e4a2cfcb8ec9399e51611080063e55`），
+> 本地容器 `masterino-hot` 运行中，Next/Vite 双端口 200，依赖预检全绿，
+> 前端源码改动触发 Vite page reload、服务端改动触发 Next 自动重载，全程不重建镜像。
 >
 > 范围：仅建设本地单镜像热更新开发环境；OCR、图片识别、模型能力判定和视觉降级逻辑均不在本计划内。
 
