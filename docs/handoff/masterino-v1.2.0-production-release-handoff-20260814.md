@@ -107,6 +107,8 @@ RepoId，并在操作前通过 `aliyun cr ListRepository` 再次确认。
 - Masterino 与 Memory Worker 使用相同应用 digest。
 - 持久化卷均为 Bound；本次只更新 Masterino 与 Memory Worker 镜像，不改数据库、Redis、
   Bridge、Market、Device Gateway 和存储资源。
+- 使用 `ACK_TEST_ACTION=app-update`，由受控 helper 校验集群、namespace、确认值和不可变
+  digest，并等待 Masterino 与 Memory Worker 两个 rollout 完成。
 
 ### 4.2 ACR 构建
 

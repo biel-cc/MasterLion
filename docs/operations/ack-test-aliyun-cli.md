@@ -106,3 +106,15 @@ internal hourly BullMQ scheduler remain explicit follow-up operations. The sched
 off for the first manual extraction acceptance.
 
 Do not echo the secret environment or enable shell tracing while running the command.
+
+Update only the Masterino application and memory worker to the same reviewed image digest:
+
+```bash
+export ACK_TEST_ACTION=app-update
+export CONFIRM_ACK_TEST_DEPLOY=masterino-test
+export MASTERINO_IMAGE_DIGEST='sha256:<reviewed-digest>'
+bash scripts/operations/deployAckTestWithAliyunCli.sh
+```
+
+This action does not recreate Secrets, databases, Market, Device Gateway, Ingress, or storage.
+It runs the guarded preflight and waits for both application rollouts.
