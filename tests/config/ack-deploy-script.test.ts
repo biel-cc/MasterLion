@@ -15,4 +15,14 @@ describe('guarded ACK deployment script', () => {
     expect(normalization).toBeGreaterThan(0);
     expect(applicationApply).toBeGreaterThan(normalization);
   });
+
+  it('updates the test app and memory worker with one immutable image digest', async () => {
+    const helper = await readFile('scripts/operations/deployAckTestWithAliyunCli.sh', 'utf8');
+
+    expect(helper).toContain('app-update)');
+    expect(helper).toContain('require_digest MASTERINO_IMAGE_DIGEST');
+    expect(helper).toContain('update-image masterino');
+    expect(helper).toContain('update-image memory-worker');
+    expect(helper).toContain('$MASTERINO_IMAGE@$MASTERINO_IMAGE_DIGEST');
+  });
 });
