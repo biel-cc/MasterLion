@@ -1,6 +1,9 @@
 ## Set global build ENV
 ARG NODEJS_VERSION="24"
 ARG BASE_REGISTRY="docker.io/library"
+## Select the final stage emitted by this Dockerfile. Defaults to the production
+## image; the dev image is produced with `--build-arg FINAL_STAGE=dev`.
+ARG FINAL_STAGE="production"
 
 ## Base image for all building stages
 FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS base
@@ -174,6 +177,11 @@ COPY --chown=nextjs:nodejs --from=builder /deps/node_modules/drizzle-orm /app/no
 # Copy server launcher and shared scripts
 COPY --chown=nextjs:nodejs --from=builder /app/scripts/serverLauncher/startServer.js /app/startServer.js
 COPY --chown=nextjs:nodejs --from=builder /app/scripts/_shared /app/scripts/_shared
+
+## Dev image: same source and dependency layers as the builder stage, without the
+## production runtime. The hot-dev compose bind-mounts the repo over /app and runs
+## `pnpm run dev`, so only the toolchain inside this image is consumed.
+FROM builder AS dev
 
 ## Production image
 # 不再用 scratch + COPY / / 压成一个大层；直接 FROM app 保留分层，push/pull 更容易复用 layer。
@@ -393,3 +401,8 @@ EXPOSE 3210/tcp
 ENTRYPOINT ["/bin/node"]
 
 CMD ["/app/startServer.js"]
+
+## Final stage: resolved by FINAL_STAGE so the same Dockerfile can emit the dev
+## image (FINAL_STAGE=dev) or the production image (default) from ACR cloud builds,
+## which cannot pass `--target` to the build engine.
+FROM ${FINAL_STAGE} AS final
