@@ -135,9 +135,14 @@ cutover_admin() {
 }
 
 status() {
-  kubectl -n "$NAMESPACE" get deployment/masterino-admin service/masterino-admin \
-    ingress/masterino-admin-ingress -o wide
+  kubectl -n "$NAMESPACE" get deployment/masterino-admin service/masterino-admin -o wide
+  kubectl -n "$NAMESPACE" get ingress/masterino-admin-ingress -o wide \
+    || echo "Admin Ingress has not been created"
   kubectl -n "$NAMESPACE" get endpoints masterino-admin
+  kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/name=masterino-admin -o wide
+  kubectl -n "$NAMESPACE" describe pods -l app.kubernetes.io/name=masterino-admin
+  kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/name=masterino-admin \
+    --all-containers --prefix --tail=100 || true
 }
 
 require_command aliyun
