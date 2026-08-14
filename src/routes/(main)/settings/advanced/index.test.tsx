@@ -73,7 +73,9 @@ vi.mock('@/routes/(main)/settings/features/SettingHeader', () => ({
 
 vi.mock('@/services/electron/autoUpdate', () => ({
   autoUpdateService: {
+    getAutoDownloadEnabled: vi.fn().mockResolvedValue(true),
     getUpdateChannel: vi.fn().mockResolvedValue('stable'),
+    setAutoDownloadEnabled: vi.fn(),
     setUpdateChannel: vi.fn(),
   },
 }));
