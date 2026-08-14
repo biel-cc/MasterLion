@@ -32,7 +32,7 @@ export const UPDATE_SERVER_URL = getDesktopEnv().UPDATE_SERVER_URL;
 export const updaterConfig = {
   app: {
     autoCheckUpdate: true,
-    autoDownloadUpdate: false,
+    autoDownloadUpdate: true,
     checkUpdateInterval: 60 * 60 * 1000, // 1 hour
   },
   enableAppUpdate: !isDev && !getDesktopEnv().DISABLE_APP_UPDATE,

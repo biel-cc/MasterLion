@@ -27,6 +27,24 @@ export default class UpdaterCtr extends ControllerModule {
     await this.app.updaterManager.downloadUpdate();
   }
 
+  @IpcMethod()
+  applyDownloadedUpdate() {
+    logger.info('Apply downloaded update requested');
+    this.app.updaterManager.applyDownloadedUpdate();
+  }
+
+  @IpcMethod()
+  async getAutoDownloadEnabled(): Promise<boolean> {
+    return this.app.storeManager.get('autoDownloadUpdates') ?? true;
+  }
+
+  @IpcMethod()
+  async setAutoDownloadEnabled(enabled: boolean): Promise<void> {
+    logger.info(`Set automatic update downloads: ${enabled}`);
+    this.app.storeManager.set('autoDownloadUpdates', enabled);
+    await this.app.updaterManager.setAutoDownloadEnabled(enabled);
+  }
+
   /**
    * Quit application and install update
    */

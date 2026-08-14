@@ -152,9 +152,17 @@ export default {
   'updater.checkingUpdate': 'Checking for updates',
   'updater.checkingUpdateDesc': 'Retrieving version information...',
   'updater.downloadNewVersion': 'Download new version',
+  'updater.downloadProgress': 'Downloaded {{percent}}%',
+  'updater.openInstaller': 'Open installer',
   'updater.downloadingUpdate': 'Downloading update',
   'updater.downloadingUpdateDesc': 'The update is downloading, please wait...',
-  'updater.installLater': 'Update on next launch',
+  'updater.error.disk': 'There is not enough disk space to download the update',
+  'updater.error.install': 'The verified update could not be opened or installed',
+  'updater.error.integrity': 'The downloaded update failed its integrity check',
+  'updater.error.network': 'The update server could not be reached',
+  'updater.error.signature': 'The update signature could not be verified',
+  'updater.error.unknown': 'The update failed. Please try again',
+  'updater.installLater': 'Install when exiting',
   'updater.isLatestVersion': 'You are using the latest version',
   'updater.isLatestVersionDesc':
     'Great! The version {{version}} you are using is the latest available.',
@@ -163,6 +171,7 @@ export default {
   'updater.newVersionAvailableDesc':
     'A new version {{version}} has been found, would you like to download it now?',
   'updater.restartAndInstall': 'Install updates and restart',
+  'updater.retry': 'Retry',
   'updater.updateError': 'Update error',
   'updater.updateReady': 'A new version is available',
   'updater.updateReadyDesc':

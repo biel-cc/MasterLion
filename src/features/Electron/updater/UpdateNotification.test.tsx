@@ -7,10 +7,13 @@ import { UpdateNotification } from './UpdateNotification';
 type Handler = (payload: any) => void;
 
 const mocks = vi.hoisted(() => ({
+  applyDownloadedUpdate: vi.fn(),
+  downloadUpdate: vi.fn(),
   getUpdaterState: vi.fn(),
   handlers: new Map<string, Handler>(),
+  checkUpdate: vi.fn(),
+  installLater: vi.fn(),
   installNow: vi.fn(),
-  openExternalLink: vi.fn(),
 }));
 
 vi.mock('@lobechat/electron-client-ipc', () => ({
@@ -63,13 +66,13 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/services/electron/autoUpdate', () => ({
   autoUpdateService: {
+    applyDownloadedUpdate: mocks.applyDownloadedUpdate,
+    checkUpdate: mocks.checkUpdate,
+    downloadUpdate: mocks.downloadUpdate,
     getUpdaterState: mocks.getUpdaterState,
     installNow: mocks.installNow,
+    installLater: mocks.installLater,
   },
-}));
-
-vi.mock('@/services/electron/system', () => ({
-  electronSystemService: { openExternalLink: mocks.openExternalLink },
 }));
 
 const emitUpdaterState = (payload: any) => {
@@ -79,16 +82,22 @@ const emitUpdaterState = (payload: any) => {
 describe('UpdateNotification', () => {
   beforeEach(() => {
     mocks.handlers.clear();
-    mocks.getUpdaterState.mockReset().mockResolvedValue({ stage: 'idle' });
+    mocks.applyDownloadedUpdate.mockReset();
+    mocks.checkUpdate.mockReset();
+    mocks.downloadUpdate.mockReset().mockResolvedValue(undefined);
+    mocks.getUpdaterState
+      .mockReset()
+      .mockResolvedValue({ autoDownloadEnabled: true, stage: 'idle' });
     mocks.installNow.mockReset();
-    mocks.openExternalLink.mockReset().mockResolvedValue(undefined);
+    mocks.installLater.mockReset();
   });
 
-  it('shows release details and opens the platform installer URL', async () => {
+  it('shows release details and starts a main-process download', async () => {
     render(<UpdateNotification />);
 
     emitUpdaterState({
-      downloadUrl: 'https://example.com/Masterino-1.1.2-arm64.dmg',
+      autoDownloadEnabled: false,
+      installMode: 'open-dmg',
       stage: 'available',
       updateInfo: { releaseNotes: 'Important fixes', version: '1.1.2' },
     });
@@ -100,17 +109,28 @@ describe('UpdateNotification', () => {
     fireEvent.click(screen.getAllByText('updater.downloadNewVersion')[0]);
 
     await waitFor(() => {
-      expect(mocks.openExternalLink).toHaveBeenCalledWith(
-        'https://example.com/Masterino-1.1.2-arm64.dmg',
-      );
+      expect(mocks.downloadUpdate).toHaveBeenCalledTimes(1);
     });
     expect(mocks.installNow).not.toHaveBeenCalled();
+  });
+
+  it('opens a verified macOS installer after download', async () => {
+    render(<UpdateNotification />);
+    emitUpdaterState({
+      autoDownloadEnabled: true,
+      installMode: 'open-dmg',
+      stage: 'downloaded',
+      updateInfo: { version: '1.1.4' },
+    });
+
+    fireEvent.click(screen.getByText('updater.openInstaller'));
+    await waitFor(() => expect(mocks.applyDownloadedUpdate).toHaveBeenCalledTimes(1));
   });
 
   it('dismisses only the current prompt', () => {
     render(<UpdateNotification />);
     emitUpdaterState({
-      downloadUrl: 'https://example.com/Masterino-1.1.2-setup.exe',
+      autoDownloadEnabled: false,
       stage: 'available',
       updateInfo: { version: '1.1.2' },
     });
@@ -118,6 +138,28 @@ describe('UpdateNotification', () => {
     fireEvent.click(screen.getByText('updater.later'));
 
     expect(screen.queryByText('updater.newVersionAvailable')).not.toBeInTheDocument();
-    expect(mocks.openExternalLink).not.toHaveBeenCalled();
+    expect(mocks.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('offers install on exit for a verified Windows update', async () => {
+    render(<UpdateNotification />);
+    emitUpdaterState({
+      autoDownloadEnabled: true,
+      installMode: 'restart',
+      stage: 'downloaded',
+      updateInfo: { version: '1.1.4' },
+    });
+
+    fireEvent.click(screen.getByText('updater.installLater'));
+    await waitFor(() => expect(mocks.installLater).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows a localized error and retries a failed check', async () => {
+    render(<UpdateNotification />);
+    emitUpdaterState({ autoDownloadEnabled: true, errorCode: 'signature', stage: 'error' });
+
+    expect(screen.getByText('updater.error.signature')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('updater.retry'));
+    await waitFor(() => expect(mocks.checkUpdate).toHaveBeenCalledTimes(1));
   });
 });

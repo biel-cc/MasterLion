@@ -102,6 +102,9 @@ importers:
       consola:
         specifier: ^3.4.2
         version: 3.4.2
+      builder-util-runtime:
+        specifier: 9.7.0
+        version: 9.7.0
       cookie:
         specifier: ^1.1.1
         version: 1.1.1

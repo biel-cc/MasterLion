@@ -33,9 +33,21 @@ export type UpdaterStage =
   | 'latest'
   | 'error';
 
+export type UpdaterInstallMode = 'open-dmg' | 'restart';
+
+export type UpdaterErrorCode =
+  | 'disk'
+  | 'integrity'
+  | 'install'
+  | 'network'
+  | 'signature'
+  | 'unknown';
+
 export interface UpdaterState {
-  downloadUrl?: string;
+  autoDownloadEnabled: boolean;
+  errorCode?: UpdaterErrorCode;
   errorMessage?: string;
+  installMode?: UpdaterInstallMode;
   progress?: ProgressInfo;
   stage: UpdaterStage;
   updateInfo?: UpdateInfo;
