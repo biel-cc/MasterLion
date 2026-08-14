@@ -145,6 +145,75 @@ describe('Market SDK compatibility', () => {
     expect(response.status).toBe(401);
   });
 
+  it('filters and paginates the internal Admin resource catalog', async () => {
+    const query = vi.fn(async () => ({
+      rowCount: 1,
+      rows: [
+        {
+          category: 'office',
+          description: 'Internal skill',
+          identifier: 'internal-skill',
+          name: 'Internal Skill',
+          ownerName: 'Employee',
+          ownerUserId: 'user-1',
+          status: 'published',
+          tags: [],
+          totalCount: 21,
+          type: 'skill',
+          updatedAt: '2026-08-14T00:00:00.000Z',
+          version: '1.0.0',
+          visibility: 'internal',
+          workflowState: 'published',
+        },
+      ],
+    }));
+    const repository = { ...createRepository(), getPool: () => ({ query }) };
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: repository as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+
+    const response = await app.request(
+      '/api/internal/resources?type=skill&workflowState=published&visibility=internal&clientVisible=true&page=2&pageSize=20&q=office',
+      { headers: { 'x-lobe-trust-token': token } },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      currentPage: 2,
+      items: [expect.objectContaining({ clientVisible: true, identifier: 'internal-skill' })],
+      pageSize: 20,
+      totalCount: 21,
+      totalPages: 2,
+    });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("r.visibility IN ('internal','public')"),
+      ['skill', 'internal', 'published', '%office%', 20, 20],
+    );
+  });
+
+  it('denies internal Admin catalog access to Market submitters', async () => {
+    const repository = {
+      ...createRepository(),
+      syncAccount: vi.fn(async () => ({ ...account, role: 'submitter' as const })),
+    };
+    const app = createMarketApp({
+      config,
+      redis: { ping: vi.fn(async () => 'PONG') } as any,
+      repository: repository as any,
+      storage: { ping: vi.fn(async () => undefined) } as any,
+    });
+
+    const response = await app.request('/api/internal/resources', {
+      headers: { 'x-lobe-trust-token': token },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'forbidden' });
+  });
+
   it('returns plaintext only on the authenticated server-side decrypt contract', async () => {
     const encryptedValue = encryptJson(
       { API_TOKEN: 'secret' },

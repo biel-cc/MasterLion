@@ -49,4 +49,27 @@ describe('Masterino Admin test deployment', () => {
 
     expect(configMap).toContain(`APP_URL_ALLOWED_HOSTS: 'mlai-test.bielcrystal.com,${adminHost}'`);
   });
+
+  it('uses the shared Market catalog for the Admin Agent, Skill, and MCP pages', async () => {
+    const [app, shell, catalog, adminRouter, marketApp] = await Promise.all([
+      readFile('apps/admin/src/App.tsx', 'utf8'),
+      readFile('apps/admin/src/layout/AdminShell.tsx', 'utf8'),
+      readFile('apps/admin/src/pages/CatalogPage.tsx', 'utf8'),
+      readFile('apps/server/src/routers/lambda/admin.ts', 'utf8'),
+      readFile('apps/market/src/app.ts', 'utf8'),
+    ]);
+
+    expect(app).toContain("path: 'agents'");
+    expect(app).toContain("path: 'skills'");
+    expect(app).toContain("path: 'mcp'");
+    expect(shell).toContain("defaultOpenKeys={['catalog']}");
+    expect(catalog).toContain('trpc.admin.listCatalogResources.useQuery');
+    expect(catalog).toContain("type CatalogResourceType = 'agent' | 'mcp' | 'skill'");
+    expect(adminRouter).toContain('listCatalogResources: adminProcedure');
+    expect(adminRouter).not.toContain('listSkillPolicies:');
+    expect(adminRouter).not.toContain('listMcpConnectors:');
+    expect(marketApp).toContain("'/api/internal/resources'");
+    expect(marketApp).toContain('AdminResourceListQuerySchema.parse');
+    expect(marketApp).toContain('clientVisibleCount');
+  });
 });

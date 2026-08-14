@@ -206,7 +206,7 @@ export default function SsoPage() {
           <Form.Item label="自动创建用户" name="autoProvision" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Divider orientation="start">身份字段映射</Divider>
+          <Divider titlePlacement="start">身份字段映射</Divider>
           <Form.Item label="员工号字段" name={['identityMapping', 'employeeNumberField']}>
             <Input placeholder="userid" />
           </Form.Item>
@@ -225,7 +225,7 @@ export default function SsoPage() {
           <Form.Item label="职位字段" name={['identityMapping', 'positionField']}>
             <Input placeholder="position" />
           </Form.Item>
-          <Divider orientation="start">部门同步</Divider>
+          <Divider titlePlacement="start">部门同步</Divider>
           <Form.Item
             label="启用部门同步"
             name={['departmentSync', 'enabled']}
@@ -236,7 +236,7 @@ export default function SsoPage() {
           <Form.Item label="同步模式" name={['departmentSync', 'mode']}>
             <Select options={departmentSyncModeOptions} />
           </Form.Item>
-          <Divider orientation="start">AIHub 自动开通</Divider>
+          <Divider titlePlacement="start">AIHub 自动开通</Divider>
           <Form.Item
             label="启用 AIHub 开通"
             name={['aihubProvisioning', 'enabled']}

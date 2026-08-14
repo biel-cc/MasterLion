@@ -1,25 +1,35 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getServerDB } from '@/database/core/db-adaptor';
 import { UserModel } from '@/database/models/user';
 import { createCallerFactory } from '@/libs/trpc/lambda';
-import { type AuthContext } from '@/libs/trpc/lambda/context';
-import { createContextInner } from '@/libs/trpc/lambda/context';
 import type * as DirectorySyncService from '@/server/services/enterprise/directorySyncService';
 import type * as WecomSsoService from '@/server/services/enterprise/wecomSsoService';
 
 import { adminRouter } from './admin';
 
+type AuthContext = {
+  resHeaders: Headers;
+  userId?: null | string;
+};
+
+const createContextInner = async (params?: { userId?: null | string }): Promise<AuthContext> => ({
+  resHeaders: new Headers(),
+  userId: params?.userId,
+});
+
 const {
   mockApplyEnterpriseDirectorySnapshot,
   mockGetWecomSsoConfig,
+  mockGenerateTrustedClientToken,
   mockHasAnyPermission,
   mockProvisionWecomLoginAccount,
   mockUpsertWecomSsoConfig,
 } = vi.hoisted(() => ({
   mockApplyEnterpriseDirectorySnapshot: vi.fn(),
   mockGetWecomSsoConfig: vi.fn(),
+  mockGenerateTrustedClientToken: vi.fn(),
   mockHasAnyPermission: vi.fn(),
   mockProvisionWecomLoginAccount: vi.fn(),
   mockUpsertWecomSsoConfig: vi.fn(),
@@ -33,6 +43,10 @@ vi.mock('@/database/models/user', () => ({
   UserModel: {
     findById: vi.fn(),
   },
+}));
+
+vi.mock('@/libs/trusted-client', () => ({
+  generateTrustedClientToken: mockGenerateTrustedClientToken,
 }));
 
 vi.mock('@/libs/better-auth/wecom-login-provisioning', () => ({
@@ -969,6 +983,12 @@ describe('adminRouter', () => {
       syncedMembers: 0,
     });
     mockGetWecomSsoConfig.mockResolvedValue(mockSsoConfig);
+    mockGenerateTrustedClientToken.mockReturnValue('trusted-admin-token');
+    vi.mocked(UserModel.findById).mockResolvedValue({
+      email: 'admin@example.com',
+      id: 'user-admin',
+      role: 'platform_admin',
+    } as never);
     mockUpsertWecomSsoConfig.mockResolvedValue({
       ...mockSsoConfig,
       config: {
@@ -980,6 +1000,10 @@ describe('adminRouter', () => {
       corpSecretConfigured: true,
       enabled: true,
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('returns platform admin identity for platform admin users from context role', async () => {
@@ -1046,14 +1070,59 @@ describe('adminRouter', () => {
       items: [],
       total: 0,
     });
-    await expect(caller.listSkillPolicies({ page: 1, pageSize: 20 })).resolves.toEqual({
-      items: [],
-      total: 0,
-    });
-    await expect(caller.listMcpConnectors({ page: 1, pageSize: 20 })).resolves.toEqual({
-      items: [],
-      total: 0,
-    });
+  });
+
+  it('lists filtered Market catalog resources for the Admin console', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            currentPage: 2,
+            items: [
+              {
+                clientVisible: true,
+                identifier: 'skill-one',
+                name: 'Skill One',
+                ownerName: 'Masterino',
+                ownerUserId: 'owner-1',
+                status: 'published',
+                tags: [],
+                type: 'skill',
+                updatedAt: '2026-08-14T00:00:00.000Z',
+                visibility: 'internal',
+                workflowState: 'published',
+              },
+            ],
+            pageSize: 20,
+            totalCount: 21,
+            totalPages: 2,
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const caller = createCaller(await createAdminContext('platform_admin'));
+
+    await expect(
+      caller.listCatalogResources({
+        clientVisible: true,
+        page: 2,
+        pageSize: 20,
+        q: 'skill',
+        type: 'skill',
+        visibility: 'internal',
+        workflowState: 'published',
+      }),
+    ).resolves.toMatchObject({ currentPage: 2, totalCount: 21 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '/api/internal/resources?clientVisible=true&page=2&pageSize=20&q=skill&type=skill&visibility=internal&workflowState=published',
+      ),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-lobe-trust-token': 'trusted-admin-token' }),
+      }),
+    );
   });
 
   it('updates WeCom SSO config through the enterprise SSO service', async () => {

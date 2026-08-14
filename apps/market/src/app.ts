@@ -7,6 +7,7 @@ import { type AuthEnv, requireRole, trustedClientAuth } from './auth.js';
 import type { MarketConfig } from './config.js';
 import { splitCsv } from './config.js';
 import {
+  AdminResourceListQuerySchema,
   CredentialInputSchema,
   OfflineImportSchema,
   ResourceInputSchema,
@@ -1490,14 +1491,90 @@ export const createMarketApp = (options: {
     return c.json({ items: result.rows, totalCount: result.rowCount || 0 });
   });
   app.get('/api/internal/resources', requireRole('reviewer', 'admin'), async (c) => {
+    const input = AdminResourceListQuerySchema.parse({
+      clientVisible: c.req.query('clientVisible'),
+      page: c.req.query('page'),
+      pageSize: c.req.query('pageSize'),
+      q: c.req.query('q'),
+      status: c.req.query('status'),
+      type: c.req.query('type'),
+      visibility: c.req.query('visibility'),
+      workflowState: c.req.query('workflowState'),
+    });
+    const values: unknown[] = [];
+    const filters: string[] = [];
+
+    const addFilter = (column: string, value: unknown) => {
+      if (value === undefined || value === '') return;
+      values.push(value);
+      filters.push(`${column}=$${values.length}`);
+    };
+
+    addFilter('r.type', input.type);
+    addFilter('r.status', input.status);
+    addFilter('r.visibility', input.visibility);
+    addFilter('v.workflow_state', input.workflowState);
+    if (input.q) {
+      values.push(`%${input.q}%`);
+      filters.push(
+        `(r.name ILIKE $${values.length} OR r.description ILIKE $${values.length} OR r.identifier ILIKE $${values.length})`,
+      );
+    }
+    if (input.clientVisible === true) {
+      filters.push(
+        `r.status='published' AND v.workflow_state='published' AND r.visibility IN ('internal','public')`,
+      );
+    } else if (input.clientVisible === false) {
+      filters.push(
+        `NOT (r.status='published' AND v.workflow_state='published' AND r.visibility IN ('internal','public'))`,
+      );
+    }
+
+    values.push(input.pageSize, (input.page - 1) * input.pageSize);
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
     const result = await repository.getPool().query(
-      `SELECT r.type, r.identifier, r.name, r.category, r.status, r.visibility, v.version,
-        v.workflow_state AS "workflowState", r.updated_at AS "updatedAt"
-       FROM market_resources r LEFT JOIN market_versions v ON v.id=r.current_version_id
-       ORDER BY r.updated_at DESC LIMIT $1`,
-      [Math.min(500, Number(c.req.query('limit') || 200))],
+      `SELECT r.type, r.identifier, r.name, r.description, r.category, r.status, r.visibility,
+        r.tags, r.updated_at AS "updatedAt", v.version,
+        v.workflow_state AS "workflowState", a.external_user_id AS "ownerUserId",
+        COALESCE(a.name, a.email, a.external_user_id) AS "ownerName",
+        count(*) OVER()::int AS "totalCount"
+       FROM market_resources r
+       LEFT JOIN market_versions v ON v.id=r.current_version_id
+       JOIN market_accounts a ON a.id=r.owner_account_id
+       ${where}
+       ORDER BY r.updated_at DESC, r.id DESC
+       LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      values,
     );
-    return c.json({ items: result.rows, totalCount: result.rowCount || 0 });
+    const totalCount = Number(result.rows[0]?.totalCount || 0);
+    return c.json({
+      currentPage: input.page,
+      items: result.rows.map(({ totalCount: _totalCount, ...item }) => ({
+        ...item,
+        clientVisible:
+          item.status === 'published' &&
+          item.workflowState === 'published' &&
+          (item.visibility === 'internal' || item.visibility === 'public'),
+      })),
+      pageSize: input.pageSize,
+      totalCount,
+      totalPages: Math.ceil(totalCount / input.pageSize),
+    });
+  });
+  app.get('/api/internal/resources/summary', requireRole('reviewer', 'admin'), async (c) => {
+    const result = await repository.getPool().query(
+      `SELECT r.type, r.status, r.visibility, count(*)::int AS count,
+        count(*) FILTER (
+          WHERE r.status='published'
+            AND v.workflow_state='published'
+            AND r.visibility IN ('internal', 'public')
+        )::int AS "clientVisibleCount"
+       FROM market_resources r
+       LEFT JOIN market_versions v ON v.id=r.current_version_id
+       GROUP BY r.type, r.status, r.visibility
+       ORDER BY r.type, r.status, r.visibility`,
+    );
+    return c.json({ items: result.rows });
   });
   app.post(
     '/api/internal/resources/:type/:identifier/review',
