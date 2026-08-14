@@ -11,12 +11,19 @@ export interface AgentChatOptions {
   includeInput?: boolean;
   metadata?: Record<string, unknown>;
   provider: string;
+  shutdownMode?: 'deferred' | 'immediate';
   trace?: TracePayload;
 }
 
 export const createTraceOptions = (
   payload: ChatStreamPayload,
-  { includeInput = true, metadata, trace: tracePayload, provider }: AgentChatOptions,
+  {
+    includeInput = true,
+    metadata,
+    trace: tracePayload,
+    provider,
+    shutdownMode = 'deferred',
+  }: AgentChatOptions,
 ) => {
   const { messages, model, tools, ...parameters } = payload;
   // create a trace to monitor the completion
@@ -93,15 +100,24 @@ export const createTraceOptions = (
         trace?.update({ output });
       },
 
-      onFinal: () => {
-        after(async () => {
-          try {
-            await traceClient.shutdownAsync();
-          } catch (e) {
-            console.error('TraceClient shutdown error:', e);
+      onFinal: trace
+        ? async () => {
+            const shutdown = async () => {
+              try {
+                await traceClient.shutdownAsync();
+              } catch (e) {
+                console.error('TraceClient shutdown error:', e);
+              }
+            };
+
+            if (shutdownMode === 'immediate') {
+              await shutdown();
+              return;
+            }
+
+            after(shutdown);
           }
-        });
-      },
+        : undefined,
 
       onStart: () => {
         generation?.update({ completionStartTime: new Date() });

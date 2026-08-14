@@ -6,6 +6,10 @@ const integerInRange = (min: number, max: number, fallback: number) =>
 
 export const getAgentExecutionConfig = () =>
   createEnv({
+    // This module is imported exclusively by server code. Vitest may expose a
+    // browser-like global even for server suites, so do not let env-core infer
+    // the runtime from `window` and reject access to server variables.
+    isServer: true,
     runtimeEnv: {
       MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT:
         process.env.MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT,

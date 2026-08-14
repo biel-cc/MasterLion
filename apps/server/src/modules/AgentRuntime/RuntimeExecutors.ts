@@ -1634,13 +1634,16 @@ export const createRuntimeExecutors = (
       // Hard-stop background operations before sending a request that cannot fit
       // in the remaining token or wall-clock budget. Frontend chat operations do
       // not carry executionBudget and therefore retain their existing behavior.
-      const projectedInputTokens = countContextTokens({
-        messages: providerMessages as UIChatMessage[],
-        tools,
-      }).adjustedTotal;
-      const preflightBudgetReason = getExecutionBudgetReason(state, projectedInputTokens);
-      if (preflightBudgetReason) {
-        return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
+      const executionBudget = state.executionBudget ?? state.metadata?.executionBudget;
+      if (executionBudget) {
+        const projectedInputTokens = countContextTokens({
+          messages: providerMessages as UIChatMessage[],
+          tools,
+        }).adjustedTotal;
+        const preflightBudgetReason = getExecutionBudgetReason(state, projectedInputTokens);
+        if (preflightBudgetReason) {
+          return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
+        }
       }
       const runtimeTraceOptions = createTraceOptions(chatPayload as ChatStreamPayload, {
         includeInput: false,
@@ -1653,6 +1656,7 @@ export const createRuntimeExecutors = (
           trigger: state.metadata?.trigger,
         },
         provider,
+        shutdownMode: 'immediate',
         trace: {
           topicId: state.metadata?.topicId ?? ctx.topicId,
           traceId: operationId,
