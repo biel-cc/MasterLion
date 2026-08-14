@@ -183,6 +183,26 @@ COPY --chown=nextjs:nodejs --from=builder /app/scripts/_shared /app/scripts/_sha
 ## `pnpm run dev`, so only the toolchain inside this image is consumed.
 FROM builder AS dev
 
+# pnpm hoisted linker 只把「根 workspace 的直接依赖」软链到 /app/node_modules；
+# workspace 之间的依赖（如 @lobechat/agent-manager-runtime）放在各包的嵌套
+# node_modules 里。热更新 compose 会把 ../../packages bind mount 到 /app/packages，
+# 嵌套链接会被宿主目录遮蔽，导致 Vite/Next 解析失败。这里把所有 workspace 包
+# 在根 node_modules 建立软链，绑定挂载后依然能解析到宿主源码。
+RUN node <<'NODE_SCRIPT'
+const fs = require('node:fs');
+const path = require('node:path');
+for (const dir of fs.readdirSync('packages')) {
+  const pkgPath = path.join('packages', dir, 'package.json');
+  if (!fs.existsSync(pkgPath)) continue;
+  const name = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).name;
+  if (!name) continue;
+  const linkPath = path.join('node_modules', name);
+  fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+  fs.rmSync(linkPath, { recursive: true, force: true });
+  fs.symlinkSync(path.join('/app', 'packages', dir), linkPath, 'dir');
+}
+NODE_SCRIPT
+
 ## Production image
 # 不再用 scratch + COPY / / 压成一个大层；直接 FROM app 保留分层，push/pull 更容易复用 layer。
 FROM app AS production

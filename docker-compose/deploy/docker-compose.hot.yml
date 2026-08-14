@@ -21,6 +21,7 @@ services:
       - '${VITE_DEV_PORT:-9876}:9876'
     environment:
       - 'APP_URL_DYNAMIC=1'
+      - 'APP_URL=${APP_URL:-http://localhost:3210}'
       - 'APP_URL_ALLOWED_HOSTS=${APP_URL_ALLOWED_HOSTS:-*}'
       - 'DEV_PACKAGE_MANAGER=pnpm'
       - 'DEV_SPA_SCRIPT=dev:spa:container'

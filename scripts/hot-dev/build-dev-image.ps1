@@ -54,6 +54,7 @@ function Get-CurrentBranch {
 }
 
 # 校验分支已 push 到 origin，避免云端构建的不是预期提交。
+# 本机可能未直连 github.com（需代理），ls-remote 失败时给出提示并中止。
 function Assert-BranchPushed([string]$Branch) {
   $local = git rev-parse "$Branch" 2>$null
   if (-not $local) {
@@ -61,7 +62,7 @@ function Assert-BranchPushed([string]$Branch) {
   }
   $remote = git ls-remote origin "refs/heads/$Branch" 2>$null | ForEach-Object { ($_ -split "`t")[0] }
   if (-not $remote) {
-    Fail "branch is not pushed to origin (no remote ref): $Branch"
+    Fail "branch is not pushed to origin (no remote ref); if your network requires a proxy, run: git config --global http.proxy http://127.0.0.1:<port>"
   }
   if ($local -ne $remote) {
     Fail "local '$Branch' ($local) does not match origin ('$remote'); push first"
@@ -74,11 +75,11 @@ function Get-ShortSha([string]$Branch) {
 
 function Invoke-AliyunJson {
   # 透传 aliyun 输出 JSON；非零退出码直接失败。
-  param([string[]]$Args)
-  $output = & aliyun @Args 2>&1
+  param([string[]]$CliArgs)
+  $output = & aliyun @CliArgs 2>&1
   $code = $LASTEXITCODE
   if ($code -ne 0) {
-    Fail "aliyun command failed (exit $code): aliyun $($Args -join ' ')"
+    Fail "aliyun command failed (exit $code): aliyun $($CliArgs -join ' ')"
   }
   return ($output -join "`n") | ConvertFrom-Json
 }

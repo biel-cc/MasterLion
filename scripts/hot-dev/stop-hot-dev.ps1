@@ -29,6 +29,18 @@ function Write-Log([string]$Message) {
   if (Test-Path $LOG_FILE) { Add-Content -Path $LOG_FILE -Value $line -Encoding utf8 }
 }
 
+# PS 5.1 下 $ErrorActionPreference='Stop' 会把原生命令的 stderr 当成终止错误；
+# docker compose 的进度与告警走 stderr，调用时临时放宽。
+function Invoke-DockerComposeDown {
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & docker compose -f $HOT_COMPOSE down --remove-orphans 2>&1 | ForEach-Object { Write-Log $_ }
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
 function Stop-ComposeContainer {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Log 'docker not found; skipping compose down'
@@ -55,7 +67,7 @@ function Stop-ComposeContainer {
       }
     }
   }
-  & docker compose -f $HOT_COMPOSE down --remove-orphans 2>&1 | ForEach-Object { Write-Log $_ }
+  Invoke-DockerComposeDown
   Write-Log 'masterino-hot container stopped'
 }
 

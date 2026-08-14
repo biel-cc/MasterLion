@@ -226,10 +226,16 @@ function Build-EnvFile {
     $value = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
     $lines.Add((ConvertTo-EnvLine $key $value))
   }
-  # 本地专用覆盖：容器访问 host.docker.internal 端口转发地址。
-  $lines.Add("DATABASE_URL=postgresql://postgres:'$((($lines | Where-Object { $_ -like "POSTGRES_PASSWORD=*" }) -replace "POSTGRES_PASSWORD='",'' -replace "'$",''))@host.docker.internal:15432/lobechat")
-  $redisPass = ($lines | Where-Object { $_ -like "REDIS_PASSWORD=*" }) -replace "REDIS_PASSWORD='",'' -replace "'$",''
-  $lines.Add("REDIS_URL=redis://:$redisPass@host.docker.internal:16379")
+  # 本地专用覆盖：
+  # - APP_URL_ALLOWED_HOSTS 追加 localhost/127.0.0.1，保证本机直接访问时 auth
+  #   回调与 SPA 静态资源不跳回线上域名（ConfigMap 只允许测试域名）。
+  $allowedHosts = ([string]$cm.data.APP_URL_ALLOWED_HOSTS).Trim()
+  if ($allowedHosts -and $allowedHosts -notmatch '(^|,)localhost($|,)' -and $allowedHosts -notmatch '\*') {
+    $allowedHosts += ',localhost,127.0.0.1'
+  }
+  if ($allowedHosts) {
+    $lines.Add("APP_URL_ALLOWED_HOSTS=$allowedHosts")
+  }
 
   $lines | Set-Content -Path $ENV_FILE -Encoding utf8
   icacls $ENV_FILE /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
@@ -329,13 +335,21 @@ function Start-Compose([string]$ImageRef) {
   $env:VITE_DEV_PORT = '9876'
 
   # --env-file 提供 ${VAR} 插值；--no-deps 固定不拉起任何依赖服务。
-  $args = @(
-    'compose',
-    '--env-file', $ENV_FILE,
-    '-f', $HOT_COMPOSE,
-    'up', '-d', '--no-deps'
-  )
-  & docker @args *>> $LOG_FILE
+  # PS 5.1 下 ErrorActionPreference=Stop 会把 docker compose 的 stderr 进度
+  # 当终止错误，这里临时放宽并按退出码判断成败。
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $args = @(
+      'compose',
+      '--env-file', $ENV_FILE,
+      '-f', $HOT_COMPOSE,
+      'up', '-d', '--no-deps'
+    )
+    & docker @args *>> $LOG_FILE
+  } finally {
+    $ErrorActionPreference = $previous
+  }
   if ($LASTEXITCODE -ne 0) {
     Fail "docker compose up failed (exit $LASTEXITCODE); see $LOG_FILE"
   }
