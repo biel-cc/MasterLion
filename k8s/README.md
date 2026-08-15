@@ -58,7 +58,8 @@ Before deploying the test rollout:
    `0117_use_halfvec_for_user_memory_embeddings`, and the user-memory tables, 2048-dimension
    `halfvec` columns, pgvector, and ParadeDB indexes exist.
 
-3. Confirm both the target Aihub user group and its `masterlion-managed` token allow `glm-5.2` and
+3. Confirm both the target Aihub user group and its `masterlion-managed` token allow
+   `deepseek-v4-flash` and
    `text-embedding-3-large`. Do not enable the rollout if either model is unavailable. Memory
    runtimes fail closed on an unauthorized provider/model/type or a missing user-managed token;
    they never borrow server or another provider's credentials. Run the guarded read-only check

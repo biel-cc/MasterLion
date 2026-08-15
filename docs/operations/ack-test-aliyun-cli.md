@@ -61,7 +61,8 @@ Non-secret deployment inputs:
   `apps/aihub-db-bridge`, so the currently approved bridge digest may be reused.
 
 The Aihub `masterlion-managed` token is not a CI variable. The target Aihub user group and each
-test user's managed token must both authorize `glm-5.2` and `text-embedding-3-large`.
+test user's managed token must both authorize `deepseek-v4-flash` and
+`text-embedding-3-large`.
 
 ## Command steps
 

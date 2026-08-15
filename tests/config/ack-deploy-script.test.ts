@@ -25,4 +25,15 @@ describe('guarded ACK deployment script', () => {
     expect(helper).toContain('update-image memory-worker');
     expect(helper).toContain('$MASTERINO_IMAGE@$MASTERINO_IMAGE_DIGEST');
   });
+
+  it('checks the Aihub models required by the v1.2 production configuration', async () => {
+    const helper = await readFile('scripts/operations/deployAckTestWithAliyunCli.sh', 'utf8');
+
+    expect(helper).toContain(
+      'AIHUB_REQUIRED_CHAT_MODEL="${AIHUB_REQUIRED_CHAT_MODEL:-deepseek-v4-flash}"',
+    );
+    expect(helper).toContain(
+      'AIHUB_REQUIRED_EMBEDDING_MODEL="${AIHUB_REQUIRED_EMBEDDING_MODEL:-text-embedding-3-large}"',
+    );
+  });
 });
