@@ -166,7 +166,7 @@
 | `ONLYBOXES_JIT_ISSUER`                              | `https://masterino.bielcrystal.com`              |
 | `ONLYBOXES_JIT_SIGNING_KEY`                         | 与 Console 的 `CONSOLE_JIT_SIGNING_KEY` 完全一致 |
 | `ONLYBOXES_JIT_TTL_SEC` / `ONLYBOXES_LEASE_TTL_SEC` | `1800` / `900`                                   |
-| `OFFICECLI_ENABLED`                                 | `false`；Office Runtime 黄金样例验收前不启用     |
+| `OFFICECLI_ENABLED`                                 | `true`；Office Runtime 黄金样例已验收            |
 | `ONLYBOXES_DATA_DIR`                                | `/var/lib/onlyboxes/console`                     |
 | `CONSOLE_DASHBOARD_USERNAME`                        | `masterino-admin`                                |
 | `CONSOLE_ENABLE_REGISTRATION`                       | `false`                                          |
@@ -179,6 +179,9 @@
 Console、Python runtime、Terminal runtime 和 Worker 二进制都必须从内部制品库按 digest
 固定。Dashboard 密码、Worker ID/Secret、Console hash key 和 JIT key 不得进入 Git、
 ConfigMap 或日志。
+
+2026-08-16 已使用 OfficeCLI `1.0.143` 完成 DOCX/XLSX/PPTX 的创建与校验，并完成 PPTX
+批量添加幻灯片和文本框验证；生产开关据此从保守关闭值调整为启用。
 
 ### 2.8 内部 Market
 

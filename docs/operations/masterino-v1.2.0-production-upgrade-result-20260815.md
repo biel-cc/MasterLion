@@ -102,7 +102,7 @@ Aihub 管理 Token 的模型限制同时包含 `deepseek-v4-flash` 与 `text-emb
 | `ONLYBOXES_BASE_URL`      | `https://onlyboxes.internal.bielcrystal.com` |
 | `ONLYBOXES_JIT_TTL_SEC`   | `1800`                                       |
 | `ONLYBOXES_LEASE_TTL_SEC` | `900`                                        |
-| `OFFICECLI_ENABLED`       | `false`                                      |
+| `OFFICECLI_ENABLED`       | `true`（2026-08-16 黄金样例通过后启用）      |
 
 SearXNG JSON 搜索返回 200；OnlyBoxes 根接口返回 200，应用 JIT key 与 OnlyBoxes Console key 的 SHA-256 一致，未输出密钥明文。
 

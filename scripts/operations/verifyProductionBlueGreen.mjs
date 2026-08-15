@@ -110,7 +110,7 @@ assert.equal(appConfig.data.EMBEDDING_CONCURRENCY, '10');
 assert.equal(appConfig.data.REDIS_DATABASE, '0');
 assert.equal(appConfig.data.ONLYBOXES_JIT_TTL_SEC, '1800');
 assert.equal(appConfig.data.ONLYBOXES_LEASE_TTL_SEC, '900');
-assert.equal(appConfig.data.OFFICECLI_ENABLED, 'false');
+assert.equal(appConfig.data.OFFICECLI_ENABLED, 'true');
 
 assert.equal(
   market.some((resource) => resource.kind === 'Ingress'),

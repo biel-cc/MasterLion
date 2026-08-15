@@ -53,7 +53,7 @@ data:
   ONLYBOXES_JIT_ISSUER: 'https://masterino.bielcrystal.com'
   ONLYBOXES_JIT_TTL_SEC: '1800'
   ONLYBOXES_LEASE_TTL_SEC: '900'
-  OFFICECLI_ENABLED: 'false'
+  OFFICECLI_ENABLED: 'true'
   SEARCH_PROVIDERS: 'searxng'
   SEARXNG_URL: 'http://masterino-searxng:8080'
   REDIS_DATABASE: '0'
