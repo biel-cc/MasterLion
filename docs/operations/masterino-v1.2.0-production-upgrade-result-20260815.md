@@ -175,3 +175,33 @@ SearXNG JSON 搜索返回 200；OnlyBoxes 根接口返回 200，应用 JIT key �
 1. 16:01 的 Memory 队列为 `wait=36`、`active=1`、`failed=1000`（保留上限）、`delayed=1`、`repeat=1`；10 秒采样曾从 41 降至 36，队列仍在消费。最近 20 分钟日志中，主要失败为部分用户额度不足和历史上下文超过模型限制，另有少量结构化结果解析失败。这些任务按用户隔离并 fail-closed，未造成应用或模型通道全局故障。建议后续补充额度预检、长上下文截断 / 摘要和失败队列分原因告警。
 2. 未登录页控制台记录到 4 条 `registry.npmmirror.com` 字体或 KaTeX CSS 加载失败；页面主体和登录控件仍正常渲染。建议将关键字体 / CSS 自托管或增加稳定镜像源，避免外部 CDN 波动。
 3. 旧的、未被 Deployment 引用的 Memory 哈希 ConfigMap `masterino-memory-config-542d95ffd4` 仍保留，用于短期回滚；确认观察周期结束后可按配置保留策略清理。
+
+## 8. 2026-08-16 OfficeCLI 启用补充记录
+
+### 8.1 原因与处置
+
+生产用户创建 PowerPoint 时收到 `OfficeCLI document tools are disabled`。运行时、OnlyBoxes
+服务和 JIT 鉴权均正常，直接原因是首次切流时按保守合同保留了
+`OFFICECLI_ENABLED=false`。测试节点完成黄金样例后，将生产值调整为 `true`，没有变更
+Secret、镜像、数据库、Redis、Market 或 OnlyBoxes 节点配置。
+
+### 8.2 发布前验证
+
+- OnlyBoxes Office Runtime 报告 OfficeCLI `1.0.143`。
+- DOCX、XLSX、PPTX 的 `create + validate` 均成功。
+- PPTX 批量添加 1 张幻灯片与 1 个文本框成功，outline 返回 `totalSlides=1`，最终校验通过。
+- OnlyBoxes Provider 与 ACK 发布脚本共 18 个定向测试通过。
+- 生产 Blue/Green、维护页校验器及 Kubernetes server-side dry-run 通过。
+
+### 8.3 生产发布与验收
+
+2026-08-16 04:01（Asia/Shanghai）只更新 `masterino-config`，随后滚动重启 Masterino 与
+Memory Worker。Masterino 保持 2/2 Ready，Memory Worker 保持 1/1 Ready，新 Pod 重启次数
+均为 0，应用镜像 digest 未变化。
+
+使用生产 Pod 的现有 JIT issuer/key 完成无敏感数据的真实烟测：DOCX、XLSX、PPTX 均创建并
+校验成功，PPTX 批量写入也成功。`/`、`/chat` 与 `/market/health` 返回预期状态；发布后日志中
+没有新的 OfficeCLI disabled 或 OnlyBoxes/OfficeCLI failed 记录。
+
+若需要回滚，先把 `OFFICECLI_ENABLED` 恢复为 `false`，再以相同方式滚动重启 Masterino 与
+Memory Worker；Office Runtime 镜像本次没有变化。
