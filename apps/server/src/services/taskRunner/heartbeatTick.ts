@@ -24,6 +24,7 @@ export type HeartbeatTickSkipReason =
   | 'mode-changed'
   | 'no-interval'
   | 'not-found'
+  | 'paused'
   | 'terminal';
 
 /**
@@ -58,6 +59,10 @@ export async function runHeartbeatTick(
   if (isTerminal(task.status)) {
     log('skip task=%s reason=terminal (status=%s)', taskId, task.status);
     return { ran: false, reason: 'terminal' };
+  }
+  if (task.status === 'paused') {
+    log('skip task=%s reason=paused', taskId);
+    return { ran: false, reason: 'paused' };
   }
   if (!task.heartbeatInterval || task.heartbeatInterval <= 0) {
     log('skip task=%s reason=no-interval', taskId);

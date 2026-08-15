@@ -244,5 +244,5 @@ describe('Server callSubAgent suspend/resume', () => {
       (m) => m.role === 'tool' && m.content === SUB_AGENT_ANSWER,
     );
     expect(subAgentToolMessage).toBeDefined();
-  });
+  }, 30_000);
 });

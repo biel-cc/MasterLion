@@ -667,6 +667,7 @@ export class AiAgentService {
       cronJobId,
       taskId,
       evalContext,
+      executionBudget,
       maxSteps,
       disableLocalSystem,
       initialStepCount,
@@ -2738,6 +2739,7 @@ export class AiAgentService {
           // runs — lands in state.metadata.agentSignal so the completion path can
           // project receipts/briefs. Undefined for ordinary chat runs.
           ...(appContext?.agentSignal ? { agentSignal: appContext.agentSignal } : {}),
+          automationMode: appContext?.automationMode,
           defaultTaskAssigneeAgentId: appContext?.defaultTaskAssigneeAgentId,
           documentId: appContext?.documentId,
           groupId: appContext?.groupId,
@@ -2755,6 +2757,7 @@ export class AiAgentService {
         deviceAccessPolicy: { canUseDevice, reason: deviceAccessReason },
         discordContext,
         evalContext,
+        executionBudget,
         initialContext,
         initialMessages: allMessages,
         initialStepCount,

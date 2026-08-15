@@ -6,6 +6,10 @@ metadata:
     app.kubernetes.io/part-of: masterino
     masterino.io/environment: test
 data:
+  MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT: '7500'
+  TASK_EXECUTION_MAX_DURATION_SECONDS: '3600'
+  TASK_EXECUTION_MAX_STEPS: '200'
+  TASK_EXECUTION_MAX_TOTAL_TOKENS: '5000000'
   APP_URL: 'https://mlai-test.bielcrystal.com'
   APP_URL_DYNAMIC: '1'
   APP_URL_ALLOWED_HOSTS: 'mlai-test.bielcrystal.com'

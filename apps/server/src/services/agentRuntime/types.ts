@@ -113,6 +113,9 @@ export type StepCompletionReason =
   | 'error'
   | 'interrupted'
   | 'max_steps'
+  | 'repeated_error'
+  | 'time_limit'
+  | 'token_limit'
   | 'cost_limit'
   | 'waiting_for_human'
   | 'waiting_for_async_tool';
@@ -316,6 +319,7 @@ export interface OperationCreationParams {
      * read on the completion path to project receipts.
      */
     agentSignal?: AgentSignalOperationMarker;
+    automationMode?: 'heartbeat' | 'schedule' | null;
     defaultTaskAssigneeAgentId?: string;
     documentId?: string | null;
     groupId?: string | null;
@@ -349,6 +353,12 @@ export interface OperationCreationParams {
   /** Discord context for injecting channel/guild info into agent system message */
   discordContext?: any;
   evalContext?: any;
+  /** Hard limits for a server-side background operation. */
+  executionBudget?: {
+    maxDurationMs: number;
+    maxSteps: number;
+    maxTotalTokens: number;
+  };
   /**
    * Resolved execution plan for the run (see `resolveExecutionPlan`).
    * Forwarded into `state.metadata.executionPlan` so step-level layers (the

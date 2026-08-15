@@ -59,6 +59,8 @@ export interface ExecAgentAppContext {
    * Forwarded into the operation so the completion path can project receipts.
    */
   agentSignal?: AgentSignalOperationMarker;
+  /** Server-side task automation mode for observability metadata. */
+  automationMode?: 'heartbeat' | 'schedule' | null;
   /** Optional default assignee candidate for task manager prompts */
   defaultTaskAssigneeAgentId?: string;
   /** Current document ID for page-scoped conversations */
@@ -119,6 +121,12 @@ export interface ExecAgentParams {
   autoStart?: boolean;
   /** Explicit device ID to bind to the topic and activate for this run */
   deviceId?: string;
+  /** Server-controlled execution budget for background operations. */
+  executionBudget?: {
+    maxDurationMs: number;
+    maxSteps: number;
+    maxTotalTokens: number;
+  };
   /** Optional existing message IDs to include in context */
   existingMessageIds?: string[];
   /**

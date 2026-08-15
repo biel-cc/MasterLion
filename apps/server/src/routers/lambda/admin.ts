@@ -1,8 +1,8 @@
+import { getTaskExecutionBudget } from '@lobechat/env/agent';
 import { TRPCError } from '@trpc/server';
-import { and, count, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
+import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { provisionWecomLoginAccount } from '@/libs/better-auth/wecom-login-provisioning';
 import { UserModel } from '@/database/models/user';
 import {
   type PrincipalType,
@@ -11,6 +11,7 @@ import {
   type ResourceType,
 } from '@/database/repositories/enterprise/resourceAclRepository';
 import {
+  agentOperations,
   enterpriseAuditLogs,
   enterpriseDepartmentMembers,
   enterpriseDepartments,
@@ -22,13 +23,17 @@ import {
   permissions,
   rolePermissions,
   roles,
+  tasks,
   userRoles,
   users,
   workspaces,
 } from '@/database/schemas';
+import { provisionWecomLoginAccount } from '@/libs/better-auth/wecom-login-provisioning';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { generateTrustedClientToken } from '@/libs/trusted-client';
+import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
+import { AiAgentService } from '@/server/services/aiAgent';
 import {
   type AdminRbacPermissionCode,
   requireAdminAccess,
@@ -41,6 +46,10 @@ import {
   upsertWecomSsoConfig,
   wecomSsoUpdateInputSchema,
 } from '@/server/services/enterprise/wecomSsoService';
+import { getEmbeddingInputLimit } from '@/server/services/memory/userMemory/embedding';
+import { NewApiService } from '@/server/services/newApi';
+import { TaskService } from '@/server/services/task';
+import { TaskRunnerService } from '@/server/services/taskRunner';
 import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
 type PlatformAdminRole = 'platform_admin' | 'super_admin';
@@ -93,6 +102,7 @@ interface AdminSkillPolicyItem {
 
 interface AdminUserListItem {
   email: string;
+  employeeNumber?: null | string;
   id: string;
   name: string;
   role: string;
@@ -257,6 +267,28 @@ const userIdInput = z.object({
   userId: z.string().min(1),
 });
 
+const usageDiagnosticsInput = z
+  .object({
+    employeeNumber: z.string().trim().min(1).optional(),
+    endTimestamp: z.number().int().positive().optional(),
+    startTimestamp: z.number().int().positive().optional(),
+    userId: z.string().trim().min(1).optional(),
+  })
+  .refine((input) => input.employeeNumber || input.userId, {
+    message: 'employeeNumber or userId is required',
+  });
+
+const pauseUserAutomationsInput = z.object({
+  reason: z.string().trim().min(1).max(500).default('Admin incident mitigation'),
+  taskIds: z.array(z.string().min(1)).optional(),
+  userId: z.string().min(1),
+});
+
+const resumeTaskAutomationInput = z.object({
+  taskId: z.string().min(1),
+  userId: z.string().min(1),
+});
+
 const updateUserStatusInput = userIdInput.extend({
   banned: z.boolean(),
   reason: z.string().trim().optional(),
@@ -384,8 +416,9 @@ const countRows = async (db: any, table: any, where?: any, fallback = 0) => {
   }
 };
 
-const mapAdminUser = (user: any): AdminUserListItem => ({
+const mapAdminUser = (user: any, employeeNumber?: null | string): AdminUserListItem => ({
   email: user.email ?? '',
+  employeeNumber,
   id: user.id,
   name: user.fullName || user.username || user.email || user.id,
   role: user.role || 'user',
@@ -574,7 +607,10 @@ const retryEnterpriseUserProvisioning = async (
   }
 
   const identity = await db.query.externalIdentities.findFirst({
-    where: and(eq(externalIdentities.userId, input.userId), eq(externalIdentities.provider, 'wecom')),
+    where: and(
+      eq(externalIdentities.userId, input.userId),
+      eq(externalIdentities.provider, 'wecom'),
+    ),
   });
 
   if (!identity) {
@@ -650,7 +686,7 @@ const updateAdminUserStatus = async (
   const db = getServerDBFromContext(ctx) as any;
   const values = {
     banExpires: null,
-    banReason: input.banned ? input.reason ?? null : null,
+    banReason: input.banned ? (input.reason ?? null) : null,
     banned: input.banned,
   };
   const updateResult = await db.update(users).set(values).where(eq(users.id, input.userId));
@@ -854,7 +890,8 @@ const createAdminRole = async (
   let role: any;
 
   try {
-    role = typeof db.transaction === 'function' ? await db.transaction(writeRole) : await writeRole(db);
+    role =
+      typeof db.transaction === 'function' ? await db.transaction(writeRole) : await writeRole(db);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new TRPCError({
@@ -942,9 +979,7 @@ const updateAdminRoleStatus = async (
     const [updatedRole] = await tx
       .update(roles)
       .set({ isActive: input.isActive, updatedAt: new Date() })
-      .where(
-        and(eq(roles.id, input.roleId), eq(roles.isSystem, false), isNull(roles.workspaceId)),
-      )
+      .where(and(eq(roles.id, input.roleId), eq(roles.isSystem, false), isNull(roles.workspaceId)))
       .returning();
 
     if (!updatedRole) {
@@ -1237,7 +1272,7 @@ const listEnterpriseDepartmentMembers = async (
       isPrimary: Boolean(membership.isPrimary),
       name: user?.fullName || user?.username || user?.email || membership.userId,
       position: profile?.position ?? null,
-      status: user?.banned ? '\u7981\u7528' : '\u6b63\u5e38',
+      status: user?.banned ? '\u7981\u7528' : '\u6B63\u5E38',
       userId: membership.userId,
     };
   });
@@ -1468,13 +1503,18 @@ const callInternalMarketAdmin = async <T>(
   const admin = await requirePlatformAdmin(ctx);
   const db = getServerDBFromContext(ctx) as any;
   const user = await UserModel.findById(db, admin.userId);
-  if (!user?.email) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Admin user email is required' });
+  if (!user?.email)
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Admin user email is required' });
   const token = generateTrustedClientToken({
     email: user.email,
     name: user.fullName || user.username || undefined,
     userId: admin.userId,
   });
-  if (!token) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Market Trusted Client is not configured' });
+  if (!token)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Market Trusted Client is not configured',
+    });
   const response = await fetch(`${getInternalMarketBaseUrl()}${path}`, {
     body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     headers: { 'content-type': 'application/json', 'x-lobe-trust-token': token },
@@ -1483,9 +1523,240 @@ const callInternalMarketAdmin = async <T>(
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new TRPCError({ code: response.status === 403 ? 'FORBIDDEN' : 'BAD_GATEWAY', message: `Market: ${message}` });
+    throw new TRPCError({
+      code: response.status === 403 ? 'FORBIDDEN' : 'BAD_GATEWAY',
+      message: `Market: ${message}`,
+    });
   }
   return response.json() as Promise<T>;
+};
+
+const resolveDiagnosticsUserId = async (db: any, input: z.infer<typeof usageDiagnosticsInput>) => {
+  if (input.userId) return input.userId;
+
+  const profile = await db.query?.enterpriseUserProfiles?.findFirst?.({
+    where: eq(enterpriseUserProfiles.employeeNumber, input.employeeNumber!),
+  });
+  if (!profile?.userId) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Employee number was not found' });
+  }
+
+  return profile.userId as string;
+};
+
+const getUserUsageDiagnostics = async (
+  ctx: unknown,
+  input: z.infer<typeof usageDiagnosticsInput>,
+) => {
+  const db = getServerDBFromContext(ctx) as any;
+  const userId = await resolveDiagnosticsUserId(db, input);
+  const detail = await getAdminUserDetail(ctx, { userId });
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const startTimestamp = input.startTimestamp ?? nowSeconds - 24 * 60 * 60;
+  const endTimestamp = input.endTimestamp ?? nowSeconds;
+  const operationWhere = and(
+    eq(agentOperations.userId, userId),
+    gte(agentOperations.createdAt, new Date(startTimestamp * 1000)),
+    lte(agentOperations.createdAt, new Date(endTimestamp * 1000)),
+  );
+  const [taskRows, operationRows] = await Promise.all([
+    db.query?.tasks?.findMany?.({
+      orderBy: [desc(tasks.updatedAt)],
+      where: and(eq(tasks.createdByUserId, userId), isNotNull(tasks.automationMode)),
+    }) ?? [],
+    db.query?.agentOperations?.findMany?.({
+      limit: 100,
+      orderBy: [desc(agentOperations.createdAt)],
+      where: operationWhere,
+    }) ?? [],
+  ]);
+  const taskIds = taskRows.map((task: any) => task.id);
+  const auditRows =
+    (await db.query?.enterpriseAuditLogs?.findMany?.({
+      limit: 100,
+      orderBy: [desc(enterpriseAuditLogs.createdAt)],
+      where: or(
+        and(eq(enterpriseAuditLogs.targetType, 'user'), eq(enterpriseAuditLogs.targetId, userId)),
+        taskIds.length
+          ? and(
+              eq(enterpriseAuditLogs.targetType, 'task'),
+              inArray(enterpriseAuditLogs.targetId, taskIds),
+            )
+          : undefined,
+      ),
+    })) ?? [];
+
+  let aihubUsage: Record<string, unknown> | null = null;
+  let aihubUsageError: string | null = null;
+  try {
+    const usage = await new NewApiService({ db, userId }).getUsageSummary({
+      endTimestamp,
+      startTimestamp,
+    });
+    aihubUsage = {
+      byDay: usage.byDay,
+      byModel: usage.byModel,
+      requestCount: usage.requestCount,
+      totalCompletionTokens: usage.totalCompletionTokens,
+      totalPromptTokens: usage.totalPromptTokens,
+      totalQuota: usage.totalQuota,
+      totalTokens: usage.totalTokens,
+    };
+  } catch (error) {
+    aihubUsageError = error instanceof Error ? error.message : String(error);
+  }
+
+  const memoryEmbedding = parseMemoryExtractionConfig().embedding;
+  const embeddingLimit = getEmbeddingInputLimit(memoryEmbedding.model, memoryEmbedding.provider);
+  const operations = operationRows.map((operation: any) => ({
+    budgetSnapshot: operation.metadata?.executionBudget ?? null,
+    completionReason: operation.completionReason,
+    createdAt: toIsoString(operation.createdAt),
+    id: operation.id,
+    langfuse: { sessionId: operation.topicId, traceId: operation.id, userId },
+    model: operation.model,
+    provider: operation.provider,
+    status: operation.status,
+    stepCount: operation.stepCount,
+    taskId: operation.taskId,
+    tokens: {
+      input: operation.totalInputTokens,
+      output: operation.totalOutputTokens,
+      total: operation.totalTokens,
+    },
+    trigger: operation.trigger,
+  }));
+
+  return {
+    aihubUsage,
+    aihubUsageError,
+    auditLogs: auditRows.map(mapAuditLog),
+    embedding: {
+      ...embeddingLimit,
+      model: memoryEmbedding.model,
+      provider: memoryEmbedding.provider,
+    },
+    executionBudget: getTaskExecutionBudget(),
+    identity: {
+      aihub: detail.aihubBinding,
+      employeeNumber: detail.enterpriseProfile?.employeeNumber ?? null,
+      langfuseUserId: userId,
+      masterinoUserId: userId,
+    },
+    operations,
+    range: { endTimestamp, startTimestamp },
+    tasks: taskRows.map((task: any) => ({
+      automationMode: task.automationMode,
+      id: task.id,
+      identifier: task.identifier,
+      name: task.name,
+      status: task.status,
+      updatedAt: toIsoString(task.updatedAt),
+    })),
+  };
+};
+
+const pauseUserAutomations = async (
+  ctx: unknown,
+  input: z.infer<typeof pauseUserAutomationsInput>,
+  actorUserId: string,
+) => {
+  const db = getServerDBFromContext(ctx) as any;
+  const where = and(
+    eq(tasks.createdByUserId, input.userId),
+    isNotNull(tasks.automationMode),
+    input.taskIds?.length ? inArray(tasks.id, input.taskIds) : undefined,
+  );
+  const taskRows = (await db.query?.tasks?.findMany?.({ where })) ?? [];
+  const results: Array<{ error?: string; status: string; taskId: string; warning?: string }> = [];
+
+  for (const task of taskRows) {
+    if (task.status === 'paused') {
+      results.push({ status: 'already_paused', taskId: task.id });
+      continue;
+    }
+
+    try {
+      const service = new TaskService(db, input.userId, task.workspaceId ?? undefined);
+      await service.updateStatus({ id: task.id, status: 'paused' });
+      const remainingOperations =
+        (await db.query?.agentOperations?.findMany?.({
+          where: and(eq(agentOperations.taskId, task.id), eq(agentOperations.status, 'running')),
+        })) ?? [];
+      const aiAgentService = new AiAgentService(db, input.userId, {
+        workspaceId: task.workspaceId ?? undefined,
+      });
+      const interruptResults = await Promise.allSettled(
+        remainingOperations.map((operation: any) =>
+          aiAgentService.interruptTask({ operationId: operation.id }),
+        ),
+      );
+      const interruptFailures = interruptResults.filter((result) => result.status === 'rejected');
+      await writeEnterpriseAuditLog(db, {
+        action: 'task.automation.pause',
+        actorUserId,
+        metadata: {
+          interruptFailures: interruptFailures.length,
+          previousStatus: task.status,
+          reason: input.reason,
+        },
+        result: 'success',
+        targetId: task.id,
+        targetType: 'task',
+      });
+      results.push({
+        status: 'paused',
+        taskId: task.id,
+        ...(interruptFailures.length
+          ? { warning: `${interruptFailures.length} running operation(s) could not be interrupted` }
+          : {}),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeEnterpriseAuditLog(db, {
+        action: 'task.automation.pause',
+        actorUserId,
+        metadata: { error: message, reason: input.reason },
+        result: 'failed',
+        targetId: task.id,
+        targetType: 'task',
+      });
+      results.push({ error: message, status: 'failed', taskId: task.id });
+    }
+  }
+
+  return { results };
+};
+
+const resumeTaskAutomation = async (
+  ctx: unknown,
+  input: z.infer<typeof resumeTaskAutomationInput>,
+  actorUserId: string,
+) => {
+  const db = getServerDBFromContext(ctx) as any;
+  const task = await db.query?.tasks?.findFirst?.({
+    where: and(eq(tasks.id, input.taskId), eq(tasks.createdByUserId, input.userId)),
+  });
+  if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
+  if (!task.automationMode) {
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Task has no automation config' });
+  }
+  if (task.status !== 'paused') {
+    throw new TRPCError({ code: 'CONFLICT', message: 'Only paused tasks can be resumed' });
+  }
+
+  const runner = new TaskRunnerService(db, input.userId, task.workspaceId ?? undefined);
+  const run = await runner.runTask({ taskId: task.id });
+  await writeEnterpriseAuditLog(db, {
+    action: 'task.automation.resume',
+    actorUserId,
+    metadata: { automationMode: task.automationMode, operationId: run.operationId },
+    result: 'success',
+    targetId: task.id,
+    targetType: 'task',
+  });
+
+  return { operationId: run.operationId, taskId: task.id };
 };
 
 export const adminRouter = router({
@@ -1498,12 +1769,20 @@ export const adminRouter = router({
       return emptyList<AdminUserListItem>();
     }
 
+    const matchingProfiles = input.q
+      ? ((await db.query?.enterpriseUserProfiles?.findMany?.({
+          columns: { userId: true },
+          where: ilike(enterpriseUserProfiles.employeeNumber, `%${input.q}%`),
+        })) ?? [])
+      : [];
+    const matchingProfileUserIds = matchingProfiles.map((profile: any) => profile.userId);
     const where = input.q
       ? or(
           ilike(users.fullName, `%${input.q}%`),
           ilike(users.email, `%${input.q}%`),
           ilike(users.username, `%${input.q}%`),
           ilike(users.id, `%${input.q}%`),
+          matchingProfileUserIds.length ? inArray(users.id, matchingProfileUserIds) : undefined,
         )
       : undefined;
 
@@ -1513,7 +1792,18 @@ export const adminRouter = router({
       orderBy: [desc(users.createdAt)],
       where,
     });
-    const items = rows.map(mapAdminUser);
+    const profiles = rows.length
+      ? ((await db.query?.enterpriseUserProfiles?.findMany?.({
+          where: inArray(
+            enterpriseUserProfiles.userId,
+            rows.map((row: any) => row.id),
+          ),
+        })) ?? [])
+      : [];
+    const employeeNumberByUserId = new Map<string, null | string>(
+      profiles.map((profile: any) => [profile.userId, profile.employeeNumber]),
+    );
+    const items = rows.map((row: any) => mapAdminUser(row, employeeNumberByUserId.get(row.id)));
 
     return {
       items,
@@ -1527,27 +1817,47 @@ export const adminRouter = router({
     return getAdminUserDetail(ctx, input);
   }),
 
+  getUserUsageDiagnostics: adminProcedure
+    .input(usageDiagnosticsInput)
+    .query(async ({ ctx, input }) => {
+      await requireUserManage(ctx);
+
+      return getUserUsageDiagnostics(ctx, input);
+    }),
+
+  pauseUserAutomations: adminProcedure
+    .input(pauseUserAutomationsInput)
+    .mutation(async ({ ctx, input }) => {
+      const admin = await requireUserManage(ctx);
+
+      return pauseUserAutomations(ctx, input, admin.userId);
+    }),
+
+  resumeTaskAutomation: adminProcedure
+    .input(resumeTaskAutomationInput)
+    .mutation(async ({ ctx, input }) => {
+      const admin = await requireUserManage(ctx);
+
+      return resumeTaskAutomation(ctx, input, admin.userId);
+    }),
+
   retryUserProvisioning: adminProcedure.input(userIdInput).mutation(async ({ ctx, input }) => {
     const admin = await requireUserManage(ctx);
 
     return retryEnterpriseUserProvisioning(ctx, input, admin.userId);
   }),
 
-  updateUserStatus: adminProcedure
-    .input(updateUserStatusInput)
-    .mutation(async ({ ctx, input }) => {
-      const admin = await requireUserManage(ctx);
+  updateUserStatus: adminProcedure.input(updateUserStatusInput).mutation(async ({ ctx, input }) => {
+    const admin = await requireUserManage(ctx);
 
-      return updateAdminUserStatus(ctx, input, admin.userId);
-    }),
+    return updateAdminUserStatus(ctx, input, admin.userId);
+  }),
 
-  assignUserRoles: adminProcedure
-    .input(assignUserRolesInput)
-    .mutation(async ({ ctx, input }) => {
-      const admin = await requireRoleManage(ctx);
+  assignUserRoles: adminProcedure.input(assignUserRolesInput).mutation(async ({ ctx, input }) => {
+    const admin = await requireRoleManage(ctx);
 
-      return assignAdminUserRoles(ctx, input, admin.userId);
-    }),
+    return assignAdminUserRoles(ctx, input, admin.userId);
+  }),
 
   createRole: adminProcedure.input(createRoleInput).mutation(async ({ ctx, input }) => {
     const admin = await requireRoleManage(ctx);
@@ -1561,13 +1871,11 @@ export const adminRouter = router({
     return updateAdminRole(ctx, input, admin.userId);
   }),
 
-  updateRoleStatus: adminProcedure
-    .input(updateRoleStatusInput)
-    .mutation(async ({ ctx, input }) => {
-      const admin = await requireRoleManage(ctx);
+  updateRoleStatus: adminProcedure.input(updateRoleStatusInput).mutation(async ({ ctx, input }) => {
+    const admin = await requireRoleManage(ctx);
 
-      return updateAdminRoleStatus(ctx, input, admin.userId);
-    }),
+    return updateAdminRoleStatus(ctx, input, admin.userId);
+  }),
 
   updateRolePermissions: adminProcedure
     .input(updateRolePermissionsInput)
@@ -1610,8 +1918,9 @@ export const adminRouter = router({
       }
 
       return {
-        items: roleRows.map((role: any): AdminRoleItem =>
-          mapAdminRole(role, permissionCodesByRoleId.get(role.id) ?? []),
+        items: roleRows.map(
+          (role: any): AdminRoleItem =>
+            mapAdminRole(role, permissionCodesByRoleId.get(role.id) ?? []),
         ),
       };
     } catch {
@@ -1733,80 +2042,158 @@ export const adminRouter = router({
   }),
 
   listMarketReviews: adminProcedure.query(async ({ ctx }) =>
-    callInternalMarketAdmin<{ items: Array<{
-      identifier: string;
-      name: string;
-      ownerName?: string;
-      scanResult?: Record<string, unknown>;
-      submittedAt?: string;
-      type: string;
-      version: string;
-      workflowState: string;
-    }>; totalCount: number }>(ctx, '/api/internal/reviews'),
+    callInternalMarketAdmin<{
+      items: Array<{
+        identifier: string;
+        name: string;
+        ownerName?: string;
+        scanResult?: Record<string, unknown>;
+        submittedAt?: string;
+        type: string;
+        version: string;
+        workflowState: string;
+      }>;
+      totalCount: number;
+    }>(ctx, '/api/internal/reviews'),
   ),
 
   listMarketResources: adminProcedure.query(async ({ ctx }) =>
-    callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(ctx, '/api/internal/resources'),
+    callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(
+      ctx,
+      '/api/internal/resources',
+    ),
   ),
 
   reviewMarketResource: adminProcedure
-    .input(z.object({
-      action: z.enum(['scan-start', 'scan-passed', 'scan-failed', 'approve', 'reject', 'publish', 'deprecate']),
-      identifier: z.string().min(1),
-      reason: z.string().max(2000).optional(),
-      scanResult: z.record(z.any()).optional(),
-      type: z.enum(['agent', 'agent-group', 'skill', 'mcp', 'plugin', 'model', 'provider']),
-    }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx,
-      `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/review`,
-      { body: { action: input.action, reason: input.reason, scanResult: input.scanResult }, method: 'POST' },
-    )),
+    .input(
+      z.object({
+        action: z.enum([
+          'scan-start',
+          'scan-passed',
+          'scan-failed',
+          'approve',
+          'reject',
+          'publish',
+          'deprecate',
+        ]),
+        identifier: z.string().min(1),
+        reason: z.string().max(2000).optional(),
+        scanResult: z.record(z.any()).optional(),
+        type: z.enum(['agent', 'agent-group', 'skill', 'mcp', 'plugin', 'model', 'provider']),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(
+        ctx,
+        `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/review`,
+        {
+          body: { action: input.action, reason: input.reason, scanResult: input.scanResult },
+          method: 'POST',
+        },
+      ),
+    ),
 
   listMarketAudit: adminProcedure
     .input(z.object({ limit: z.number().int().min(1).max(500).default(100) }))
-    .query(async ({ ctx, input }) => callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(ctx, `/api/internal/audit?limit=${input.limit}`)),
+    .query(async ({ ctx, input }) =>
+      callInternalMarketAdmin<{ items: unknown[]; totalCount: number }>(
+        ctx,
+        `/api/internal/audit?limit=${input.limit}`,
+      ),
+    ),
 
   listMarketConnectorAllowlist: adminProcedure.query(async ({ ctx }) =>
-    callInternalMarketAdmin<{ items: Array<{ enabled: boolean; hostname: string; id: string; port?: number; protocol: string; provider: string }> }>(ctx, '/api/internal/allowlist'),
+    callInternalMarketAdmin<{
+      items: Array<{
+        enabled: boolean;
+        hostname: string;
+        id: string;
+        port?: number;
+        protocol: string;
+        provider: string;
+      }>;
+    }>(ctx, '/api/internal/allowlist'),
   ),
 
   upsertMarketConnectorAllowlist: adminProcedure
-    .input(z.object({ allowPrivate: z.boolean().optional(), provider: z.string().min(1), url: z.string().url() }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/allowlist', { body: input, method: 'POST' })),
+    .input(
+      z.object({
+        allowPrivate: z.boolean().optional(),
+        provider: z.string().min(1),
+        url: z.string().url(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(ctx, '/api/internal/allowlist', { body: input, method: 'POST' }),
+    ),
 
   updateMarketConnectorAllowlist: adminProcedure
     .input(z.object({ enabled: z.boolean(), id: z.union([z.string(), z.number()]) }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, `/api/internal/allowlist/${encodeURIComponent(String(input.id))}`, {
-      body: { enabled: input.enabled },
-      method: 'PATCH',
-    })),
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(
+        ctx,
+        `/api/internal/allowlist/${encodeURIComponent(String(input.id))}`,
+        {
+          body: { enabled: input.enabled },
+          method: 'PATCH',
+        },
+      ),
+    ),
 
   importMarketPackage: adminProcedure
     .input(z.object({ payload: z.record(z.any()), signature: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/import', { body: input, method: 'POST' })),
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(ctx, '/api/internal/import', { body: input, method: 'POST' }),
+    ),
 
   rollbackMarketResource: adminProcedure
-    .input(z.object({ identifier: z.string().min(1), type: z.string().min(1), version: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx,
-      `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/rollback`,
-      { body: { version: input.version }, method: 'POST' },
-    )),
+    .input(
+      z.object({
+        identifier: z.string().min(1),
+        type: z.string().min(1),
+        version: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(
+        ctx,
+        `/api/internal/resources/${encodeURIComponent(input.type)}/${encodeURIComponent(input.identifier)}/rollback`,
+        { body: { version: input.version }, method: 'POST' },
+      ),
+    ),
 
   listMarketCategories: adminProcedure.query(async ({ ctx }) =>
     callInternalMarketAdmin<{ items: unknown[] }>(ctx, '/api/internal/categories'),
   ),
 
   upsertMarketCategory: adminProcedure
-    .input(z.object({ localizations: z.record(z.any()).optional(), resourceType: z.string().min(1), slug: z.string().min(1), sortOrder: z.number().int().optional() }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, '/api/internal/categories', { body: input, method: 'POST' })),
+    .input(
+      z.object({
+        localizations: z.record(z.any()).optional(),
+        resourceType: z.string().min(1),
+        slug: z.string().min(1),
+        sortOrder: z.number().int().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(ctx, '/api/internal/categories', { body: input, method: 'POST' }),
+    ),
 
   listMarketAccounts: adminProcedure.query(async ({ ctx }) =>
     callInternalMarketAdmin<{ items: unknown[] }>(ctx, '/api/internal/accounts'),
   ),
 
   updateMarketAccountRole: adminProcedure
-    .input(z.object({ role: z.enum(['submitter', 'reviewer', 'admin']), userId: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => callInternalMarketAdmin(ctx, `/api/internal/accounts/${encodeURIComponent(input.userId)}/role`, { body: { role: input.role }, method: 'POST' })),
+    .input(
+      z.object({ role: z.enum(['submitter', 'reviewer', 'admin']), userId: z.string().min(1) }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      callInternalMarketAdmin(
+        ctx,
+        `/api/internal/accounts/${encodeURIComponent(input.userId)}/role`,
+        { body: { role: input.role }, method: 'POST' },
+      ),
+    ),
 
   org: router({
     departments: router({

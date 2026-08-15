@@ -313,6 +313,9 @@ importers:
       '@lobechat/editor-runtime':
         specifier: workspace:*
         version: link:packages/editor-runtime
+      '@lobechat/env':
+        specifier: workspace:*
+        version: link:packages/env
       '@lobechat/electron-client-ipc':
         specifier: workspace:*
         version: link:packages/electron-client-ipc

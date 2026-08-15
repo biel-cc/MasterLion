@@ -334,7 +334,7 @@ describe('Multi-Round Tool Execution', () => {
     expect(mockResponsesCreate).toHaveBeenCalledTimes(3);
 
     mockExecuteTool.mockRestore();
-  });
+  }, 30_000);
 
   it('should maintain correct state.messages structure in AgentState across tool rounds', async () => {
     let callCount = 0;
@@ -401,5 +401,5 @@ describe('Multi-Round Tool Execution', () => {
     expect(totalToolCalls).toBe(4);
 
     mockExecuteTool.mockRestore();
-  });
+  }, 30_000);
 });

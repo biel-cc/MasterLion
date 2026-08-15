@@ -36,6 +36,12 @@ export interface AgentState {
   // --- Metadata ---
   createdAt: string;
   error?: any;
+  /** Optional hard budget attached to server-side background operations. */
+  executionBudget?: {
+    maxDurationMs: number;
+    maxSteps: number;
+    maxTotalTokens: number;
+  };
   /**
    * When true, the agent is in force-finish mode (maxSteps exceeded).
    * Tools are allowed to complete, but the next LLM call will have tools stripped

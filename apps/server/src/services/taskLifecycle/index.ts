@@ -24,6 +24,7 @@ import type {
 import { DEFAULT_BRIEF_ACTIONS } from '@lobechat/types';
 import debug from 'debug';
 
+import { AgentOperationModel } from '@/database/models/agentOperation';
 import { BriefModel } from '@/database/models/brief';
 import { TaskModel } from '@/database/models/task';
 import { TaskTopicModel } from '@/database/models/taskTopic';
@@ -62,6 +63,12 @@ const isTerminal = (status: string) => TERMINAL_STATUSES.has(status);
 // urgent brief surface for human attention. Hardcoded for now (per );
 // move to task.config later if it needs to be tunable per-task.
 const HEARTBEAT_FAILURE_FUSE = 3;
+const AUTOMATION_STOP_REASONS = new Set([
+  'max_steps',
+  'repeated_error',
+  'time_limit',
+  'token_limit',
+]);
 
 export interface TopicCompleteParams {
   errorMessage?: string;
@@ -188,19 +195,38 @@ export class TaskLifecycleService {
           await this.taskModel.updateStatus(taskId, 'paused', { error: null });
         }
       }
-    } else if (reason === 'error') {
-      if (topicId) await this.taskTopicModel.updateStatus(taskId, topicId, 'failed');
+    } else if (reason === 'error' || AUTOMATION_STOP_REASONS.has(reason)) {
+      if (topicId) {
+        await this.taskTopicModel.updateStatus(
+          taskId,
+          topicId,
+          reason === 'time_limit' ? 'timeout' : 'failed',
+        );
+      }
 
       const topicSeq = currentTask?.totalTopics || '?';
       const topicRef = topicId ? ` #${topicSeq} (${topicId})` : '';
+      const operation = AUTOMATION_STOP_REASONS.has(reason)
+        ? await new AgentOperationModel(this.db, this.userId, this.workspaceId)
+            .findById(params.operationId)
+            .catch(() => undefined)
+        : undefined;
+      const durationMs = operation?.processingTimeMs ?? 0;
+      const executionSummary = operation
+        ? ` Steps: ${operation.stepCount ?? 0}; duration: ${durationMs}ms; tokens: ${operation.totalTokens ?? 0}.`
+        : '';
 
       await this.briefModel.create({
         actions: DEFAULT_BRIEF_ACTIONS['error'],
         agentId: currentTask?.assigneeAgentId || undefined,
         priority: 'urgent',
-        summary: `Execution failed: ${errorMessage || 'Unknown error'}`,
+        summary: AUTOMATION_STOP_REASONS.has(reason)
+          ? `Execution guard stopped task ${taskIdentifier} (${reason}). Operation ${params.operationId} was stopped and the task was paused.${executionSummary}`
+          : `Execution failed: ${errorMessage || 'Unknown error'}`,
         taskId,
-        title: `${taskIdentifier} topic${topicRef} error`,
+        title: AUTOMATION_STOP_REASONS.has(reason)
+          ? `${taskIdentifier} topic${topicRef} execution guard stopped the task`
+          : `${taskIdentifier} topic${topicRef} error`,
         trigger: 'task',
         type: 'error',
       });
@@ -264,6 +290,7 @@ export class TaskLifecycleService {
     if (task.automationMode !== 'heartbeat') return;
     if (!task.heartbeatInterval || task.heartbeatInterval <= 0) return;
     if (isTerminal(task.status)) return;
+    if (task.status === 'paused') return;
 
     const ctx = (task.context as { scheduler?: TaskSchedulerContext } | null) ?? {};
     const sched = ctx.scheduler ?? {};
