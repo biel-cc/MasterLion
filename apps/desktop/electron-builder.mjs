@@ -26,6 +26,11 @@ const packageJSON = JSON.parse(await fs.readFile(path.join(__dirname, 'package.j
 const channel = process.env.UPDATE_CHANNEL;
 const arch = os.arch();
 const hasAppleCertificate = Boolean(process.env.CSC_LINK);
+const unsignedMacArtifactName = '${productName}-${version}-unsigned-${arch}.${ext}';
+const desktopConfigFiles = [
+  { from: 'resources/desktop-config.json', to: 'desktop-config.json' },
+  { from: 'resources/desktop-config.README.txt', to: 'desktop-config.README.txt' },
+];
 
 // 自定义更新服务器 URL (用于 stable 频道)
 const updateServerUrl = process.env.UPDATE_SERVER_URL;
@@ -76,7 +81,9 @@ const keepLanguages = new Set(['en', 'en_GB', 'en-US', 'en_US']);
 if (!hasAppleCertificate) {
   // Disable auto discovery to keep electron-builder from searching unavailable signing identities
   process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
-  console.info('⚠️ Apple certificate link not found, macOS artifacts will be unsigned.');
+  console.info(
+    '⚠️ Apple certificate link not found, macOS artifacts will use ad-hoc signing and remain unnotarized.',
+  );
 }
 
 // 根据版本类型确定协议 scheme
@@ -203,12 +210,20 @@ const config = {
   },
 
   dmg: {
-    artifactName: '${productName}-${version}-${arch}.${ext}',
+    artifactName: hasAppleCertificate
+      ? '${productName}-${version}-${arch}.${ext}'
+      : unsignedMacArtifactName,
     background: 'resources/dmg.png',
-    contents: [
-      { type: 'file', x: 150, y: 240 },
-      { type: 'link', path: '/Applications', x: 450, y: 240 },
-    ],
+    contents: hasAppleCertificate
+      ? [
+          { type: 'file', x: 150, y: 240 },
+          { type: 'link', path: '/Applications', x: 450, y: 240 },
+        ]
+      : [
+          { type: 'file', x: 150, y: 220 },
+          { type: 'link', path: '/Applications', x: 450, y: 220 },
+          { path: 'build/INSTALL-MACOS-UNSIGNED.txt', type: 'file', x: 300, y: 335 },
+        ],
     iconSize: 80,
     window: {
       height: 400,
@@ -241,6 +256,7 @@ const config = {
     target: ['AppImage', 'snap', 'deb', 'rpm', 'tar.gz'],
   },
   mac: {
+    ...(!hasAppleCertificate && { artifactName: unsignedMacArtifactName }),
     compression: 'maximum',
     entitlementsInherit: 'build/entitlements.mac.plist',
     extendInfo: {
@@ -265,7 +281,7 @@ const config = {
     gatekeeperAssess: false,
     hardenedRuntime: hasAppleCertificate,
     notarize: hasAppleCertificate,
-    ...(hasAppleCertificate ? {} : { identity: null }),
+    ...(hasAppleCertificate ? {} : { identity: '-' }),
     target: [
       { arch: [arch === 'arm64' ? 'arm64' : 'x64'], target: 'dmg' },
       { arch: [arch === 'arm64' ? 'arm64' : 'x64'], target: 'zip' },
@@ -301,11 +317,9 @@ const config = {
   extraResources: [
     { from: 'resources/bin', to: 'bin' },
     { from: 'resources/cli-package.json', to: 'package.json' },
+    ...(process.platform === 'darwin' ? desktopConfigFiles : []),
   ],
-  extraFiles: [
-    { from: 'resources/desktop-config.json', to: 'desktop-config.json' },
-    { from: 'resources/desktop-config.README.txt', to: 'desktop-config.README.txt' },
-  ],
+  extraFiles: process.platform === 'darwin' ? [] : desktopConfigFiles,
 
   win: {
     executableName: 'Masterino',

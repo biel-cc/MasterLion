@@ -150,27 +150,21 @@ git checkout dev-app-update.yml
 
 ### Gatekeeper
 
-本地测试的包未经签名和公证，macOS 会阻止运行。解决方法：
+本地测试包只有 ad-hoc 完整性签名，没有 Apple Developer ID 签名或公证，macOS 会阻止运行。解决方法：
+
+仅对确认来自 Masterino 公司内部可信发布渠道的应用移除隔离属性：
 
 ```bash
-# 临时禁用 Gatekeeper（推荐，测试完成后务必重新启用）
-sudo spctl --master-disable
-
-# 测试完成后
-sudo spctl --master-enable
+xattr -dr com.apple.quarantine /Applications/Masterino.app
 ```
 
-或手动移除隔离属性：
-
-```bash
-xattr -cr /path/to/YourApp.app
-```
+不要全局关闭 Gatekeeper。
 
 ### Squirrel.Mac 更新安装限制
 
 **本地未签名构建无法完成更新的安装步骤。** Squirrel.Mac 要求更新包的签名与当前运行 app 的 designated requirement 匹配。ad-hoc 签名的 DR 包含 `cdhash`（二进制哈希），不同构建的哈希必定不同，因此校验必然失败。
 
-这意味着本地测试能验证到 **下载完成** 为止，但无法安装。CI 中有真实 Apple Developer 证书，不存在此问题。
+这意味着本地测试能验证到 **下载完成** 为止，但无法自动安装。当前 CI 产物同样只有 ad-hoc 签名，没有 Apple Developer ID 签名或公证，只能按上述内部测试流程手动安装。
 
 **可验证的部分（通过日志）：**
 

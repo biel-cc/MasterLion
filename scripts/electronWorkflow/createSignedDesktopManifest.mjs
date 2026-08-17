@@ -27,10 +27,34 @@ if (!/^(?:canary|stable)$/.test(channel) || !/^\d+\.\d+\.\d+$/.test(version)) {
   throw new Error('Invalid desktop update channel or version');
 }
 
+const resolveArtifactFile = (candidates) => {
+  const matches = candidates.filter((file) => fs.existsSync(path.join(releaseDir, file)));
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one release artifact from ${candidates.join(', ')}, found ${matches.length}`,
+    );
+  }
+  return matches[0];
+};
+
 const artifactSpecs = [
   { arch: 'x64', file: `Masterino-${version}-setup.exe`, platform: 'win32' },
-  { arch: 'arm64', file: `Masterino-${version}-arm64.dmg`, platform: 'darwin' },
-  { arch: 'x64', file: `Masterino-${version}-x64.dmg`, platform: 'darwin' },
+  {
+    arch: 'arm64',
+    file: resolveArtifactFile([
+      `Masterino-${version}-unsigned-arm64.dmg`,
+      `Masterino-${version}-arm64.dmg`,
+    ]),
+    platform: 'darwin',
+  },
+  {
+    arch: 'x64',
+    file: resolveArtifactFile([
+      `Masterino-${version}-unsigned-x64.dmg`,
+      `Masterino-${version}-x64.dmg`,
+    ]),
+    platform: 'darwin',
+  },
 ];
 
 const artifacts = artifactSpecs.map(({ arch, file, platform }) => {

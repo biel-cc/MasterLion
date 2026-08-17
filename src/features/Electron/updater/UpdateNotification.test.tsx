@@ -8,6 +8,7 @@ type Handler = (payload: any) => void;
 
 const mocks = vi.hoisted(() => ({
   applyDownloadedUpdate: vi.fn(),
+  copyToClipboard: vi.fn(),
   downloadUpdate: vi.fn(),
   getUpdaterState: vi.fn(),
   handlers: new Map<string, Handler>(),
@@ -39,6 +40,7 @@ vi.mock('@lobehub/ui', () => ({
   Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Icon: () => null,
   Markdown: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  copyToClipboard: mocks.copyToClipboard,
 }));
 
 vi.mock('antd', () => ({
@@ -58,7 +60,10 @@ vi.mock('antd-style', () => ({
   },
 }));
 
-vi.mock('lucide-react', () => ({ CircleFadingArrowUp: () => null }));
+vi.mock('lucide-react', () => ({
+  CircleFadingArrowUp: () => null,
+  TriangleAlert: () => null,
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -84,6 +89,7 @@ describe('UpdateNotification', () => {
     mocks.handlers.clear();
     mocks.applyDownloadedUpdate.mockReset();
     mocks.checkUpdate.mockReset();
+    mocks.copyToClipboard.mockReset().mockResolvedValue(undefined);
     mocks.downloadUpdate.mockReset().mockResolvedValue(undefined);
     mocks.getUpdaterState
       .mockReset()
@@ -114,16 +120,30 @@ describe('UpdateNotification', () => {
     expect(mocks.installNow).not.toHaveBeenCalled();
   });
 
-  it('opens a verified macOS installer after download', async () => {
-    render(<UpdateNotification />);
-    emitUpdaterState({
+  it('shows unsigned macOS instructions before opening the installer', async () => {
+    mocks.getUpdaterState.mockResolvedValueOnce({
       autoDownloadEnabled: true,
       installMode: 'open-dmg',
       stage: 'downloaded',
       updateInfo: { version: '1.1.4' },
     });
+    render(<UpdateNotification />);
 
-    fireEvent.click(screen.getByText('updater.openInstaller'));
+    fireEvent.click(await screen.findByText('updater.openInstaller'));
+    expect(screen.getByText('updater.unsignedMacWarningTitle')).toBeInTheDocument();
+    expect(
+      screen.getByText('xattr -dr com.apple.quarantine /Applications/Masterino.app'),
+    ).toBeInTheDocument();
+    expect(mocks.applyDownloadedUpdate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('updater.copyInstallCommand'));
+    await waitFor(() =>
+      expect(mocks.copyToClipboard).toHaveBeenCalledWith(
+        'xattr -dr com.apple.quarantine /Applications/Masterino.app',
+      ),
+    );
+
+    fireEvent.click(screen.getAllByText('updater.openInstaller')[1]);
     await waitFor(() => expect(mocks.applyDownloadedUpdate).toHaveBeenCalledTimes(1));
   });
 
@@ -150,6 +170,7 @@ describe('UpdateNotification', () => {
       updateInfo: { version: '1.1.4' },
     });
 
+    expect(screen.queryByText('updater.unsignedMacWarningTitle')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('updater.installLater'));
     await waitFor(() => expect(mocks.installLater).toHaveBeenCalledTimes(1));
   });
