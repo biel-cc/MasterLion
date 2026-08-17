@@ -118,6 +118,12 @@ MARKET_TRUSTED_CLIENT_SECRET=your-market-trusted-client-secret
 - `npx` 以及可用的 `tsx`，用于 TypeScript 执行
 - `base64`、`find`、`grep` 等常见 Shell 工具
 
+Masterino 推荐让 `WORKER_PYTHON_EXEC_DOCKER_IMAGE` 与 `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` 指向同一个不可变 digest。官方部署包的均衡版基线还包含 pandas/NumPy/SciPy、matplotlib/seaborn、PyArrow/Polars/DuckDB、openpyxl/XlsxWriter、python-docx/python-pptx、pypdf/ReportLab、OfficeCLI、LibreOffice、Pandoc、Poppler，以及 Noto CJK、Carlito、Caladea 字体。
+
+核心依赖应预装并固定版本。运行时安装只能访问执行项目和版本白名单的内部 Python 镜像代理；不要允许沙箱直连公网 PyPI，也不要把代理凭据烘焙进镜像。
+
+Onlyboxes worker 默认 capacity 不适合 30 个并发任务。生产部署需要显式配置 `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`、`WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`、`WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 以及单容器 CPU、内存和 PID 限制，并通过多 Worker 节点保留故障余量。
+
 使用 Onlyboxes 时的最小配置：
 
 ```bash

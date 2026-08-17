@@ -1,0 +1,40 @@
+# Masterino sandbox runtime add-ons for Ubuntu 24.04 / CPython 3.12.
+#
+# Hashes cover the reviewed amd64 and arm64 Linux wheels. The inherited
+# Onlyboxes image is pinned by digest and supplies the shared numerical,
+# plotting, Office, PDF, and image dependencies. Docker installs this file
+# with --no-deps --require-hashes and then runs pip check, so an unreviewed
+# transitive upgrade cannot enter the runtime silently.
+charset-normalizer==3.5.1 \
+  --hash=sha256:b9af956078716df40d985fb0dfeb2c2120c5ca92ba4ff4b388acfd01cdc14d08 \
+  --hash=sha256:4582c27e8c889d64811987b5967fbd3ae0c823fe1fd933b543d55ac20bb475fa
+duckdb==1.5.5 \
+  --hash=sha256:7a6d2d11859d82a936ebdcb30ce3d8a1cbb3e990bff05c12abb9b54c44fa7bd1 \
+  --hash=sha256:f316eae2323d9a851883fdf2dee91c1f9efe251ab33e14a2272f82a913422ed6
+fastexcel==0.20.2 \
+  --hash=sha256:15d41bcc4433bb3ab778426ecaeaf3a5f38d949555c631a83e958c57bb0a116e \
+  --hash=sha256:cdab3cc439c18c4ee14c4ec2b321e1d927cae84f557525f390a3c28517f6e721
+patsy==1.0.2 \
+  --hash=sha256:37bfddbc58fcf0362febb5f54f10743f8b21dd2aa73dec7e7ef59d1b02ae668a
+polars==1.43.2 \
+  --hash=sha256:22aa0cb92a1ee2d60d6a15a638b2e8e0dd99aea21ac0cd8fb29da8e382e075a9
+polars-runtime-32==1.43.2 \
+  --hash=sha256:6d5a7ae004a2723ebf4427f6d6a639f30f86af4cf077075f6b35d04711154fc3 \
+  --hash=sha256:10ed36e615ab362feb7406e6d084e124b445ad284caa73bd93ae7e65745ed894
+pyarrow==25.0.1 \
+  --hash=sha256:5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3 \
+  --hash=sha256:4340f0ba6c1d2e13f21658de1d7c662ca2545018568d0030a1e9afca159d87e3
+python-pptx==1.0.2 \
+  --hash=sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba
+rapidfuzz==3.14.5 \
+  --hash=sha256:48bee0b91bebfaec41e1081e351000659ab7570cc4598d617aa04d5bf827f9e6 \
+  --hash=sha256:01550fe5f60fd176aa66b7611289d46dc4aa4b1b904874c7b6d1d54e581c5ec1
+seaborn==0.13.2 \
+  --hash=sha256:636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987
+statsmodels==0.14.6 \
+  --hash=sha256:19b58cf7474aa9e7e3b0771a66537148b2df9b5884fbf156096c0e6c1ff0469d \
+  --hash=sha256:d8c00a42863e4f4733ac9d078bbfad816249c01451740e6f5053ecc7db6d6368
+tabulate==0.10.0 \
+  --hash=sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3
+XlsxWriter==3.2.9 \
+  --hash=sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3

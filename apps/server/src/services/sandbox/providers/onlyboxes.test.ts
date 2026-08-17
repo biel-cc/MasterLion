@@ -166,7 +166,11 @@ describe('OnlyboxesSandboxProvider', () => {
     });
 
     expect(result).toMatchObject({
-      error: { message: 'no compatible worker' },
+      error: {
+        code: 'sandbox_capacity_exhausted',
+        message: '沙箱当前繁忙，暂时没有可用执行容量，请稍后再试。',
+        retryable: true,
+      },
       result: null,
       success: false,
     });
@@ -352,7 +356,7 @@ describe('OnlyboxesSandboxProvider', () => {
     expect(body.command).not.toContain('季度报告');
   });
 
-  it('retries transient Office worker capacity failures with bounded backoff', async () => {
+  it('retries transient Office worker capacity failures with bounded jittered backoff', async () => {
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void) => {
       handler();
       return 0;
@@ -465,11 +469,77 @@ describe('OnlyboxesSandboxProvider', () => {
       }),
     ).resolves.toMatchObject({
       error: {
-        code: 'capacity_exhausted',
-        message: 'no online worker capacity',
+        code: 'sandbox_capacity_exhausted',
+        message: '沙箱当前繁忙，暂时没有可用执行容量，请稍后再试。',
         retryable: true,
       },
       success: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('applies the same bounded capacity retry policy to Python execution', async () => {
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void) => {
+      handler();
+      return 0;
+    }) as typeof setTimeout);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 'capacity_exhausted', message: 'no online worker capacity' },
+          }),
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            exit_code: 0,
+            session_id: 'lobe-user-1-topic-1',
+            stderr: '',
+            stdout: '',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            exit_code: 0,
+            session_id: 'lobe-user-1-topic-1',
+            stderr: '',
+            stdout: JSON.stringify({ bytesWritten: 9, success: true }),
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            exit_code: 0,
+            session_id: 'lobe-user-1-topic-1',
+            stderr: '',
+            stdout: '42\n',
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { OnlyboxesSandboxProvider } = await import('./onlyboxes');
+    const provider = new OnlyboxesSandboxProvider({
+      marketService: {} as MarketService,
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    await expect(
+      provider.callTool('executeCode', { code: 'print(42)', language: 'python' }),
+    ).resolves.toMatchObject({
+      result: { exitCode: 0, output: '42\n' },
+      success: true,
     });
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });

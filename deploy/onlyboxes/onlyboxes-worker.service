@@ -1,18 +1,21 @@
 [Unit]
 Description=Masterino Onlyboxes Docker Worker
 Documentation=https://github.com/Coooolfan/onlyboxes
-After=docker.service network-online.target masterino-onlyboxes-console.service
+After=docker.service network-online.target
 Wants=docker.service network-online.target
-Requires=masterino-onlyboxes-console.service
+Requires=docker.service
 
 [Service]
 Type=simple
 User=onlyboxes
 Group=docker
 EnvironmentFile=/etc/masterino/onlyboxes-worker.env
+ExecStartPre=/usr/bin/docker image inspect ${WORKER_TERMINAL_EXEC_DOCKER_IMAGE}
+ExecStartPre=/usr/bin/docker run --rm --network none --memory 2048m --cpus 1.5 --pids-limit 256 ${WORKER_TERMINAL_EXEC_DOCKER_IMAGE} python3 /opt/masterino/runtime-smoke.py --quick
 ExecStart=/opt/onlyboxes/bin/onlyboxes-worker-docker
 Restart=always
 RestartSec=5s
+TimeoutStartSec=300s
 TimeoutStopSec=30s
 NoNewPrivileges=true
 PrivateTmp=true

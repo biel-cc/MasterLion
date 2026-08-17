@@ -1,14 +1,50 @@
-ARG ONLYBOXES_RUNTIME_BASE=boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/onlyboxes-runtime:0.7.1-lobehub
+ARG ONLYBOXES_RUNTIME_BASE
 FROM ${ONLYBOXES_RUNTIME_BASE}
 
+ARG ONLYBOXES_RUNTIME_BASE
 ARG TARGETARCH=amd64
 ARG OFFICECLI_VERSION=1.0.143
+ARG MASTERINO_PYPI_INDEX_URL
+ARG MASTERINO_RUNTIME_BUILD_DATE
+ARG MASTERINO_RUNTIME_SOURCE_REVISION=unknown
+ARG MASTERINO_RUNTIME_VERSION=0.7.1-officecli-1.0.143-pydata1
 
-ENV OFFICECLI_SKIP_UPDATE=1
+ENV MASTERINO_RUNTIME_BASE_IMAGE=${ONLYBOXES_RUNTIME_BASE} \
+    MASTERINO_RUNTIME_BUILD_DATE=${MASTERINO_RUNTIME_BUILD_DATE} \
+    MASTERINO_RUNTIME_SOURCE_REVISION=${MASTERINO_RUNTIME_SOURCE_REVISION} \
+    MASTERINO_RUNTIME_VERSION=${MASTERINO_RUNTIME_VERSION} \
+    OFFICECLI_SKIP_UPDATE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+COPY deploy/onlyboxes/generate-runtime-manifest.py /opt/masterino/generate-runtime-manifest.py
+COPY deploy/onlyboxes/runtime-requirements.txt /opt/masterino/runtime-requirements.txt
+COPY deploy/onlyboxes/runtime-smoke.py /opt/masterino/runtime-smoke.py
 
 USER root
 
 RUN set -eu; \
+    test -n "${ONLYBOXES_RUNTIME_BASE}"; \
+    test -n "${MASTERINO_PYPI_INDEX_URL}"; \
+    test -n "${MASTERINO_RUNTIME_BUILD_DATE}"; \
+    test "${MASTERINO_RUNTIME_SOURCE_REVISION}" != 'unknown'; \
+    case "${ONLYBOXES_RUNTIME_BASE}" in *@sha256:*) ;; *) echo 'ONLYBOXES_RUNTIME_BASE must use an immutable digest' >&2; exit 1 ;; esac; \
+    case "${MASTERINO_PYPI_INDEX_URL}" in http://*|https://*) ;; *) echo 'MASTERINO_PYPI_INDEX_URL must be an HTTP(S) internal proxy' >&2; exit 1 ;; esac; \
+    case "${MASTERINO_PYPI_INDEX_URL}" in *'@'*) echo 'MASTERINO_PYPI_INDEX_URL must not contain credentials' >&2; exit 1 ;; esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      fonts-crosextra-caladea=20200211-2 \
+      fonts-crosextra-carlito=20230309-2; \
+    rm -rf /var/lib/apt/lists/*; \
+    python3 -m pip install \
+      --break-system-packages \
+      --index-url "${MASTERINO_PYPI_INDEX_URL}" \
+      --no-cache-dir \
+      --no-deps \
+      --only-binary=:all: \
+      --require-hashes \
+      --requirement /opt/masterino/runtime-requirements.txt; \
+    python3 -m pip check; \
     case "${TARGETARCH}" in \
       amd64) asset='officecli-linux-x64'; expected='6a29c598a789b57c92c03e560907d3f131a4bd0a068785b1d338a86fc31a58a7' ;; \
       arm64) asset='officecli-linux-arm64'; expected='c50298e4698fcd1b15fe1a0f096405ad260b5c84d4440882582d0bba1e57bd49' ;; \
@@ -21,4 +57,9 @@ RUN set -eu; \
     chmod 0755 /usr/local/bin/officecli; \
     officecli --version; \
     mkdir -p /tmp/masterino-office; \
-    chmod 1777 /tmp/masterino-office
+    chmod 1777 /tmp/masterino-office; \
+    chmod 0755 /opt/masterino/generate-runtime-manifest.py /opt/masterino/runtime-smoke.py; \
+    printf '[global]\nindex-url = %s\ndisable-pip-version-check = true\nno-cache-dir = true\n' \
+      "${MASTERINO_PYPI_INDEX_URL}" > /etc/pip.conf; \
+    python3 /opt/masterino/generate-runtime-manifest.py --output /opt/masterino/runtime-manifest.json; \
+    python3 /opt/masterino/runtime-smoke.py --quick

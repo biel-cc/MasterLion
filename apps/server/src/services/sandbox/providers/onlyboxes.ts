@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 
 import type { SandboxCallToolResult } from '@lobechat/builtin-tool-cloud-sandbox';
+import { metrics } from '@lobechat/observability-otel/api';
 import { isRecord } from '@lobechat/utils';
 import debug from 'debug';
 import { sha256 } from 'js-sha256';
@@ -19,6 +20,38 @@ import type {
 } from '../types';
 
 const log = debug('lobe-server:sandbox:onlyboxes');
+const meter = metrics.getMeter('server-services-sandbox-onlyboxes');
+const sandboxRequestCounter = meter.createCounter('sandbox_onlyboxes_tool_requests_total', {
+  description: 'Count of Onlyboxes sandbox tool requests by tool, outcome, and error code.',
+  unit: '{request}',
+});
+const sandboxRequestDuration = meter.createHistogram('sandbox_onlyboxes_tool_duration_ms', {
+  description: 'Duration of Onlyboxes sandbox tool requests.',
+  unit: 'ms',
+});
+const sandboxRetryCounter = meter.createCounter('sandbox_onlyboxes_worker_retries_total', {
+  description: 'Count of retries caused by unavailable Onlyboxes worker capacity.',
+  unit: '{retry}',
+});
+const sandboxCapacityErrorCounter = meter.createCounter(
+  'sandbox_onlyboxes_capacity_exhausted_total',
+  {
+    description: 'Count of Onlyboxes requests that exhausted worker-capacity retries.',
+    unit: '{error}',
+  },
+);
+const sandboxFailureCounter = meter.createCounter('sandbox_onlyboxes_failures_total', {
+  description: 'Count of Onlyboxes sandbox failures by failure kind and operation.',
+  unit: '{error}',
+});
+const sandboxExportCounter = meter.createCounter('sandbox_onlyboxes_exports_total', {
+  description: 'Count of Onlyboxes file exports by outcome and failure kind.',
+  unit: '{export}',
+});
+const sandboxExportDuration = meter.createHistogram('sandbox_onlyboxes_export_duration_ms', {
+  description: 'Duration of Onlyboxes file exports.',
+  unit: 'ms',
+});
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const OFFICE_TIMEOUT_MS = 180_000;
@@ -28,7 +61,9 @@ const DEFAULT_JIT_TTL_SEC = 1800;
 const JIT_TOKEN_PREFIX = 'obx_jit_v1.';
 const WRITE_FILE_CHUNK_BYTES = 48 * 1024;
 const SKILL_ARCHIVE_CACHE_DIR = '/tmp/lobe-skills';
-const OFFICE_RETRY_DELAYS_MS = [2000, 5000, 10_000] as const;
+const WORKER_RETRY_DELAYS_MS = [2000, 5000, 10_000] as const;
+const CAPACITY_ERROR_CODE = 'sandbox_capacity_exhausted';
+const CAPACITY_ERROR_MESSAGE = '沙箱当前繁忙，暂时没有可用执行容量，请稍后再试。';
 
 class OnlyboxesRequestError extends Error {
   code?: string;
@@ -63,8 +98,23 @@ const isRetryableWorkerError = (code: string | undefined, message: string) => {
     value.includes('no compatible worker') ||
     value.includes('no_worker') ||
     value.includes('worker_offline') ||
+    value.includes('session_capacity_exceeded') ||
     value.includes('capacity_exhausted')
   );
+};
+
+const classifyFailure = (code: string | undefined, message: string) => {
+  const value = `${code || ''} ${message}`.toLowerCase();
+
+  if (code === CAPACITY_ERROR_CODE || isRetryableWorkerError(code, message)) return 'capacity';
+  if (value.includes('out of memory') || value.includes('oom') || value.includes('memory limit')) {
+    return 'oom';
+  }
+  if (value.includes('timeout') || value.includes('timed out') || value.includes('deadline')) {
+    return 'timeout';
+  }
+
+  return 'other';
 };
 
 interface OnlyboxesTaskResponse {
@@ -118,6 +168,34 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     toolName: string,
     params: Record<string, unknown>,
   ): Promise<SandboxCallToolResult> {
+    const startedAt = performance.now();
+    const result = await this.callToolWithErrorHandling(toolName, params);
+    const errorCode = result.error?.code || result.error?.name || 'none';
+    const attributes = {
+      'sandbox.error_code': errorCode,
+      'sandbox.outcome': result.success ? 'success' : 'error',
+      'sandbox.tool': toolName,
+    };
+
+    sandboxRequestCounter.add(1, attributes);
+    sandboxRequestDuration.record(performance.now() - startedAt, attributes);
+    if (errorCode === CAPACITY_ERROR_CODE) {
+      sandboxCapacityErrorCounter.add(1, { 'sandbox.tool': toolName });
+    }
+    if (!result.success) {
+      sandboxFailureCounter.add(1, {
+        'sandbox.failure_kind': classifyFailure(result.error?.code, result.error?.message || ''),
+        'sandbox.operation': toolName,
+      });
+    }
+
+    return result;
+  }
+
+  private async callToolWithErrorHandling(
+    toolName: string,
+    params: Record<string, unknown>,
+  ): Promise<SandboxCallToolResult> {
     if (!this.baseUrl || !this.jitSigningKey) {
       return this.errorResult('ONLYBOXES_BASE_URL and ONLYBOXES_JIT_SIGNING_KEY are required');
     }
@@ -133,7 +211,7 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
             return this.errorResult('OfficeCLI document tools are disabled');
           }
 
-          return await this.runOfficeJsonScriptWithRetry(
+          return await this.runJsonScript(
             officeCliScript,
             { ...params, action: toolName },
             Math.min(Math.max(this.timeout(params), OFFICE_TIMEOUT_MS), 300_000),
@@ -227,6 +305,8 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     } catch (error) {
       log('Onlyboxes tool %s failed: %O', toolName, error);
       if (error instanceof OnlyboxesRequestError) {
+        if (error.retryable) return this.capacityErrorResult();
+
         return this.errorResult(error.message, error.name, error.code, error.retryable);
       }
 
@@ -235,6 +315,37 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
   }
 
   async exportFileToUploadUrl({
+    path,
+    uploadHeaders,
+    uploadUrl,
+  }: SandboxProviderFileExportRequest): Promise<SandboxProviderFileExportResult> {
+    const startedAt = performance.now();
+    const result = await this.exportFileToUploadUrlWithErrorHandling({
+      path,
+      uploadHeaders,
+      uploadUrl,
+    });
+    const failureKind = result.success
+      ? 'none'
+      : classifyFailure(result.error?.code, result.error?.message || '');
+    const attributes = {
+      'sandbox.failure_kind': failureKind,
+      'sandbox.outcome': result.success ? 'success' : 'error',
+    };
+
+    sandboxExportCounter.add(1, attributes);
+    sandboxExportDuration.record(performance.now() - startedAt, attributes);
+    if (!result.success) {
+      sandboxFailureCounter.add(1, {
+        'sandbox.failure_kind': failureKind,
+        'sandbox.operation': 'exportFile',
+      });
+    }
+
+    return result;
+  }
+
+  private async exportFileToUploadUrlWithErrorHandling({
     path,
     uploadHeaders,
     uploadUrl,
@@ -258,6 +369,17 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       });
 
       if (task.status !== 'succeeded') {
+        if (isRetryableWorkerError(task.error?.code, task.error?.message || '')) {
+          return {
+            error: {
+              code: CAPACITY_ERROR_CODE,
+              message: CAPACITY_ERROR_MESSAGE,
+              retryable: true,
+            },
+            success: false,
+          };
+        }
+
         return {
           error: { message: task.error?.message || 'Failed to export file from Onlyboxes sandbox' },
           success: false,
@@ -272,6 +394,17 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       };
     } catch (error) {
       log('Onlyboxes export failed: %O', error);
+      if (error instanceof OnlyboxesRequestError && error.retryable) {
+        return {
+          error: {
+            code: CAPACITY_ERROR_CODE,
+            message: CAPACITY_ERROR_MESSAGE,
+            retryable: true,
+          },
+          success: false,
+        };
+      }
+
       return {
         error: { message: (error as Error).message },
         success: false,
@@ -437,6 +570,10 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       );
 
       if (task.error || !task.task_id) {
+        if (isRetryableWorkerError(task.error?.code, task.error?.message || '')) {
+          return this.capacityErrorResult();
+        }
+
         return this.errorResult(
           task.error?.message || task.error?.code || 'Failed to start Onlyboxes background command',
         );
@@ -714,22 +851,25 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     }
   }
 
-  private async runOfficeJsonScriptWithRetry(
-    script: string,
-    params: Record<string, unknown>,
-    timeoutMs: number,
-  ): Promise<SandboxCallToolResult> {
-    for (let attempt = 0; ; attempt++) {
+  private async withWorkerRetry<T>(label: string, operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.runJsonScript(script, params, timeoutMs);
+        return await operation();
       } catch (error) {
         const retryable = error instanceof OnlyboxesRequestError && error.retryable;
-        const retryDelay = OFFICE_RETRY_DELAYS_MS[attempt];
+        const baseDelay = WORKER_RETRY_DELAYS_MS[attempt];
 
-        if (!retryable || retryDelay === undefined) throw error;
+        if (!retryable || baseDelay === undefined) throw error;
+
+        const retryDelay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+        sandboxRetryCounter.add(1, {
+          'sandbox.capability': label,
+          'sandbox.retry_attempt': attempt + 1,
+        });
 
         log(
-          'Onlyboxes Office worker unavailable; retrying attempt %d in %dms',
+          'Onlyboxes worker unavailable for %s; retrying attempt %d in %dms',
+          label,
           attempt + 2,
           retryDelay,
         );
@@ -739,16 +879,18 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
   }
 
   private async execTerminal(command: string, timeoutMs = DEFAULT_TIMEOUT_MS) {
-    return this.request<TerminalExecResult>('/api/v1/commands/terminal', {
-      body: JSON.stringify({
-        command,
-        create_if_missing: true,
-        lease_ttl_sec: this.leaseTTLSec,
-        session_id: this.sessionId,
-        timeout_ms: timeoutMs,
+    return this.withWorkerRetry('terminalExec', () =>
+      this.request<TerminalExecResult>('/api/v1/commands/terminal', {
+        body: JSON.stringify({
+          command,
+          create_if_missing: true,
+          lease_ttl_sec: this.leaseTTLSec,
+          session_id: this.sessionId,
+          timeout_ms: timeoutMs,
+        }),
+        method: 'POST',
       }),
-      method: 'POST',
-    });
+    );
   }
 
   private async ensureSession() {
@@ -760,16 +902,22 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
     input: Record<string, unknown>,
     options?: { mode?: 'async' | 'auto' | 'sync'; timeoutMs?: number },
   ) {
-    return this.request<OnlyboxesTaskResponse>('/api/v1/tasks', {
-      body: JSON.stringify({
-        capability,
-        input,
-        mode: options?.mode || 'sync',
-        timeout_ms: options?.timeoutMs || DEFAULT_TIMEOUT_MS,
-        wait_ms: options?.mode === 'async' ? 1 : EXPORT_TASK_WAIT_MS,
-      }),
-      method: 'POST',
-    });
+    const operation = () =>
+      this.request<OnlyboxesTaskResponse>('/api/v1/tasks', {
+        body: JSON.stringify({
+          capability,
+          input,
+          mode: options?.mode || 'sync',
+          timeout_ms: options?.timeoutMs || DEFAULT_TIMEOUT_MS,
+          wait_ms: options?.mode === 'async' ? 1 : EXPORT_TASK_WAIT_MS,
+        }),
+        method: 'POST',
+      });
+
+    // Retrying an acknowledged asynchronous submission could duplicate a
+    // background command. Synchronous resource tasks are safe to resubmit only
+    // when Console explicitly rejected them for lack of worker capacity.
+    return options?.mode === 'async' ? operation() : this.withWorkerRetry(capability, operation);
   }
 
   private async request<T>(path: string, init: RequestInit): Promise<T> {
@@ -837,6 +985,15 @@ export class OnlyboxesSandboxProvider implements SandboxProvider {
       result: null,
       success: false,
     };
+  }
+
+  private capacityErrorResult(): SandboxCallToolResult {
+    return this.errorResult(
+      CAPACITY_ERROR_MESSAGE,
+      'OnlyboxesRequestError',
+      CAPACITY_ERROR_CODE,
+      true,
+    );
   }
 }
 
