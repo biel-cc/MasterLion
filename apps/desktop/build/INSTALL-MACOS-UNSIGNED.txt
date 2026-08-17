@@ -1,0 +1,28 @@
+Masterino macOS internal test build / 内部测试版安装说明
+=========================================================
+
+This build does not have an Apple Developer ID signature and is not notarized.
+It only has an ad-hoc integrity signature. Only install it when you obtained the
+DMG from Masterino's trusted internal release channel.
+
+此版本没有 Apple Developer ID 签名且未经公证，只包含用于保证应用包完整性的 ad-hoc 签名。
+仅当 DMG 来自 Masterino 公司内部可信发布渠道时继续安装。
+
+Installation / 安装步骤
+-----------------------
+
+1. Drag Masterino into Applications.
+   将 Masterino 拖入 Applications（应用程序）文件夹。
+
+2. Open Terminal and run this command:
+   打开“终端”，运行以下命令：
+
+   xattr -dr com.apple.quarantine /Applications/Masterino.app
+
+3. Open Masterino from Applications.
+   从 Applications（应用程序）中打开 Masterino。
+
+Do not disable Gatekeeper globally. The command above only removes the quarantine
+attribute from this trusted Masterino application.
+
+请勿全局关闭 Gatekeeper。以上命令只会移除这个可信 Masterino 应用的隔离属性。
