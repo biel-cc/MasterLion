@@ -87,7 +87,13 @@ function Stop-PortForwards {
 }
 
 function Remove-TempFiles {
-  foreach ($f in @($KUBECONFIG_FILE, $ENV_FILE, $PID_FILE)) {
+  # Onlyboxes 的 JIT 签名密钥与 CA 属敏感文件，必须一并删除。
+  $files = @(
+    $KUBECONFIG_FILE, $ENV_FILE, $PID_FILE,
+    (Join-Path $STATE_DIR 'onlyboxes-jit-key.txt'),
+    (Join-Path $STATE_DIR 'onlyboxes-ca.pem')
+  )
+  foreach ($f in $files) {
     if (Test-Path $f) {
       Remove-Item -Path $f -Force -ErrorAction SilentlyContinue
       Write-Log "removed $f"
@@ -95,7 +101,7 @@ function Remove-TempFiles {
   }
   if (-not $KeepState) {
     # 保留 dev-image.json 状态（便于复用 digest），只清理敏感文件。
-    Write-Log 'temp kubeconfig / env / pid files removed'
+    Write-Log 'temp kubeconfig / env / pid / onlyboxes key & CA files removed'
   }
 }
 

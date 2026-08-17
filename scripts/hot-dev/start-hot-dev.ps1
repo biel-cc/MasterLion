@@ -43,6 +43,12 @@ $ENV_FILE = Join-Path $STATE_DIR 'hot.env'
 $PID_FILE = Join-Path $STATE_DIR 'port-forward-pids.txt'
 $DEV_IMAGE_FILE = Join-Path $STATE_DIR 'dev-image.json'
 $LOG_FILE = Join-Path $STATE_DIR 'start.log'
+# Onlyboxes 沙箱复用测试环境：JIT 签名密钥与内部 CA 证书。
+$ONLYBOXES_KEY_FILE = Join-Path $STATE_DIR 'onlyboxes-jit-key.txt'
+$ONLYBOXES_CA_FILE = Join-Path $STATE_DIR 'onlyboxes-ca.pem'
+$ONLYBOXES_SECRET = 'masterino-onlyboxes-secret'
+$ONLYBOXES_CA_CM = 'masterino-onlyboxes-ca'
+$ONLYBOXES_INTERNAL_IP = '10.80.137.220'
 
 # 端口转发映射：本机端口 -> 集群 Service 与远端端口。
 $FORWARDS = @(
@@ -237,6 +243,32 @@ function Build-EnvFile {
     $lines.Add("APP_URL_ALLOWED_HOSTS=$allowedHosts")
   }
 
+  # Onlyboxes 沙箱：从测试环境读取 JIT 签名密钥与内部 CA，注入本地容器。
+  # 密钥只写入 %TEMP% 且 icacls 限当前用户，退出时由 stop 脚本删除。
+  Write-Log "Reading Onlyboxes JIT signing key from Secret $ONLYBOXES_SECRET"
+  $obKey = & kubectl --kubeconfig $KUBECONFIG_FILE --context $ACK_CONTEXT get secret $ONLYBOXES_SECRET -n $NAMESPACE -o jsonpath='{.data.ONLYBOXES_JIT_SIGNING_KEY}' 2>&1
+  if ($LASTEXITCODE -ne 0 -or -not $obKey) {
+    Write-Log '  [WARN] Onlyboxes JIT signing key not found; sandbox features will be unavailable'
+  } else {
+    $obKeyBytes = [Convert]::FromBase64String(($obKey -join ''))
+    $obKeyText = [System.Text.Encoding]::UTF8.GetString($obKeyBytes)
+    Set-Content -Path $ONLYBOXES_KEY_FILE -Value $obKeyText -Encoding utf8 -NoNewline
+    icacls $ONLYBOXES_KEY_FILE /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
+    $lines.Add("ONLYBOXES_JIT_SIGNING_KEY=$obKeyText")
+    Write-Log '  [OK] Onlyboxes JIT signing key injected'
+  }
+
+  Write-Log "Reading Onlyboxes CA cert from ConfigMap $ONLYBOXES_CA_CM"
+  $obCa = & kubectl --kubeconfig $KUBECONFIG_FILE --context $ACK_CONTEXT get configmap $ONLYBOXES_CA_CM -n $NAMESPACE -o jsonpath='{.data.onlyboxes-internal-ca\.crt}' 2>&1
+  if ($LASTEXITCODE -ne 0 -or -not $obCa) {
+    Write-Log '  [WARN] Onlyboxes CA cert not found; TLS to sandbox may fail'
+  } else {
+    $obCaText = ($obCa -join "`n")
+    Set-Content -Path $ONLYBOXES_CA_FILE -Value $obCaText -Encoding ascii -NoNewline
+    icacls $ONLYBOXES_CA_FILE /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
+    Write-Log "  [OK] Onlyboxes CA written to $ONLYBOXES_CA_FILE"
+  }
+
   $lines | Set-Content -Path $ENV_FILE -Encoding utf8
   icacls $ENV_FILE /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
   Write-Log "Temp env file written to $ENV_FILE ($($lines.Count) entries)"
@@ -301,12 +333,15 @@ function Run-Preflight {
     }
   }
 
-  # Onlyboxes 沙箱非硬阻塞，但必须提示。
+  # Onlyboxes 沙箱非硬阻塞，但必须提示；有密钥才认为可配置。
   $onlyboxes = 'https://onlyboxes.internal.bielcrystal.com'
+  $obConfigured = (Test-Path $ONLYBOXES_KEY_FILE)
   if (-not (Test-Http $onlyboxes)) {
     Write-Log "  [WARN] Onlyboxes sandbox ($onlyboxes) is unreachable - sandbox features are unavailable, other features are not blocked"
+  } elseif (-not $obConfigured) {
+    Write-Log "  [WARN] Onlyboxes sandbox reachable but JIT signing key not injected - sandbox features are unavailable"
   } else {
-    Write-Log "  [OK] Onlyboxes sandbox reachable"
+    Write-Log "  [OK] Onlyboxes sandbox reachable and configured"
   }
 
   if ($failed) {
@@ -333,6 +368,11 @@ function Start-Compose([string]$ImageRef) {
   $env:MASTERLION_DEV_IMAGE = $ImageRef
   $env:LOBE_PORT = '3210'
   $env:VITE_DEV_PORT = '9876'
+  # Onlyboxes 沙箱：CA 文件路径与固定内网 IP 注入 compose 插值。
+  if (Test-Path $ONLYBOXES_CA_FILE) {
+    $env:HOT_DEV_CA_FILE = $ONLYBOXES_CA_FILE
+  }
+  $env:ONLYBOXES_INTERNAL_IP = $ONLYBOXES_INTERNAL_IP
 
   # --env-file 提供 ${VAR} 插值；--no-deps 固定不拉起任何依赖服务。
   # PS 5.1 下 ErrorActionPreference=Stop 会把 docker compose 的 stderr 进度

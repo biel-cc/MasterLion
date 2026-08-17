@@ -72,10 +72,23 @@ services:
       - 'AGENTS_INDEX_URL=${AGENTS_INDEX_URL:-https://mlai-test.bielcrystal.com/market/indexes/agents}'
       - 'PLUGINS_INDEX_URL=${PLUGINS_INDEX_URL:-https://mlai-test.bielcrystal.com/market/indexes/plugins}'
       - 'DEVICE_GATEWAY_URL=${DEVICE_GATEWAY_URL:-https://mlai-test.bielcrystal.com/device-gateway}'
+      # Onlyboxes 沙箱（测试环境复用）：容器内通过 extra_hosts 固定域名到
+      # 沙箱节点内网 IP（与测试 Pod 的 hostAliases 一致）；JIT 签名密钥和
+      # CA 证书由 start-hot-dev.ps1 从测试环境 Secret/ConfigMap 提取注入。
+      - 'SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-onlyboxes}'
+      - 'ONLYBOXES_BASE_URL=${ONLYBOXES_BASE_URL:-https://onlyboxes.internal.bielcrystal.com}'
+      - 'ONLYBOXES_JIT_ISSUER=${ONLYBOXES_JIT_ISSUER:-https://mlai-test.bielcrystal.com}'
+      - 'ONLYBOXES_JIT_SIGNING_KEY=${ONLYBOXES_JIT_SIGNING_KEY:?Set ONLYBOXES_JIT_SIGNING_KEY}'
+      - 'ONLYBOXES_JIT_TTL_SEC=${ONLYBOXES_JIT_TTL_SEC:-1800}'
+      - 'ONLYBOXES_LEASE_TTL_SEC=${ONLYBOXES_LEASE_TTL_SEC:-900}'
+      - 'OFFICECLI_ENABLED=${OFFICECLI_ENABLED:-true}'
+      - 'NODE_EXTRA_CA_CERTS=/etc/ssl/masterino-onlyboxes-ca.crt'
       - 'RUN_HOT_DB_MIGRATE=0'
       - 'ALIBABA_CLOUD_ECS_METADATA_DISABLED=true'
       - 'ALIBABA_CLOUD_IMDSV1_DISABLE=true'
       - 'AWS_EC2_METADATA_DISABLED=true'
+    extra_hosts:
+      - 'onlyboxes.internal.bielcrystal.com:${ONLYBOXES_INTERNAL_IP:-10.80.137.220}'
     volumes:
       - '../../src:/app/src'
       - '../../packages:/app/packages'
@@ -87,6 +100,7 @@ services:
       - '../../index.auth.html:/app/index.auth.html'
       - '../../package.json:/app/package.json'
       - '../../pnpm-workspace.yaml:/app/pnpm-workspace.yaml'
+      - '${HOT_DEV_CA_FILE:-./onlyboxes-ca.pem}:/etc/ssl/masterino-onlyboxes-ca.crt:ro'
       - 'masterino_hot_next:/app/.next'
     command:
       - /bin/sh
