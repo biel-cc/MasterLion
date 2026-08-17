@@ -1,6 +1,6 @@
 import type { MainBroadcastEventKey, MainBroadcastParams } from '@lobechat/electron-client-ipc';
+import { app } from 'electron';
 
-import { name } from '@/../../package.json';
 import { isMac } from '@/const/env';
 import { createLogger } from '@/utils/logger';
 
@@ -87,7 +87,7 @@ export class TrayManager {
       iconPath: isMac ? 'trayTemplate.png' : 'tray.png',
       identifier: 'main',
       isTemplateImage: isMac,
-      tooltip: name,
+      tooltip: app.getName(),
     });
   }
 

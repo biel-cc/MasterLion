@@ -167,6 +167,14 @@ describe('I18nManager', () => {
       expect(mockLoadResources).toHaveBeenCalledWith('en-US', 'common');
     });
 
+    it('should register English fallback resources before a non-English locale', async () => {
+      await manager.init('zh-CN');
+
+      const calls = mockLoadResources.mock.calls.map(([lng, ns]) => `${lng}/${ns}`);
+      expect(calls.slice(0, 3)).toEqual(['en/menu', 'en/dialog', 'en/common']);
+      expect(calls.slice(3)).toEqual(['zh-CN/menu', 'zh-CN/dialog', 'zh-CN/common']);
+    });
+
     it('should refresh main UI after init', async () => {
       await manager.init();
 
@@ -311,6 +319,9 @@ describe('I18nManager', () => {
       await languageChangedHandler('ja-JP');
 
       // Should load resources for new language
+      expect(mockLoadResources).toHaveBeenCalledWith('en', 'menu');
+      expect(mockLoadResources).toHaveBeenCalledWith('en', 'dialog');
+      expect(mockLoadResources).toHaveBeenCalledWith('en', 'common');
       expect(mockLoadResources).toHaveBeenCalledWith('ja-JP', 'menu');
       expect(mockLoadResources).toHaveBeenCalledWith('ja-JP', 'dialog');
       expect(mockLoadResources).toHaveBeenCalledWith('ja-JP', 'common');

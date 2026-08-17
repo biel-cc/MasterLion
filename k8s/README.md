@@ -3,6 +3,8 @@
 The manifests are split into a shared workload base and environment-specific overlays:
 
 - `overlays/production`: `masterino` namespace and production domain/configuration.
+- `overlays/production-gateway-cutover`: the separately guarded production Device Gateway Ingress;
+  apply it only after the in-cluster Gateway health and authentication checks pass.
 - `overlays/production-maintenance`: standalone maintenance page for introducing
   `masterino.bielcrystal.com` in the current legacy production namespace without changing the
   existing application or data stack.
@@ -46,6 +48,13 @@ and WebSocket traffic. Create `masterino-device-gateway-secret` from a random `S
 public-only JWKS derived from `masterino-secret/JWKS_KEY`; never copy private RSA fields into the
 gateway Secret.
 The test overlay pins the ACR image by digest; update the digest only after a reviewed ACR build.
+
+Production uses the same reviewed Gateway digest and single-replica security profile. The main
+production overlay installs only its Deployment, ClusterIP Service, internal Masterino URL, and
+Secret reference. Run `deploy.sh --env production gateway-cutover` to install the public
+`/device-gateway` Ingress after private validation, or `gateway-rollback` to remove that exact
+Ingress without affecting the main site. See
+`docs/operations/device-gateway-production-release.md` for the guarded sequence.
 
 Before deploying the test rollout:
 

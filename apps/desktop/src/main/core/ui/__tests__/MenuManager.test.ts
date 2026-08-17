@@ -40,6 +40,7 @@ describe('MenuManager', () => {
   let menuManager: MenuManager;
   let mockApp: App;
   let mockMenu: any;
+  let mockTray: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,8 +52,16 @@ describe('MenuManager', () => {
       insert: vi.fn(),
     };
 
+    mockTray = {
+      setMenu: vi.fn(),
+    };
+
     // Mock App
-    mockApp = {} as unknown as App;
+    mockApp = {
+      trayManager: {
+        getMainTray: vi.fn(() => mockTray),
+      },
+    } as unknown as App;
 
     // Setup mock returns
     mockBuildContextMenu.mockReturnValue(mockMenu);
@@ -165,6 +174,20 @@ describe('MenuManager', () => {
       menuManager.refreshMenus();
 
       expect(mockRefresh).toHaveBeenCalled();
+    });
+
+    it('should rebuild and reattach the tray menu', () => {
+      menuManager.refreshMenus();
+
+      expect(mockBuildTrayMenu).toHaveBeenCalledTimes(1);
+      expect(mockTray.setMenu).toHaveBeenCalledWith(mockMenu);
+    });
+
+    it('should refresh safely before the tray is initialized', () => {
+      vi.mocked(mockApp.trayManager.getMainTray).mockReturnValue(undefined);
+
+      expect(menuManager.refreshMenus()).toEqual({ success: true });
+      expect(mockBuildTrayMenu).not.toHaveBeenCalled();
     });
   });
 

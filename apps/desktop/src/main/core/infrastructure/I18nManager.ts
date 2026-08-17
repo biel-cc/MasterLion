@@ -55,7 +55,7 @@ export class I18nManager {
     logger.info(`i18n initialized, language: ${this.i18n.language}`);
 
     // Preload base namespaces
-    await this.loadLocale(this.i18n.language);
+    await this.loadLocale(defaultLanguage);
 
     this.initialized = true;
 
@@ -152,8 +152,17 @@ export class I18nManager {
 
   private async loadLocale(language: string) {
     logger.debug(`Loading locale for language: ${language}`);
-    // Preload base namespaces
-    await Promise.all(['menu', 'dialog', 'common'].map((ns) => this.loadNamespace(language, ns)));
+    const namespaces = ['menu', 'dialog', 'common'];
+    const usesDefaultEnglish = language === 'en' || language.startsWith('en-');
+
+    // i18next cannot use fallbackLng until the fallback resources have actually
+    // been registered. Load English first for every non-English locale, then
+    // overlay the requested language so missing keys display English, not keys.
+    if (!usesDefaultEnglish) {
+      await Promise.all(namespaces.map((ns) => this.loadNamespace('en', ns)));
+    }
+
+    await Promise.all(namespaces.map((ns) => this.loadNamespace(language, ns)));
   }
 
   /**

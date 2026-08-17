@@ -1,80 +1,122 @@
 # Device Gateway 生产发布清单
 
-本文用于把已在 `mlai-test.bielcrystal.com` 验收的 Device Gateway 与桌面客户端
-`1.1.2` 发布到 `masterino.bielcrystal.com`。合并代码不等于完成生产发布；必须按以下阶段
-执行，并在每个阶段保留可回滚的不可变镜像 digest 和旧资源快照。
+本文用于把已在 `mlai-test.bielcrystal.com` 验收的 Device Gateway 部署到
+`masterino.bielcrystal.com`。网关 Deployment 与 Service 属于生产 overlay；公网 Ingress
+独立放在 cutover overlay，只有私网检查通过后才允许创建。
 
-## 当前边界
+## 固定边界
 
-- 测试网关镜像已验证的 digest 为
-  `sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d`。
-- 当前仓库只包含 `masterino-test` 的 Device Gateway Deployment、Service、Ingress 和
-  `create-gateway-secret` 受控命令；生产 overlay 尚未包含这些资源。
-- `deploy.sh --env test create-gateway-secret` 只能操作测试环境，禁止把测试 Secret 文件、
-  `SERVICE_TOKEN` 或测试 JWKS 复制到生产。
-- 桌面正式构建已指向 `https://masterino.bielcrystal.com/device-gateway`；只有生产 Ingress
-  就绪后才能发布正式客户端，否则客户端会持续离线。
+- namespace：`masterino`
+- Gateway 镜像：
+  `sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d`
+- 内部地址：`http://masterino-device-gateway:8788`
+- 公网地址：`https://masterino.bielcrystal.com/device-gateway`
+- Gateway 保持单副本；当前版本把活动连接保存在进程内存中。
+- 生产 `SERVICE_TOKEN` 和由生产 `JWKS_KEY` 派生的 public-only RS256 JWKS 必须存放在
+  仓库外；不得复用测试 Secret、提交到 Git 或输出私钥字段。
 
-## 发布前必须补齐
+生产 Gateway 资源位于：
 
-1. 新增并评审生产专用的 Device Gateway Deployment、Service 和 Ingress：
-   - namespace 固定为 `masterino`；
-   - Ingress host 固定为 `masterino.bielcrystal.com`，路径为
-     `/device-gateway(/|$)(.*)`，保留 WebSocket upgrade、rewrite 和长连接超时；
-   - 镜像必须使用 ACR 产出的不可变 `image@sha256:digest`，不得使用可变 tag；
-   - 保留 non-root、只读根文件系统、最小 capabilities、requests/limits 和 readiness probe。
-2. 增加生产受控 Secret 流程，要求显式生产确认变量、ACK context 与 API Server 校验。
-   Secret 名称可以沿用 `masterino-device-gateway-secret`，但内容必须重新生成：
-   - `SERVICE_TOKEN` 使用生产专用随机值，至少 32 字符；
-   - `JWKS_PUBLIC_KEY` 只从生产 `masterino-secret/JWKS_KEY` 派生 `kty`、`n`、`e`、
-     `kid`、`alg`、`use` 公共字段；严禁包含 `d`、`p`、`q`、`dp`、`dq`、`qi`；
-   - 必须使用 `--from-literal` 写入 JSON，并在写入后逐字节校验，不能使用会剥离双引号的
-     `kubectl --from-env-file`。
-3. 确认生产 Masterino Deployment 引用同一个生产 `SERVICE_TOKEN`，并设置内部
-   `DEVICE_GATEWAY_URL=http://masterino-device-gateway:8788`。Token 不得进入 ConfigMap、
-   GitHub artifact、构建日志或浏览器。
-4. 通过本地 `aliyun` CLI 提交 Alibaba Cloud ACR 构建；不得在开发机本地构建或推送
-   Docker 镜像。记录构建 ID、源码 SHA、镜像 digest 和 ACR 构建中的 `go test ./...` 结果。
+- `k8s/overlays/production/device-gateway.yaml`
+- `k8s/overlays/production-gateway-cutover/device-gateway-ingress.yaml`
+- `k8s/overlays/production/device-gateway-secret.env.example`
 
-## 推荐发布顺序
+## 发布前准备
 
-1. 在独立生产发布 PR 中加入生产资源、受控 Secret 命令、render/validate 检查和回滚步骤。
-2. 对生产 overlay 执行客户端 render、schema 校验和 server-side dry-run，确认只新增网关资源
-   及预期的 Masterino 环境变量，不覆盖现有 Ingress 根路径、TLS Secret、数据库或 OSS 配置。
-3. 通过 `aliyun cs` 获取短期 ACK 凭据，先执行只读 preflight；人工核对 cluster ID、region、
-   context、API Server、namespace 注解及当前工作负载快照。
-4. 创建生产网关 Secret，随后部署 Deployment/Service；先只做集群内健康检查，不创建公网
-   Ingress。
-5. 验证 `/health`、有效 JWT、无效 JWT、`sub` 不匹配、未认证超时、Service Token 规则及
-   Secret/日志无敏感数据后，再应用生产 Ingress。
-6. 从公网验证：
-   - `https://masterino.bielcrystal.com/device-gateway/health` 返回 200；
-   - WebSocket URL 不携带 `userId` 也能升级，并在首条有效 JWT 后收到 `auth_success`；
-   - `auth_success.userId` 与服务端验签后的 `sub` 一致；
-   - API Key 仍通过对应 Masterino 生产服务验证，Service Token 仍强制显式 `userId`。
-7. 先让少量内部账号使用生产指向的 `1.1.2` 客户端验收至少一小时，再发布 OSS canary：
-   - 登录后 15 秒内在线，服务端 `online=true` 且设备数量正确；
-   - 设备列表、系统信息、工作区扫描、只读文件操作和安全本地工具调用正常；
-   - 断网恢复、休眠唤醒、Token 刷新后自动重连；
-   - 开关保持用户启用意图，只有真正 `auth_success` 才显示绿色在线。
-8. 手动运行 `Build Unsigned Desktop`，版本输入 `1.1.2`，确认三个平台构建和 OSS 校验成功后，
-   再检查 Draft Release。正式发布前确认 OSS 当前 manifest 最后写入，所有引用对象 HTTP 200、
-   size 与 SHA512 一致。
+1. 准备仓库外的生产 `KUBECONFIG`，并记录 `ACK_CONTEXT` 和 API Server。
+2. 准备当前生产 Masterino 与 Aihub DB Bridge 的不可变镜像 digest。
+3. 从 `device-gateway-secret.env.example` 创建仓库外临时文件：
+   - `SERVICE_TOKEN` 使用全新随机值，至少 32 字符；
+   - `JWKS_PUBLIC_KEY` 只能包含 `kty`、`n`、`e`、`kid`、`alg`、`use`；
+   - JWKS 必须由生产 `masterino-secret/JWKS_KEY` 派生。
+4. 不要把 Secret 内容写入 shell history、终端日志、GitHub artifact 或 PR。
 
-## 监控与回滚
+所有命令都必须显式带生产凭据与镜像 digest：
 
-- 重点监控 WebSocket 400/401、JWT 验签失败、用户不匹配、认证超时、心跳超时、重连数量、
-  Pod 重启和内存；日志不得记录 Token 或完整用户 ID。
-- 网关异常时先移除或回滚 `/device-gateway` Ingress，再把 Deployment 回滚到上一 digest；
-  不删除 Secret，不修改 Bucket ACL，不影响主站根路径。
-- 客户端发布异常时不要覆盖已有 OSS 版本目录；将 `canary.yml` 与 `canary-mac.yml` 恢复到
-  上一个已验证版本。版本文件不可变，当前 manifest 必须最后更新。
-- 回滚后再次确认主站登录、OAuth callback、文件上传、记忆和 Aihub 模型调用不受影响。
+```bash
+export KUBECONFIG='/absolute/path/outside/repository/production-kubeconfig'
+export ACK_CONTEXT='<production-context>'
+export ACK_API_SERVER='<exact-api-server-from-preflight>'
+export MASTERINO_IMAGE_DIGEST='sha256:<current-production-digest>'
+export BRIDGE_IMAGE_DIGEST='sha256:<current-production-digest>'
+```
+
+## 分阶段上线
+
+### 1. 只读预检和渲染验证
+
+```bash
+./deploy.sh --env production preflight
+./deploy.sh --env production validate
+./deploy.sh --env production render > /tmp/masterino-production-rendered.yaml
+kubectl --kubeconfig "$KUBECONFIG" --context "$ACK_CONTEXT" \
+  apply --server-side --dry-run=server -f /tmp/masterino-production-rendered.yaml
+```
+
+核对集群、region、namespace 注解、固定 Gateway digest、单副本、探针、资源限制、
+`DEVICE_GATEWAY_URL` 和 Secret 引用。此时渲染结果不得包含 Gateway 公网 Ingress。
+
+### 2. 创建生产 Gateway Secret
+
+`create-gateway-secret` 会拒绝短 Token、测试 Token、私有 JWKS 字段、非生产 JWKS 和未确认的
+生产操作：
+
+```bash
+CONFIRM_GATEWAY_SECRET=masterino \
+  ./deploy.sh --env production create-gateway-secret \
+  '/absolute/path/outside/repository/device-gateway-secret.env'
+```
+
+### 3. 部署私网 Gateway
+
+```bash
+./deploy.sh --env production deploy
+./deploy.sh --env production rollout
+```
+
+确认 Gateway 只有一个 Available replica。通过 Kubernetes API Server 的 Service proxy 检查
+`/health`，并完成有效 JWT、无效 JWT、`sub` 不匹配、未认证超时及 Service Token 行为验证。
+
+### 4. 公网切流
+
+只有私网健康与认证验证全部通过后才执行：
+
+```bash
+CONFIRM_GATEWAY_CUTOVER=masterino \
+  ./deploy.sh --env production gateway-cutover
+```
+
+该命令会再次检查 Secret、单副本、私网 `/health` 和 server-side dry-run，然后创建独立 Ingress，
+并等待公网健康接口返回 `OK`。
+
+### 5. 验收
+
+- `GET https://masterino.bielcrystal.com/device-gateway/health` 返回 `200 OK`；
+- `WSS /device-gateway/ws` 在 15 秒内完成 upgrade 和 `auth_success`；
+- `auth_success.userId` 与服务端验签后的 JWT `sub` 一致；
+- 生产 Masterino Pod 已注入内部 Gateway URL 与生产 Service Token 引用；
+- 主站登录、OAuth callback、文件上传、记忆和 Aihub 模型调用不受影响。
+
+网关验证完成后才创建 `v1.2.1` Release，并运行 `Build Unsigned Desktop` 发布 Windows x64、
+macOS arm64 和 macOS x64。不得修改 `v1.2.0` 标签、附件或 OSS 版本目录。
+
+## 精确回滚
+
+Gateway 公网异常时只移除专用 Ingress：
+
+```bash
+CONFIRM_GATEWAY_ROLLBACK=masterino \
+  ./deploy.sh --env production gateway-rollback
+```
+
+该操作不会删除 Gateway Secret、Deployment、Service 或主站 Ingress。若还需回滚 Gateway
+Deployment，使用已记录的上一不可变 digest；不要删除 Secret，也不要修改 Bucket ACL 或系统全局
+安全设置。
 
 ## 禁止事项
 
-- 禁止复用测试 `SERVICE_TOKEN`、测试 JWKS、测试客户端数据目录或测试 namespace 资源。
-- 禁止把生产私钥字段写入网关 Secret，禁止在命令输出、PR 或日志中打印完整 Secret。
-- 禁止本地构建生产 Docker 镜像，禁止使用可变镜像 tag，禁止跳过 ACK target guard。
-- 禁止在生产网关未就绪前发布指向生产 URL 的正式客户端。
-- 未完成上述生产资源 PR、dry-run、灰度验收和回滚演练前，不得视为生产发布完成。
+- 禁止复用测试 `SERVICE_TOKEN`、测试 JWKS 或测试 namespace 数据。
+- 禁止把生产私钥字段写入 Gateway Secret 或打印到日志。
+- 禁止使用可变镜像 tag，禁止跳过 ACK target guard 和生产确认变量。
+- 禁止在私网验证通过前创建公网 Gateway Ingress。
+- 禁止在生产 Gateway 就绪前发布指向生产地址的新桌面客户端。

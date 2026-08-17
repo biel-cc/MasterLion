@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterino-device-gateway
+  labels:
+    app.kubernetes.io/name: masterino-device-gateway
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: device-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: masterino-device-gateway
+  ports:
+    - name: http
+      port: 8788
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino-device-gateway
+  labels:
+    app.kubernetes.io/name: masterino-device-gateway
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: device-gateway
+spec:
+  # Gateway connections are stored in process memory; keep one replica until
+  # shared connection state or sticky routing is implemented.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-device-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-device-gateway
+        app.kubernetes.io/part-of: masterino
+        app.kubernetes.io/component: device-gateway
+        masterino.io/environment: production
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: device-gateway
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway:v0.3.1-masterino.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+          env:
+            - name: PORT
+              value: '8788'
+            - name: SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: masterino-device-gateway-secret
+                  key: SERVICE_TOKEN
+            - name: JWKS_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: masterino-device-gateway-secret
+                  key: JWKS_PUBLIC_KEY
+          ports:
+            - name: http
+              containerPort: 8788
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
