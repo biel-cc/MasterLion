@@ -6,6 +6,17 @@
 > - `Dockerfile` 的 `dev` 阶段 + `FINAL_STAGE` 构建参数
 > - `scripts/hot-dev/build-dev-image.ps1`、`start-hot-dev.ps1`、`stop-hot-dev.ps1`
 >
+> 沙箱接入（2026-08-17）：热更新环境复用测试环境 Onlyboxes 沙箱。实测确认沙箱
+> 域名 `onlyboxes.internal.bielcrystal.com` 通过测试 Pod 的 hostAliases 固定到内网
+> IP `10.80.137.220`（`Masterino-Onlyboxes` ECS），nginx 白名单为
+> `allow 10.80.0.0/16; allow 127.0.0.1; deny all;`。已将开发机内网 IP
+> `10.83.48.3` 通过阿里云云助手加入节点 nginx 白名单（备份
+> `onlyboxes.conf.bak.20260817155452`，`nginx -t` 通过后 reload）。compose 增加
+> `extra_hosts` 固定域名到 IP，start 脚本从测试环境提取
+> `masterino-onlyboxes-secret` 的 JIT 签名密钥与 `masterino-onlyboxes-ca` 的 CA
+> 证书注入容器；已实测容器内带 JIT token 调用沙箱任务执行成功
+> （`/api/v1/tasks` → `succeeded`）。
+>
 > 已验证：ACR 云端构建 dev 镜像 `dev-2d3903ff`
 > （`sha256:ba028bc0f39440b7585defb35d461a7a54e4a2cfcb8ec9399e51611080063e55`），
 > 本地容器 `masterino-hot` 运行中，Next/Vite 双端口 200，依赖预检全绿，
@@ -80,9 +91,11 @@ Aihub Proxy、测试 OSS、Market 和 Device Gateway 使用现有测试环境 HT
   SearXNG（HTTP）、Aihub Proxy（HTTPS）和 OSS（HTTPS）。
 - 任一必需依赖失败时，输出服务名、目标地址和错误类型，并停止启动，避免产生
   半可用环境。
-- Onlyboxes 不作为基础开发环境启动的硬阻塞项，但必须明确提示沙箱功能不可用
-  （当前 `onlyboxes.internal.bielcrystal.com` 无法解析）。
-- 停止脚本负责关闭主容器、端口转发及其子进程，并删除临时 kubeconfig 和环境文件。
+- Onlyboxes 不作为基础开发环境启动的硬阻塞项；接入后若沙箱不可达或 JIT 密钥
+  未注入，只提示沙箱功能不可用（`onlyboxes.internal.bielcrystal.com` 通过
+  compose `extra_hosts` 固定到内网 IP，不依赖 DNS）。
+- 停止脚本负责关闭主容器、端口转发及其子进程，并删除临时 kubeconfig、环境
+  文件、Onlyboxes JIT 密钥与 CA 文件。
 
 ## 测试与验收
 
