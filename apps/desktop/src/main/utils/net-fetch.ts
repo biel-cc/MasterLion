@@ -9,6 +9,4 @@ import { net } from 'electron';
  *
  * This must be called only after `app.whenReady()` has resolved.
  */
-export const netFetch: typeof globalThis.fetch = (input, init?) => {
-  return net.fetch(input as any, init as any);
-};
+export const netFetch: typeof net.fetch = (input, init?) => net.fetch(input, init);

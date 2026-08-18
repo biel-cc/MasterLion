@@ -108,7 +108,8 @@ describe('UpdaterManager signed OSS flow', () => {
       json: vi.fn().mockResolvedValue({}),
       ok: true,
       status: 200,
-      url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
+      // Electron documents Response.url as unreliable; in Electron 41 it is empty.
+      url: '',
     } as any);
     vi.mocked(verifySignedManifest).mockReturnValue(manifest);
     vi.mocked(selectUpdateArtifact).mockReturnValue(artifact);
@@ -131,14 +132,12 @@ describe('UpdaterManager signed OSS flow', () => {
     manager = new UpdaterManager(app);
   });
 
-  it('checks the signed OSS manifest before configuring the immutable NSIS feed', async () => {
+  it('checks the signed OSS manifest when Electron returns an empty response URL', async () => {
     await manager.initialize();
     await manager.checkForUpdates({ manual: true });
 
     expect(netFetch).toHaveBeenCalledWith(
-      new URL(
-        'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
-      ),
+      'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
       { redirect: 'manual' },
     );
     expect(verifySignedManifest).toHaveBeenCalled();
@@ -148,7 +147,7 @@ describe('UpdaterManager signed OSS flow', () => {
     });
   });
 
-  it('automatically downloads and verifies the Windows installer', async () => {
+  it('downloads and verifies Windows artifacts when Electron returns an empty response URL', async () => {
     await manager.initialize();
     await manager.checkForUpdates();
     await events.get('update-available')?.({ version: '1.1.4' });
@@ -156,9 +155,7 @@ describe('UpdaterManager signed OSS flow', () => {
       expect(verifyArtifact).toHaveBeenCalledWith(expect.any(String), artifact),
     );
     expect(netFetch).toHaveBeenCalledWith(
-      new URL(
-        'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/Masterino-1.1.4-setup.exe',
-      ),
+      'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/Masterino-1.1.4-setup.exe',
       { method: 'HEAD', redirect: 'manual' },
     );
     expect(manager.getUpdaterState()).toMatchObject({

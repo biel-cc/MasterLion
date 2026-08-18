@@ -53,7 +53,7 @@ describe('verifyArtifact', () => {
     ).rejects.toMatchObject({ code: 'integrity' });
   });
 
-  it('deletes a partial macOS download after an integrity failure', async () => {
+  it('reaches integrity verification when Electron returns an empty response URL', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'masterino-update-'));
     created.push(dir);
     const body = Buffer.from('tampered');
@@ -66,7 +66,8 @@ describe('verifyArtifact', () => {
       }),
       ok: true,
       status: 200,
-      url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/update.dmg',
+      // Electron documents Response.url as unreliable; in Electron 41 it is empty.
+      url: '',
     } as any);
 
     await expect(
