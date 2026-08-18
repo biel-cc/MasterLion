@@ -54,7 +54,8 @@ export const downloadArtifact = async ({
   await fs.rm(partialPath, { force: true });
 
   try {
-    const response = await netFetch(url, { redirect: 'manual', signal });
+    const response = await netFetch(url.toString(), { redirect: 'manual', signal });
+    // Do not read Electron's unreliable Response.url; manual redirects are not followed.
     if (response.status >= 300 && response.status < 400) {
       throw new ArtifactDownloadError('Update downloads may not redirect', 'network');
     }
@@ -64,10 +65,6 @@ export const downloadArtifact = async ({
         'network',
       );
     }
-    if (new URL(response.url).origin !== url.origin) {
-      throw new ArtifactDownloadError('Update download left the OSS origin', 'network');
-    }
-
     let transferred = 0;
     const startedAt = Date.now();
     const tracked = new TransformStream<Uint8Array, Uint8Array>({

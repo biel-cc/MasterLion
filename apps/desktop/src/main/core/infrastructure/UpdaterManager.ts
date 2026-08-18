@@ -326,7 +326,9 @@ export class UpdaterManager {
   private async fetchSignedManifest(): Promise<DesktopUpdateManifest> {
     const baseUrl = UPDATE_SERVER_URL!.replace(/\/$/, '');
     const url = new URL(`${baseUrl}/${this.currentChannel}/${this.currentChannel}.json`);
-    const response = await netFetch(url, { redirect: 'manual' });
+    const response = await netFetch(url.toString(), { redirect: 'manual' });
+    // Electron documents Response.url as unreliable. Manual redirects are never
+    // followed: Electron rejects them, while fetch-compatible mocks may expose 3xx.
     if (response.status >= 300 && response.status < 400)
       throw new SignedManifestError('Signed update manifest may not redirect', 'signature');
     if (!response.ok)
@@ -334,8 +336,6 @@ export class UpdaterManager {
         `Update check failed with HTTP ${response.status}`,
         'network',
       );
-    if (new URL(response.url).origin !== url.origin)
-      throw new SignedManifestError('Signed update manifest left OSS', 'signature');
     return verifySignedManifest(await response.json(), {
       baseUrl,
       channel: this.currentChannel,
@@ -356,7 +356,11 @@ export class UpdaterManager {
   private async verifyArtifactEndpoint(artifact: DesktopUpdateArtifact) {
     const baseUrl = UPDATE_SERVER_URL!.replace(/\/$/, '');
     const artifactUrl = new URL(`${baseUrl}/${artifact.path}`);
-    const response = await netFetch(artifactUrl, { method: 'HEAD', redirect: 'manual' });
+    const response = await netFetch(artifactUrl.toString(), {
+      method: 'HEAD',
+      redirect: 'manual',
+    });
+    // Do not read Electron's unreliable Response.url; manual redirects are not followed.
     if (response.status >= 300 && response.status < 400) {
       throw new SignedManifestError('Update artifacts may not redirect', 'signature');
     }
@@ -365,9 +369,6 @@ export class UpdaterManager {
         `Update artifact check failed with HTTP ${response.status}`,
         'network',
       );
-    }
-    if (new URL(response.url).origin !== artifactUrl.origin) {
-      throw new SignedManifestError('Update artifact left OSS', 'signature');
     }
     const contentLength = response.headers.get('content-length');
     if (contentLength && Number(contentLength) !== artifact.size) {
