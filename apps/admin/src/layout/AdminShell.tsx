@@ -1,4 +1,7 @@
+import type { MenuProps } from 'antd';
+import { Layout, Menu, Typography } from 'antd';
 import {
+  Bot,
   Database,
   KeyRound,
   LayoutDashboard,
@@ -11,8 +14,6 @@ import {
   Users,
   Workflow,
 } from 'lucide-react';
-import { Layout, Menu, Typography } from 'antd';
-import type { MenuProps } from 'antd';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 const { Content, Header, Sider } = Layout;
@@ -49,19 +50,30 @@ const navItems: MenuProps['items'] = [
     label: <Link to="/knowledge">知识库</Link>,
   },
   {
-    icon: <Sparkles size={18} />,
-    key: '/skills',
-    label: <Link to="/skills">Skills</Link>,
-  },
-  {
-    icon: <Plug size={18} />,
-    key: '/mcp',
-    label: <Link to="/mcp">MCP</Link>,
+    children: [
+      {
+        icon: <Bot size={18} />,
+        key: '/agents',
+        label: <Link to="/agents">Agents</Link>,
+      },
+      {
+        icon: <Sparkles size={18} />,
+        key: '/skills',
+        label: <Link to="/skills">Skills</Link>,
+      },
+      {
+        icon: <Plug size={18} />,
+        key: '/mcp',
+        label: <Link to="/mcp">MCP</Link>,
+      },
+    ],
+    key: 'catalog',
+    label: '资源目录',
   },
   {
     icon: <Store size={18} />,
     key: '/market',
-    label: <Link to="/market">内部 Market</Link>,
+    label: <Link to="/market">审核与发布</Link>,
   },
   {
     icon: <ScrollText size={18} />,
@@ -84,10 +96,17 @@ export default function AdminShell() {
         <Typography.Title level={4} style={{ margin: 24 }}>
           Masterino
         </Typography.Title>
-        <Menu items={navItems} mode="inline" selectedKeys={[location.pathname]} />
+        <Menu
+          defaultOpenKeys={['catalog']}
+          items={navItems}
+          mode="inline"
+          selectedKeys={[location.pathname]}
+        />
       </Sider>
       <Layout>
-        <Header style={{ alignItems: 'center', background: '#fff', display: 'flex', paddingInline: 24 }}>
+        <Header
+          style={{ alignItems: 'center', background: '#fff', display: 'flex', paddingInline: 24 }}
+        >
           <Typography.Title level={4} style={{ margin: 0 }}>
             企业管理后台
           </Typography.Title>

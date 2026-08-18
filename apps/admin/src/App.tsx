@@ -7,10 +7,11 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import AdminShell from './layout/AdminShell';
 import RequireAdmin from './layout/RequireAdmin';
 import { trpc, trpcClient } from './lib/trpc';
+import AgentsPage from './pages/AgentsPage';
 import AuditPage from './pages/AuditPage';
 import KnowledgePage from './pages/KnowledgePage';
-import McpPage from './pages/McpPage';
 import MarketPage from './pages/MarketPage';
+import McpPage from './pages/McpPage';
 import OverviewPage from './pages/OverviewPage';
 import RolesPage from './pages/RolesPage';
 import SkillsPage from './pages/SkillsPage';
@@ -58,6 +59,10 @@ const router = createBrowserRouter([
       {
         element: <KnowledgePage />,
         path: 'knowledge',
+      },
+      {
+        element: <AgentsPage />,
+        path: 'agents',
       },
       {
         element: <SkillsPage />,

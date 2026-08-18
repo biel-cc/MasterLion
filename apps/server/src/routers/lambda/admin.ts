@@ -52,8 +52,6 @@ import { TaskService } from '@/server/services/task';
 import { TaskRunnerService } from '@/server/services/taskRunner';
 import { getInternalMarketBaseUrl } from '@/utils/internalMarket';
 
-type PlatformAdminRole = 'platform_admin' | 'super_admin';
-
 interface AdminAuditLogItem {
   action: string;
   actor: string;
@@ -73,13 +71,31 @@ interface AdminKnowledgeBaseItem {
   workspaceId?: null | string;
 }
 
-interface AdminMcpConnectorItem {
-  id: string;
+type AdminCatalogResourceType = 'agent' | 'agent-group' | 'mcp' | 'skill';
+
+interface AdminCatalogResourceItem {
+  category?: null | string;
+  clientVisible: boolean;
+  description?: null | string;
+  identifier: string;
   name: string;
-  policy: string;
-  toolCount: number;
-  type: string;
-  workspace: string;
+  ownerName: string;
+  ownerUserId: string;
+  status: string;
+  tags: string[];
+  type: AdminCatalogResourceType;
+  updatedAt: string;
+  version?: null | string;
+  visibility: string;
+  workflowState?: null | string;
+}
+
+interface AdminCatalogResourceList {
+  currentPage: number;
+  items: AdminCatalogResourceItem[];
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
 }
 
 interface AdminRoleItem {
@@ -90,14 +106,6 @@ interface AdminRoleItem {
   name: string;
   permissions: string[];
   workspaceId?: null | string;
-}
-
-interface AdminSkillPolicyItem {
-  id: string;
-  name: string;
-  policy: string;
-  scope: string;
-  source: string;
 }
 
 interface AdminUserListItem {
@@ -212,6 +220,26 @@ const paginationInput = z.object({
   page: z.number().min(1).default(1),
   pageSize: z.number().min(1).max(100).default(20),
   q: z.string().optional(),
+});
+
+const catalogResourceTypes = ['agent', 'agent-group', 'skill', 'mcp'] as const;
+const catalogResourceListInput = paginationInput.extend({
+  clientVisible: z.boolean().optional(),
+  status: z.string().trim().max(50).optional(),
+  type: z.enum(catalogResourceTypes).optional(),
+  visibility: z.enum(['internal', 'private', 'public']).optional(),
+  workflowState: z
+    .enum([
+      'draft',
+      'submitted',
+      'scanning',
+      'in_review',
+      'approved',
+      'rejected',
+      'published',
+      'deprecated',
+    ])
+    .optional(),
 });
 
 const departmentMembersInput = z.object({
@@ -2029,16 +2057,42 @@ export const adminRouter = router({
       return mapResourceGrant(row);
     }),
 
-  listSkillPolicies: adminProcedure.input(paginationInput).query(async ({ ctx }) => {
-    await requireSkillManage(ctx);
+  listCatalogResources: adminProcedure
+    .input(catalogResourceListInput)
+    .query(async ({ ctx, input }) => {
+      if (input.type === 'skill') await requireSkillManage(ctx);
+      else if (input.type === 'mcp') await requireMcpManage(ctx);
+      else await requirePlatformAdmin(ctx);
 
-    return emptyList<AdminSkillPolicyItem>();
-  }),
+      const search = new URLSearchParams();
+      if (input.clientVisible !== undefined)
+        search.set('clientVisible', String(input.clientVisible));
+      search.set('page', String(input.page));
+      search.set('pageSize', String(input.pageSize));
+      if (input.q) search.set('q', input.q);
+      if (input.status) search.set('status', input.status);
+      if (input.type) search.set('type', input.type);
+      if (input.visibility) search.set('visibility', input.visibility);
+      if (input.workflowState) search.set('workflowState', input.workflowState);
 
-  listMcpConnectors: adminProcedure.input(paginationInput).query(async ({ ctx }) => {
-    await requireMcpManage(ctx);
+      return callInternalMarketAdmin<AdminCatalogResourceList>(
+        ctx,
+        `/api/internal/resources?${search.toString()}`,
+      );
+    }),
 
-    return emptyList<AdminMcpConnectorItem>();
+  getCatalogSummary: adminProcedure.query(async ({ ctx }) => {
+    await requirePlatformAdmin(ctx);
+
+    return callInternalMarketAdmin<{
+      items: Array<{
+        clientVisibleCount: number;
+        count: number;
+        status: string;
+        type: AdminCatalogResourceType;
+        visibility: string;
+      }>;
+    }>(ctx, '/api/internal/resources/summary');
   }),
 
   listMarketReviews: adminProcedure.query(async ({ ctx }) =>
