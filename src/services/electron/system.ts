@@ -64,6 +64,10 @@ class ElectronSystemService {
     return this.ipc.system.openExternalLink(url);
   }
 
+  async openLogsDirectory(): Promise<void> {
+    return this.ipc.system.openLogsDirectory();
+  }
+
   async hasLegacyLocalDb(): Promise<boolean> {
     return this.ipc.system.hasLegacyLocalDb();
   }

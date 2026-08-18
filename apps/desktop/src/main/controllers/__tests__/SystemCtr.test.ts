@@ -1,4 +1,5 @@
 import type { ThemeMode } from '@lobechat/electron-client-ipc';
+import { shell } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@/core/App';
@@ -76,6 +77,7 @@ vi.mock('electron', () => ({
   },
   shell: {
     openExternal: vi.fn().mockResolvedValue(undefined),
+    openPath: vi.fn().mockResolvedValue(''),
   },
   systemPreferences: {
     askForMediaAccess: vi.fn(async () => true),
@@ -394,6 +396,23 @@ describe('SystemController', () => {
       await invokeIpc('system.openExternalLink', 'https://example.com');
 
       expect(shell.openExternal).toHaveBeenCalledWith('https://example.com');
+    });
+  });
+
+  describe('openLogsDirectory', () => {
+    it("opens Electron's logs directory", async () => {
+      await invokeIpc('system.openLogsDirectory');
+
+      expect(shell.openPath).toHaveBeenCalledWith('/mock/path/logs');
+    });
+
+    it('rejects when the operating system cannot open the directory', async () => {
+      vi.mocked(shell.openPath).mockResolvedValueOnce('Unable to open');
+
+      await expect(invokeIpc('system.openLogsDirectory')).resolves.toMatchObject({
+        __lobeIpcError__: true,
+        error: { message: 'Unable to open the logs directory' },
+      });
     });
   });
 

@@ -3,6 +3,7 @@ import type {
   ImessageBridgeConfig,
   NetworkProxySettings,
   UpdateChannel,
+  UpdaterDiagnostic,
 } from '@lobechat/electron-client-ipc';
 
 export interface ElectronMainStore {
@@ -28,6 +29,7 @@ export interface ElectronMainStore {
    */
   heteroTracingEnabled: boolean;
   imessageBridgeConfigs: ImessageBridgeConfig[];
+  lastUpdaterDiagnostic: null | UpdaterDiagnostic;
   locale: string;
   localFileWorkspaceRoots: string[];
   networkProxy: NetworkProxySettings;

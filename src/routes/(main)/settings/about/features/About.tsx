@@ -2,13 +2,18 @@
 
 import { SiGithub, SiRss } from '@icons-pack/react-simple-icons';
 import { BRANDING_EMAIL, BRANDING_NAME, SOCIAL_URL } from '@lobechat/business-const';
+import { isDesktop } from '@lobechat/const';
+import type { UpdaterState } from '@lobechat/electron-client-ipc';
+import { useWatchBroadcast } from '@lobechat/electron-client-ipc';
 import { Flexbox, Form } from '@lobehub/ui';
 import { Divider } from 'antd';
 import { createStaticStyles } from 'antd-style';
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { BLOG, mailTo, OFFICIAL_SITE } from '@/const/url';
+import { UpdateDiagnostics } from '@/features/Electron/updater/UpdateDiagnostics';
+import { autoUpdateService } from '@/services/electron/autoUpdate';
 
 import AboutList from './AboutList';
 import ItemCard from './ItemCard';
@@ -25,6 +30,21 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
 const About = memo<{ mobile?: boolean }>(({ mobile }) => {
   const { t } = useTranslation('common');
+  const { t: electronT } = useTranslation('electron');
+  const [updaterState, setUpdaterState] = useState<UpdaterState>({
+    autoDownloadEnabled: true,
+    stage: 'idle',
+  });
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    void autoUpdateService
+      .getUpdaterState()
+      .then(setUpdaterState)
+      .catch(() => undefined);
+  }, []);
+
+  useWatchBroadcast('updaterStateChanged', setUpdaterState);
 
   return (
     <Form.Group
@@ -36,7 +56,14 @@ const About = memo<{ mobile?: boolean }>(({ mobile }) => {
     >
       <Flexbox gap={20} paddingBlock={20} width={'100%'}>
         <div className={styles.title}>{t('version')}</div>
-        <Version mobile={mobile} />
+        <Version mobile={mobile} version={updaterState.runtime?.currentVersion} />
+        {isDesktop && (
+          <>
+            <Divider style={{ marginBlock: 0 }} />
+            <div className={styles.title}>{electronT('updater.diagnostic.title')}</div>
+            <UpdateDiagnostics showCheckAction state={updaterState} />
+          </>
+        )}
         <Divider style={{ marginBlock: 0 }} />
         <div className={styles.title}>{t('contact')}</div>
         <AboutList

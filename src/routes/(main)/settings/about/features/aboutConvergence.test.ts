@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 
-const readSource = (path: string) => readFileSync(resolve(root, path), 'utf8');
+const readSource = (sourcePath: string) => readFileSync(path.resolve(root, sourcePath), 'utf8');
 
 describe('about settings convergence', () => {
   it('hides business, social, legal, changelog, and update actions', () => {
@@ -26,5 +26,7 @@ describe('about settings convergence', () => {
     expect(version).not.toContain('autoUpdateService');
     expect(version).not.toContain('checkUpdate');
     expect(version).not.toContain('useNewVersion');
+    expect(about).toContain('version={updaterState.runtime?.currentVersion}');
+    expect(about).toContain('<UpdateDiagnostics');
   });
 });

@@ -9,6 +9,8 @@ import { useTranslation } from 'react-i18next';
 
 import { autoUpdateService } from '@/services/electron/autoUpdate';
 
+import { UpdateDiagnostics } from './UpdateDiagnostics';
+
 const MACOS_QUARANTINE_COMMAND = 'xattr -dr com.apple.quarantine /Applications/Masterino.app';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -200,6 +202,7 @@ export const UpdateNotification: React.FC = () => {
         onCancel={() => setDetailVisible(false)}
       >
         <Flexbox gap={12} style={{ maxWidth: 480 }}>
+          {updateFailed && <UpdateDiagnostics state={updaterState} />}
           <div style={{ color: cssVar.colorTextSecondary, fontSize: 12 }}>
             {updateInfo?.version}
           </div>

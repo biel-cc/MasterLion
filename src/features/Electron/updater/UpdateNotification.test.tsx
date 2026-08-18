@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   checkUpdate: vi.fn(),
   installLater: vi.fn(),
   installNow: vi.fn(),
+  openLogsDirectory: vi.fn(),
+  openManualDownload: vi.fn(),
 }));
 
 vi.mock('@lobechat/electron-client-ipc', () => ({
@@ -77,7 +79,12 @@ vi.mock('@/services/electron/autoUpdate', () => ({
     getUpdaterState: mocks.getUpdaterState,
     installNow: mocks.installNow,
     installLater: mocks.installLater,
+    openManualDownload: mocks.openManualDownload,
   },
+}));
+
+vi.mock('@/services/electron/system', () => ({
+  electronSystemService: { openLogsDirectory: mocks.openLogsDirectory },
 }));
 
 const emitUpdaterState = (payload: any) => {
@@ -96,6 +103,8 @@ describe('UpdateNotification', () => {
       .mockResolvedValue({ autoDownloadEnabled: true, stage: 'idle' });
     mocks.installNow.mockReset();
     mocks.installLater.mockReset();
+    mocks.openLogsDirectory.mockReset().mockResolvedValue(undefined);
+    mocks.openManualDownload.mockReset().mockResolvedValue('opened');
   });
 
   it('shows release details and starts a main-process download', async () => {
@@ -182,5 +191,44 @@ describe('UpdateNotification', () => {
     expect(screen.getByText('updater.error.signature')).toBeInTheDocument();
     fireEvent.click(screen.getByText('updater.retry'));
     await waitFor(() => expect(mocks.checkUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the exact persisted failure and support actions', async () => {
+    render(<UpdateNotification />);
+    emitUpdaterState({
+      autoDownloadEnabled: true,
+      diagnostic: {
+        arch: 'arm64',
+        channel: 'canary',
+        currentVersion: '1.2.2',
+        errorCode: 'network',
+        errorMessage: 'Update check failed with HTTP 503',
+        id: 'check-123',
+        manifestUrl: 'https://example.com/canary.json',
+        platform: 'darwin',
+        schemaVersion: 1,
+        stage: 'error',
+        startedAt: '2026-08-19T00:00:00.000Z',
+        steps: [],
+        targetVersion: '1.2.3',
+        trigger: 'manual',
+      },
+      errorCode: 'network',
+      errorMessage: 'Update check failed with HTTP 503',
+      manualDownloadAvailable: true,
+      stage: 'error',
+    });
+
+    fireEvent.click(screen.getByText('updater.error.network'));
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'network: Update check failed with HTTP 503',
+    );
+    fireEvent.click(screen.getByText('updater.diagnostic.openLogs'));
+    fireEvent.click(screen.getByText('updater.diagnostic.manualDownload'));
+
+    await waitFor(() => {
+      expect(mocks.openLogsDirectory).toHaveBeenCalledTimes(1);
+      expect(mocks.openManualDownload).toHaveBeenCalledTimes(1);
+    });
   });
 });

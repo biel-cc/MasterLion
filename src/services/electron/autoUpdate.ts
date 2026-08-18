@@ -46,6 +46,10 @@ class AutoUpdateService {
   getUpdaterState = async (): Promise<UpdaterState> => {
     return ensureElectronIpc().autoUpdate.getUpdaterState();
   };
+
+  openManualDownload = async (): Promise<'opened' | 'unavailable'> => {
+    return ensureElectronIpc().autoUpdate.openManualDownload();
+  };
 }
 
 export const autoUpdateService = new AutoUpdateService();

@@ -95,4 +95,10 @@ export default class UpdaterCtr extends ControllerModule {
   async getUpdaterState(): Promise<UpdaterState> {
     return this.app.updaterManager.getUpdaterState();
   }
+
+  @IpcMethod()
+  async openManualDownload(): Promise<'opened' | 'unavailable'> {
+    logger.info('Open verified manual update download requested');
+    return this.app.updaterManager.openManualDownload();
+  }
 }

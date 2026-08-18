@@ -14,7 +14,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   `,
 }));
 
-const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
+const Version = memo<{ mobile?: boolean; version?: string }>(({ mobile, version }) => {
   return (
     <Flexbox
       align={mobile ? 'stretch' : 'center'}
@@ -39,7 +39,7 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
         <Flexbox align={'flex-start'} gap={6}>
           <div style={{ fontSize: 18, fontWeight: 'bolder' }}>{BRANDING_NAME}</div>
           <Flexbox gap={6} horizontal={!mobile}>
-            <Tag>v{APP_VERSION}</Tag>
+            <Tag>v{version ?? APP_VERSION}</Tag>
           </Flexbox>
         </Flexbox>
       </Flexbox>
