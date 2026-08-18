@@ -167,6 +167,14 @@ export default class SystemController extends ControllerModule {
   }
 
   @IpcMethod()
+  async openLogsDirectory(): Promise<void> {
+    const logsPath = app.getPath('logs');
+    logger.info('Opening logs directory');
+    const message = await shell.openPath(logsPath);
+    if (message) throw new Error('Unable to open the logs directory');
+  }
+
+  @IpcMethod()
   async selectFolder(payload?: {
     defaultPath?: string;
     title?: string;

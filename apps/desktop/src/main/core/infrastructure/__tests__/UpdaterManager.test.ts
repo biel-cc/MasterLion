@@ -1,8 +1,8 @@
 import { autoUpdater } from 'electron-updater';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { verifyArtifact } from '@/modules/updater/artifactDownloader';
-import { selectUpdateArtifact, verifySignedManifest } from '@/modules/updater/signedManifest';
+import * as artifactDownloaderModule from '@/modules/updater/artifactDownloader';
+import * as signedManifestModule from '@/modules/updater/signedManifest';
 import { netFetch } from '@/utils/net-fetch';
 
 import type { App as AppCore } from '../../App';
@@ -10,7 +10,9 @@ import { UpdaterManager } from '../UpdaterManager';
 
 const mocks = vi.hoisted(() => ({
   broadcast: vi.fn(),
+  isWindows: true,
   releaseSingleInstanceLock: vi.fn(),
+  shellOpenExternal: vi.fn(),
   shellOpenPath: vi.fn(),
   storeGet: vi.fn(),
   storeSet: vi.fn(),
@@ -49,12 +51,18 @@ vi.mock('electron', () => ({
     getVersion: vi.fn().mockReturnValue('1.1.3'),
     releaseSingleInstanceLock: mocks.releaseSingleInstanceLock,
   },
-  shell: { openPath: mocks.shellOpenPath },
+  shell: { openExternal: mocks.shellOpenExternal, openPath: mocks.shellOpenPath },
 }));
 
-vi.mock('@/const/env', () => ({ isDev: false, isWindows: true }));
+vi.mock('@/const/env', () => ({
+  isDev: false,
+  get isWindows() {
+    return mocks.isWindows;
+  },
+}));
 vi.mock('@/env', () => ({ getDesktopEnv: () => ({ FORCE_DEV_UPDATE_CONFIG: false }) }));
 vi.mock('@/modules/updater/configs', () => ({
+  BUILD_CHANNEL: 'canary',
   resolveInitialUpdateChannel: (channel?: string) => (channel === 'canary' ? 'canary' : 'stable'),
   UPDATE_CHANNEL: 'canary',
   UPDATE_SERVER_URL: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases',
@@ -65,11 +73,11 @@ vi.mock('@/modules/updater/configs', () => ({
 }));
 vi.mock('@/utils/net-fetch', () => ({ netFetch: vi.fn() }));
 vi.mock('@/modules/updater/artifactDownloader', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/modules/updater/artifactDownloader')>();
+  const actual = await importOriginal<typeof artifactDownloaderModule>();
   return { ...actual, downloadArtifact: vi.fn(), verifyArtifact: vi.fn() };
 });
 vi.mock('@/modules/updater/signedManifest', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/modules/updater/signedManifest')>();
+  const actual = await importOriginal<typeof signedManifestModule>();
   return { ...actual, selectUpdateArtifact: vi.fn(), verifySignedManifest: vi.fn() };
 });
 vi.mock('@/utils/logger', () => ({
@@ -103,6 +111,9 @@ describe('UpdaterManager signed OSS flow', () => {
       return autoUpdater;
     });
     mocks.storeGet.mockImplementation((key: string) => (key === 'updateChannel' ? 'canary' : true));
+    mocks.shellOpenExternal.mockResolvedValue(undefined);
+    mocks.shellOpenPath.mockResolvedValue('');
+    mocks.isWindows = true;
     vi.mocked(netFetch).mockResolvedValue({
       headers: new Headers(),
       json: vi.fn().mockResolvedValue({}),
@@ -111,13 +122,16 @@ describe('UpdaterManager signed OSS flow', () => {
       // Electron documents Response.url as unreliable; in Electron 41 it is empty.
       url: '',
     } as any);
-    vi.mocked(verifySignedManifest).mockReturnValue(manifest);
-    vi.mocked(selectUpdateArtifact).mockReturnValue(artifact);
+    vi.mocked(signedManifestModule.verifySignedManifest).mockReturnValue(manifest);
+    vi.mocked(signedManifestModule.selectUpdateArtifact).mockReturnValue(artifact);
     vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({} as any);
     vi.mocked(autoUpdater.downloadUpdate).mockResolvedValue([
       'C:/updates/Masterino-1.1.4-setup.exe',
     ]);
-    vi.mocked(verifyArtifact).mockResolvedValue(undefined);
+    vi.mocked(artifactDownloaderModule.verifyArtifact).mockResolvedValue(undefined);
+    vi.mocked(artifactDownloaderModule.downloadArtifact).mockResolvedValue(
+      '/updates/Masterino-1.1.4.dmg',
+    );
     const app = {
       browserManager: {
         getMainWindow: () => ({
@@ -140,10 +154,158 @@ describe('UpdaterManager signed OSS flow', () => {
       'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/canary.json',
       { redirect: 'manual' },
     );
-    expect(verifySignedManifest).toHaveBeenCalled();
+    expect(signedManifestModule.verifySignedManifest).toHaveBeenCalled();
     expect(autoUpdater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4',
+    });
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: {
+        artifact: {
+          arch: artifact.arch,
+          path: artifact.path,
+          platform: artifact.platform,
+          size: artifact.size,
+        },
+        currentVersion: '1.1.3',
+        stage: 'available',
+        targetVersion: '1.1.4',
+        trigger: 'manual',
+      },
+      manualDownloadAvailable: true,
+      runtime: {
+        buildChannel: 'canary',
+        currentVersion: '1.1.3',
+        updateChannel: 'canary',
+      },
+    });
+    expect(mocks.storeSet).toHaveBeenCalledWith(
+      'lastUpdaterDiagnostic',
+      expect.objectContaining({ schemaVersion: 1, targetVersion: '1.1.4' }),
+    );
+  });
+
+  it('opens only a selected artifact from the verified OSS manifest', async () => {
+    await manager.initialize();
+    await expect(manager.openManualDownload()).resolves.toBe('unavailable');
+
+    await manager.checkForUpdates({ manual: true });
+
+    await expect(manager.openManualDownload()).resolves.toBe('opened');
+    expect(mocks.shellOpenExternal).toHaveBeenCalledWith(
+      'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/Masterino-1.1.4-setup.exe',
+    );
+  });
+
+  it('restores the last persisted diagnostic on startup', async () => {
+    const persisted = {
+      arch: 'arm64',
+      channel: 'canary',
+      currentVersion: '1.2.2',
+      id: 'persisted-check',
+      manifestUrl: 'https://example.com/canary.json',
+      platform: 'darwin',
+      schemaVersion: 1 as const,
+      stage: 'error' as const,
+      startedAt: '2026-08-19T00:00:00.000Z',
+      steps: [],
+      trigger: 'automatic' as const,
+    };
+    mocks.storeGet.mockImplementation((key: string) => {
+      if (key === 'lastUpdaterDiagnostic') return persisted;
+      if (key === 'updateChannel') return 'canary';
+      return true;
+    });
+
+    await manager.initialize();
+
+    expect(manager.getUpdaterState().diagnostic).toEqual(persisted);
+    expect(manager.getUpdaterState().manualDownloadAvailable).toBe(false);
+  });
+
+  it('replaces the persisted diagnostic and redacts credentials and local paths', async () => {
+    const persisted = {
+      arch: 'arm64',
+      channel: 'canary',
+      currentVersion: '1.2.2',
+      id: 'persisted-check',
+      manifestUrl: 'https://example.com/canary.json',
+      platform: 'darwin',
+      schemaVersion: 1 as const,
+      stage: 'error' as const,
+      startedAt: '2026-08-19T00:00:00.000Z',
+      steps: [],
+      trigger: 'automatic' as const,
+    };
+    mocks.storeGet.mockImplementation((key: string) => {
+      if (key === 'lastUpdaterDiagnostic') return persisted;
+      if (key === 'updateChannel') return 'canary';
+      return true;
+    });
+    vi.mocked(netFetch).mockRejectedValueOnce(
+      new Error(
+        'network request failed for https://user:password@example.com/file?token=secret at /Users/alice/update.dmg',
+      ),
+    );
+
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
+
+    const diagnostic = manager.getUpdaterState().diagnostic;
+    expect(diagnostic?.id).not.toBe(persisted.id);
+    expect(diagnostic?.errorMessage).toBe(
+      'network request failed for https://[redacted]@example.com/file?token=[redacted] at [local-path]',
+    );
+    expect(JSON.stringify(diagnostic)).not.toMatch(/password|secret|Users\/alice/);
+  });
+
+  it('records a completed latest-version check', async () => {
+    vi.mocked(signedManifestModule.verifySignedManifest).mockReturnValue({
+      ...manifest,
+      version: '1.1.3',
+    });
+
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
+
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: {
+        finishedAt: expect.any(String),
+        stage: 'latest',
+        targetVersion: '1.1.3',
+      },
+      manualDownloadAvailable: false,
+      stage: 'latest',
+    });
+    expect(manager.getUpdaterState().diagnostic?.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'check-completed', status: 'success' }),
+      ]),
+    );
+  });
+
+  it('records the exact HTTP status for a network failure', async () => {
+    vi.mocked(netFetch).mockResolvedValueOnce({
+      headers: new Headers(),
+      json: vi.fn(),
+      ok: false,
+      status: 503,
+      url: '',
+    } as any);
+
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
+
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: {
+        errorCode: 'network',
+        errorMessage: 'Update check failed with HTTP 503',
+        finishedAt: expect.any(String),
+        manifestHttpStatus: 503,
+        stage: 'error',
+      },
+      manualDownloadAvailable: false,
+      stage: 'error',
     });
   });
 
@@ -152,7 +314,10 @@ describe('UpdaterManager signed OSS flow', () => {
     await manager.checkForUpdates();
     await events.get('update-available')?.({ version: '1.1.4' });
     await vi.waitFor(() =>
-      expect(verifyArtifact).toHaveBeenCalledWith(expect.any(String), artifact),
+      expect(artifactDownloaderModule.verifyArtifact).toHaveBeenCalledWith(
+        expect.any(String),
+        artifact,
+      ),
     );
     expect(netFetch).toHaveBeenCalledWith(
       'https://masterlion-prd.oss-cn-shenzhen.aliyuncs.com/desktop/releases/canary/1.1.4/Masterino-1.1.4-setup.exe',
@@ -199,17 +364,68 @@ describe('UpdaterManager signed OSS flow', () => {
         stage: 'available',
       }),
     );
-    expect(verifyArtifact).not.toHaveBeenCalled();
+    expect(artifactDownloaderModule.verifyArtifact).not.toHaveBeenCalled();
   });
 
   it('surfaces manifest verification failures without configuring a download feed', async () => {
-    vi.mocked(verifySignedManifest).mockImplementation(() => {
-      throw new Error('signature invalid');
+    vi.mocked(signedManifestModule.verifySignedManifest).mockImplementation(() => {
+      throw new signedManifestModule.SignedManifestError('signature invalid', 'signature');
     });
     await manager.initialize();
     await manager.checkForUpdates({ manual: true });
-    expect(manager.getUpdaterState()).toMatchObject({ errorCode: 'unknown', stage: 'error' });
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: { errorCode: 'signature', errorMessage: 'signature invalid' },
+      errorCode: 'signature',
+      manualDownloadAvailable: false,
+      stage: 'error',
+    });
     expect(autoUpdater.setFeedURL).not.toHaveBeenCalled();
+  });
+
+  it('records a checksum failure and keeps the verified manual artifact available', async () => {
+    vi.mocked(artifactDownloaderModule.verifyArtifact).mockRejectedValueOnce(
+      new artifactDownloaderModule.ArtifactDownloadError(
+        'Downloaded update checksum mismatch',
+        'integrity',
+      ),
+    );
+    await manager.initialize();
+    await manager.checkForUpdates();
+    await events.get('update-available')?.({ version: '1.1.4' });
+    await vi.waitFor(() => expect(manager.getUpdaterState().stage).toBe('error'));
+
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: {
+        errorCode: 'integrity',
+        errorMessage: 'Downloaded update checksum mismatch',
+      },
+      manualDownloadAvailable: true,
+    });
+  });
+
+  it('records a macOS installer-open failure without persisting the local path', async () => {
+    mocks.isWindows = false;
+    mocks.shellOpenPath.mockResolvedValueOnce('Unable to open');
+    const macArtifact = {
+      ...artifact,
+      arch: 'arm64' as const,
+      path: 'canary/1.1.4/Masterino-1.1.4-unsigned-arm64.dmg',
+      platform: 'darwin' as const,
+    };
+    vi.mocked(signedManifestModule.selectUpdateArtifact).mockReturnValueOnce(macArtifact);
+
+    await manager.initialize();
+    await manager.checkForUpdates({ manual: true });
+    manager.applyDownloadedUpdate();
+    await vi.waitFor(() => expect(manager.getUpdaterState().stage).toBe('error'));
+
+    expect(manager.getUpdaterState()).toMatchObject({
+      diagnostic: {
+        errorCode: 'install',
+        errorMessage: 'Unable to open',
+      },
+    });
+    expect(JSON.stringify(manager.getUpdaterState().diagnostic)).not.toContain('/updates/');
   });
 
   it('rejects an artifact redirect before electron-updater downloads it', async () => {

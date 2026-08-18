@@ -1,10 +1,14 @@
-import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { readdir, rm, stat } from 'node:fs/promises';
+import path from 'node:path';
 
 import type {
   ProgressInfo,
   UpdateChannel,
   UpdateInfo,
+  UpdaterDiagnostic,
+  UpdaterDiagnosticStepName,
+  UpdaterDiagnosticStepStatus,
   UpdaterErrorCode,
   UpdaterInstallMode,
   UpdaterStage,
@@ -19,11 +23,12 @@ import semver from 'semver';
 import { isDev, isWindows } from '@/const/env';
 import { getDesktopEnv } from '@/env';
 import {
-  downloadArtifact,
   ArtifactDownloadError,
+  downloadArtifact,
   verifyArtifact,
 } from '@/modules/updater/artifactDownloader';
 import {
+  BUILD_CHANNEL,
   resolveInitialUpdateChannel,
   UPDATE_CHANNEL,
   UPDATE_SERVER_URL,
@@ -32,13 +37,14 @@ import {
 import {
   type DesktopUpdateArtifact,
   type DesktopUpdateManifest,
+  resolveArtifactUrl,
   selectUpdateArtifact,
   SignedManifestError,
   verifySignedManifest,
 } from '@/modules/updater/signedManifest';
 import { extractRestoreRoute } from '@/modules/updater/utils';
-import { netFetch } from '@/utils/net-fetch';
 import { createLogger } from '@/utils/logger';
+import { netFetch } from '@/utils/net-fetch';
 
 import type { App as AppCore } from '../App';
 
@@ -57,6 +63,7 @@ export class UpdaterManager {
   private downloadedArtifactPath: string | null = null;
   private downloading = false;
   private installMode: UpdaterInstallMode | null = null;
+  private latestDiagnostic: UpdaterDiagnostic | null = null;
   private latestError: string | null = null;
   private latestErrorCode: UpdaterErrorCode | null = null;
   private latestProgress: ProgressInfo | null = null;
@@ -80,8 +87,25 @@ export class UpdaterManager {
   public getUpdaterState(): UpdaterState {
     const state: UpdaterState = {
       autoDownloadEnabled: this.autoDownloadEnabled,
+      manualDownloadAvailable: Boolean(this.pendingArtifact && this.pendingManifest),
+      runtime: {
+        arch: process.arch,
+        buildChannel: BUILD_CHANNEL,
+        currentVersion: electronApp.getVersion(),
+        platform: process.platform,
+        updateChannel: this.currentChannel,
+      },
       stage: this.stage,
     };
+    if (this.latestDiagnostic) {
+      state.diagnostic = {
+        ...this.latestDiagnostic,
+        artifact: this.latestDiagnostic.artifact
+          ? { ...this.latestDiagnostic.artifact }
+          : undefined,
+        steps: this.latestDiagnostic.steps.map((step) => ({ ...step })),
+      };
+    }
     if (this.installMode) state.installMode = this.installMode;
     if (this.latestProgress) state.progress = this.latestProgress;
     if (this.latestUpdateInfo) state.updateInfo = this.latestUpdateInfo;
@@ -102,6 +126,17 @@ export class UpdaterManager {
     },
   ) {
     this.stage = stage;
+    if (this.latestDiagnostic) {
+      this.latestDiagnostic.stage = stage;
+      if (opts?.updateInfo?.version) this.latestDiagnostic.targetVersion = opts.updateInfo.version;
+      if (opts?.error !== undefined)
+        this.latestDiagnostic.errorMessage = this.sanitizeDiagnosticText(opts.error);
+      if (opts?.errorCode !== undefined) this.latestDiagnostic.errorCode = opts.errorCode;
+      if (stage === 'latest' || stage === 'downloaded' || stage === 'error') {
+        this.latestDiagnostic.finishedAt = new Date().toISOString();
+      }
+      this.persistDiagnostic();
+    }
     if (opts?.updateInfo !== undefined) this.latestUpdateInfo = opts.updateInfo;
     if (opts?.progress !== undefined) this.latestProgress = opts.progress;
     if (opts?.installMode !== undefined) this.installMode = opts.installMode;
@@ -119,6 +154,10 @@ export class UpdaterManager {
 
   public initialize = async () => {
     if (!updaterConfig.enableAppUpdate) return;
+    const storedDiagnostic = this.app.storeManager.get('lastUpdaterDiagnostic');
+    if (storedDiagnostic?.schemaVersion === 1 && Array.isArray(storedDiagnostic.steps)) {
+      this.latestDiagnostic = storedDiagnostic;
+    }
     const storedChannel = this.app.storeManager.get('updateChannel');
     this.currentChannel = resolveInitialUpdateChannel(storedChannel);
     if (storedChannel !== this.currentChannel)
@@ -163,8 +202,9 @@ export class UpdaterManager {
 
   public checkForUpdates = async ({ manual = false }: { manual?: boolean } = {}) => {
     if (this.checking || this.downloading) return;
+    this.startDiagnostic(manual ? 'manual' : 'automatic');
     if (!UPDATE_SERVER_URL) {
-      if (manual) this.fail('Update server is not configured', 'network');
+      this.fail('Update server is not configured', 'network');
       return;
     }
     this.checking = true;
@@ -175,8 +215,15 @@ export class UpdaterManager {
       const manifest = await this.fetchSignedManifest();
       if (this.isStaleCheck()) return;
       const currentVersion = electronApp.getVersion();
+      this.latestDiagnostic!.targetVersion = manifest.version;
+      this.recordDiagnosticStep(
+        'version-compared',
+        'success',
+        `Installed ${currentVersion}; manifest ${manifest.version}`,
+      );
       if (!semver.gt(manifest.version, currentVersion)) {
         this.resetPendingUpdate();
+        this.recordDiagnosticStep('check-completed', 'success', 'The installed version is current');
         this.setStage('latest', { updateInfo: this.toUpdateInfo(manifest) });
         return;
       }
@@ -185,6 +232,17 @@ export class UpdaterManager {
         throw new SignedManifestError('No signed artifact for this platform', 'signature');
       this.pendingManifest = manifest;
       this.pendingArtifact = artifact;
+      this.latestDiagnostic!.artifact = {
+        arch: artifact.arch,
+        path: artifact.path,
+        platform: artifact.platform,
+        size: artifact.size,
+      };
+      this.recordDiagnosticStep(
+        'artifact-selected',
+        'success',
+        `${artifact.platform}/${artifact.arch} ${artifact.path} (${artifact.size} bytes)`,
+      );
       this.updateAvailable = true;
       this.installMode = isWindows ? 'restart' : 'open-dmg';
       this.setStage('available', {
@@ -197,6 +255,9 @@ export class UpdaterManager {
         await autoUpdater.checkForUpdates();
       } else if (this.autoDownloadEnabled) {
         await this.downloadUpdate();
+      }
+      if (this.stage === 'available') {
+        this.recordDiagnosticStep('check-completed', 'success', 'An update is available');
       }
     } catch (error) {
       if (!this.isStaleCheck()) this.handleError(error);
@@ -215,6 +276,11 @@ export class UpdaterManager {
     this.downloading = true;
     this.downloadAbortController = new AbortController();
     this.downloadCancellationToken = new CancellationToken();
+    this.recordDiagnosticStep(
+      'download-started',
+      'info',
+      `${this.pendingArtifact.platform}/${this.pendingArtifact.arch} ${this.pendingArtifact.size} bytes`,
+    );
     this.setStage('downloading');
     let windowsInstallerPath: string | undefined;
     try {
@@ -229,6 +295,7 @@ export class UpdaterManager {
         if (!windowsInstallerPath)
           throw new ArtifactDownloadError('Updater did not return an installer', 'integrity');
         await verifyArtifact(windowsInstallerPath, this.pendingArtifact);
+        this.recordDiagnosticStep('artifact-verified', 'success', 'SHA-512 and size verified');
         if (this.downloadAbortController.signal.aborted) {
           throw new DOMException('Update download cancelled', 'AbortError');
         }
@@ -247,7 +314,9 @@ export class UpdaterManager {
           onProgress: (progress) => this.onDownloadProgress(progress),
           signal: this.downloadAbortController.signal,
         });
+        this.recordDiagnosticStep('artifact-verified', 'success', 'SHA-512 and size verified');
       }
+      this.recordDiagnosticStep('download-completed', 'success', 'The update is ready to install');
       this.downloading = false;
       this.downloadAbortController = null;
       this.downloadCancellationToken = null;
@@ -278,8 +347,10 @@ export class UpdaterManager {
   public applyDownloadedUpdate = () => {
     if (this.stage !== 'downloaded' || !this.downloadedArtifactPath) return;
     if (this.installMode === 'open-dmg') {
+      this.recordDiagnosticStep('update-opened', 'info', 'Opening the verified DMG');
       void shell.openPath(this.downloadedArtifactPath).then((message: string) => {
-        if (message) this.fail('Unable to open the downloaded update', 'install');
+        if (message) this.fail(message, 'install');
+        else this.recordDiagnosticStep('update-opened', 'success', 'Opened the verified DMG');
       });
       return;
     }
@@ -288,6 +359,11 @@ export class UpdaterManager {
 
   public installNow = () => {
     if (!isWindows || this.stage !== 'downloaded') return;
+    this.recordDiagnosticStep(
+      'update-opened',
+      'success',
+      'Starting the verified Windows installer',
+    );
     this.captureRestoreRoute();
     this.app.isQuiting = true;
     const { app } = require('electron');
@@ -299,6 +375,18 @@ export class UpdaterManager {
     if (!isWindows || this.stage !== 'downloaded') return;
     autoUpdater.autoInstallOnAppQuit = true;
     this.mainWindow.broadcast('updateWillInstallLater');
+  };
+
+  public openManualDownload = async (): Promise<'opened' | 'unavailable'> => {
+    if (!this.pendingArtifact || !this.pendingManifest || !UPDATE_SERVER_URL) return 'unavailable';
+    const url = resolveArtifactUrl(UPDATE_SERVER_URL, this.pendingArtifact.path);
+    await shell.openExternal(url.toString());
+    this.recordDiagnosticStep(
+      'update-opened',
+      'info',
+      'Opened the verified OSS artifact in a browser',
+    );
+    return 'opened';
   };
 
   public simulateUpdateAvailable = () => {
@@ -326,7 +414,17 @@ export class UpdaterManager {
   private async fetchSignedManifest(): Promise<DesktopUpdateManifest> {
     const baseUrl = UPDATE_SERVER_URL!.replace(/\/$/, '');
     const url = new URL(`${baseUrl}/${this.currentChannel}/${this.currentChannel}.json`);
+    this.recordDiagnosticStep('manifest-requested', 'info', url.toString());
     const response = await netFetch(url.toString(), { redirect: 'manual' });
+    if (this.latestDiagnostic) {
+      this.latestDiagnostic.manifestHttpStatus = response.status;
+      this.persistDiagnostic();
+    }
+    this.recordDiagnosticStep(
+      'manifest-received',
+      response.ok ? 'success' : 'error',
+      `HTTP ${response.status}`,
+    );
     // Electron documents Response.url as unreliable. Manual redirects are never
     // followed: Electron rejects them, while fetch-compatible mocks may expose 3xx.
     if (response.status >= 300 && response.status < 400)
@@ -336,11 +434,18 @@ export class UpdaterManager {
         `Update check failed with HTTP ${response.status}`,
         'network',
       );
-    return verifySignedManifest(await response.json(), {
+    this.recordDiagnosticStep('manifest-verified', 'info', 'Verifying the Ed25519 signature');
+    const manifest = verifySignedManifest(await response.json(), {
       baseUrl,
       channel: this.currentChannel,
       currentVersion: electronApp.getVersion(),
     });
+    this.recordDiagnosticStep(
+      'manifest-verified',
+      'success',
+      `Ed25519 signature verified for ${manifest.version}`,
+    );
+    return manifest;
   }
 
   private configureWindowsProvider(version: string) {
@@ -374,6 +479,11 @@ export class UpdaterManager {
     if (contentLength && Number(contentLength) !== artifact.size) {
       throw new ArtifactDownloadError('Update artifact size changed on OSS', 'integrity');
     }
+    this.recordDiagnosticStep(
+      'artifact-verified',
+      'success',
+      `OSS endpoint verified (${contentLength ?? 'unknown'} bytes)`,
+    );
   }
 
   private registerEvents() {
@@ -421,16 +531,79 @@ export class UpdaterManager {
       ['ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'ETIMEDOUT'].includes(
         code ?? '',
       ) ||
-      /(?:ERR_|HTTP|network|socket|timed?\s*out)/i.test(message)
+      /ERR_|HTTP|network|socket|timed?\s*out/i.test(message)
     ) {
       this.fail(message, 'network');
     } else this.fail(message, 'unknown');
   }
 
   private fail(message: string, code: UpdaterErrorCode) {
-    logger.error(`[Updater:${code}] ${message}`);
-    this.setStage('error', { error: message, errorCode: code });
-    this.mainWindow.broadcast('updateError', message);
+    const safeMessage = this.sanitizeDiagnosticText(message);
+    if (this.latestDiagnostic) {
+      this.latestDiagnostic.failedStep = this.latestDiagnostic.steps.at(-1)?.name;
+    }
+    this.recordDiagnosticStep('failed', 'error', `${code}: ${safeMessage}`);
+    logger.error(`[Updater:${code}] ${safeMessage}`);
+    this.setStage('error', { error: safeMessage, errorCode: code });
+    this.mainWindow.broadcast('updateError', safeMessage);
+  }
+
+  private startDiagnostic(trigger: 'automatic' | 'manual') {
+    const now = new Date().toISOString();
+    const baseUrl = UPDATE_SERVER_URL?.replace(/\/$/, '') ?? '';
+    this.latestDiagnostic = {
+      arch: process.arch,
+      channel: this.currentChannel,
+      currentVersion: electronApp.getVersion(),
+      id: randomUUID(),
+      manifestUrl: this.sanitizeDiagnosticText(
+        `${baseUrl}/${this.currentChannel}/${this.currentChannel}.json`,
+      ),
+      platform: process.platform,
+      schemaVersion: 1,
+      stage: 'checking',
+      startedAt: now,
+      steps: [],
+      trigger,
+    };
+    this.recordDiagnosticStep('check-started', 'info', `${trigger} update check`);
+  }
+
+  private recordDiagnosticStep(
+    name: UpdaterDiagnosticStepName,
+    status: UpdaterDiagnosticStepStatus,
+    detail?: string,
+  ) {
+    if (!this.latestDiagnostic) return;
+    const safeDetail = detail ? this.sanitizeDiagnosticText(detail) : undefined;
+    this.latestDiagnostic.steps.push({
+      at: new Date().toISOString(),
+      detail: safeDetail,
+      name,
+      status,
+    });
+    this.persistDiagnostic();
+    logger.info(
+      `[UpdaterDiagnostic:${this.latestDiagnostic.id}] ${status} ${name}${safeDetail ? `: ${safeDetail}` : ''}`,
+    );
+  }
+
+  private persistDiagnostic() {
+    if (!this.latestDiagnostic) return;
+    this.app.storeManager.set('lastUpdaterDiagnostic', this.latestDiagnostic);
+  }
+
+  private sanitizeDiagnosticText(value: string) {
+    return value
+      .replaceAll(
+        /([?&](?:access_token|api_key|key|password|proxy_password|signature|token)=)[^&\s]+/gi,
+        '$1[redacted]',
+      )
+      .replaceAll(/((?:proxy-)?authorization\s*:\s*)(?:basic|bearer)\s+\S+/gi, '$1[redacted]')
+      .replaceAll(/https?:\/\/[^/\s@]+@/gi, 'https://[redacted]@')
+      .replaceAll(/\/(?:Users|home|private\/var\/folders|tmp|var\/folders)\/\S+/g, '[local-path]')
+      .replaceAll(/[A-Z]:\\\S+/gi, '[local-path]')
+      .slice(0, 1000);
   }
 
   private async cleanupUpdateCache() {

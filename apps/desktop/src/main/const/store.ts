@@ -40,6 +40,7 @@ export const STORE_DEFAULTS: ElectronMainStore = {
   imessageBridgeConfigs: [],
   locale: 'auto',
   localFileWorkspaceRoots: [],
+  lastUpdaterDiagnostic: null,
   networkProxy: defaultProxySettings,
   pendingRestoreRoute: '',
   shortcuts: DEFAULT_ELECTRON_DESKTOP_SHORTCUTS,

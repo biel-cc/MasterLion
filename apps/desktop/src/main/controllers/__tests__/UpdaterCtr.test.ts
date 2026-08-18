@@ -33,6 +33,7 @@ const mockApplyDownloadedUpdate = vi.fn();
 const mockInstallNow = vi.fn();
 const mockInstallLater = vi.fn();
 const mockGetUpdaterState = vi.fn();
+const mockOpenManualDownload = vi.fn();
 const mockSwitchChannel = vi.fn();
 const mockSetAutoDownloadEnabled = vi.fn();
 const mockStoreGet = vi.fn();
@@ -50,6 +51,7 @@ const mockApp = {
     getUpdaterState: mockGetUpdaterState,
     installNow: mockInstallNow,
     installLater: mockInstallLater,
+    openManualDownload: mockOpenManualDownload,
     setAutoDownloadEnabled: mockSetAutoDownloadEnabled,
     switchChannel: mockSwitchChannel,
   },
@@ -63,6 +65,7 @@ describe('UpdaterCtr', () => {
     ipcMainHandleMock.mockClear();
     mockStoreGet.mockReset();
     mockStoreSet.mockReset();
+    mockOpenManualDownload.mockReset();
     updaterCtr = new UpdaterCtr(mockApp);
   });
 
@@ -105,6 +108,13 @@ describe('UpdaterCtr', () => {
       updaterCtr.quitAndInstallUpdate();
       expect(mockInstallNow).toHaveBeenCalled();
     });
+  });
+
+  it('opens a verified manual download through the updater manager', async () => {
+    mockOpenManualDownload.mockResolvedValueOnce('opened');
+
+    await expect(updaterCtr.openManualDownload()).resolves.toBe('opened');
+    expect(mockOpenManualDownload).toHaveBeenCalledTimes(1);
   });
 
   describe('installLater', () => {
