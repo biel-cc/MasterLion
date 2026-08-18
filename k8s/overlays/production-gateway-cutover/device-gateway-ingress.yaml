@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: masterino-device-gateway
+  labels:
+    app.kubernetes.io/name: masterino-device-gateway
+    app.kubernetes.io/part-of: masterino
+    app.kubernetes.io/component: device-gateway
+    masterino.io/environment: production
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: 'true'
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - masterino.bielcrystal.com
+      secretName: 20261122bielcrystal.com
+  rules:
+    - host: masterino.bielcrystal.com
+      http:
+        paths:
+          - path: /device-gateway(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: masterino-device-gateway
+                port:
+                  number: 8788

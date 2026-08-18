@@ -1,6 +1,6 @@
 import type { Menu } from 'electron';
 
-import type {IMenuPlatform, MenuOptions } from '@/menus';
+import type { IMenuPlatform, MenuOptions } from '@/menus';
 import { createMenuImpl } from '@/menus';
 import { createLogger } from '@/utils/logger';
 
@@ -51,6 +51,14 @@ export class MenuManager {
   refreshMenus(options?: MenuOptions) {
     logger.debug('Refreshing all menus');
     this.platformImpl.refresh(options);
+
+    // The Electron Tray keeps the Menu instance that was attached at startup.
+    // Rebuild and replace it after a locale change so tray labels follow i18n.
+    const mainTray = this.app.trayManager.getMainTray();
+    if (mainTray) {
+      mainTray.setMenu(this.platformImpl.buildTrayMenu());
+    }
+
     return { success: true };
   }
 
