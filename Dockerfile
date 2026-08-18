@@ -1,6 +1,9 @@
 ## Set global build ENV
 ARG NODEJS_VERSION="24"
 ARG BASE_REGISTRY="docker.io/library"
+## Select the final stage emitted by this Dockerfile. Defaults to the production
+## image; the dev image is produced with `--build-arg FINAL_STAGE=dev`.
+ARG FINAL_STAGE="production"
 
 ## Base image for all building stages
 FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS base
@@ -174,6 +177,31 @@ COPY --chown=nextjs:nodejs --from=builder /deps/node_modules/drizzle-orm /app/no
 # Copy server launcher and shared scripts
 COPY --chown=nextjs:nodejs --from=builder /app/scripts/serverLauncher/startServer.js /app/startServer.js
 COPY --chown=nextjs:nodejs --from=builder /app/scripts/_shared /app/scripts/_shared
+
+## Dev image: same source and dependency layers as the builder stage, without the
+## production runtime. The hot-dev compose bind-mounts the repo over /app and runs
+## `pnpm run dev`, so only the toolchain inside this image is consumed.
+FROM builder AS dev
+
+# pnpm hoisted linker 只把「根 workspace 的直接依赖」软链到 /app/node_modules；
+# workspace 之间的依赖（如 @lobechat/agent-manager-runtime）放在各包的嵌套
+# node_modules 里。热更新 compose 会把 ../../packages bind mount 到 /app/packages，
+# 嵌套链接会被宿主目录遮蔽，导致 Vite/Next 解析失败。这里把所有 workspace 包
+# 在根 node_modules 建立软链，绑定挂载后依然能解析到宿主源码。
+RUN node <<'NODE_SCRIPT'
+const fs = require('node:fs');
+const path = require('node:path');
+for (const dir of fs.readdirSync('packages')) {
+  const pkgPath = path.join('packages', dir, 'package.json');
+  if (!fs.existsSync(pkgPath)) continue;
+  const name = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).name;
+  if (!name) continue;
+  const linkPath = path.join('node_modules', name);
+  fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+  fs.rmSync(linkPath, { recursive: true, force: true });
+  fs.symlinkSync(path.join('/app', 'packages', dir), linkPath, 'dir');
+}
+NODE_SCRIPT
 
 ## Production image
 # 不再用 scratch + COPY / / 压成一个大层；直接 FROM app 保留分层，push/pull 更容易复用 layer。
@@ -393,3 +421,8 @@ EXPOSE 3210/tcp
 ENTRYPOINT ["/bin/node"]
 
 CMD ["/app/startServer.js"]
+
+## Final stage: resolved by FINAL_STAGE so the same Dockerfile can emit the dev
+## image (FINAL_STAGE=dev) or the production image (default) from ACR cloud builds,
+## which cannot pass `--target` to the build engine.
+FROM ${FINAL_STAGE} AS final

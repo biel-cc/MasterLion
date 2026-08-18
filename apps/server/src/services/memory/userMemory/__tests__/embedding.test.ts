@@ -1,27 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { UserMemoryEmbeddingRuntime } from '../embedding';
-import { embedUserMemoryTexts } from '../embedding';
+import { embedUserMemoryTexts, resolveEmbeddingInputLimit } from '../embedding';
 
 const mocks = vi.hoisted(() => ({
-  contextLimit: 3 as number | undefined,
+  agentExecutionEnv: { MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT: 3 },
   encodeAsync: vi.fn(async (text: string) => text.split(/\s+/).filter(Boolean).length),
-  trimBasedOnBatchProbe: vi.fn(async (text: string, limit?: number) =>
-    text
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(-(limit ?? 0))
-      .join(' '),
+  trimBasedOnBatchProbe: vi.fn(async (text: string, limit: number) =>
+    text.split(/\s+/).filter(Boolean).slice(-limit).join(' '),
   ),
 }));
 
-vi.mock('@/server/globalConfig/parseMemoryExtractionConfig', () => ({
-  parseMemoryExtractionConfig: () => ({
-    embedding: {
-      contextLimit: mocks.contextLimit,
-    },
-  }),
-}));
+vi.mock('@lobechat/env/agent', () => ({ agentExecutionEnv: mocks.agentExecutionEnv }));
 
 vi.mock('@/utils/chunkers', () => ({
   trimBasedOnBatchProbe: mocks.trimBasedOnBatchProbe,
@@ -31,9 +21,25 @@ vi.mock('@/utils/tokenizer', () => ({
   encodeAsync: mocks.encodeAsync,
 }));
 
+describe('resolveEmbeddingInputLimit', () => {
+  it.each([
+    [{ configuredLimit: 7500, contextWindowTokens: 8192 }, 7500],
+    [{ configuredLimit: 100_000, contextWindowTokens: 128_000 }, 100_000],
+    [{ configuredLimit: 1_800_000, contextWindowTokens: 2_000_000 }, 1_800_000],
+    [{ configuredLimit: 10_000_000 }, 7500],
+  ] as const)('resolves model-safe limit for %o', (input, expected) => {
+    expect(resolveEmbeddingInputLimit(input).effectiveLimit).toBe(expected);
+  });
+
+  it('reserves eight percent or at least 512 tokens', () => {
+    expect(
+      resolveEmbeddingInputLimit({ configuredLimit: 100_000, contextWindowTokens: 8192 }),
+    ).toMatchObject({ effectiveLimit: 7536, modelSafeInputLimit: 7536 });
+  });
+});
+
 describe('embedUserMemoryTexts', () => {
   beforeEach(() => {
-    mocks.contextLimit = 3;
     vi.clearAllMocks();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -42,7 +48,7 @@ describe('embedUserMemoryTexts', () => {
     vi.restoreAllMocks();
   });
 
-  it('trims long inputs and preserves output indexes', async () => {
+  it('trims each input and preserves output indexes', async () => {
     const runtime = {
       embeddings: vi.fn(async () => [
         [1, 2, 3],
@@ -53,6 +59,7 @@ describe('embedUserMemoryTexts', () => {
     const result = await embedUserMemoryTexts({
       input: ['one two three four', '', null, 'short text'],
       model: 'text-embedding-3-large',
+      provider: 'openai',
       runtime,
       source: 'test:source',
       userId: 'user-test',
@@ -67,39 +74,33 @@ describe('embedUserMemoryTexts', () => {
       { metadata: { trigger: 'memory' }, user: 'user-test' },
     );
     expect(result).toEqual([[1, 2, 3], undefined, undefined, [4, 5, 6]]);
-    expect(console.warn).toHaveBeenCalledWith('[user-memory] trimmed embedding input', {
-      limit: 3,
-      model: 'text-embedding-3-large',
-      originalTokens: 4,
-      source: 'test:source',
-      trimmedTokens: 3,
-      userId: 'user-test',
-    });
+    expect(console.warn).toHaveBeenCalledWith(
+      '[user-memory] trimmed embedding input',
+      expect.objectContaining({
+        configuredLimit: 3,
+        effectiveLimit: 3,
+        model: 'text-embedding-3-large',
+        originalTokens: 4,
+        provider: 'openai',
+        trimmedTokens: 3,
+        userId: 'user-test',
+      }),
+    );
   });
 
-  it('skips trimming when no context limit is configured', async () => {
-    mocks.contextLimit = undefined;
+  it('rejects an embedding output count mismatch', async () => {
     const runtime = {
-      embeddings: vi.fn(async () => [[1, 2, 3]]),
+      embeddings: vi.fn(async () => []),
     } satisfies UserMemoryEmbeddingRuntime;
 
-    const result = await embedUserMemoryTexts({
-      input: ['one two three four'],
-      model: 'text-embedding-3-large',
-      runtime,
-      source: 'test:no-limit',
-      userId: 'user-test',
-    });
-
-    expect(mocks.trimBasedOnBatchProbe).not.toHaveBeenCalled();
-    expect(runtime.embeddings).toHaveBeenCalledWith(
-      {
-        dimensions: 2048,
-        input: ['one two three four'],
+    await expect(
+      embedUserMemoryTexts({
+        input: ['one two'],
         model: 'text-embedding-3-large',
-      },
-      { metadata: { trigger: 'memory' }, user: 'user-test' },
-    );
-    expect(result).toEqual([[1, 2, 3]]);
+        runtime,
+        source: 'test:mismatch',
+        userId: 'user-test',
+      }),
+    ).rejects.toThrow('Embedding output count mismatch');
   });
 });

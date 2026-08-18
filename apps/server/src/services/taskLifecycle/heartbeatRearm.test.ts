@@ -24,7 +24,7 @@ const baseTask = (overrides: Partial<TaskItem> = {}): TaskItem =>
     id: 'task-1',
     identifier: 'TASK-1',
     name: 'demo',
-    status: 'paused',
+    status: 'running',
     ...overrides,
   }) as unknown as TaskItem;
 
@@ -87,6 +87,13 @@ describe('TaskLifecycleService.maybeRearmHeartbeat', () => {
     await rearm(baseTask({ status }), 'done');
 
     expect(fakeScheduler.scheduleNextTopic).not.toHaveBeenCalled();
+  });
+
+  it('skips when the task is paused', async () => {
+    await rearm(baseTask({ status: 'paused' }), 'done');
+
+    expect(fakeScheduler.scheduleNextTopic).not.toHaveBeenCalled();
+    expect(updateContext).not.toHaveBeenCalled();
   });
 
   it('skips when a non-error unresolved urgent brief exists, but persists failure count', async () => {

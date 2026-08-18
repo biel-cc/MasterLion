@@ -9,6 +9,7 @@ DEFAULT_TEST_CONTEXT="ack-c23ea84b-masterlion-test"
 MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 BRIDGE_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-aihub-db-bridge"
 DEVICE_GATEWAY_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway"
+DEVICE_GATEWAY_IMAGE_DIGEST="sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d"
 MARKET_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market"
 IMAGE_TAG_MARKER="v1.1.0"
 TLS_SECRET_NAME="20261122bielcrystal.com"
@@ -39,8 +40,10 @@ Commands:
   create-secret [app-env] [bridge-env] [searxng-env] [market-env]
                               Create/update isolated app, bridge, SearXNG and Market Secrets.
   create-gateway-secret [gateway-env]
-                              Create/update the isolated test Device Gateway Secret.
+                              Create/update the environment-specific Device Gateway Secret.
   deploy                     Server dry-run and apply the selected overlay.
+  gateway-cutover            Expose the validated production Device Gateway Ingress.
+  gateway-rollback           Remove only the production Device Gateway Ingress.
   start                      Scale Masterino to one replica for private validation.
   cutover                    Move the test Ingress from the old namespace to Masterino.
   rollback                   Restore the old test Ingress and stop Masterino.
@@ -94,6 +97,7 @@ case "$ENVIRONMENT" in
     EXPECTED_ACK_CLUSTER_ID="$PRODUCTION_ACK_CLUSTER_ID"
     OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production"
     MIGRATION_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production-migration"
+    GATEWAY_CUTOVER_OVERLAY_DIR="$SCRIPT_DIR/k8s/overlays/production-gateway-cutover"
     EXPECTED_CONTEXT="${ACK_CONTEXT:-}"
     [[ -n "$EXPECTED_CONTEXT" ]] || fail "ACK_CONTEXT is required for production"
     STORAGE_CLASS_NAME="masterino-production-essd-retain"
@@ -208,6 +212,16 @@ searxng_enabled() {
   kubectl kustomize "$OVERLAY_DIR" | grep -Eq 'SEARCH_PROVIDERS:.*searxng'
 }
 
+check_gateway_secret() {
+  local key value
+  "${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
+    "masterino-device-gateway-secret is missing in namespace '$NAMESPACE'"
+  for key in "${required_gateway_secret_keys[@]}"; do
+    value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
+    [[ -n "$value" ]] || fail "masterino-device-gateway-secret is missing key: $key"
+  done
+}
+
 normalize_workload_schema_transitions() {
   local legacy_probe postgres_db_value
 
@@ -286,13 +300,8 @@ check_secret() {
       value="$("${KUBE[@]}" get secret masterlion-searxng-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
       [[ -n "$value" ]] || fail "masterlion-searxng-secret is missing key: $key"
     done
-    "${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" > /dev/null 2>&1 || fail \
-      "masterino-device-gateway-secret is missing in namespace '$NAMESPACE'"
-    for key in "${required_gateway_secret_keys[@]}"; do
-      value="$("${KUBE[@]}" get secret masterino-device-gateway-secret -n "$NAMESPACE" -o "jsonpath={.data.${key}}")"
-      [[ -n "$value" ]] || fail "masterino-device-gateway-secret is missing key: $key"
-    done
   fi
+  check_gateway_secret
 }
 
 service_resource() {
@@ -476,6 +485,22 @@ case "$COMMAND" in
       printf '%s\n' "$rendered" | grep -q 'name: masterino-production-essd-retain'
       printf '%s\n' "$rendered" | grep -q 'reclaimPolicy: Retain'
       printf '%s\n' "$rendered" | grep -q 'replicas: 2'
+      printf '%s\n' "$rendered" \
+        | grep -q "image: ${DEVICE_GATEWAY_IMAGE}@${DEVICE_GATEWAY_IMAGE_DIGEST}"
+      printf '%s\n' "$rendered" | grep -q 'runAsUser: 10001'
+      printf '%s\n' "$rendered" | grep -q 'DEVICE_GATEWAY_URL: http://masterino-device-gateway:8788'
+      printf '%s\n' "$rendered" \
+        | grep -A5 -F 'name: DEVICE_GATEWAY_SERVICE_TOKEN' \
+        | grep -Fq 'name: masterino-device-gateway-secret' \
+        || fail "production Masterino deployment must reference the Device Gateway service token"
+      if printf '%s\n' "$rendered" | grep -Fq 'path: /device-gateway(/|$)(.*)'; then
+        fail "production Device Gateway Ingress must remain gated until gateway-cutover"
+      fi
+      gateway_cutover_rendered="$(kubectl kustomize "$GATEWAY_CUTOVER_OVERLAY_DIR")"
+      printf '%s\n' "$gateway_cutover_rendered" | grep -q 'host: masterino.bielcrystal.com'
+      printf '%s\n' "$gateway_cutover_rendered" | grep -Fq 'path: /device-gateway(/|$)(.*)'
+      printf '%s\n' "$gateway_cutover_rendered" | grep -q 'name: masterino-device-gateway'
+      printf '%s\n' "$gateway_cutover_rendered" | grep -q 'proxy-read-timeout: "3600"'
       migration_rendered="$(render_manifests "$MIGRATION_OVERLAY_DIR")"
       printf '%s\n' "$migration_rendered" | grep -q 'replicas: 0'
       if printf '%s\n' "$migration_rendered" | grep -q '^kind: Ingress$'; then
@@ -585,8 +610,11 @@ case "$COMMAND" in
     check_secret
     ;;
   create-gateway-secret)
-    [[ "$ENVIRONMENT" == "test" ]] || fail "create-gateway-secret is only used for the test environment"
     verify_target mutation
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+      [[ "${CONFIRM_GATEWAY_SECRET:-}" == "$NAMESPACE" ]] || fail \
+        "set CONFIRM_GATEWAY_SECRET=$NAMESPACE to create the production Device Gateway Secret"
+    fi
     gateway_secret_file="${1:-$OVERLAY_DIR/device-gateway-secret.env}"
     [[ -f "$gateway_secret_file" ]] || fail "gateway secret env file does not exist: $gateway_secret_file"
     if grep -q 'CHANGE_ME\|replace-with' "$gateway_secret_file"; then
@@ -608,6 +636,44 @@ case "$COMMAND" in
         if (Object.keys(key).some((field) => privateFields.has(field))) process.exit(1);
       }
     ' || fail "JWKS_PUBLIC_KEY must contain public-only RS256 signing keys"
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+      production_jwks="$({
+        "${KUBE[@]}" get secret masterino-secret -n "$NAMESPACE" \
+          -o 'jsonpath={.data.JWKS_KEY}' | base64 --decode
+      })"
+      [[ -n "$production_jwks" ]] || fail "production masterino-secret is missing JWKS_KEY"
+      expected_gateway_public_jwks="$(printf '%s' "$production_jwks" | node -e '
+        const fs = require("node:fs");
+        const input = JSON.parse(fs.readFileSync(0, "utf8"));
+        const fields = ["kty", "n", "e", "kid", "alg", "use"];
+        const keys = (Array.isArray(input.keys) ? input.keys : [input]).map((key) =>
+          Object.fromEntries(fields.filter((field) => key[field] !== undefined).map((field) => [field, key[field]])),
+        );
+        process.stdout.write(JSON.stringify({ keys }));
+      ')"
+      candidate_gateway_public_jwks="$(printf '%s' "$gateway_public_jwks" | node -e '
+        const fs = require("node:fs");
+        const input = JSON.parse(fs.readFileSync(0, "utf8"));
+        const fields = ["kty", "n", "e", "kid", "alg", "use"];
+        const keys = input.keys.map((key) =>
+          Object.fromEntries(fields.filter((field) => key[field] !== undefined).map((field) => [field, key[field]])),
+        );
+        process.stdout.write(JSON.stringify({ keys }));
+      ')"
+      unset production_jwks
+      [[ "$candidate_gateway_public_jwks" == "$expected_gateway_public_jwks" ]] || fail \
+        "JWKS_PUBLIC_KEY must be derived from production masterino-secret/JWKS_KEY"
+
+      if "${KUBE[@]}" get secret masterino-device-gateway-secret -n masterino-test > /dev/null 2>&1; then
+        test_gateway_token="$({
+          "${KUBE[@]}" get secret masterino-device-gateway-secret -n masterino-test \
+            -o 'jsonpath={.data.SERVICE_TOKEN}'
+        })"
+        candidate_gateway_token="$(printf '%s' "$gateway_service_token" | base64 | tr -d '\n')"
+        [[ "$candidate_gateway_token" != "$test_gateway_token" ]] || fail \
+          "production SERVICE_TOKEN must not reuse the test Device Gateway token"
+      fi
+    fi
     # kubectl's dotenv reader removes the unescaped quotes from inline JSON
     # values. Passing the validated values literally preserves JWKS_PUBLIC_KEY
     # byte-for-byte in the Secret.
@@ -694,6 +760,40 @@ case "$COMMAND" in
       | "${KUBE[@]}" apply --server-side --field-manager=masterino-deploy \
         --force-conflicts -f -
     ;;
+  gateway-cutover)
+    [[ "$ENVIRONMENT" == "production" ]] || fail "gateway-cutover is only used for production"
+    verify_target mutation
+    [[ "${CONFIRM_GATEWAY_CUTOVER:-}" == "$NAMESPACE" ]] || fail \
+      "set CONFIRM_GATEWAY_CUTOVER=$NAMESPACE after private Gateway validation succeeds"
+    check_gateway_secret
+    "${KUBE[@]}" rollout status deployment/masterino-device-gateway -n "$NAMESPACE" --timeout=10m
+    available="$("${KUBE[@]}" get deployment masterino-device-gateway -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}')"
+    [[ "$available" == "1" ]] || fail "Device Gateway must have exactly one available replica before cutover"
+    private_health="$("${KUBE[@]}" get --raw "/api/v1/namespaces/${NAMESPACE}/services/http:masterino-device-gateway:8788/proxy/health")"
+    [[ "$private_health" == "OK" ]] || fail "private Device Gateway health check did not return OK"
+    gateway_cutover_rendered="$(kubectl kustomize "$GATEWAY_CUTOVER_OVERLAY_DIR")"
+    printf '%s\n' "$gateway_cutover_rendered" \
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-gateway-cutover \
+        --force-conflicts --dry-run=server -f - > /dev/null
+    printf '%s\n' "$gateway_cutover_rendered" \
+      | "${KUBE[@]}" apply --server-side --field-manager=masterino-gateway-cutover \
+        --force-conflicts -f -
+    for attempt in {1..12}; do
+      if [[ "$(curl -fsS --max-time 10 https://masterino.bielcrystal.com/device-gateway/health 2>/dev/null || true)" == "OK" ]]; then
+        echo "Production Device Gateway is publicly healthy."
+        exit 0
+      fi
+      sleep 5
+    done
+    fail "production Device Gateway public health check did not return OK after cutover"
+    ;;
+  gateway-rollback)
+    [[ "$ENVIRONMENT" == "production" ]] || fail "gateway-rollback is only used for production"
+    verify_target mutation
+    [[ "${CONFIRM_GATEWAY_ROLLBACK:-}" == "$NAMESPACE" ]] || fail \
+      "set CONFIRM_GATEWAY_ROLLBACK=$NAMESPACE to remove the production Device Gateway Ingress"
+    "${KUBE[@]}" delete ingress masterino-device-gateway -n "$NAMESPACE" --ignore-not-found
+    ;;
   start)
     verify_target mutation
     check_secret
@@ -767,6 +867,7 @@ case "$COMMAND" in
     if [[ "$replicas" != "0" ]]; then
       "${KUBE[@]}" rollout status deployment/masterino -n "$NAMESPACE" --timeout=10m
     fi
+    "${KUBE[@]}" rollout status deployment/masterino-device-gateway -n "$NAMESPACE" --timeout=10m
     if [[ "$ENVIRONMENT" == "test" ]]; then
       "${KUBE[@]}" wait -n "$NAMESPACE" --for=condition=complete \
         job/masterino-market-db-bootstrap --timeout=5m
@@ -779,7 +880,6 @@ case "$COMMAND" in
       if [[ "$worker_replicas" != "0" ]]; then
         "${KUBE[@]}" rollout status deployment/masterino-memory-worker -n "$NAMESPACE" --timeout=10m
       fi
-      "${KUBE[@]}" rollout status deployment/masterino-device-gateway -n "$NAMESPACE" --timeout=10m
     fi
     ;;
   logs)

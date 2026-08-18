@@ -8,13 +8,22 @@ import { TraceClient } from '@/libs/traces';
 
 export interface AgentChatOptions {
   enableTrace?: boolean;
+  includeInput?: boolean;
+  metadata?: Record<string, unknown>;
   provider: string;
+  shutdownMode?: 'deferred' | 'immediate';
   trace?: TracePayload;
 }
 
 export const createTraceOptions = (
   payload: ChatStreamPayload,
-  { trace: tracePayload, provider }: AgentChatOptions,
+  {
+    includeInput = true,
+    metadata,
+    trace: tracePayload,
+    provider,
+    shutdownMode = 'deferred',
+  }: AgentChatOptions,
 ) => {
   const { messages, model, tools, ...parameters } = payload;
   // create a trace to monitor the completion
@@ -24,8 +33,14 @@ export const createTraceOptions = (
 
   const trace = traceClient.createTrace({
     id: tracePayload?.traceId,
-    input: messages,
-    metadata: { messageLength, model, provider, systemRole, tools },
+    input: includeInput ? messages : undefined,
+    metadata: {
+      ...metadata,
+      messageLength,
+      model,
+      provider,
+      ...(includeInput ? { systemRole, tools } : {}),
+    },
     name: tracePayload?.traceName,
     sessionId: tracePayload?.topicId
       ? tracePayload.topicId
@@ -35,7 +50,7 @@ export const createTraceOptions = (
   });
 
   const generation = trace?.generation({
-    input: messages,
+    input: includeInput ? messages : undefined,
     metadata: { messageLength, model, provider },
     model,
     modelParameters: parameters as any,
@@ -85,15 +100,24 @@ export const createTraceOptions = (
         trace?.update({ output });
       },
 
-      onFinal: () => {
-        after(async () => {
-          try {
-            await traceClient.shutdownAsync();
-          } catch (e) {
-            console.error('TraceClient shutdown error:', e);
+      onFinal: trace
+        ? async () => {
+            const shutdown = async () => {
+              try {
+                await traceClient.shutdownAsync();
+              } catch (e) {
+                console.error('TraceClient shutdown error:', e);
+              }
+            };
+
+            if (shutdownMode === 'immediate') {
+              await shutdown();
+              return;
+            }
+
+            after(shutdown);
           }
-        });
-      },
+        : undefined,
 
       onStart: () => {
         generation?.update({ completionStartTime: new Date() });

@@ -1,0 +1,48 @@
+ARG NODEJS_VERSION="24"
+ARG BASE_REGISTRY="docker.io/library"
+
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS builder
+
+ARG USE_CN_MIRROR
+
+ENV CI="true" \
+    NODE_OPTIONS="--max-old-space-size=4096"
+
+WORKDIR /app
+
+COPY . .
+
+RUN set -e; \
+    if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
+      npm config set registry "https://registry.npmmirror.com/"; \
+    fi; \
+    export COREPACK_NPM_REGISTRY="$(npm config get registry | sed 's/\/$//')"; \
+    export PNPM_SPEC="$(node -p 'require("./package.json").packageManager.split("+")[0]')"; \
+    corepack enable; \
+    for attempt in 1 2 3; do \
+      if corepack prepare "$PNPM_SPEC" --activate; then break; fi; \
+      if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+      sleep "$((attempt * 5))"; \
+    done; \
+    if [ "${USE_CN_MIRROR:-false}" = "true" ]; then \
+      pnpm config set registry "https://registry.npmmirror.com/"; \
+    fi; \
+    pnpm install --frozen-lockfile --node-linker=hoisted --prefer-offline --prod=false; \
+    pnpm --filter @masterlion/admin build
+
+FROM ${BASE_REGISTRY}/node:${NODEJS_VERSION}-slim AS production
+
+ENV ADMIN_HOST="0.0.0.0" \
+    ADMIN_PORT="3020" \
+    NODE_ENV="production"
+
+WORKDIR /app
+
+COPY --chown=node:node --from=builder /app/apps/admin/dist ./dist
+COPY --chown=node:node apps/admin/server.mjs ./server.mjs
+
+USER node
+
+EXPOSE 3020
+
+CMD ["node", "server.mjs"]

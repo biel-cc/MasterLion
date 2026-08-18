@@ -153,6 +153,7 @@ export default {
   'updater.checkingUpdateDesc': 'Retrieving version information...',
   'updater.downloadNewVersion': 'Download new version',
   'updater.downloadProgress': 'Downloaded {{percent}}%',
+  'updater.copyInstallCommand': 'Copy command',
   'updater.openInstaller': 'Open installer',
   'updater.downloadingUpdate': 'Downloading update',
   'updater.downloadingUpdateDesc': 'The update is downloading, please wait...',
@@ -176,6 +177,14 @@ export default {
   'updater.updateReady': 'A new version is available',
   'updater.updateReadyDesc':
     'The new version {{version}} has been downloaded. Restart the application to complete the installation.',
+  'updater.unsignedMacStep1': 'Drag Masterino into Applications.',
+  'updater.unsignedMacStep2': 'Open Terminal and run the command below.',
+  'updater.unsignedMacStep3': 'Open Masterino from Applications.',
+  'updater.unsignedMacTrustedSourceOnly':
+    'Only continue if this update came from Masterino’s trusted internal release channel.',
+  'updater.unsignedMacWarningDescription':
+    'This internal build only has an ad-hoc integrity signature; it has no Apple Developer ID signature or notarization. macOS may report that it is damaged until its quarantine attribute is removed.',
+  'updater.unsignedMacWarningTitle': 'Unsigned internal macOS build',
   'updater.upgradeNow': 'Update now',
   'updater.willInstallLater': 'The update will be installed on the next launch',
   'waitingOAuth.cancel': 'Cancel',

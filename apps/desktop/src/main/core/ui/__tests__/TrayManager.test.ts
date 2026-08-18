@@ -4,8 +4,12 @@ import type { App } from '../../App';
 import { Tray } from '../Tray';
 import { TrayManager } from '../TrayManager';
 
-// Mock electron modules (empty shim — TrayManager no longer reads nativeTheme)
-vi.mock('electron', () => ({}));
+// Mock Electron's runtime product name.
+vi.mock('electron', () => ({
+  app: {
+    getName: vi.fn(() => 'Masterino'),
+  },
+}));
 
 // Mock logger
 vi.mock('@/utils/logger', () => ({
@@ -20,11 +24,6 @@ vi.mock('@/utils/logger', () => ({
 // Mock environment constants
 vi.mock('@/const/env', () => ({
   isMac: true,
-}));
-
-// Mock package.json
-vi.mock('@/../../package.json', () => ({
-  name: 'test-app',
 }));
 
 // Mock Tray class
@@ -116,7 +115,7 @@ describe('TrayManager', () => {
           iconPath: 'trayTemplate.png',
           identifier: 'main',
           isTemplateImage: true,
-          tooltip: 'test-app',
+          tooltip: 'Masterino',
         }),
         mockApp,
       );

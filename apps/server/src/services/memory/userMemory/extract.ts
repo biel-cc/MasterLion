@@ -1,7 +1,4 @@
-import {
-  DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
-  DEFAULT_USER_MEMORY_EMBEDDING_MODEL_ITEM,
-} from '@lobechat/const';
+import { DEFAULT_USER_MEMORY_EMBEDDING_MODEL_ITEM } from '@lobechat/const';
 import { messages, topics } from '@lobechat/database/schemas';
 import {
   ActivityMemoryItemSchema,
@@ -19,7 +16,6 @@ import {
   type WithActivity,
 } from '@lobechat/memory-user-memory';
 import {
-  type Embeddings,
   type GenerateObjectPayload,
   type LLMRoleType,
   type ModelRuntimeHooks,
@@ -47,7 +43,6 @@ import type {
   MemoryExtractionTracePayload,
   UserServiceModelConfig,
 } from '@lobechat/types';
-import { RequestTrigger } from '@lobechat/types';
 import debug from 'debug';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { join } from 'pathe';
@@ -85,6 +80,7 @@ import { trimBasedOnBatchProbe } from '@/utils/chunkers';
 import { encodeAsync } from '@/utils/tokenizer';
 
 import { isPersonalMemoryEnabled } from './access';
+import { EmbeddingOutputCountMismatchError, embedUserMemoryTexts } from './embedding';
 
 const SOURCE_ALIAS_MAP: Record<string, MemorySourceType> = {
   benchmark_locomo: MemorySourceType.BenchmarkLocomo,
@@ -873,19 +869,18 @@ export class MemoryExtractionExecutor {
       }
 
       try {
-        const response = await runtimes.embeddings(
-          {
-            dimensions: DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
-            input: requests.map((item) => item.text),
-            model,
-          },
-          { metadata: { trigger: RequestTrigger.Memory }, user: userId },
-        );
+        const response = await embedUserMemoryTexts({
+          input: requests.map((item) => item.text),
+          model,
+          runtime: runtimes,
+          source: 'memory-extraction:persist',
+          userId,
+        });
 
-        const vectors = texts.map<Embeddings | null>(() => null);
+        const vectors = texts.map<number[] | null>(() => null);
         response?.forEach((embedding, idx) => {
           const request = requests[idx];
-          if (request) {
+          if (request && embedding) {
             vectors[request.index] = embedding;
           }
         });
@@ -901,6 +896,8 @@ export class MemoryExtractionExecutor {
         });
         span.recordException(error as Error);
         console.error('[memory-extraction] failed to generate embeddings', error, 'model:', model);
+
+        if (error instanceof EmbeddingOutputCountMismatchError) throw error;
 
         return texts.map(() => null);
       } finally {
@@ -1370,14 +1367,13 @@ export class MemoryExtractionExecutor {
       tokenLimit,
     );
 
-    const embeddings = await runtime.embeddings(
-      {
-        dimensions: DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
-        input: [aggregatedContent],
-        model: embeddingModel,
-      },
-      { metadata: { trigger: RequestTrigger.Memory }, user: userId },
-    );
+    const embeddings = await embedUserMemoryTexts({
+      input: [aggregatedContent],
+      model: embeddingModel,
+      runtime,
+      source: 'memory-extraction:retrieval',
+      userId,
+    });
 
     const vector = embeddings?.[0];
     if (vector) {

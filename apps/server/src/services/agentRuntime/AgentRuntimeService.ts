@@ -393,6 +393,7 @@ export class AgentRuntimeService {
       discordContext,
       evalContext,
       executionPlan,
+      executionBudget,
       maxSteps,
       userMemory,
       deviceSystemInfo,
@@ -418,11 +419,18 @@ export class AgentRuntimeService {
         sourceMessageId: appContext?.sourceMessageId,
       },
       chatGroupId: appContext?.groupId ?? null,
-      maxSteps,
+      maxSteps: executionBudget?.maxSteps ?? maxSteps,
       // Persist the Agent Signal run marker on the operation row so server-side
       // self-iteration tools can read it back (metadata.agentSignal) at tool-call
       // time — the trimmed appContext above intentionally drops it.
-      ...(appContext?.agentSignal ? { metadata: { agentSignal: appContext.agentSignal } } : {}),
+      ...(appContext?.agentSignal || executionBudget
+        ? {
+            metadata: {
+              ...(appContext?.agentSignal ? { agentSignal: appContext.agentSignal } : {}),
+              ...(executionBudget ? { executionBudget } : {}),
+            },
+          }
+        : {}),
       model: modelRuntimeConfig?.model,
       modelRuntimeConfig,
       operationId,
@@ -474,6 +482,7 @@ export class AgentRuntimeService {
           discordContext,
           evalContext,
           executionPlan,
+          executionBudget,
           // need be removed
           modelRuntimeConfig,
           queueRetries,
@@ -487,7 +496,8 @@ export class AgentRuntimeService {
           workspaceId,
           ...appContext,
         },
-        maxSteps,
+        executionBudget,
+        maxSteps: executionBudget?.maxSteps ?? maxSteps,
         // modelRuntimeConfig at state level for executor fallback
         modelRuntimeConfig,
         operationId,
@@ -711,6 +721,23 @@ export class AgentRuntimeService {
 
         if (!agentState) {
           throw new Error(`Agent state not found for operation ${operationId}`);
+        }
+
+        const budgetReason = this.getExecutionBudgetReason(agentState);
+        if (budgetReason) {
+          const interruptedAt = new Date().toISOString();
+          agentState.status = 'interrupted';
+          agentState.lastModified = interruptedAt;
+          agentState.interruption = {
+            canResume: true,
+            interruptedAt,
+            reason: `Execution budget exceeded: ${budgetReason}`,
+          };
+          agentState.metadata = {
+            ...agentState.metadata,
+            executionBudgetCompletionReason: budgetReason,
+          };
+          await this.coordinator.saveAgentState(operationId, agentState);
         }
 
         const stepStartUiMessages = await this.queryUiMessages(agentState);
@@ -2472,6 +2499,24 @@ export class AgentRuntimeService {
     return true;
   }
 
+  private getExecutionBudgetReason(
+    state: AgentState,
+  ): 'max_steps' | 'time_limit' | 'token_limit' | undefined {
+    const budget = state.executionBudget ?? state.metadata?.executionBudget;
+    if (!budget) return;
+
+    if (state.stepCount >= budget.maxSteps) return 'max_steps';
+
+    const createdAt = new Date(state.createdAt).getTime();
+    if (Number.isFinite(createdAt) && Date.now() - createdAt >= budget.maxDurationMs) {
+      return 'time_limit';
+    }
+
+    if ((state.usage?.llm?.tokens?.total ?? 0) >= budget.maxTotalTokens) {
+      return 'token_limit';
+    }
+  }
+
   /**
    * Calculate step delay
    */
@@ -2512,6 +2557,15 @@ export class AgentRuntimeService {
    * Determine operation completion reason
    */
   private determineCompletionReason(state: AgentState): StepCompletionReason {
+    const budgetReason = state.metadata?.executionBudgetCompletionReason;
+    if (
+      budgetReason === 'max_steps' ||
+      budgetReason === 'repeated_error' ||
+      budgetReason === 'time_limit' ||
+      budgetReason === 'token_limit'
+    ) {
+      return budgetReason;
+    }
     if (state.status === 'done') return 'done';
     if (state.status === 'error') return 'error';
     if (state.status === 'interrupted') return 'interrupted';

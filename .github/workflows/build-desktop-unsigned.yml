@@ -3,6 +3,16 @@ name: Build Unsigned Desktop
 on:
   workflow_dispatch:
     inputs:
+      acknowledge_unsigned_macos:
+        description: I understand the macOS artifacts are unsigned internal builds
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing GitHub release tag that receives the desktop installers
+        required: true
+        type: string
+        default: v1.2.1
       release_notes:
         description: Chinese release notes embedded in the update manifest
         required: false
@@ -12,7 +22,7 @@ on:
         description: Stable SemVer greater than the current OSS canary version
         required: true
         type: string
-        default: 1.1.4
+        default: 1.2.1
 
 concurrency:
   group: unsigned-desktop-${{ github.ref }}
@@ -46,13 +56,35 @@ jobs:
           AWS_EC2_METADATA_DISABLED: 'true'
           AWS_REGION: cn-shenzhen
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DESKTOP_OSS_ACCESS_KEY_SECRET }}
+          ACKNOWLEDGE_UNSIGNED_MACOS: ${{ inputs.acknowledge_unsigned_macos }}
+          GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+
+          if [ "$ACKNOWLEDGE_UNSIGNED_MACOS" != "true" ]; then
+            echo "You must acknowledge that macOS artifacts are unsigned internal builds" >&2
+            exit 1
+          fi
 
           semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           if [[ ! "$INPUT_VERSION" =~ $semver_pattern ]]; then
             echo "Version must be a stable SemVer such as 1.1.4" >&2
+            exit 1
+          fi
+
+          if [ "$RELEASE_TAG" != "v${INPUT_VERSION}" ]; then
+            echo "Release tag $RELEASE_TAG must equal v${INPUT_VERSION}" >&2
+            exit 1
+          fi
+
+          release_state="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease \
+            --jq '[.isDraft, .isPrerelease] | @tsv')"
+          if [ "$release_state" != $'false\tfalse' ]; then
+            echo "Release $RELEASE_TAG must be an existing published, non-prerelease release" >&2
             exit 1
           fi
 
@@ -176,12 +208,48 @@ jobs:
           set -euo pipefail
           app_path="$(find apps/desktop/release -type d -name 'Masterino.app' -print -quit)"
           test -n "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
           signature="$(codesign -dv --verbose=4 "$app_path" 2>&1 || true)"
           if grep -q '^Authority=' <<<"$signature"; then
             echo "Unexpected Developer ID signature found" >&2
             exit 1
           fi
-          echo "Verified no Developer ID authority on $(uname -m) build"
+          if ! grep -q '^Signature=adhoc' <<<"$signature"; then
+            echo "Expected a valid ad-hoc signature" >&2
+            exit 1
+          fi
+          echo "Verified valid ad-hoc signature with no Developer ID authority on $(uname -m) build"
+
+      - name: Verify unsigned macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -m)" = "arm64" ]; then
+            arch="arm64"
+          else
+            arch="x64"
+          fi
+          dmg_path="$(find apps/desktop/release -maxdepth 1 -name "Masterino-*-unsigned-${arch}.dmg" -print -quit)"
+          zip_path="$(find apps/desktop/release -maxdepth 1 -name "Masterino-*-unsigned-${arch}.zip" -print -quit)"
+          test -n "$dmg_path"
+          test -n "$zip_path"
+
+          mount_point="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+            rmdir "$mount_point" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg_path" >/dev/null
+          test -d "$mount_point/Masterino.app"
+          test -f "$mount_point/INSTALL-MACOS-UNSIGNED.txt"
+          grep -Fq 'xattr -dr com.apple.quarantine /Applications/Masterino.app' \
+            "$mount_point/INSTALL-MACOS-UNSIGNED.txt"
+          grep -Fq 'trusted internal release channel' \
+            "$mount_point/INSTALL-MACOS-UNSIGNED.txt"
+          echo "Verified unsigned ${arch} artifacts and embedded installation guide"
 
       - name: Build unsigned Windows artifacts
         if: runner.os == 'Windows'
@@ -258,8 +326,10 @@ jobs:
           VERSION: ${{ needs.validate-version.outputs.version }}
         run: |
           set -euo pipefail
-          test -f "release/Masterino-${VERSION}-arm64.dmg"
-          test -f "release/Masterino-${VERSION}-x64.dmg"
+          test -f "release/Masterino-${VERSION}-unsigned-arm64.dmg"
+          test -f "release/Masterino-${VERSION}-unsigned-x64.dmg"
+          test -f "release/Masterino-${VERSION}-unsigned-arm64.zip"
+          test -f "release/Masterino-${VERSION}-unsigned-x64.zip"
           test -f "release/Masterino-${VERSION}-setup.exe"
           test -f "release/${DESKTOP_CHANNEL}.yml"
           test -f "release/${DESKTOP_CHANNEL}-mac.yml"
@@ -274,7 +344,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish OSS and draft GitHub release
+    name: Publish OSS and GitHub release
     needs: [validate-version, merge]
     runs-on: ubuntu-latest
     permissions:
@@ -297,43 +367,78 @@ jobs:
           signing-private-key-b64: ${{ secrets.DESKTOP_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           version: ${{ needs.validate-version.outputs.version }}
 
-      - name: Create draft GitHub release
+      - name: Upload installers to existing GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ inputs.release_notes }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           VERSION: ${{ needs.validate-version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="desktop-unsigned-v${VERSION}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; refusing to overwrite it" >&2
-            exit 1
-          fi
-
-          mapfile -d '' assets < <(
-            find release -maxdepth 1 -type f \
-              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) \
-              -print0
+          assets=(
+            "release/Masterino-${VERSION}-setup.exe"
+            "release/Masterino-${VERSION}-unsigned-arm64.dmg"
+            "release/Masterino-${VERSION}-unsigned-x64.dmg"
           )
-          test "${#assets[@]}" -eq 5
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
 
+          gh release upload "$RELEASE_TAG" "${assets[@]}" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
+
+          current_notes="$RUNNER_TEMP/current-release-notes.md"
+          notes_without_desktop="$RUNNER_TEMP/release-notes-without-desktop.md"
           notes_file="$RUNNER_TEMP/desktop-release-notes.md"
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json body \
+            --jq '.body' > "$current_notes"
+          awk '
+            /<!-- desktop-installers:start -->/ { skip = 1; next }
+            /<!-- desktop-installers:end -->/ { skip = 0; next }
+            !skip { print }
+          ' "$current_notes" > "$notes_without_desktop"
+          sed -i \
+            's/GitHub Release 不提供客户端安装资产。/GitHub Release 现提供 Windows x64 与 macOS 双架构手动安装包。/' \
+            "$notes_without_desktop"
+
           {
-            echo "## Masterino Desktop ${VERSION}（未签名测试版）"
+            cat "$notes_without_desktop"
+            echo
+            echo '<!-- desktop-installers:start -->'
+            echo "## 桌面客户端安装包"
             echo
             echo "$RELEASE_NOTES"
             echo
+            echo "- 构建源码：\`${GITHUB_SHA}\`（保留原有 \`${RELEASE_TAG}\` 标签位置）"
             echo "- 更新通道：canary"
-            echo "- macOS：未使用 Developer ID 签名或公证，需通过右键打开或移除 quarantine。"
+            echo "- macOS：这是仅使用 ad-hoc 签名、未经 Apple 公证的内部测试包，不能直接通过 Gatekeeper。"
+            echo '- 安装：拖入 Applications 后，在终端运行 `xattr -dr com.apple.quarantine /Applications/Masterino.app`。'
+            echo "- 安全：仅对来自 Masterino 公司内部可信发布渠道的包执行上述命令；不要全局关闭 Gatekeeper。"
             echo "- Windows：未使用 Authenticode 签名，可能出现 SmartScreen 提示。"
             echo "- 更新源：客户端仅访问阿里云 OSS，不使用 GitHub Release 作为更新源。"
-            echo "- Windows：默认后台下载，完整性校验通过后可立即重启安装或退出时安装。"
-            echo "- macOS：默认后台下载并校验 DMG，需用户手动打开安装包替换应用。"
+            echo
+            echo "### SHA-256"
+            echo
+            for asset in "${assets[@]}"; do
+              checksum="$(sha256sum "$asset" | cut -d ' ' -f 1)"
+              echo "- \`$(basename "$asset")\`: \`${checksum}\`"
+            done
+            echo '<!-- desktop-installers:end -->'
           } > "$notes_file"
 
-          gh release create "$tag" "${assets[@]}" \
-            --draft \
-            --target "$GITHUB_SHA" \
-            --title "Masterino Desktop ${VERSION}（未签名）" \
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --notes-file "$notes_file"
+
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            uploaded_size="$(gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq ".assets[] | select(.name == \"$name\") | .size")"
+            test "$uploaded_size" = "$(stat -c %s "$asset")"
+          done

@@ -7,6 +7,7 @@ import {
 } from '@/database/models/agentOperation';
 import { MessageModel } from '@/database/models/message';
 import { type LobeChatDatabase } from '@/database/type';
+import { TraceClient } from '@/libs/traces';
 import { buildFinalSnapshotKey } from '@/server/modules/AgentTracing';
 import { emitAgentSignalSourceEvent } from '@/server/services/agentSignal';
 import { toAgentSignalTraceEvents } from '@/server/services/agentSignal/observability/traceEvents';
@@ -84,6 +85,12 @@ export class CompletionLifecycle {
       case 'interrupted': {
         return 'interrupted';
       }
+      case 'max_steps':
+      case 'repeated_error':
+      case 'time_limit':
+      case 'token_limit': {
+        return 'interrupted';
+      }
       case 'waiting_for_human': {
         return 'waiting_for_human';
       }
@@ -104,6 +111,9 @@ export class CompletionLifecycle {
   private async persistCompletion(operationId: string, state: any, reason: string): Promise<void> {
     const completionReason: any =
       reason === 'max_steps' ||
+      reason === 'repeated_error' ||
+      reason === 'time_limit' ||
+      reason === 'token_limit' ||
       reason === 'cost_limit' ||
       reason === 'waiting_for_human' ||
       reason === 'waiting_for_async_tool'
@@ -147,6 +157,31 @@ export class CompletionLifecycle {
       });
     } catch (error) {
       log('[%s] Failed to persist operation completion (non-fatal): %O', operationId, error);
+    }
+
+    try {
+      const traceClient = new TraceClient();
+      traceClient
+        .createTrace({
+          id: operationId,
+          metadata: {
+            actualUsage: state?.usage ?? null,
+            automationMode: metadata?.automationMode,
+            completionReason,
+            executionBudget: state?.executionBudget ?? metadata?.executionBudget,
+            processingTimeMs,
+            status,
+            stepCount: state?.stepCount ?? null,
+            taskId: metadata?.taskId,
+            trigger: metadata?.trigger,
+          },
+          sessionId: metadata?.topicId,
+          userId: metadata?.userId || this.userId,
+        })
+        ?.update({ output: { completionReason, status } });
+      await traceClient.shutdownAsync();
+    } catch (error) {
+      log('[%s] Failed to finalize Langfuse trace (non-fatal): %O', operationId, error);
     }
   }
 

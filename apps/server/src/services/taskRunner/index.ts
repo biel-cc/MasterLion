@@ -1,6 +1,7 @@
 import { TaskIdentifier as TaskSkillIdentifier } from '@lobechat/builtin-skills';
 import { BriefIdentifier } from '@lobechat/builtin-tool-brief';
 import { INBOX_SESSION_ID } from '@lobechat/const';
+import { getTaskExecutionBudget } from '@lobechat/env/agent';
 import type { ExecAgentResult, TaskItem } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
@@ -210,11 +211,15 @@ export class TaskRunnerService {
         ],
         ...(attachmentFileIds.length > 0 ? { fileIds: attachmentFileIds } : {}),
         prompt,
+        executionBudget: getTaskExecutionBudget(),
         taskId: task.id,
         title: extraPrompt ? extraPrompt.slice(0, 100) : task.name || task.identifier,
         trigger: TopicTrigger.RunTask,
         userInterventionConfig: { approvalMode: 'headless' },
-        ...(continueTopicId && { appContext: { topicId: continueTopicId } }),
+        appContext: {
+          automationMode: task.automationMode,
+          ...(continueTopicId ? { topicId: continueTopicId } : {}),
+        },
       });
 
       if (result.topicId) {

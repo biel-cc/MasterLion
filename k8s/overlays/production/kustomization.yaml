@@ -6,6 +6,7 @@ resources:
   - auth-signup-ingress.yaml
   - namespace.yaml
   - configmap.yaml
+  - device-gateway.yaml
   - ingress.yaml
   - metadata-egress-network-policy.yaml
   - oidc-token-ingress.yaml
@@ -15,6 +16,10 @@ resources:
 replicas:
   - name: masterino
     count: 2
+images:
+  - name: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    newName: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-device-gateway
+    digest: sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d
 patches:
   - target:
       kind: Deployment
@@ -23,6 +28,18 @@ patches:
         path: /spec/template/spec/imagePullSecrets
         value:
           - name: acr-credential-secret-aggregation
+  - target:
+      kind: Deployment
+      name: masterino
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DEVICE_GATEWAY_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: masterino-device-gateway-secret
+              key: SERVICE_TOKEN
   - target:
       kind: StatefulSet
     patch: |-

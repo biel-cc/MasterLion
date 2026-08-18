@@ -35,7 +35,7 @@ const JsonView = ({ value }: { value: unknown }) => (
 export default function MarketPage() {
   const utils = trpc.useUtils();
   const reviews = trpc.admin.listMarketReviews.useQuery();
-  const resources = trpc.admin.listMarketResources.useQuery();
+  const resources = trpc.admin.listCatalogResources.useQuery({ page: 1, pageSize: 100 });
   const categories = trpc.admin.listMarketCategories.useQuery();
   const accounts = trpc.admin.listMarketAccounts.useQuery();
   const allowlist = trpc.admin.listMarketConnectorAllowlist.useQuery();
@@ -111,7 +111,7 @@ export default function MarketPage() {
                 <Table
                   dataSource={resources.data?.items ?? []}
                   loading={resources.isLoading}
-                  rowKey={(record) => `${record.type}:${record.identifier}`}
+                  rowKey={(record: any) => `${record.type}:${record.identifier}`}
                   columns={[
                     { dataIndex: 'name', title: '资源' },
                     { dataIndex: 'type', title: '类型' },

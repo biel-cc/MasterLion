@@ -6,6 +6,9 @@ export interface ExecutionSnapshot {
     | 'error'
     | 'interrupted'
     | 'max_steps'
+    | 'repeated_error'
+    | 'time_limit'
+    | 'token_limit'
     | 'cost_limit'
     | 'waiting_for_human';
   error?: { type: string; message: string };

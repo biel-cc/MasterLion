@@ -1,7 +1,18 @@
-import { Button, Card, Divider, Form, Input, InputNumber, message, Select, Space, Switch, Typography } from 'antd';
-import { useEffect } from 'react';
-
 import { trpc } from '@admin/lib/trpc';
+import {
+  Button,
+  Card,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  message,
+  Select,
+  Space,
+  Switch,
+  Typography,
+} from 'antd';
+import { useEffect } from 'react';
 
 type EnabledMode = 'web_qr' | 'workbench';
 type DefaultRole = 'owner' | 'admin' | 'member' | 'viewer';
@@ -170,7 +181,9 @@ export default function SsoPage() {
           <Form.Item label="Corp Secret" name="corpSecret">
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <Input.Password autoComplete="new-password" placeholder="留空则保持当前密钥不变" />
-              <Typography.Text type={ssoConfig.data?.corpSecretConfigured ? 'success' : 'secondary'}>
+              <Typography.Text
+                type={ssoConfig.data?.corpSecretConfigured ? 'success' : 'secondary'}
+              >
                 {ssoConfig.data?.corpSecretConfigured ? '已配置' : '未配置'}
               </Typography.Text>
             </Space>
@@ -193,7 +206,7 @@ export default function SsoPage() {
           <Form.Item label="自动创建用户" name="autoProvision" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Divider orientation="left">身份字段映射</Divider>
+          <Divider titlePlacement="start">身份字段映射</Divider>
           <Form.Item label="员工号字段" name={['identityMapping', 'employeeNumberField']}>
             <Input placeholder="userid" />
           </Form.Item>
@@ -212,21 +225,33 @@ export default function SsoPage() {
           <Form.Item label="职位字段" name={['identityMapping', 'positionField']}>
             <Input placeholder="position" />
           </Form.Item>
-          <Divider orientation="left">部门同步</Divider>
-          <Form.Item label="启用部门同步" name={['departmentSync', 'enabled']} valuePropName="checked">
+          <Divider titlePlacement="start">部门同步</Divider>
+          <Form.Item
+            label="启用部门同步"
+            name={['departmentSync', 'enabled']}
+            valuePropName="checked"
+          >
             <Switch />
           </Form.Item>
           <Form.Item label="同步模式" name={['departmentSync', 'mode']}>
             <Select options={departmentSyncModeOptions} />
           </Form.Item>
-          <Divider orientation="left">AIHub 自动开通</Divider>
-          <Form.Item label="启用 AIHub 开通" name={['aihubProvisioning', 'enabled']} valuePropName="checked">
+          <Divider titlePlacement="start">AIHub 自动开通</Divider>
+          <Form.Item
+            label="启用 AIHub 开通"
+            name={['aihubProvisioning', 'enabled']}
+            valuePropName="checked"
+          >
             <Switch />
           </Form.Item>
           <Form.Item label="查找字段" name={['aihubProvisioning', 'lookupField']}>
             <Select options={aihubLookupFieldOptions} />
           </Form.Item>
-          <Form.Item label="自动创建 AIHub 用户" name={['aihubProvisioning', 'autoCreateUser']} valuePropName="checked">
+          <Form.Item
+            label="自动创建 AIHub 用户"
+            name={['aihubProvisioning', 'autoCreateUser']}
+            valuePropName="checked"
+          >
             <Switch />
           </Form.Item>
           <Form.Item
