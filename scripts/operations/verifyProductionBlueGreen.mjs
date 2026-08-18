@@ -40,8 +40,8 @@ assert(memoryWorker, 'Masterino memory worker Deployment is missing');
 assert(searxng, 'Masterino SearXNG Deployment is missing');
 assert(wecomVerification, 'Masterino WeCom verification Deployment is missing');
 assert.equal(app.spec.replicas, 1);
-assert.match(app.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
-assert.match(bridge.spec.template.spec.containers[0].image, /sha256:9c5c1dfd/);
+assert.match(app.spec.template.spec.containers[0].image, /masterino@sha256:acea845a/);
+assert.match(bridge.spec.template.spec.containers[0].image, /sha256:9140209e/);
 assert.equal(
   bridge.spec.selector.matchLabels['app.kubernetes.io/name'],
   'masterino-aihub-db-bridge',
@@ -62,9 +62,11 @@ const memoryConfig = validation.find(
 );
 assert(memoryConfig, 'Masterino memory ConfigMap is missing');
 assert.equal(memoryConfig.data.FEATURE_FLAGS, '+memory');
-assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_GATEKEEPER_MODEL, 'glm-5.2');
+assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_GATEKEEPER_MODEL, 'deepseek-v4-flash');
+assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_MODEL, 'deepseek-v4-flash');
+assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_PERSONA_WRITER_MODEL, 'deepseek-v4-flash');
 assert.equal(memoryConfig.data.MEMORY_USER_MEMORY_EMBEDDING_MODEL, 'text-embedding-3-large');
-assert.match(memoryWorker.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
+assert.match(memoryWorker.spec.template.spec.containers[0].image, /masterino@sha256:acea845a/);
 const memoryWorkerEnv = Object.fromEntries(
   memoryWorker.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
 );
@@ -91,11 +93,24 @@ assert.equal(
   wecomVerification.spec.selector.matchLabels['app.kubernetes.io/name'],
   'masterino-wecom-verification',
 );
-assert.match(wecomVerification.spec.template.spec.containers[0].image, /masterino@sha256:387dfc65/);
+assert.match(wecomVerification.spec.template.spec.containers[0].image, /masterino@sha256:acea845a/);
 const appConfig = find(validation, 'ConfigMap', 'masterino-config');
 assert.equal(appConfig.data.APP_URL, 'https://masterino.bielcrystal.com');
 assert.equal(appConfig.data.MARKET_BASE_URL, 'http://masterino-market:3220');
+assert.equal(appConfig.data.MARKET_ALLOW_EXTERNAL_FALLBACK, '0');
 assert.equal(appConfig.data.SEARCH_PROVIDERS, 'searxng');
+assert.equal(appConfig.data.AIHUB_DEFAULT_MODEL, 'deepseek-v4-flash');
+assert.equal(appConfig.data.AIHUB_QUOTA_DISPLAY_TYPE, 'CNY');
+assert.equal(appConfig.data.AIHUB_QUOTA_PER_UNIT, '500000');
+assert.equal(appConfig.data.AIHUB_USD_EXCHANGE_RATE, '7.12');
+assert.equal(appConfig.data.S3_PREVIEW_URL_EXPIRE_IN, '7200');
+assert.equal(appConfig.data.CHUNKS_AUTO_GEN_METADATA, '1');
+assert.equal(appConfig.data.EMBEDDING_BATCH_SIZE, '50');
+assert.equal(appConfig.data.EMBEDDING_CONCURRENCY, '10');
+assert.equal(appConfig.data.REDIS_DATABASE, '0');
+assert.equal(appConfig.data.ONLYBOXES_JIT_TTL_SEC, '1800');
+assert.equal(appConfig.data.ONLYBOXES_LEASE_TTL_SEC, '900');
+assert.equal(appConfig.data.OFFICECLI_ENABLED, 'true');
 
 assert.equal(
   market.some((resource) => resource.kind === 'Ingress'),
@@ -111,7 +126,7 @@ const marketDeployment = find(market, 'Deployment', 'masterino-market');
 assert(marketDeployment);
 assert.match(
   marketDeployment.spec.template.spec.containers[0].image,
-  /masterino-market@sha256:e7463e93c0538bf16dcdae06f52fa63bbeb4ddea58e6734f79d5ff521c0395e5/,
+  /masterino-market@sha256:53582abdb90b8672e8e2662ae0968530cb3fc13fb8d025e5c41501e2f9660242/,
 );
 assert(find(market, 'HorizontalPodAutoscaler', 'masterino-market'));
 assert(find(market, 'PodDisruptionBudget', 'masterino-market'));

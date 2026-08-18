@@ -41,7 +41,7 @@ data:
   AIHUB_PROXY_URL: 'https://aihub.bielcrystal.com'
   MODEL_PROVIDER_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com'
   SKILL_IMPORT_ALLOWED_ORIGINS: 'https://mlai-test.bielcrystal.com,https://github.com,https://raw.githubusercontent.com,https://codeload.github.com,https://pinchwork.dev'
-  AIHUB_DEFAULT_MODEL: 'glm-5.2'
+  AIHUB_DEFAULT_MODEL: 'deepseek-v4-flash'
   AIHUB_HIDDEN_MODELS: 'glm-5.1'
   AIHUB_MANAGED_TOKEN_NAME: 'masterlion-managed'
   AIHUB_USAGE_PAGE_SIZE: '100'

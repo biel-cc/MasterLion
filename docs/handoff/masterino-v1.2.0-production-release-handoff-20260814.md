@@ -91,7 +91,7 @@
 | 测试 namespace              | `masterino-test`                                                          |
 | 测试部署前 Masterino digest | `sha256:6fb1c51e86c2e7ba1ab7fbbb93279af9e6873d367dfc7506dc8e4ab04e00f033` |
 | 测试部署后 Masterino digest | `sha256:acea845ad6bcb8c6221f5e0de7996686a635905fe172994e7e1a737c962431e5` |
-| Bridge digest               | `sha256:4c2c72cddc1fef5673f4974d29d91d82ebfad748a3525b19069b561fdc181cc5` |
+| Bridge digest               | `sha256:9140209ecab59d1617613feebc85d8c1da0de0ec14a1d44448786e33cb5e37d8` |
 | Device Gateway digest       | `sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d` |
 | Market digest               | `sha256:53582abdb90b8672e8e2662ae0968530cb3fc13fb8d025e5c41501e2f9660242` |
 
@@ -193,7 +193,7 @@ Masterino 仓库已绑定 `chaaak6/Masterino`，`main` 分支规则
 ## 7. 验收清单
 
 - 企业微信登录回调不会落入 `Not Found`，刷新后会话仍有效。
-- Aihub 管理 Token 精确命中，`glm-5.2` 和 `text-embedding-3-large` 均可用。
+- Aihub 管理 Token 精确命中，`deepseek-v4-flash` 和 `text-embedding-3-large` 均可用。
 - 个人记忆入口和 Memory Worker 正常，任务不重复执行。
 - 社区助理、Skills、MCP 列表 / 详情、投稿和审核可用，Market 根入口不返回 404。
 - Word、Excel、PowerPoint 生成成功；Onlyboxes 临时离线可恢复且错误不泄露内部信息。

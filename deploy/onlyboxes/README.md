@@ -53,7 +53,7 @@ ONLYBOXES_BASE_URL=https://onlyboxes.internal.bielcrystal.com
 ONLYBOXES_JIT_ISSUER=https://masterino.bielcrystal.com
 AUTH_DISABLE_EMAIL_SIGNUP=1
 AUTH_DISABLE_EMAIL_PASSWORD=0
-OFFICECLI_ENABLED=false
+OFFICECLI_ENABLED=true
 ```
 
 在生产 Secret 的外部 env 文件中加入以下值，再通过现有 `deploy.sh --env production create-secret ...` 流程更新 Secret：
@@ -64,7 +64,9 @@ ONLYBOXES_JIT_SIGNING_KEY=<与 Console 相同的随机值>
 
 默认沿用 Masterino 的 `ONLYBOXES_JIT_TTL_SEC=1800` 和 `ONLYBOXES_LEASE_TTL_SEC=900`。不要把 Dashboard、Worker 或 JIT 密钥写入 ConfigMap、Git 或命令历史。
 
-Office Runtime digest 在测试节点完成 Word、Excel、PowerPoint 黄金样例验证后，将 `OFFICECLI_ENABLED` 改为 `true` 并按受控 ACK 流程发布。回滚时先关闭该开关，再恢复上一版 Runtime digest。
+Office Runtime 已于 2026-08-16 使用固定的 OfficeCLI `1.0.143` 完成 Word、Excel、PowerPoint
+创建与校验黄金样例，并完成 PowerPoint 批量添加幻灯片和文本框验证，因此生产启用
+`OFFICECLI_ENABLED=true`。回滚时先关闭该开关，再恢复上一版 Runtime digest。
 
 ## 6. 出口隔离
 
