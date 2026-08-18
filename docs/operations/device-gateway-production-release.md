@@ -1,122 +1,108 @@
 # Device Gateway 生产发布清单
 
-本文用于把已在 `mlai-test.bielcrystal.com` 验收的 Device Gateway 部署到
-`masterino.bielcrystal.com`。网关 Deployment 与 Service 属于生产 overlay；公网 Ingress
-独立放在 cutover overlay，只有私网检查通过后才允许创建。
+生产盘点确认 `masterino.bielcrystal.com` 当前由 `masterlion` namespace 中的
+`deployment/masterino` 提供服务。`k8s/overlays/production` 对应未来的 `masterino` namespace
+迁移目标，当前不得为了发布 Gateway 而应用该完整 overlay。
 
-## 固定边界
+## 当前正式环境边界
 
-- namespace：`masterino`
-- Gateway 镜像：
+- namespace：`masterlion`
+- 主应用：`deployment/masterino`
+- Gateway 固定镜像：
   `sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d`
 - 内部地址：`http://masterino-device-gateway:8788`
 - 公网地址：`https://masterino.bielcrystal.com/device-gateway`
 - Gateway 保持单副本；当前版本把活动连接保存在进程内存中。
-- 生产 `SERVICE_TOKEN` 和由生产 `JWKS_KEY` 派生的 public-only RS256 JWKS 必须存放在
-  仓库外；不得复用测试 Secret、提交到 Git 或输出私钥字段。
 
-生产 Gateway 资源位于：
+只使用以下当前正式环境资源和脚本：
 
-- `k8s/overlays/production/device-gateway.yaml`
-- `k8s/overlays/production-gateway-cutover/device-gateway-ingress.yaml`
-- `k8s/overlays/production/device-gateway-secret.env.example`
+- `k8s/overlays/production-live-gateway`
+- `k8s/overlays/production-live-gateway-cutover`
+- `scripts/operations/deployProductionDeviceGateway.sh`
+
+脚本只管理 Gateway Deployment、Service、Secret、专用 Ingress，以及现有 Masterino
+Deployment 的 `DEVICE_GATEWAY_URL`/`DEVICE_GATEWAY_SERVICE_TOKEN` 两个环境变量。它不包含
+数据库、Redis、主站 Ingress 或其他生产工作负载。
 
 ## 发布前准备
 
-1. 准备仓库外的生产 `KUBECONFIG`，并记录 `ACK_CONTEXT` 和 API Server。
-2. 准备当前生产 Masterino 与 Aihub DB Bridge 的不可变镜像 digest。
-3. 从 `device-gateway-secret.env.example` 创建仓库外临时文件：
-   - `SERVICE_TOKEN` 使用全新随机值，至少 32 字符；
-   - `JWKS_PUBLIC_KEY` 只能包含 `kty`、`n`、`e`、`kid`、`alg`、`use`；
-   - JWKS 必须由生产 `masterino-secret/JWKS_KEY` 派生。
-4. 不要把 Secret 内容写入 shell history、终端日志、GitHub artifact 或 PR。
-
-所有命令都必须显式带生产凭据与镜像 digest：
+1. 通过阿里云 CLI 的 `DescribeClusterUserKubeconfig` 获取仓库外的短期 kubeconfig。
+2. 设置固定 context：`ack-c23ea84b-masterino-production`。
+3. 从集群读取当前 Masterino 与 Aihub DB Bridge 的不可变镜像 digest，作为 mutation guard。
+4. 在仓库外生成全新至少 32 字符的生产 `SERVICE_TOKEN`。
+5. 从 `masterlion/masterino-secret` 的 `JWKS_KEY` 只保留 `kty`、`n`、`e`、`kid`、`alg`、
+   `use`，生成 public-only RS256 JWKS。不得输出或写入私钥字段。
 
 ```bash
-export KUBECONFIG='/absolute/path/outside/repository/production-kubeconfig'
-export ACK_CONTEXT='<production-context>'
-export ACK_API_SERVER='<exact-api-server-from-preflight>'
-export MASTERINO_IMAGE_DIGEST='sha256:<current-production-digest>'
-export BRIDGE_IMAGE_DIGEST='sha256:<current-production-digest>'
+export KUBECONFIG='/absolute/path/outside/repository/kubeconfig'
+export ACK_CONTEXT='ack-c23ea84b-masterino-production'
+export ACK_API_SERVER='<exact-api-server-from-kubeconfig>'
+export MASTERINO_IMAGE_DIGEST='sha256:<current-live-digest>'
+export BRIDGE_IMAGE_DIGEST='sha256:<current-live-digest>'
 ```
 
 ## 分阶段上线
 
-### 1. 只读预检和渲染验证
+### 1. 预检与渲染
 
 ```bash
-./deploy.sh --env production preflight
-./deploy.sh --env production validate
-./deploy.sh --env production render > /tmp/masterino-production-rendered.yaml
-kubectl --kubeconfig "$KUBECONFIG" --context "$ACK_CONTEXT" \
-  apply --server-side --dry-run=server -f /tmp/masterino-production-rendered.yaml
+scripts/operations/deployProductionDeviceGateway.sh preflight
+scripts/operations/deployProductionDeviceGateway.sh validate
+scripts/operations/deployProductionDeviceGateway.sh render
 ```
 
-核对集群、region、namespace 注解、固定 Gateway digest、单副本、探针、资源限制、
-`DEVICE_GATEWAY_URL` 和 Secret 引用。此时渲染结果不得包含 Gateway 公网 Ingress。
+预检必须确认 context、API Server、region、`masterlion` namespace、正式域名所有权、TLS/ACR
+Secret，以及当前两个生产镜像均为不可变 digest。
 
-### 2. 创建生产 Gateway Secret
-
-`create-gateway-secret` 会拒绝短 Token、测试 Token、私有 JWKS 字段、非生产 JWKS 和未确认的
-生产操作：
+### 2. 创建生产 Secret
 
 ```bash
-CONFIRM_GATEWAY_SECRET=masterino \
-  ./deploy.sh --env production create-gateway-secret \
+CONFIRM_GATEWAY_SECRET=masterlion \
+  scripts/operations/deployProductionDeviceGateway.sh create-secret \
   '/absolute/path/outside/repository/device-gateway-secret.env'
 ```
 
-### 3. 部署私网 Gateway
+脚本会拒绝短 Token、测试 Token、私有 JWKS 字段、非生产 JWKS、错误集群和未确认操作。
+
+### 3. 私网部署
 
 ```bash
-./deploy.sh --env production deploy
-./deploy.sh --env production rollout
+CONFIRM_GATEWAY_DEPLOY=masterlion \
+  scripts/operations/deployProductionDeviceGateway.sh deploy
 ```
 
-确认 Gateway 只有一个 Available replica。通过 Kubernetes API Server 的 Service proxy 检查
-`/health`，并完成有效 JWT、无效 JWT、`sub` 不匹配、未认证超时及 Service Token 行为验证。
+命令会依次执行 server-side dry-run、应用 Gateway Deployment/Service、战略合并主应用两个环境
+变量、等待两个 Deployment rollout，并通过 Kubernetes Service proxy 验证 `/health` 返回 `OK`。
+此阶段不创建公网 Gateway Ingress。
 
-### 4. 公网切流
+### 4. 认证验证与公网切流
 
-只有私网健康与认证验证全部通过后才执行：
+在私网完成有效 JWT、无效 JWT、`sub` 不匹配、未认证超时和 Service Token 行为验证后执行：
 
 ```bash
-CONFIRM_GATEWAY_CUTOVER=masterino \
-  ./deploy.sh --env production gateway-cutover
+CONFIRM_GATEWAY_CUTOVER=masterlion \
+  scripts/operations/deployProductionDeviceGateway.sh cutover
 ```
 
-该命令会再次检查 Secret、单副本、私网 `/health` 和 server-side dry-run，然后创建独立 Ingress，
-并等待公网健康接口返回 `OK`。
+cutover 会再次检查 Secret、单副本、私网健康和 server-side dry-run，然后只创建
+`ingress/masterino-device-gateway`，并等待公网健康接口返回 `OK`。
 
-### 5. 验收
+### 5. 验收与桌面发布
 
-- `GET https://masterino.bielcrystal.com/device-gateway/health` 返回 `200 OK`；
+- `GET /device-gateway/health` 返回 `200 OK`；
 - `WSS /device-gateway/ws` 在 15 秒内完成 upgrade 和 `auth_success`；
-- `auth_success.userId` 与服务端验签后的 JWT `sub` 一致；
-- 生产 Masterino Pod 已注入内部 Gateway URL 与生产 Service Token 引用；
-- 主站登录、OAuth callback、文件上传、记忆和 Aihub 模型调用不受影响。
+- `auth_success.userId` 与 JWT `sub` 一致；
+- 主站登录、OAuth callback、上传、记忆和 Aihub 模型调用不受影响。
 
-网关验证完成后才创建 `v1.2.1` Release，并运行 `Build Unsigned Desktop` 发布 Windows x64、
-macOS arm64 和 macOS x64。不得修改 `v1.2.0` 标签、附件或 OSS 版本目录。
+全部通过后才创建 `v1.2.1` Release 并运行 `Build Unsigned Desktop`。不得修改 `v1.2.0`
+标签、附件或 OSS 版本目录。
 
 ## 精确回滚
 
-Gateway 公网异常时只移除专用 Ingress：
-
 ```bash
-CONFIRM_GATEWAY_ROLLBACK=masterino \
-  ./deploy.sh --env production gateway-rollback
+CONFIRM_GATEWAY_ROLLBACK=masterlion \
+  scripts/operations/deployProductionDeviceGateway.sh rollback
 ```
 
-该操作不会删除 Gateway Secret、Deployment、Service 或主站 Ingress。若还需回滚 Gateway
-Deployment，使用已记录的上一不可变 digest；不要删除 Secret，也不要修改 Bucket ACL 或系统全局
-安全设置。
-
-## 禁止事项
-
-- 禁止复用测试 `SERVICE_TOKEN`、测试 JWKS 或测试 namespace 数据。
-- 禁止把生产私钥字段写入 Gateway Secret 或打印到日志。
-- 禁止使用可变镜像 tag，禁止跳过 ACK target guard 和生产确认变量。
-- 禁止在私网验证通过前创建公网 Gateway Ingress。
-- 禁止在生产 Gateway 就绪前发布指向生产地址的新桌面客户端。
+回滚只删除 `masterlion/ingress/masterino-device-gateway`，不删除 Secret、Deployment、Service，
+也不修改主站 Ingress、数据库、Redis 或 Bucket ACL。

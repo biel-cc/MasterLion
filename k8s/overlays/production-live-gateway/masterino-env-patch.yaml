@@ -1,0 +1,13 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: masterino
+          env:
+            - name: DEVICE_GATEWAY_URL
+              value: http://masterino-device-gateway:8788
+            - name: DEVICE_GATEWAY_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: masterino-device-gateway-secret
+                  key: SERVICE_TOKEN

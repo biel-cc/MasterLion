@@ -68,4 +68,31 @@ describe('guarded ACK deployment script', () => {
     expect(script).toContain('apply --server-side --field-manager=masterino-gateway-cutover');
     expect(script).toContain('delete ingress masterino-device-gateway');
   });
+
+  it('targets the currently active masterlion production namespace with a minimal Gateway rollout', async () => {
+    const [workload, workloadKustomization, patch, ingress, script] = await Promise.all([
+      readFile('k8s/overlays/production-live-gateway/device-gateway.yaml', 'utf8'),
+      readFile('k8s/overlays/production-live-gateway/kustomization.yaml', 'utf8'),
+      readFile('k8s/overlays/production-live-gateway/masterino-env-patch.yaml', 'utf8'),
+      readFile('k8s/overlays/production-live-gateway-cutover/device-gateway-ingress.yaml', 'utf8'),
+      readFile('scripts/operations/deployProductionDeviceGateway.sh', 'utf8'),
+    ]);
+
+    expect(workloadKustomization).toContain('namespace: masterlion');
+    expect(workloadKustomization).toContain(
+      'digest: sha256:bdb74578c3c8129d898bf628494afe0b7ff22bb0fcb7d62f9f8fdac50d5c463d',
+    );
+    expect(workload).toContain('replicas: 1');
+    expect(workload).toContain('readOnlyRootFilesystem: true');
+    expect(workload).toContain('name: acr-credential-secret-aggregation');
+    expect(patch).toContain('name: DEVICE_GATEWAY_URL');
+    expect(patch).toContain('name: DEVICE_GATEWAY_SERVICE_TOKEN');
+    expect(ingress).toContain('path: /device-gateway(/|$)(.*)');
+    expect(script).toContain('NAMESPACE="masterlion"');
+    expect(script).toContain('CONFIRM_GATEWAY_DEPLOY');
+    expect(script).toContain('JWKS_PUBLIC_KEY must be derived from production');
+    expect(script).toContain('--dry-run=server');
+    expect(script).toContain('patch deployment masterino');
+    expect(script).toContain('delete ingress masterino-device-gateway');
+  });
 });

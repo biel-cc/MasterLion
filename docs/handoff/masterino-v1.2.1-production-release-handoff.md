@@ -23,6 +23,10 @@ OSS 版本目录。
    canary。
 6. 回读 Release 附件、OSS 对象、size、SHA-512、签名 JSON 与双架构清单。
 
+生产盘点确认当前正式服务仍位于 `masterlion` namespace。Gateway 上线必须使用
+`scripts/operations/deployProductionDeviceGateway.sh` 和 `production-live-gateway*` overlays；
+不得为了本次补丁应用未来 `masterino` namespace 的完整生产 overlay。
+
 桌面安装包仍为公司内部未公证、未 Authenticode 签名产物。macOS 用户只应对公司可信发布源
 下载的 Masterino 执行安装说明中的 quarantine 清理命令；不得要求用户关闭系统全局
 Gatekeeper。
