@@ -1,15 +1,27 @@
-name: masterino
+name: masterino-hot
+
+# 单镜像本地热更新环境（独立 compose 文件，不继承 docker-compose.yml）：
+# 只定义 masterino 一个服务，本地不再启动 PostgreSQL / Redis / Bridge / SearXNG。
+#
+# - 镜像使用不可变 digest（由 scripts/hot-dev/build-dev-image.ps1 通过 ACR 云端
+#   构建并记录），本地不执行 docker build。
+# - 依赖全部复用 ACK 测试环境，通过 host.docker.internal 端口转发访问：
+#   PostgreSQL :15432、Redis :16379、Aihub DB Bridge :13218、SearXNG :18080。
+# - 启动固定使用 --no-deps；本文件没有 depends_on，也不会拉起任何依赖容器。
+# - 禁止自动执行数据库 migration（RUN_HOT_DB_MIGRATE=0），防止污染共享测试库。
+# - AIHUB_READONLY_DATABASE_URL 固定为空：主应用只能访问 Aihub DB Bridge。
 services:
   masterino:
-    image: ${MASTERLION_DEV_IMAGE:-masterino:test-builder}
-    build: !reset null
+    image: '${MASTERLION_DEV_IMAGE:?Set MASTERLION_DEV_IMAGE to the immutable sha256 digest of the dev image}'
+    container_name: masterino-hot
     working_dir: /app
     user: root
     ports:
-      - '${LOBE_PORT}:3210'
+      - '${LOBE_PORT:-3210}:3210'
       - '${VITE_DEV_PORT:-9876}:9876'
     environment:
       - 'APP_URL_DYNAMIC=1'
+      - 'APP_URL=${APP_URL:-http://localhost:3210}'
       - 'APP_URL_ALLOWED_HOSTS=${APP_URL_ALLOWED_HOSTS:-*}'
       - 'DEV_PACKAGE_MANAGER=pnpm'
       - 'DEV_SPA_SCRIPT=dev:spa:container'
@@ -17,6 +29,66 @@ services:
       - 'PORT=3210'
       - 'VITE_DEV_PORT=${VITE_DEV_PORT:-9876}'
       - 'INTERNAL_APP_URL=http://localhost:3210'
+      # 复用 ACK 测试环境的依赖，全部走 host.docker.internal 端口转发。
+      - 'DATABASE_DRIVER=${DATABASE_DRIVER:-node}'
+      - 'DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@host.docker.internal:15432/${LOBE_DB_NAME:-lobechat}'
+      - 'REDIS_URL=redis://:${REDIS_PASSWORD}@host.docker.internal:16379'
+      - 'REDIS_PASSWORD=${REDIS_PASSWORD}'
+      - 'REDIS_PREFIX=${REDIS_PREFIX:-lobechat-test}'
+      - 'REDIS_TLS=0'
+      - 'AIHUB_BRIDGE_URL=${AIHUB_BRIDGE_URL:-http://host.docker.internal:13218}'
+      - 'AIHUB_BRIDGE_TOKEN=${AIHUB_BRIDGE_TOKEN:?Set AIHUB_BRIDGE_TOKEN to the test bridge shared secret}'
+      - 'AIHUB_READONLY_DATABASE_URL='
+      - 'AIHUB_PROXY_URL=${AIHUB_PROXY_URL:-https://aihub.bielcrystal.com}'
+      - 'AIHUB_DATA_SOURCE=${AIHUB_DATA_SOURCE:-bridge}'
+      - 'AIHUB_DEFAULT_MODEL=${AIHUB_DEFAULT_MODEL:-glm-5.2}'
+      - 'AIHUB_MANAGED_TOKEN_NAME=${AIHUB_MANAGED_TOKEN_NAME:-masterlion-managed}'
+      - 'AIHUB_USAGE_PAGE_SIZE=${AIHUB_USAGE_PAGE_SIZE:-100}'
+      - 'AIHUB_ADMIN_USER_ID=${AIHUB_ADMIN_USER_ID:-}'
+      - 'AIHUB_ADMIN_ACCESS_TOKEN=${AIHUB_ADMIN_ACCESS_TOKEN:-}'
+      - 'AIHUB_IAM_PROVIDER_ID=${AIHUB_IAM_PROVIDER_ID:-1}'
+      - 'SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:18080}'
+      - 'S3_ENDPOINT=${S3_ENDPOINT:?Set S3_ENDPOINT to the test OSS endpoint}'
+      - 'S3_BUCKET=${S3_BUCKET:?Set S3_BUCKET to the test OSS bucket}'
+      - 'S3_ENABLE_PATH_STYLE=${S3_ENABLE_PATH_STYLE:-0}'
+      - 'S3_ACCESS_KEY=${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID for test OSS}'
+      - 'S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID for test OSS}'
+      - 'S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY for test OSS}'
+      - 'S3_REGION=${S3_REGION:-cn-shenzhen}'
+      - 'S3_PUBLIC_DOMAIN=${S3_PUBLIC_DOMAIN:-https://masterlion-test.oss-cn-shenzhen.aliyuncs.com}'
+      - 'S3_SET_ACL=${S3_SET_ACL:-0}'
+      - 'LLM_VISION_IMAGE_USE_BASE64=1'
+      - 'DEFAULT_FILES_CONFIG=${DEFAULT_FILES_CONFIG:-embedding_model=newapi/text-embedding-3-large,query_mode=full_text}'
+      - 'CHUNKS_AUTO_EMBEDDING=${CHUNKS_AUTO_EMBEDDING:-1}'
+      - 'KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET:?Set KEY_VAULTS_SECRET}'
+      - 'AUTH_SECRET=${AUTH_SECRET:?Set AUTH_SECRET}'
+      - 'JWKS_KEY=${JWKS_KEY:?Set JWKS_KEY for internal JWT signing}'
+      - 'AUTH_SSO_PROVIDERS=${AUTH_SSO_PROVIDERS:-wecom}'
+      - 'AUTH_WECOM_CORP_ID=${AUTH_WECOM_CORP_ID:-}'
+      - 'AUTH_WECOM_AGENT_ID=${AUTH_WECOM_AGENT_ID:-}'
+      - 'AUTH_WECOM_CORP_SECRET=${AUTH_WECOM_CORP_SECRET:-}'
+      - 'MARKET_BASE_URL=${MARKET_BASE_URL:-https://mlai-test.bielcrystal.com/market}'
+      - 'NEXT_PUBLIC_MARKET_BASE_URL=${NEXT_PUBLIC_MARKET_BASE_URL:-https://mlai-test.bielcrystal.com/market}'
+      - 'AGENTS_INDEX_URL=${AGENTS_INDEX_URL:-https://mlai-test.bielcrystal.com/market/indexes/agents}'
+      - 'PLUGINS_INDEX_URL=${PLUGINS_INDEX_URL:-https://mlai-test.bielcrystal.com/market/indexes/plugins}'
+      - 'DEVICE_GATEWAY_URL=${DEVICE_GATEWAY_URL:-https://mlai-test.bielcrystal.com/device-gateway}'
+      # Onlyboxes 沙箱（测试环境复用）：容器内通过 extra_hosts 固定域名到
+      # 沙箱节点内网 IP（与测试 Pod 的 hostAliases 一致）；JIT 签名密钥和
+      # CA 证书由 start-hot-dev.ps1 从测试环境 Secret/ConfigMap 提取注入。
+      - 'SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-onlyboxes}'
+      - 'ONLYBOXES_BASE_URL=${ONLYBOXES_BASE_URL:-https://onlyboxes.internal.bielcrystal.com}'
+      - 'ONLYBOXES_JIT_ISSUER=${ONLYBOXES_JIT_ISSUER:-https://mlai-test.bielcrystal.com}'
+      - 'ONLYBOXES_JIT_SIGNING_KEY=${ONLYBOXES_JIT_SIGNING_KEY:?Set ONLYBOXES_JIT_SIGNING_KEY}'
+      - 'ONLYBOXES_JIT_TTL_SEC=${ONLYBOXES_JIT_TTL_SEC:-1800}'
+      - 'ONLYBOXES_LEASE_TTL_SEC=${ONLYBOXES_LEASE_TTL_SEC:-900}'
+      - 'OFFICECLI_ENABLED=${OFFICECLI_ENABLED:-true}'
+      - 'NODE_EXTRA_CA_CERTS=/etc/ssl/masterino-onlyboxes-ca.crt'
+      - 'RUN_HOT_DB_MIGRATE=0'
+      - 'ALIBABA_CLOUD_ECS_METADATA_DISABLED=true'
+      - 'ALIBABA_CLOUD_IMDSV1_DISABLE=true'
+      - 'AWS_EC2_METADATA_DISABLED=true'
+    extra_hosts:
+      - 'onlyboxes.internal.bielcrystal.com:${ONLYBOXES_INTERNAL_IP:-10.80.137.220}'
     volumes:
       - '../../src:/app/src'
       - '../../packages:/app/packages'
@@ -28,37 +100,14 @@ services:
       - '../../index.auth.html:/app/index.auth.html'
       - '../../package.json:/app/package.json'
       - '../../pnpm-workspace.yaml:/app/pnpm-workspace.yaml'
+      - '${HOT_DEV_CA_FILE:-./onlyboxes-ca.pem}:/etc/ssl/masterino-onlyboxes-ca.crt:ro'
       - 'masterino_hot_next:/app/.next'
     command:
       - /bin/sh
       - -lc
       - |
         set -e
-        if [ "${RUN_HOT_DB_MIGRATE:-0}" = "1" ]; then
-          pnpm run db:migrate
-        fi
         pnpm run dev
-
-  aihub-db-bridge:
-    image: ${MASTERLION_DEV_IMAGE:-masterino:test-builder}
-    build: !reset null
-    working_dir: /app
-    user: root
-    environment:
-      - 'PORT=3218'
-    volumes:
-      - '../../apps/aihub-db-bridge/src:/app/apps/aihub-db-bridge/src'
-      - '../../apps/aihub-db-bridge/package.json:/app/apps/aihub-db-bridge/package.json'
-      - '../../apps/aihub-db-bridge/tsconfig.json:/app/apps/aihub-db-bridge/tsconfig.json'
-      - '../../tsconfig.json:/app/tsconfig.json'
-    command:
-      - /bin/sh
-      - -lc
-      - |
-        set -e
-        pnpm --filter @masterlion/aihub-db-bridge dev
-    healthcheck:
-      start_period: 120s
 
 volumes:
   masterino_hot_next:
