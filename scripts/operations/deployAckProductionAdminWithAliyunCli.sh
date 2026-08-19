@@ -18,6 +18,7 @@ PRIMARY_HOST="masterino.bielcrystal.com"
 ADMIN_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-admin"
 MASTERINO_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino"
 MARKET_IMAGE="boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-market"
+MARKET_CONTAINER="market"
 ADMIN_IMAGE_PLACEHOLDER="${ADMIN_IMAGE}:unreleased"
 ADMIN_OVERLAY="$ROOT_DIR/k8s/overlays/production-admin"
 ADMIN_CUTOVER_OVERLAY="$ROOT_DIR/k8s/overlays/production-admin-cutover"
@@ -154,7 +155,7 @@ deploy_private() {
   patch_allowed_hosts
 
   kubectl -n "$NAMESPACE" set image deployment/masterino-market \
-    "masterino-market=$MARKET_IMAGE@$MARKET_IMAGE_DIGEST"
+    "$MARKET_CONTAINER=$MARKET_IMAGE@$MARKET_IMAGE_DIGEST"
   kubectl -n "$NAMESPACE" rollout status deployment/masterino-market --timeout=10m
 
   kubectl -n "$NAMESPACE" set image deployment/masterino \
@@ -182,7 +183,7 @@ assert_release_images() {
   [[ "$actual" == "$MASTERINO_IMAGE@$MASTERINO_IMAGE_DIGEST" ]] \
     || fail "Memory Worker is not using the approved release digest"
   actual="$(kubectl -n "$NAMESPACE" get deployment masterino-market \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="masterino-market")].image}')"
+    -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$MARKET_CONTAINER\")].image}")"
   [[ "$actual" == "$MARKET_IMAGE@$MARKET_IMAGE_DIGEST" ]] \
     || fail "Market deployment is not using the approved release digest"
   actual="$(kubectl -n "$NAMESPACE" get deployment masterino-admin \
@@ -213,7 +214,7 @@ rollback() {
   kubectl -n "$NAMESPACE" patch configmap masterino-config --type merge --patch \
     "{\"data\":{\"APP_URL_ALLOWED_HOSTS\":\"$PRIMARY_HOST\"}}" > /dev/null
   kubectl -n "$NAMESPACE" set image deployment/masterino-market \
-    "masterino-market=$MARKET_IMAGE@$ROLLBACK_MARKET_IMAGE_DIGEST"
+    "$MARKET_CONTAINER=$MARKET_IMAGE@$ROLLBACK_MARKET_IMAGE_DIGEST"
   kubectl -n "$NAMESPACE" set image deployment/masterino \
     "masterino=$MASTERINO_IMAGE@$ROLLBACK_MASTERINO_IMAGE_DIGEST"
   kubectl -n "$NAMESPACE" set image deployment/masterino-memory-worker \
