@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: masterino-admin
+  labels:
+    app.kubernetes.io/name: masterino-admin
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: production
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: masterino-admin
+  ports:
+    - name: http
+      port: 3020
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: masterino-admin
+  labels:
+    app.kubernetes.io/name: masterino-admin
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: production
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-admin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: masterino-admin
+        app.kubernetes.io/part-of: masterino
+        masterino.io/environment: production
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: acr-credential-secret-aggregation
+      nodeSelector:
+        alibabacloud.com/nodepool-id: npb74caa73461b49c986f40c22580f91c1
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: masterino-admin
+          image: boen-registry-vpc.cn-shenzhen.cr.aliyuncs.com/biel_client/masterino-admin:unreleased
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+          ports:
+            - containerPort: 3020
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 6
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 20
+            periodSeconds: 3
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: masterino-admin
+  labels:
+    app.kubernetes.io/name: masterino-admin
+    app.kubernetes.io/part-of: masterino
+    masterino.io/environment: production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: masterino-admin
