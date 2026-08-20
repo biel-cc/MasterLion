@@ -159,6 +159,10 @@ class AgentService {
     return lambdaClient.agent.deleteAgentFile.mutate({ agentId, fileId });
   };
 
+  disableAllFiles = async (agentId: string) => {
+    return lambdaClient.agent.disableAllFiles.mutate({ agentId });
+  };
+
   toggleFile = async (agentId: string, fileId: string, enabled?: boolean) => {
     return lambdaClient.agent.toggleFile.mutate({
       agentId,

@@ -61,6 +61,14 @@ export class KnowledgeSliceActionImpl {
     await internal_refreshAgentKnowledge();
   };
 
+  disableAllFiles = async (): Promise<void> => {
+    const { activeAgentId, internal_refreshAgentConfig } = this.#get();
+    if (!activeAgentId) return;
+
+    await agentService.disableAllFiles(activeAgentId);
+    await internal_refreshAgentConfig(activeAgentId);
+  };
+
   removeKnowledgeBaseFromAgent = async (knowledgeBaseId: string): Promise<void> => {
     const { activeAgentId, internal_refreshAgentConfig, internal_refreshAgentKnowledge } =
       this.#get();

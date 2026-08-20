@@ -110,10 +110,10 @@ describe('topic action', () => {
       const switchTopicSpy = vi.spyOn(result.current, 'switchTopic');
 
       await act(async () => {
-        result.current.openNewTopicOrSaveTopic();
+        await result.current.openNewTopicOrSaveTopic();
       });
 
-      expect(switchTopicSpy).toHaveBeenCalled();
+      expect(switchTopicSpy).toHaveBeenCalledWith(null, { resetFileSelection: true });
     });
 
     it('should call saveToTopic if activeTopicId does not exist', async () => {
@@ -129,6 +129,20 @@ describe('topic action', () => {
       });
 
       expect(saveToTopicSpy).toHaveBeenCalled();
+    });
+
+    it('should clear selected files when starting from an unsaved conversation', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const disableAllFilesSpy = vi
+        .spyOn(useAgentStore.getState(), 'disableAllFiles')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        useChatStore.setState({ activeTopicId: undefined });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(disableAllFilesSpy).toHaveBeenCalledOnce();
     });
   });
   describe('saveToTopic', () => {
@@ -805,6 +819,28 @@ describe('topic action', () => {
 
       expect(useChatStore.getState().activeTopicId).toBe(topicId);
       expect(refreshMessagesSpy).not.toHaveBeenCalled();
+    });
+
+    it('should clear selected files only when opening an explicit new conversation', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const disableAllFilesSpy = vi
+        .spyOn(useAgentStore.getState(), 'disableAllFiles')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.switchTopic(null, {
+          resetFileSelection: true,
+          skipRefreshMessage: true,
+        });
+      });
+
+      expect(disableAllFilesSpy).toHaveBeenCalledOnce();
+
+      await act(async () => {
+        await result.current.switchTopic('existing-topic', { skipRefreshMessage: true });
+      });
+
+      expect(disableAllFilesSpy).toHaveBeenCalledOnce();
     });
 
     it('should clear new key data when switching to null (main scope)', async () => {

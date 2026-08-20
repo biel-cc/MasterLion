@@ -15,6 +15,7 @@ import { cronKeys, topicKeys } from '@/libs/swr/keys';
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
+import { useAgentStore } from '@/store/agent';
 import { type ChatStore } from '@/store/chat';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useGlobalStore } from '@/store/global';
@@ -54,6 +55,12 @@ export interface SwitchTopicOptions {
    * @default false
    */
   clearNewKey?: boolean;
+  /**
+   * Disable files selected in the previous conversation before opening a new one.
+   * Only explicit user actions that create a new conversation should set this.
+   * @default false
+   */
+  resetFileSelection?: boolean;
   /**
    * Explicit scope for clearing new key data
    * If not provided, will be inferred from store state (activeGroupId)
@@ -98,10 +105,11 @@ export class ChatTopicActionImpl {
     const { switchTopic, saveToTopic, refreshMessages, activeTopicId } = this.#get();
     const hasTopic = !!activeTopicId;
 
-    if (hasTopic) switchTopic(null);
+    if (hasTopic) await switchTopic(null, { resetFileSelection: true });
     else {
       await saveToTopic();
-      refreshMessages();
+      await useAgentStore.getState().disableAllFiles();
+      await refreshMessages();
     }
   };
 
@@ -795,6 +803,11 @@ export class ChatTopicActionImpl {
     const epoch = ++this.#switchTopicEpoch;
 
     const { activeAgentId, activeGroupId } = this.#get();
+
+    if (!id && opts.resetFileSelection) {
+      await useAgentStore.getState().disableAllFiles();
+      if (epoch !== this.#switchTopicEpoch) return;
+    }
 
     // Clear the _new key data in the following cases:
     // 1. When id is null or undefined (switching to empty topic state)

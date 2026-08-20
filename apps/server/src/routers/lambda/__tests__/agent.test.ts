@@ -62,6 +62,7 @@ describe('agentRouter', () => {
       createAgentKnowledgeBase: vi.fn(),
       deleteAgentFile: vi.fn(),
       deleteAgentKnowledgeBase: vi.fn(),
+      disableAllFiles: vi.fn(),
       findBySessionId: vi.fn(),
       getAgentAssignedKnowledge: vi.fn(),
       toggleFile: vi.fn(),
@@ -233,6 +234,15 @@ describe('agentRouter', () => {
         mockInput.agentId,
         mockInput.fileId,
       );
+    });
+  });
+
+  describe('disableAllFiles', () => {
+    it('should disable all files for the agent', async () => {
+      const caller = agentRouter.createCaller(mockCtx);
+      await caller.disableAllFiles({ agentId: 'agent1' });
+
+      expect(agentModelMock.disableAllFiles).toHaveBeenCalledWith('agent1');
     });
   });
 

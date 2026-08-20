@@ -897,6 +897,50 @@ describe('AgentModel', () => {
     });
   });
 
+  describe('disableAllFiles', () => {
+    it('should disable every file attached to the agent', async () => {
+      const agent = await serverDB
+        .insert(agents)
+        .values({ userId })
+        .returning()
+        .then((res) => res[0]);
+
+      await serverDB.insert(agentsFiles).values([
+        { agentId: agent.id, fileId: '1', userId, enabled: true },
+        { agentId: agent.id, fileId: '2', userId, enabled: true },
+      ]);
+
+      await agentModel.disableAllFiles(agent.id);
+
+      const results = await serverDB.query.agentsFiles.findMany({
+        where: eq(agentsFiles.agentId, agent.id),
+      });
+
+      expect(results).toHaveLength(2);
+      expect(results.every((item) => item.enabled === false)).toBe(true);
+    });
+
+    it('should not disable files owned by another user', async () => {
+      const agent = await serverDB
+        .insert(agents)
+        .values({ userId })
+        .returning()
+        .then((res) => res[0]);
+
+      await serverDB
+        .insert(agentsFiles)
+        .values({ agentId: agent.id, fileId: '1', userId, enabled: true });
+
+      await agentModel2.disableAllFiles(agent.id);
+
+      const result = await serverDB.query.agentsFiles.findFirst({
+        where: eq(agentsFiles.agentId, agent.id),
+      });
+
+      expect(result?.enabled).toBe(true);
+    });
+  });
+
   describe('toggleFile', () => {
     it('should toggle the enabled status of an agent file association', async () => {
       const agent = await serverDB
