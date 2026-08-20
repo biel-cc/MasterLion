@@ -15,6 +15,37 @@ export interface AgentChatOptions {
   trace?: TracePayload;
 }
 
+const normalizeModelParameters = (parameters: Record<string, unknown>) => {
+  const normalized: Record<string, boolean | number | string | string[]> = {};
+
+  for (const [key, value] of Object.entries(parameters)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      normalized[key] = value;
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      normalized[key] = value.flatMap((item) => {
+        if (typeof item === 'string') return [item];
+
+        const serialized = JSON.stringify(item);
+        return serialized ? [serialized] : [];
+      });
+      continue;
+    }
+
+    if (!value || typeof value !== 'object') continue;
+
+    try {
+      normalized[key] = JSON.stringify(value);
+    } catch {
+      // Ignore parameters that cannot be serialized rather than dropping the trace.
+    }
+  }
+
+  return normalized;
+};
+
 export const createTraceOptions = (
   payload: ChatStreamPayload,
   {
@@ -53,7 +84,7 @@ export const createTraceOptions = (
     input: includeInput ? messages : undefined,
     metadata: { messageLength, model, provider },
     model,
-    modelParameters: parameters as any,
+    modelParameters: normalizeModelParameters(parameters),
     name: `Chat Completion (${provider})`,
     startTime: new Date(),
   });

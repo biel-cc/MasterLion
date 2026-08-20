@@ -55,4 +55,25 @@ describe('createTraceOptions', () => {
     expect(mocks.traceUpdate).toHaveBeenCalledWith({ output: { error: 'socket hang up' } });
     expect(mocks.shutdownAsync).toHaveBeenCalledOnce();
   });
+
+  it('serializes object model parameters before sending them to Langfuse', () => {
+    createTraceOptions(
+      {
+        messages: [{ content: 'hello', role: 'user' }],
+        model: 'deepseek-v4-flash',
+        temperature: 0.2,
+        thinking: { budget_tokens: 4096, type: 'enabled' },
+      } as any,
+      { provider: 'newapi', trace: { enabled: true } },
+    );
+
+    expect(mocks.generation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelParameters: {
+          temperature: 0.2,
+          thinking: '{"budget_tokens":4096,"type":"enabled"}',
+        },
+      }),
+    );
+  });
 });
