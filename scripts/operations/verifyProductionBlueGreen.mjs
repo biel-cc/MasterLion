@@ -96,6 +96,10 @@ assert.equal(
 assert.match(wecomVerification.spec.template.spec.containers[0].image, /masterino@sha256:acea845a/);
 const appConfig = find(validation, 'ConfigMap', 'masterino-config');
 assert.equal(appConfig.data.APP_URL, 'https://masterino.bielcrystal.com');
+assert.equal(
+  appConfig.data.APP_URL_ALLOWED_HOSTS,
+  'masterino.bielcrystal.com,admin-masterino.bielcrystal.com',
+);
 assert.equal(appConfig.data.MARKET_BASE_URL, 'http://masterino-market:3220');
 assert.equal(appConfig.data.MARKET_ALLOW_EXTERNAL_FALLBACK, '0');
 assert.equal(appConfig.data.SEARCH_PROVIDERS, 'searxng');

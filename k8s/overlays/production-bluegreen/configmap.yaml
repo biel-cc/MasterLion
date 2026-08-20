@@ -11,7 +11,7 @@ data:
   TASK_EXECUTION_MAX_TOTAL_TOKENS: '5000000'
   APP_URL: 'https://masterino.bielcrystal.com'
   APP_URL_DYNAMIC: '1'
-  APP_URL_ALLOWED_HOSTS: 'masterino.bielcrystal.com'
+  APP_URL_ALLOWED_HOSTS: 'masterino.bielcrystal.com,admin-masterino.bielcrystal.com'
   ENABLED_CSP: '1'
   OPENAPI_CORS_ALLOWED_ORIGINS: 'https://aihub.bielcrystal.com'
   INTERNAL_APP_URL: 'http://masterino:3210'
