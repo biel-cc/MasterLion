@@ -20,6 +20,7 @@ import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { ChunkService } from '@/server/services/chunk';
 import { DocumentService } from '@/server/services/document';
 import { FileService } from '@/server/services/file';
+import { createStorageObjectAccessError } from '@/server/services/file/errors';
 import { type IAsyncTaskError } from '@/types/asyncTask';
 import { AsyncTaskError, AsyncTaskErrorType, AsyncTaskStatus } from '@/types/asyncTask';
 import { safeParseJSON } from '@/utils/safeParseJSON';
@@ -231,34 +232,15 @@ export const fileRouter = router({
         content = await fileService.getFileByteArray(file.url);
       } catch (e) {
         console.error(e);
-        const errorCode = (e as any).Code;
-        // Storage returned NoSuchKey. Do NOT delete the file row — transient S3
-        // outages, IAM misconfig, or already-orphaned DB rows must not cascade
-        // into destroying chunks/embeddings/documents. Mark the task as Error
-        // so users see a clear message and can re-upload or retry.
-        if (errorCode === 'NoSuchKey') {
-          await asyncTaskModel.update(input.taskId, {
-            error: new AsyncTaskError(
-              AsyncTaskErrorType.TaskTriggerError,
-              'File content unavailable in storage. Verify storage access or re-upload.',
-            ),
-            status: AsyncTaskStatus.Error,
-          });
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'File content unavailable in storage.',
-          });
-        }
-        // Other fetch errors (network, IAM, etc.) — mark the task as Error so
-        // the user surface stays consistent, then propagate.
+        const storageError = createStorageObjectAccessError(e);
+        // Storage failures must not cascade into deleting the file, chunks,
+        // embeddings, or documents. Persist the stable storage error on the
+        // task so retry and re-upload surfaces can classify it consistently.
         await asyncTaskModel.update(input.taskId, {
-          error: new AsyncTaskError(
-            AsyncTaskErrorType.TaskTriggerError,
-            `Failed to fetch file content: ${(e as Error)?.message ?? errorCode ?? 'unknown error'}`,
-          ),
+          error: new AsyncTaskError(AsyncTaskErrorType.TaskTriggerError, storageError.message),
           status: AsyncTaskStatus.Error,
         });
-        throw e;
+        throw storageError;
       }
 
       if (!content) return;

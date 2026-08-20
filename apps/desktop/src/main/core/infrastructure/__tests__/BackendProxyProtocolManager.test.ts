@@ -4,6 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BackendProxyProtocolManager } from '../BackendProxyProtocolManager';
 
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: {
+    debug: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
+
 interface RequestInitWithDuplex extends RequestInit {
   duplex?: 'half';
 }
@@ -18,12 +27,7 @@ vi.mock('electron-is', () => ({
 }));
 
 vi.mock('@/utils/logger', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-  }),
+  createLogger: () => mockLogger,
 }));
 
 vi.mock('electron', () => ({
@@ -404,5 +408,74 @@ describe('BackendProxyProtocolManager', () => {
         expect.objectContaining({ method: 'GET' }),
       );
     });
+
+    it('proxies the object-storage upload endpoint with query, content type, and body intact', async () => {
+      let forwardedBody: Uint8Array | undefined;
+      const fetchMock = vi.fn<FetchMock>(async (_input, init) => {
+        forwardedBody = new Uint8Array(await new Response(init?.body as BodyInit).arrayBuffer());
+        return new Response('uploaded', { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchMock as any);
+
+      const manager = new BackendProxyProtocolManager();
+      manager.registerWithRemoteBaseUrl(electronSession.defaultSession as any, {
+        getAccessToken: async () => null,
+        getRemoteBaseUrl: async () => 'https://remote.example.com',
+      });
+
+      const uploadBody = new Uint8Array([80, 75, 3, 4, 222, 173, 190, 239]);
+      const contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const interceptor = manager.createAppRequestInterceptor();
+      const res = await interceptor(
+        new Request(
+          'app://renderer/api/upload/s3-proxy?key=files%2Finventory.xlsx&expires=3600&signature=sig',
+          {
+            body: uploadBody,
+            headers: new Headers({ 'Content-Type': contentType }),
+            method: 'PUT',
+          },
+        ),
+      );
+
+      expect(res).not.toBeNull();
+      expect(res!.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const [calledUrl, init] = fetchMock.mock.calls[0]!;
+      expect(calledUrl).toBe(
+        'https://remote.example.com/api/upload/s3-proxy?key=files%2Finventory.xlsx&expires=3600&signature=sig',
+      );
+      expect(init).toBeDefined();
+      if (!init) throw new Error('Expected fetch init to be defined');
+
+      expect(init.method).toBe('PUT');
+      expect(new Headers(init.headers).get('Content-Type')).toBe(contentType);
+      expect(forwardedBody).toEqual(uploadBody);
+      expect(init.duplex).toBe('half');
+      expect(res!.headers.get('X-Src-Url')).toBe('https://remote.example.com/api/upload/s3-proxy');
+      expect(mockLogger.debug).toHaveBeenCalled();
+      expect(JSON.stringify(mockLogger.debug.mock.calls)).not.toContain('signature=sig');
+    });
+
+    it.each(['/api/upload/s3-proxy/extra', '/api/upload/s3-proxy-lookalike'])(
+      'does not proxy non-existent upload endpoint %s',
+      async (pathname) => {
+        const fetchMock = vi.fn<FetchMock>(async () => new Response('unexpected'));
+        vi.stubGlobal('fetch', fetchMock as any);
+
+        const manager = new BackendProxyProtocolManager();
+        manager.registerWithRemoteBaseUrl(electronSession.defaultSession as any, {
+          getAccessToken: async () => null,
+          getRemoteBaseUrl: async () => 'https://remote.example.com',
+        });
+
+        const response = await manager.createAppRequestInterceptor()(
+          new Request(`app://renderer${pathname}`),
+        );
+
+        expect(response).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
   });
 });

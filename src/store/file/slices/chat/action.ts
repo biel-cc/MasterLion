@@ -6,6 +6,7 @@ import { t } from 'i18next';
 
 import { notification } from '@/components/AntdStaticMethods';
 import { FILE_UPLOAD_BLACKLIST } from '@/const/file';
+import { FileStorageErrorCode } from '@/const/fileUpload';
 import { fileService } from '@/services/file';
 import { ragService } from '@/services/rag';
 import { UPLOAD_NETWORK_ERROR } from '@/services/upload';
@@ -259,25 +260,42 @@ export class FileActionImpl {
           status: 'success',
         });
       } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        const isStorageObjectFailure =
+          errorMessage === FileStorageErrorCode.ObjectMissing ||
+          errorMessage === FileStorageErrorCode.ObjectUnavailable;
+        const failureStage = isStorageObjectFailure
+          ? 'storage_upload_failed'
+          : 'content_parse_failed';
+
         updateUploadedFile({
           diagnostic: {
             fileId: fileResult.id,
-            message: getErrorMessage(error),
+            message: errorMessage,
             name: error instanceof Error ? error.name : undefined,
-            stage: 'content_parse_failed',
+            stage: failureStage,
           },
-          errorReason: getErrorMessage(error),
-          processStage: 'content_parse_failed',
+          errorReason: errorMessage,
+          processStage: failureStage,
           status: 'error',
         });
-        notification.warning({
-          description: t('upload.parseFailedDesc', { filename: file.name, ns: 'chat' }),
-          message: t('upload.parseFailed', { ns: 'chat' }),
-        });
-        console.warn(
-          '[uploadChatFiles] File was uploaded, but content parsing failed. This is not an object storage upload failure.',
-          error,
-        );
+
+        if (isStorageObjectFailure) {
+          notification.error({
+            description: getUploadErrorDescription(error),
+            message: t('upload.uploadFailed', { ns: 'error' }),
+          });
+          console.warn('[uploadChatFiles] Uploaded storage object is missing.', error);
+        } else {
+          notification.warning({
+            description: t('upload.parseFailedDesc', { filename: file.name, ns: 'chat' }),
+            message: t('upload.parseFailed', { ns: 'chat' }),
+          });
+          console.warn(
+            '[uploadChatFiles] File was uploaded, but content parsing failed. This is not an object storage upload failure.',
+            error,
+          );
+        }
       }
     });
 

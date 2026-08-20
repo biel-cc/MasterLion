@@ -25,7 +25,12 @@ describe('S3 upload proxy route', () => {
     const response = await OPTIONS();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
     expect(response.headers.get('access-control-allow-methods')).toContain('PUT');
+    expect(response.headers.get('access-control-allow-headers')).toContain('content-type');
+    expect(response.headers.get('access-control-expose-headers')).toContain(
+      'X-Masterino-Upload-Confirmed',
+    );
   });
 
   it('rejects invalid upload signatures', async () => {
@@ -57,6 +62,10 @@ describe('S3 upload proxy route', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('x-masterino-upload-confirmed')).toBe('1');
+    expect(response.headers.get('access-control-expose-headers')).toContain(
+      'X-Masterino-Upload-Confirmed',
+    );
     expect(mocks.verifyS3UploadProxySignature).toHaveBeenCalledWith('files/a.txt', 3600, 'good');
     expect(mocks.uploadBuffer).toHaveBeenCalledWith(
       'files/a.txt',

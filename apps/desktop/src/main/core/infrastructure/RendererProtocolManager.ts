@@ -133,6 +133,14 @@ export class StaticRendererFallback implements RendererFallbackStrategy {
   }
 
   async handle(request: Request, url: URL): Promise<Response> {
+    const method = request.method?.toUpperCase?.() || 'GET';
+    if (method !== 'GET' && method !== 'HEAD') {
+      return new Response('Method Not Allowed', {
+        headers: { Allow: 'GET, HEAD' },
+        status: 405,
+      });
+    }
+
     const pathname = url.pathname;
     const isAssetRequest = this.isAssetRequest(pathname);
     const isExplicit404HtmlRequest = pathname.endsWith('/404.html');

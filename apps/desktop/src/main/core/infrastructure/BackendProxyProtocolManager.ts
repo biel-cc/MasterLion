@@ -23,11 +23,25 @@ interface BackendProxyRemoteBaseOptions {
   source?: string;
 }
 
+const redactUploadProxyUrl = (rawUrl: string): string => {
+  try {
+    const url = new URL(rawUrl);
+    if (url.pathname !== '/api/upload/s3-proxy') return rawUrl;
+
+    url.hash = '';
+    url.search = '';
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+};
+
 /**
  * Holds per-session proxy context for routing renderer-originated backend
- * requests (`/trpc`, `/webapi`, `/api/auth`, `/market`) to the remote Masterino
- * server. The context is consumed by `createAppRequestInterceptor`, which the
- * `app://` protocol manager invokes before its static / Vite fallback.
+ * requests (`/trpc`, `/webapi`, `/api/auth`, `/api/upload/s3-proxy`, `/market`)
+ * to the remote Masterino server. The context is consumed by
+ * `createAppRequestInterceptor`, which the `app://` protocol manager invokes
+ * before its static / Vite fallback.
  */
 export class BackendProxyProtocolManager {
   private readonly contexts = new WeakMap<Session, BackendProxyContext>();
@@ -88,12 +102,12 @@ export class BackendProxyProtocolManager {
           remoteBase,
         ).toString();
         this.logger.debug(
-          `${options.source ? `[${options.source}] ` : ''}BackendProxy rewrite ${rawUrl} -> ${rewrittenUrl}`,
+          `${options.source ? `[${options.source}] ` : ''}BackendProxy rewrite ${redactUploadProxyUrl(rawUrl)} -> ${redactUploadProxyUrl(rewrittenUrl)}`,
         );
         return rewrittenUrl;
       } catch (error) {
         this.logger.error(
-          `${options.source ? `[${options.source}] ` : ''}BackendProxy rewriteUrl error (rawUrl=${rawUrl}, remoteBaseUrl=${lastRemoteBaseUrl})`,
+          `${options.source ? `[${options.source}] ` : ''}BackendProxy rewriteUrl error (rawUrl=${redactUploadProxyUrl(rawUrl)}, remoteBaseUrl=${lastRemoteBaseUrl})`,
           error,
         );
         return null;
@@ -120,9 +134,9 @@ export class BackendProxyProtocolManager {
 
   /**
    * Build an `app://` request interceptor that diverts backend-prefixed paths
-   * (trpc / webapi / api/auth / market) through `proxy()` against the default
-   * session. Plug into `RendererProtocolManager.addRequestInterceptor` so the
-   * protocol manager doesn't need to know what "backend" means.
+   * (trpc / webapi / api/auth / upload proxy / market) through `proxy()` against
+   * the default session. Plug into `RendererProtocolManager.addRequestInterceptor`
+   * so the protocol manager doesn't need to know what "backend" means.
    *
    * Returns `null` for non-backend paths (lets the fallback run). Returns a
    * 502 if the backend context isn't wired up yet — for backend prefixes we
@@ -185,7 +199,10 @@ export class BackendProxyProtocolManager {
     try {
       upstreamResponse = await netFetch(rewrittenUrl, requestInit);
     } catch (error) {
-      this.logger.error(`${logPrefix} upstream fetch failed: ${rewrittenUrl}`, error);
+      this.logger.error(
+        `${logPrefix} upstream fetch failed: ${redactUploadProxyUrl(rewrittenUrl)}`,
+        error,
+      );
       throw error;
     }
 
@@ -203,7 +220,7 @@ export class BackendProxyProtocolManager {
 
     responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     responseHeaders.set('Access-Control-Allow-Headers', '*');
-    responseHeaders.set('X-Src-Url', rewrittenUrl);
+    responseHeaders.set('X-Src-Url', redactUploadProxyUrl(rewrittenUrl));
 
     // Re-auth prompt: rely on X-Auth-Required (set by tRPC responseMeta for UNAUTHORIZED).
     // Batched tRPC responses can use HTTP 207 when calls mix success (200) and UNAUTHORIZED (401);
