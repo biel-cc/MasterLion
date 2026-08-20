@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { serializeProviderError } from './error';
+import { serializeProviderError } from './providerError';
 
 describe('serializeProviderError', () => {
   it('preserves safe diagnostics from a native Error', () => {

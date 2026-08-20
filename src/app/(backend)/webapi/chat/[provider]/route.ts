@@ -12,7 +12,7 @@ import { createErrorResponse } from '@/utils/errorResponse';
 import { getTracePayload } from '@/utils/trace';
 
 import { resolveValidWorkspaceIdFromRequest } from '../../_utils/workspace';
-import { serializeProviderError } from './error';
+import { serializeProviderError } from './providerError';
 import { callWithUpstreamTimeouts, runWithTransientRetry } from './resilience';
 
 // If user don't use fluid compute, will build  failed
