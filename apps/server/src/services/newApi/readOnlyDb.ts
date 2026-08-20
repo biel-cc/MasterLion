@@ -6,7 +6,7 @@ import type { NewApiLogItem, NewApiPage, NewApiToken, NewApiUser } from './clien
 export type AihubReadOnlyDialect = 'mysql' | 'postgres';
 
 export interface NewApiReadOnlyQueryClient {
-  query<T = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
+  query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }>;
 }
 
 export interface NewApiReadOnlyDbOptions {
@@ -33,7 +33,7 @@ const TOKEN_STATUS_ENABLED = 1;
 
 const inferDialect = (connectionString?: string): AihubReadOnlyDialect => {
   if (!connectionString) return 'mysql';
-  if (/^postgres(ql)?:\/\//i.test(connectionString)) return 'postgres';
+  if (/^postgres(?:ql)?:\/\//i.test(connectionString)) return 'postgres';
 
   return 'mysql';
 };
@@ -41,7 +41,7 @@ const inferDialect = (connectionString?: string): AihubReadOnlyDialect => {
 const convertQuestionPlaceholdersToPg = (sql: string) => {
   let index = 0;
 
-  return sql.replace(/\?/g, () => `$${++index}`);
+  return sql.replaceAll('?', () => `$${++index}`);
 };
 
 const buildMySqlPoolConfig = (connectionString: string) => {
@@ -146,7 +146,10 @@ export class NewApiReadOnlyDb {
     };
   }
 
-  async findUserByIdentity({ email, username }: NewApiIdentityLookup): Promise<NewApiUser | undefined> {
+  async findUserByIdentity({
+    email,
+    username,
+  }: NewApiIdentityLookup): Promise<NewApiUser | undefined> {
     if (!email && !username) return undefined;
 
     const groupColumn = this.groupColumn();
@@ -207,22 +210,30 @@ limit 1
 
     if (namedRows[0]) return this.normalizeToken(namedRows[0]);
 
+    return undefined;
+  }
+
+  async findManagedTokenById(userId: number, tokenId: number): Promise<NewApiToken | undefined> {
+    const groupColumn = this.groupColumn();
+    const keyColumn = this.dialect === 'postgres' ? '"key"' : '`key`';
     const now = Math.floor(Date.now() / 1000);
-    const fallbackRows = await this.query<NewApiToken>(
+    const rows = await this.query<NewApiToken>(
       `
-${safeSelectedColumns}
-where user_id = ?
+select id, user_id, name, ${keyColumn}, status, expired_time, remain_quota, unlimited_quota,
+       model_limits_enabled, model_limits, used_quota, ${groupColumn} as ${groupColumn}
+from tokens
+where id = ?
+  and user_id = ?
   and deleted_at is null
   and status = ${TOKEN_STATUS_ENABLED}
   and (unlimited_quota = true or remain_quota > 0)
   and (expired_time = -1 or expired_time > ?)
-order by accessed_time desc, id desc
 limit 1
       `.trim(),
-      [userId, now],
+      [tokenId, userId, now],
     );
 
-    return this.normalizeToken(fallbackRows[0]);
+    return this.normalizeToken(rows[0]);
   }
 
   async listManagedTokens(userId: number, tokenName: string): Promise<NewApiToken[]> {
@@ -244,24 +255,7 @@ order by id desc
       [userId, tokenName],
     );
 
-    if (namedRows.length > 0)
-      return namedRows.map((token) => this.normalizeToken(token)).filter(Boolean) as NewApiToken[];
-
-    const now = Math.floor(Date.now() / 1000);
-    const fallbackRows = await this.query<NewApiToken>(
-      `
-${safeSelectedColumns}
-where user_id = ?
-  and deleted_at is null
-  and status = ${TOKEN_STATUS_ENABLED}
-  and (unlimited_quota = true or remain_quota > 0)
-  and (expired_time = -1 or expired_time > ?)
-order by accessed_time desc, id desc
-      `.trim(),
-      [userId, now],
-    );
-
-    return fallbackRows.map((token) => this.normalizeToken(token)).filter(Boolean) as NewApiToken[];
+    return namedRows.map((token) => this.normalizeToken(token)).filter(Boolean) as NewApiToken[];
   }
 
   async listAccessibleModels(group?: string, token?: NewApiToken): Promise<string[]> {

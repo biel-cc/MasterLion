@@ -119,6 +119,10 @@ export class NewApiBridgeClient implements NewApiReadSource {
     return this.request<NewApiToken>(`/v1/users/${userId}/managed-token`, { name: tokenName });
   }
 
+  findManagedTokenById(userId: number, tokenId: number) {
+    return this.request<NewApiToken>(`/v1/users/${userId}/managed-tokens/${tokenId}`);
+  }
+
   async listManagedTokens(userId: number, tokenName: string) {
     return (
       (await this.request<NewApiToken[]>(`/v1/users/${userId}/managed-tokens`, {
@@ -160,11 +164,7 @@ export class NewApiBridgeClient implements NewApiReadSource {
    * Optionally updates the token name in the same request.
    * Returns true if the reassignment succeeded, false otherwise.
    */
-  async reassignToken(
-    tokenId: number,
-    targetUserId: number,
-    name?: string,
-  ): Promise<boolean> {
+  async reassignToken(tokenId: number, targetUserId: number, name?: string): Promise<boolean> {
     if (!this.baseUrl || !this.token) return false;
 
     try {
@@ -178,8 +178,8 @@ export class NewApiBridgeClient implements NewApiReadSource {
         const response = await this.fetchImpl(`${this.baseUrl}/v1/tokens/${tokenId}/reassign`, {
           body: JSON.stringify(payload),
           headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${this.token}`,
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${this.token}`,
             'Content-Type': 'application/json',
           },
           method: 'POST',
@@ -225,19 +225,16 @@ export class NewApiBridgeClient implements NewApiReadSource {
         const payload: Record<string, unknown> = { providerUserId };
         if (providerId) payload.providerId = providerId;
 
-        const response = await this.fetchImpl(
-          `${this.baseUrl}/v1/users/${userId}/oauth-binding`,
-          {
-            body: JSON.stringify(payload),
-            headers: {
-              Accept: 'application/json',
-              Authorization: `Bearer ${this.token}`,
-              'Content-Type': 'application/json',
-            },
-            method: 'POST',
-            signal: controller.signal,
+        const response = await this.fetchImpl(`${this.baseUrl}/v1/users/${userId}/oauth-binding`, {
+          body: JSON.stringify(payload),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${this.token}`,
+            'Content-Type': 'application/json',
           },
-        );
+          method: 'POST',
+          signal: controller.signal,
+        });
 
         if (!response.ok) return false;
 

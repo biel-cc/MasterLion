@@ -1,0 +1,3 @@
+data:
+  ENABLE_LANGFUSE: '1'
+  LANGFUSE_HOST: http://langfuse-web.masterino-observability.svc.cluster.local:3000

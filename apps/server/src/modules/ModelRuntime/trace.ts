@@ -59,6 +59,13 @@ export const createTraceOptions = (
   });
 
   const headers = new Headers();
+  let generationFinished = false;
+
+  const finishGeneration = (update: Parameters<NonNullable<typeof generation>['update']>[0]) => {
+    if (generationFinished) return;
+    generationFinished = true;
+    generation?.update({ endTime: new Date(), ...update });
+  };
 
   if (trace?.id) {
     headers.set(LOBE_CHAT_TRACE_ID, trace.id);
@@ -82,8 +89,7 @@ export const createTraceOptions = (
               ? { text, thinking }
               : text;
 
-        generation?.update({
-          endTime: new Date(),
+        finishGeneration({
           metadata: { grounding, thinking },
           output,
           usage: usage
@@ -97,6 +103,17 @@ export const createTraceOptions = (
             : undefined,
         });
 
+        trace?.update({ output });
+      },
+
+      onError: async (error) => {
+        const message =
+          error && typeof error === 'object' && typeof error.message === 'string'
+            ? error.message
+            : 'Provider request failed';
+        const output = { error: message };
+
+        finishGeneration({ level: 'ERROR', output, statusMessage: message });
         trace?.update({ output });
       },
 

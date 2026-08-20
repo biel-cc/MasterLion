@@ -89,7 +89,8 @@ export const createBridgeHandler = ({
       if (url.pathname === '/v1/users/resolve') {
         const email = url.searchParams.get('email') || undefined;
         const username = url.searchParams.get('username') || undefined;
-        if (!email && !username) return failure(400, 'bad_request', 'email or username is required');
+        if (!email && !username)
+          return failure(400, 'bad_request', 'email or username is required');
 
         const user = await repository.findUserByIdentity({ email, username });
         if (!user) return failure(404, 'not_found', 'Aihub user was not found');
@@ -102,7 +103,11 @@ export const createBridgeHandler = ({
       // Token reassignment route — checked before the userId early-return
       // because /v1/tokens/:id/* doesn't match the /v1/users/:id/* pattern.
       const tokenId = parseTokenId(url.pathname);
-      if (tokenId && url.pathname === `/v1/tokens/${tokenId}/reassign` && request.method === 'POST') {
+      if (
+        tokenId &&
+        url.pathname === `/v1/tokens/${tokenId}/reassign` &&
+        request.method === 'POST'
+      ) {
         const body = (await request.json().catch(() => ({}))) as {
           name?: unknown;
           userId?: unknown;
@@ -115,11 +120,7 @@ export const createBridgeHandler = ({
 
         const ok = await repository.reassignToken(tokenId, targetUserId);
         if (!ok) {
-          return failure(
-            404,
-            'not_found',
-            'Token was not found or could not be reassigned',
-          );
+          return failure(404, 'not_found', 'Token was not found or could not be reassigned');
         }
 
         // Optionally update the token name in the same request.
@@ -155,11 +156,7 @@ export const createBridgeHandler = ({
 
         const ok = await repository.linkOAuthBinding(userId, effectiveProviderId, providerUserId);
         if (!ok) {
-          return failure(
-            500,
-            'internal_error',
-            'OAuth binding could not be created',
-          );
+          return failure(500, 'internal_error', 'OAuth binding could not be created');
         }
 
         return success({ ok: true });
@@ -176,6 +173,23 @@ export const createBridgeHandler = ({
         const tokenName = url.searchParams.get('name') || managedTokenName;
         const token = await repository.findManagedToken(userId, tokenName);
         if (!token) return failure(404, 'not_found', 'Aihub managed token was not found');
+
+        return success(token);
+      }
+
+      const managedTokenByIdMatch = url.pathname.match(
+        new RegExp(`^/v1/users/${userId}/managed-tokens/(\\d+)$`),
+      );
+      if (managedTokenByIdMatch) {
+        const managedTokenId = Number(managedTokenByIdMatch[1]);
+        const token = await repository.findManagedTokenById(userId, managedTokenId);
+        if (!token) {
+          return failure(
+            404,
+            'not_found',
+            'Aihub managed token was not found, inactive, expired, or owned by another user',
+          );
+        }
 
         return success(token);
       }

@@ -1,0 +1,22 @@
+apiVersion: log.alibabacloud.com/v1alpha1
+kind: AliyunLogConfig
+metadata:
+  name: masterino-application
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: masterino-application-logs
+    app.kubernetes.io/part-of: masterino
+spec:
+  logstore: masterino-application
+  logtailConfig:
+    configName: masterino-application
+    inputType: plugin
+    inputDetail:
+      plugin:
+        inputs:
+          - type: service_docker_stdout
+            detail:
+              IncludeLabel:
+                io.kubernetes.pod.namespace: masterlion
+              Stdout: true
+              Stderr: true

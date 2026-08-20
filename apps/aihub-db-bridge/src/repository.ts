@@ -11,7 +11,7 @@ import type {
 export type AihubBridgeDialect = 'mysql' | 'postgres';
 
 export interface QueryClient {
-  query<T = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
+  query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }>;
 }
 
 export interface RepositoryOptions {
@@ -38,12 +38,12 @@ const LOG_TYPE_CONSUME = 2;
 const TOKEN_STATUS_ENABLED = 1;
 
 const inferDialect = (connectionString?: string): AihubBridgeDialect =>
-  /^postgres(ql)?:\/\//i.test(connectionString || '') ? 'postgres' : 'mysql';
+  /^postgres(?:ql)?:\/\//i.test(connectionString || '') ? 'postgres' : 'mysql';
 
 const convertQuestionPlaceholdersToPg = (sql: string) => {
   let index = 0;
 
-  return sql.replace(/\?/g, () => `$${++index}`);
+  return sql.replaceAll('?', () => `$${++index}`);
 };
 
 const buildMySqlPoolConfig = (connectionString: string) => {
@@ -200,22 +200,30 @@ limit 1
 
     if (namedRows[0]) return this.normalizeToken(namedRows[0]);
 
+    return undefined;
+  }
+
+  async findManagedTokenById(userId: number, tokenId: number) {
+    const groupColumn = this.groupColumn();
     const now = Math.floor(Date.now() / 1000);
-    const fallbackRows = await this.query<AihubBridgeToken>(
+    const rows = await this.query<AihubBridgeToken>(
       `
-${selectedColumns}
-where user_id = ?
+select id, user_id, name, ${this.keyColumn()} as ${this.keyColumn()}, status, expired_time,
+       remain_quota, unlimited_quota, model_limits_enabled, model_limits, used_quota,
+       ${groupColumn} as ${groupColumn}
+from tokens
+where id = ?
+  and user_id = ?
   and deleted_at is null
   and status = ${TOKEN_STATUS_ENABLED}
   and (unlimited_quota = true or remain_quota > 0)
   and (expired_time = -1 or expired_time > ?)
-order by accessed_time desc, id desc
 limit 1
       `.trim(),
-      [userId, now],
+      [tokenId, userId, now],
     );
 
-    return this.normalizeToken(fallbackRows[0]);
+    return this.normalizeToken(rows[0]);
   }
 
   async listManagedTokens(userId: number, tokenName: string) {
@@ -235,23 +243,7 @@ order by id desc
       [userId, tokenName],
     );
 
-    if (namedRows.length > 0) return namedRows.map((token) => this.normalizeToken(token)!);
-
-    const now = Math.floor(Date.now() / 1000);
-    const fallbackRows = await this.query<AihubBridgeToken>(
-      `
-${selectedColumns}
-where user_id = ?
-  and deleted_at is null
-  and status = ${TOKEN_STATUS_ENABLED}
-  and (unlimited_quota = true or remain_quota > 0)
-  and (expired_time = -1 or expired_time > ?)
-order by accessed_time desc, id desc
-      `.trim(),
-      [userId, now],
-    );
-
-    return fallbackRows.map((token) => this.normalizeToken(token)!);
+    return namedRows.map((token) => this.normalizeToken(token)!);
   }
 
   async listAccessibleModels(group?: string, token?: AihubBridgeToken) {

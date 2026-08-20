@@ -411,6 +411,69 @@ describe('NewApiService', () => {
     });
   });
 
+  it('uses the persisted token id as the primary read-source lookup', async () => {
+    mocks.bindingStore.set('current-user', {
+      encryptedAccessToken: null,
+      errorMessage: null,
+      managedTokenId: 820,
+      newApiUserId: 831,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedToken: vi.fn(),
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        id: 820,
+        key: 'sk-bound',
+        name: 'MasterLion_10488240',
+        user_id: 831,
+      }),
+      isEnabled: vi.fn(() => true),
+    };
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(service.ensureManagedToken()).resolves.toEqual({
+      key: 'sk-bound',
+      tokenId: 820,
+    });
+    expect(readOnlyDb.findManagedTokenById).toHaveBeenCalledWith(831, 820);
+    expect(readOnlyDb.findManagedToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a persisted token id that is not usable for the bound user', async () => {
+    mocks.bindingStore.set('current-user', {
+      encryptedAccessToken: null,
+      errorMessage: null,
+      managedTokenId: 820,
+      newApiUserId: 831,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedToken: vi.fn(),
+      findManagedTokenById: vi.fn().mockResolvedValue(undefined),
+      isEnabled: vi.fn(() => true),
+    };
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(service.ensureManagedToken()).rejects.toThrow(
+      'Aihub managed token 820 is unavailable or does not belong to user 831',
+    );
+    expect(readOnlyDb.findManagedToken).not.toHaveBeenCalled();
+  });
+
   it('treats a zero Aihub user id as missing and never calls remote services with it', async () => {
     mocks.bindingStore.set('current-user', {
       encryptedAccessToken: null,
