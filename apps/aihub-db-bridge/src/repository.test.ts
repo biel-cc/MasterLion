@@ -61,19 +61,27 @@ describe('AihubBridgeRepository', () => {
     });
   });
 
-  it('falls back to the latest usable token', async () => {
-    const client = {
-      query: vi
-        .fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: 31, key: 'sk-fallback', name: 'manual' }] }),
-    };
+  it('does not fall back to an unrelated token name', async () => {
+    const client = createClient([]);
     const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
 
     const token = await repo.findManagedToken(7, 'missing');
 
-    expect(token?.key).toBe('sk-fallback');
-    expect(client.query).toHaveBeenNthCalledWith(2, expect.stringContaining('accessed_time'), [
+    expect(token).toBeUndefined();
+    expect(client.query).toHaveBeenCalledOnce();
+  });
+
+  it('finds a usable managed token by bound id and owner', async () => {
+    const client = createClient([{ id: 31, key: 'sk-bound', name: 'manual', user_id: 7 }]);
+    const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
+
+    await expect(repo.findManagedTokenById(7, 31)).resolves.toMatchObject({
+      id: 31,
+      key: 'sk-bound',
+      user_id: 7,
+    });
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [
+      31,
       7,
       expect.any(Number),
     ]);

@@ -77,6 +77,7 @@ const getStatus = (errorType: ILobeAgentRuntimeErrorType | ErrorType) => {
 export const createErrorResponse = (
   errorType: ErrorType | ILobeAgentRuntimeErrorType,
   body?: any,
+  options?: { headers?: HeadersInit },
 ) => {
   const statusCode = getStatus(errorType);
 
@@ -91,6 +92,7 @@ export const createErrorResponse = (
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...Object.fromEntries(new Headers(options?.headers).entries()),
   };
 
   // Add X-Auth-Required header for real authentication failures

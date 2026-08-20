@@ -19,8 +19,7 @@ describe('NewApiReadOnlyDb', () => {
   });
 
   it('uses the Aihub read-only database url as the primary configuration', () => {
-    process.env.AIHUB_READONLY_DATABASE_URL =
-      'mysql://newapi_read:secret@47.106.93.9:13306/newapi';
+    process.env.AIHUB_READONLY_DATABASE_URL = 'mysql://newapi_read:secret@47.106.93.9:13306/newapi';
 
     const db = new NewApiReadOnlyDb();
 
@@ -93,31 +92,27 @@ describe('NewApiReadOnlyDb', () => {
     ]);
   });
 
-  it('falls back to the latest active usable token when the managed token name is absent', async () => {
-    const client = {
-      query: vi
-        .fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({
-          rows: [
-            {
-              id: 25,
-              key: 'sk-existing',
-              name: 'manual-token',
-              remain_quota: 100,
-              status: 1,
-              unlimited_quota: false,
-              used_quota: 2,
-            },
-          ],
-        }),
-    };
+  it('does not fall back to an unrelated token name', async () => {
+    const client = createQueryClient([]);
     const db = new NewApiReadOnlyDb({ client });
 
     const token = await db.findManagedToken(7, 'masterlion-managed');
 
-    expect(token?.key).toBe('sk-existing');
-    expect(client.query).toHaveBeenNthCalledWith(2, expect.stringContaining('from tokens'), [
+    expect(token).toBeUndefined();
+    expect(client.query).toHaveBeenCalledOnce();
+  });
+
+  it('finds a usable managed token by bound id and owner', async () => {
+    const client = createQueryClient([{ id: 25, key: 'sk-existing', user_id: 7 }]);
+    const db = new NewApiReadOnlyDb({ client });
+
+    await expect(db.findManagedTokenById(7, 25)).resolves.toMatchObject({
+      id: 25,
+      key: 'sk-existing',
+      user_id: 7,
+    });
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [
+      25,
       7,
       expect.any(Number),
     ]);
@@ -136,7 +131,9 @@ describe('NewApiReadOnlyDb', () => {
     });
 
     expect(models).toEqual(['gpt-4o-mini', 'deepseek-chat']);
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from abilities'), ['default']);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from abilities'), [
+      'default',
+    ]);
   });
 
   it('returns group-level enabled model names from Aihub abilities', async () => {
@@ -146,7 +143,9 @@ describe('NewApiReadOnlyDb', () => {
     const models = await db.listAccessibleModels('default');
 
     expect(models).toEqual(['gpt-4o-mini', 'deepseek-chat']);
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from abilities'), ['default']);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from abilities'), [
+      'default',
+    ]);
   });
 
   it('inlines MySQL usage log pagination after validating numeric bounds', async () => {
@@ -203,12 +202,9 @@ describe('NewApiReadOnlyDb', () => {
       startTimestamp: 1709990000,
     });
 
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('limit ? offset ?'), [
-      7,
-      1709990000,
-      1710003600,
-      10,
-      10,
-    ]);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('limit ? offset ?'),
+      [7, 1709990000, 1710003600, 10, 10],
+    );
   });
 });

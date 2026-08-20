@@ -18,6 +18,7 @@ vi.mock('@/services/agent', () => ({
     createAgentKnowledgeBase: vi.fn(),
     deleteAgentFile: vi.fn(),
     deleteAgentKnowledgeBase: vi.fn(),
+    disableAllFiles: vi.fn(),
     getFilesAndKnowledgeBases: vi.fn(),
     toggleFile: vi.fn(),
     toggleKnowledgeBase: vi.fn(),
@@ -176,6 +177,37 @@ describe('KnowledgeSlice Actions', () => {
       });
 
       expect(agentService.deleteAgentKnowledgeBase).toHaveBeenCalledWith('agent-1', 'kb-1');
+    });
+  });
+
+  describe('disableAllFiles', () => {
+    it('should not call service if no activeAgentId', async () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      await act(async () => {
+        await result.current.disableAllFiles();
+      });
+
+      expect(agentService.disableAllFiles).not.toHaveBeenCalled();
+    });
+
+    it('should disable files and refresh the active agent config', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const refreshAgentConfigSpy = vi
+        .spyOn(result.current, 'internal_refreshAgentConfig')
+        .mockResolvedValue(undefined);
+      vi.mocked(agentService.disableAllFiles).mockResolvedValue(undefined as any);
+
+      act(() => {
+        useAgentStore.setState({ activeAgentId: 'agent-1' });
+      });
+
+      await act(async () => {
+        await result.current.disableAllFiles();
+      });
+
+      expect(agentService.disableAllFiles).toHaveBeenCalledWith('agent-1');
+      expect(refreshAgentConfigSpy).toHaveBeenCalledWith('agent-1');
     });
   });
 

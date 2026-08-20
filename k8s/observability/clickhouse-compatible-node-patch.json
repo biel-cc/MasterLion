@@ -1,0 +1,9 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/templates/podTemplates/0/spec/nodeSelector",
+    "value": {
+      "kubernetes.io/hostname": "cn-shenzhen.10.80.139.176"
+    }
+  }
+]

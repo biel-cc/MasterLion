@@ -148,6 +148,13 @@ export const agentRouter = router({
       return ctx.agentModel.deleteAgentFile(input.agentId, input.fileId);
     }),
 
+  disableAllFiles: agentProcedure
+    .use(withScopedPermission('agent:update'))
+    .input(z.object({ agentId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      return ctx.agentModel.disableAllFiles(input.agentId);
+    }),
+
   deleteAgentKnowledgeBase: agentProcedure
     .use(withScopedPermission('agent:update'))
     .input(

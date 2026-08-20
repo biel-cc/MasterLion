@@ -1,3 +1,5 @@
+import { DEFAULT_MODEL, isAihubModelHidden } from '@lobechat/business-const';
+import { processMultiProviderModelList } from '@lobechat/model-runtime';
 import type {
   ChatModelCard,
   NewApiAccountSummary,
@@ -9,8 +11,6 @@ import type {
   NewApiUsageLogItem,
   NewApiUsageSummary,
 } from '@lobechat/types';
-import { DEFAULT_MODEL, isAihubModelHidden } from '@lobechat/business-const';
-import { processMultiProviderModelList } from '@lobechat/model-runtime';
 import { TRPCError } from '@trpc/server';
 import { and, eq } from 'drizzle-orm';
 import { ModelProvider } from 'model-bank';
@@ -73,7 +73,8 @@ const getNewApiBaseUrl = () => {
   return baseUrl;
 };
 
-const getManagedTokenName = () => process.env.AIHUB_MANAGED_TOKEN_NAME || DEFAULT_MANAGED_TOKEN_NAME;
+const getManagedTokenName = () =>
+  process.env.AIHUB_MANAGED_TOKEN_NAME || DEFAULT_MANAGED_TOKEN_NAME;
 
 const getAdminAuth = (): NewApiManagementAuth => {
   const accessToken = process.env.AIHUB_ADMIN_ACCESS_TOKEN;
@@ -116,7 +117,9 @@ const readPositiveNumber = (value: unknown, fallback: number) => {
 
 const getFallbackQuotaPolicy = (): NewApiQuotaPolicy => ({
   quotaDisplayType:
-    process.env.AIHUB_QUOTA_DISPLAY_TYPE?.toUpperCase() === 'USD' ? 'USD' : DEFAULT_QUOTA_DISPLAY_TYPE,
+    process.env.AIHUB_QUOTA_DISPLAY_TYPE?.toUpperCase() === 'USD'
+      ? 'USD'
+      : DEFAULT_QUOTA_DISPLAY_TYPE,
   quotaPerUnit: readPositiveNumber(process.env.AIHUB_QUOTA_PER_UNIT, DEFAULT_QUOTA_PER_UNIT),
   usdExchangeRate: readPositiveNumber(
     process.env.AIHUB_USD_EXCHANGE_RATE,
@@ -233,7 +236,9 @@ const toFallbackAiModel = (model: NewApiModelCard): AiProviderModelListItem =>
     type: 'chat',
   });
 
-const enrichNewApiModels = async (models: NewApiModelCard[]): Promise<AiProviderModelListItem[]> => {
+const enrichNewApiModels = async (
+  models: NewApiModelCard[],
+): Promise<AiProviderModelListItem[]> => {
   const processedModels = await processMultiProviderModelList(models, ModelProvider.NewAPI);
   const processedModelMap = new Map(processedModels.map((model) => [model.id, model]));
 
@@ -383,7 +388,9 @@ export class NewApiService {
     return 'Aihub binding does not have a NewAPI user id';
   }
 
-  private assertUsableBinding(binding: NewApiBindingItem): asserts binding is UsableNewApiBindingItem {
+  private assertUsableBinding(
+    binding: NewApiBindingItem,
+  ): asserts binding is UsableNewApiBindingItem {
     if (!isValidNewApiUserId(binding.newApiUserId)) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -491,13 +498,26 @@ export class NewApiService {
     const tokenName = getManagedTokenName();
     const page = await this.client.listTokens(auth, { keyword: tokenName, pageSize: 100 });
 
-    return page.items
-      .filter((token) => token.name === tokenName)
-      .sort((a, b) => b.id - a.id)[0];
+    return page.items.filter((token) => token.name === tokenName).sort((a, b) => b.id - a.id)[0];
   }
 
-  private async findManagedTokenFromReadOnlyDb(newApiUserId: number) {
+  private async findManagedTokenFromReadOnlyDb(
+    newApiUserId: number,
+    managedTokenId?: number | null,
+  ) {
     if (!this.shouldUseReadOnlyDb()) return undefined;
+
+    if (managedTokenId && typeof this.readOnlyDb.findManagedTokenById === 'function') {
+      const token = await this.readOnlyDb.findManagedTokenById(newApiUserId, managedTokenId);
+      if (!token) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: `Aihub managed token ${managedTokenId} is unavailable or does not belong to user ${newApiUserId}`,
+        });
+      }
+
+      return token;
+    }
 
     return this.readOnlyDb.findManagedToken(newApiUserId, getManagedTokenName());
   }
@@ -518,9 +538,10 @@ export class NewApiService {
       }));
     }
 
-    const token = await this.findManagedTokenFromReadOnlyDb(binding.newApiUserId).catch(
-      () => undefined,
-    );
+    const token = await this.findManagedTokenFromReadOnlyDb(
+      binding.newApiUserId,
+      binding.managedTokenId,
+    ).catch(() => undefined);
     const tokenId = token?.id ?? binding.managedTokenId;
     if (!tokenId) return [];
 
@@ -562,7 +583,10 @@ export class NewApiService {
     return 'Either lobeUserId, email, or username is required';
   }
 
-  private pickNewApiUser(users: NewApiUser[], identity: { email?: string | null; username?: string | null }) {
+  private pickNewApiUser(
+    users: NewApiUser[],
+    identity: { email?: string | null; username?: string | null },
+  ) {
     const email = identity.email?.trim().toLowerCase();
     const username = identity.username?.trim().toLowerCase();
 
@@ -772,7 +796,7 @@ export class NewApiService {
     if (this.shouldUseReadOnlyDb()) {
       const [account, token] = await Promise.all([
         this.readOnlyDb.findUserById(binding.newApiUserId),
-        this.findManagedTokenFromReadOnlyDb(binding.newApiUserId),
+        this.findManagedTokenFromReadOnlyDb(binding.newApiUserId, binding.managedTokenId),
       ]);
       const modelIds = await this.readOnlyDb.listAccessibleModels(account?.group, token);
       if (modelIds.length > 0) {
@@ -835,7 +859,10 @@ export class NewApiService {
     const bindingModel = new NewApiBindingModel(this.db, this.userId);
 
     try {
-      const dbToken = await this.findManagedTokenFromReadOnlyDb(binding.newApiUserId);
+      const dbToken = await this.findManagedTokenFromReadOnlyDb(
+        binding.newApiUserId,
+        binding.managedTokenId,
+      );
       if (dbToken?.key) {
         await this.saveManagedProviderToken(dbToken.key);
         await bindingModel.updateSyncState({
@@ -851,10 +878,9 @@ export class NewApiService {
       if (this.isReadOnlyDbRequired()) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
-          message:
-            !this.readOnlyDb.isEnabled()
-              ? this.getReadSourceRequiredMessage()
-              : 'Aihub read-only database did not return an active API token for the current user',
+          message: !this.readOnlyDb.isEnabled()
+            ? this.getReadSourceRequiredMessage()
+            : 'Aihub read-only database did not return an active API token for the current user',
         });
       }
 
@@ -985,7 +1011,10 @@ export class NewApiService {
   async getUsageSummary(params: { endTimestamp?: number; startTimestamp?: number } = {}) {
     const binding = await this.getBindingOrThrow();
     const quotaPolicy = await this.getQuotaPolicy();
-    const dbToken = await this.findManagedTokenFromReadOnlyDb(binding.newApiUserId);
+    const dbToken = await this.findManagedTokenFromReadOnlyDb(
+      binding.newApiUserId,
+      binding.managedTokenId,
+    );
     if (dbToken?.key) {
       const account = await this.readOnlyDb.findUserById(binding.newApiUserId);
       const logs: NewApiUsageLogItem[] = [];

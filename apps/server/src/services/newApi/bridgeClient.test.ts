@@ -38,12 +38,14 @@ describe('NewApiBridgeClient', () => {
   });
 
   it('reads managed token from the bridge', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ data: { id: 12, key: 'sk-managed', name: 'managed' }, success: true }),
-        { status: 200 },
-      ),
-    );
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ data: { id: 12, key: 'sk-managed', name: 'managed' }, success: true }),
+          { status: 200 },
+        ),
+      );
     const client = new NewApiBridgeClient({
       baseUrl: 'http://bridge:3218',
       fetchImpl: fetchImpl as any,
@@ -59,13 +61,37 @@ describe('NewApiBridgeClient', () => {
     );
   });
 
-  it('returns undefined for bridge 404 responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ error: { code: 'not_found', message: 'missing' }, success: false }),
-        { status: 404 },
-      ),
+  it('reads the bound managed token by id', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ data: { id: 12, key: 'sk-managed', user_id: 7 }, success: true }),
+          { status: 200 },
+        ),
+      );
+    const client = new NewApiBridgeClient({
+      baseUrl: 'http://bridge:3218',
+      fetchImpl: fetchImpl as any,
+      token: 'bridge-secret',
+    });
+
+    await expect(client.findManagedTokenById(7, 12)).resolves.toMatchObject({ id: 12, user_id: 7 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://bridge:3218/v1/users/7/managed-tokens/12',
+      expect.any(Object),
     );
+  });
+
+  it('returns undefined for bridge 404 responses', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: { code: 'not_found', message: 'missing' }, success: false }),
+          { status: 404 },
+        ),
+      );
     const client = new NewApiBridgeClient({
       baseUrl: 'http://bridge:3218',
       fetchImpl: fetchImpl as any,

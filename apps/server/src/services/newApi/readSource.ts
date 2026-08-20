@@ -1,15 +1,16 @@
-import type { NewApiLogItem, NewApiPage, NewApiToken, NewApiUser } from './client';
 import { NewApiBridgeClient } from './bridgeClient';
+import type { NewApiLogItem, NewApiPage, NewApiToken, NewApiUser } from './client';
 import { NewApiReadOnlyDb } from './readOnlyDb';
 
 export interface NewApiReadSource {
-  findManagedToken(userId: number, tokenName: string): Promise<NewApiToken | undefined>;
-  findUserById(userId: number): Promise<NewApiUser | undefined>;
-  findUserByIdentity(identity: {
+  findManagedToken: (userId: number, tokenName: string) => Promise<NewApiToken | undefined>;
+  findManagedTokenById?: (userId: number, tokenId: number) => Promise<NewApiToken | undefined>;
+  findUserById: (userId: number) => Promise<NewApiUser | undefined>;
+  findUserByIdentity: (identity: {
     email?: string;
     username?: string;
-  }): Promise<NewApiUser | undefined>;
-  getUsageLogs(
+  }) => Promise<NewApiUser | undefined>;
+  getUsageLogs: (
     userId: number,
     params?: {
       endTimestamp?: number;
@@ -17,10 +18,10 @@ export interface NewApiReadSource {
       pageSize?: number;
       startTimestamp?: number;
     },
-  ): Promise<NewApiPage<NewApiLogItem>>;
-  isEnabled(): boolean;
-  listAccessibleModels(group?: string, token?: NewApiToken): Promise<string[]>;
-  listManagedTokens(userId: number, tokenName: string): Promise<NewApiToken[]>;
+  ) => Promise<NewApiPage<NewApiLogItem>>;
+  isEnabled: () => boolean;
+  listAccessibleModels: (group?: string, token?: NewApiToken) => Promise<string[]>;
+  listManagedTokens: (userId: number, tokenName: string) => Promise<NewApiToken[]>;
 }
 
 export const getNewApiDataSource = () => (process.env.AIHUB_DATA_SOURCE || 'hybrid').toLowerCase();

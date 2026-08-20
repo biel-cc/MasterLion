@@ -102,6 +102,12 @@ describe('POST handler', () => {
 
       expect(response).toEqual(mockChatResponse);
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
+        headers: expect.objectContaining({ 'x-request-id': expect.any(String) }),
+        metadata: {
+          operationId: expect.any(String),
+          provider: 'test-provider',
+        },
+        requestHeaders: { 'X-Request-ID': expect.any(String) },
         user: 'test-user-id',
         signal: expect.anything(),
       });
@@ -131,15 +137,62 @@ describe('POST handler', () => {
       const response = await POST(request, { params: mockParams });
 
       expect(response.status).toBe(500);
+      expect(response.headers.get('x-request-id')).toEqual(expect.any(String));
       expect(await response.json()).toEqual({
         body: {
           errorMessage: 'Something went wrong',
           error: {
-            errorMessage: 'Something went wrong',
-            errorType: 500,
+            message: 'Something went wrong',
+            name: 'Error',
           },
           provider: 'test-provider',
+          requestId: expect.any(String),
+          traceId: expect.any(String),
         },
+        errorType: 500,
+      });
+    });
+
+    it('should retry transient NewAPI failures before a response is returned', async () => {
+      const mockParams = Promise.resolve({ provider: 'newapi' });
+      const mockChatResponse = new Response('ok');
+      const transientError = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+      const mockRuntime: LobeRuntimeAI = {
+        baseURL: 'abc',
+        chat: vi
+          .fn()
+          .mockRejectedValueOnce(transientError)
+          .mockRejectedValueOnce(transientError)
+          .mockResolvedValue(mockChatResponse),
+      };
+
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+
+      const response = await POST(request, { params: mockParams });
+
+      expect(response).toBe(mockChatResponse);
+      expect(mockRuntime.chat).toHaveBeenCalledTimes(3);
+    });
+
+    it('should not retry NewAPI authentication failures', async () => {
+      const mockParams = Promise.resolve({ provider: 'newapi' });
+      const authError = Object.assign(new Error('Invalid API key'), { status: 401 });
+      const mockRuntime: LobeRuntimeAI = {
+        baseURL: 'abc',
+        chat: vi.fn().mockRejectedValue(authError),
+      };
+
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+
+      const response = await POST(request, { params: mockParams });
+
+      expect(response.status).toBe(500);
+      expect(mockRuntime.chat).toHaveBeenCalledOnce();
+      expect(await response.json()).toEqual({
+        body: expect.objectContaining({
+          error: expect.objectContaining({ message: 'Invalid API key', status: 401 }),
+          requestId: expect.any(String),
+        }),
         errorType: 500,
       });
     });

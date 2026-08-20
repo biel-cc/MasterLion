@@ -14,6 +14,12 @@ const readResponse = async (response: Response) => ({
 
 const createRepo = () => ({
   findManagedToken: vi.fn().mockResolvedValue({ id: 12, key: 'sk-managed', name: 'managed' }),
+  findManagedTokenById: vi.fn().mockResolvedValue({
+    id: 12,
+    key: 'sk-managed',
+    name: 'managed',
+    user_id: 7,
+  }),
   findUserById: vi.fn().mockResolvedValue({ group: 'vip', id: 7, username: 'ada' }),
   findUserByIdentity: vi.fn().mockResolvedValue({ id: 7, username: 'ada' }),
   getUsageLogs: vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 1 }),
@@ -68,7 +74,9 @@ describe('createBridgeHandler', () => {
       repository: repo as any,
     });
 
-    const response = await readResponse(await handler(makeRequest('/v1/users/resolve?username=ada')));
+    const response = await readResponse(
+      await handler(makeRequest('/v1/users/resolve?username=ada')),
+    );
 
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual({ id: 7, username: 'ada' });
@@ -121,6 +129,23 @@ describe('createBridgeHandler', () => {
       { id: 11, name: 'managed' },
     ]);
     expect(repo.listManagedTokens).toHaveBeenCalledWith(7, 'managed');
+  });
+
+  it('returns the bound managed token by id and user', async () => {
+    const repo = createRepo();
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+
+    const response = await readResponse(
+      await handler(makeRequest('/v1/users/7/managed-tokens/12')),
+    );
+
+    expect(response.body.data).toMatchObject({ id: 12, user_id: 7 });
+    expect(repo.findManagedTokenById).toHaveBeenCalledWith(7, 12);
   });
 
   it('returns models using token and account context', async () => {
@@ -177,7 +202,7 @@ describe('createBridgeHandler', () => {
 
     const request = new Request('http://bridge.local/v1/tokens/167/reassign', {
       body: JSON.stringify({ userId: 165, name: 'Masterino_biel' }),
-      headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
       method: 'POST',
     });
 
@@ -199,7 +224,7 @@ describe('createBridgeHandler', () => {
 
     const request = new Request('http://bridge.local/v1/tokens/167/reassign', {
       body: JSON.stringify({}),
-      headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
       method: 'POST',
     });
 
@@ -220,7 +245,7 @@ describe('createBridgeHandler', () => {
 
     const request = new Request('http://bridge.local/v1/tokens/999/reassign', {
       body: JSON.stringify({ userId: 165 }),
-      headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
       method: 'POST',
     });
 

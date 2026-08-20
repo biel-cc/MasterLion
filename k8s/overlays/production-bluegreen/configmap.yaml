@@ -65,3 +65,5 @@ data:
   REDIS_DATABASE: '0'
   REDIS_PREFIX: 'lobechat'
   REDIS_TLS: '0'
+  ENABLE_LANGFUSE: '1'
+  LANGFUSE_HOST: 'http://langfuse-web.masterino-observability.svc.cluster.local:3000'

@@ -452,6 +452,13 @@ export class AgentModel {
       );
   };
 
+  disableAllFiles = async (agentId: string) => {
+    return this.db
+      .update(agentsFiles)
+      .set({ enabled: false })
+      .where(and(eq(agentsFiles.agentId, agentId), this.agentsFilesOwnership()));
+  };
+
   /**
    * Delete an agent and its associated session.
    * This will cascade delete messages, topics, etc. through the session deletion.

@@ -1,14 +1,19 @@
+import { randomUUID } from 'node:crypto';
+
 import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AGENT_RUNTIME_ERROR_SET } from '@lobechat/model-runtime';
 import { ChatErrorType } from '@lobechat/types';
 
 import { checkAuth } from '@/app/(backend)/middleware/auth';
+import { getLangfuseConfig } from '@/envs/langfuse';
 import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { type ChatStreamPayload } from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
 import { getTracePayload } from '@/utils/trace';
 
 import { resolveValidWorkspaceIdFromRequest } from '../../_utils/workspace';
+import { serializeProviderError } from './providerError';
+import { callWithUpstreamTimeouts, runWithTransientRetry } from './resilience';
 
 // If user don't use fluid compute, will build  failed
 // this enforce user to enable fluid compute
@@ -16,6 +21,9 @@ export const maxDuration = 300;
 
 export const POST = checkAuth(async (req: Request, { params, userId, serverDB }) => {
   const provider = (await params)!.provider!;
+  const inboundTracePayload = getTracePayload(req);
+  const operationId = inboundTracePayload?.traceId || randomUUID();
+  let traceOptions: ReturnType<typeof createTraceOptions> | undefined;
 
   try {
     const workspaceId = await resolveValidWorkspaceIdFromRequest({ req, serverDB, userId });
@@ -27,19 +35,51 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
 
     const data = (await req.json()) as ChatStreamPayload;
 
-    const tracePayload = getTracePayload(req);
-
-    let traceOptions = {};
-    // If user enable trace
-    if (tracePayload?.enabled) {
-      traceOptions = createTraceOptions(data, { provider, trace: tracePayload });
+    const { ENABLE_LANGFUSE } = getLangfuseConfig();
+    if (inboundTracePayload?.enabled || ENABLE_LANGFUSE) {
+      traceOptions = createTraceOptions(data, {
+        metadata: { operationId },
+        provider,
+        trace: {
+          ...inboundTracePayload,
+          enabled: true,
+          traceId: operationId,
+          userId,
+        },
+      });
     }
 
-    return await modelRuntime.chat(data, {
-      user: userId,
-      ...traceOptions,
-      signal: req.signal,
-    });
+    const responseHeaders = new Headers(traceOptions?.headers);
+    responseHeaders.set('X-Request-ID', operationId);
+
+    const execute = () =>
+      callWithUpstreamTimeouts({
+        operation: (signal) =>
+          modelRuntime.chat(data, {
+            ...traceOptions,
+            headers: Object.fromEntries(responseHeaders.entries()),
+            metadata: { operationId, provider },
+            requestHeaders: { 'X-Request-ID': operationId },
+            signal,
+            user: userId,
+          }),
+        requestSignal: req.signal,
+      });
+
+    return provider === 'newapi'
+      ? await runWithTransientRetry({
+          onRetry: (error, attempt, delayMs) =>
+            console.warn('[newapi_retry]', {
+              attempt,
+              delayMs,
+              error: serializeProviderError(error),
+              operationId,
+              provider,
+            }),
+          operation: execute,
+          provider,
+        })
+      : await execute();
   } catch (e) {
     const {
       errorType = ChatErrorType.InternalServerError,
@@ -48,12 +88,30 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
     } = e as ChatCompletionErrorPayload;
 
     const error = errorContent || e;
+    const safeError = serializeProviderError(error);
+
+    await traceOptions?.callback?.onError?.({ ...safeError, operationId, provider });
+    await traceOptions?.callback?.onFinal?.({} as any);
 
     const logMethod = AGENT_RUNTIME_ERROR_SET.has(errorType as string) ? 'warn' : 'error';
     // track the error at server side
     // eslint-disable-next-line no-console
-    console[logMethod](`Route: [${provider}] ${errorType}:`, error);
+    console[logMethod](`Route: [${provider}] ${errorType}:`, {
+      error: safeError,
+      operationId,
+      provider,
+    });
 
-    return createErrorResponse(errorType, { error, ...res, provider });
+    return createErrorResponse(
+      errorType,
+      {
+        error: safeError,
+        ...res,
+        provider,
+        requestId: operationId,
+        traceId: operationId,
+      },
+      { headers: { 'X-Request-ID': operationId } },
+    );
   }
 });
