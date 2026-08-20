@@ -3,6 +3,7 @@ import { uuid } from '@lobechat/utils';
 import dayjs from 'dayjs';
 import { sha256 } from 'js-sha256';
 
+import { UPLOAD_CONFIRMATION_HEADER, UPLOAD_CONFIRMATION_VALUE } from '@/const/fileUpload';
 import { fileEnv } from '@/envs/file';
 import { lambdaClient } from '@/libs/trpc/client';
 import { type FileMetadata, type UploadBase64ToS3Result } from '@/types/files';
@@ -10,15 +11,43 @@ import { type FileUploadState, type FileUploadStatus } from '@/types/files/uploa
 
 export const UPLOAD_NETWORK_ERROR = 'NetWorkError';
 
+const redactUploadUrl = (rawUrl: string): string => {
+  try {
+    const isAbsolute = /^[a-z][a-z\d+.-]*:/i.test(rawUrl);
+    const url = new URL(rawUrl, 'http://upload.local');
+    url.hash = '';
+    url.search = '';
+
+    return isAbsolute ? url.toString() : url.pathname;
+  } catch {
+    return 'upload endpoint';
+  }
+};
+
 const createUploadHttpError = (xhr: XMLHttpRequest, url: string) => {
   const details = xhr.responseText?.trim() || xhr.statusText || 'Unknown upload error';
-  const error = new Error(`Upload failed with HTTP ${xhr.status} for ${url}: ${details}`);
+  const safeUrl = redactUploadUrl(url);
+  const error = new Error(`Upload failed with HTTP ${xhr.status} for ${safeUrl}: ${details}`);
 
   Object.assign(error, {
     details,
     stage: 'storage_upload_failed',
     status: xhr.status,
-    url,
+    url: safeUrl,
+  });
+
+  return error;
+};
+
+const createUnconfirmedUploadError = (url: string) => {
+  const safeUrl = redactUploadUrl(url);
+  const error = new Error(
+    `Upload proxy response is missing the upload confirmation header: ${safeUrl}`,
+  );
+
+  Object.assign(error, {
+    stage: 'storage_upload_unconfirmed',
+    url: safeUrl,
   });
 
   return error;
@@ -158,10 +187,13 @@ class UploadService {
   ): Promise<FileMetadata> => {
     const xhr = new XMLHttpRequest();
 
-    const { headers, preSignUrl, ...result } = await this.getSignedUploadUrl(file, {
-      directory,
-      pathname,
-    });
+    const { headers, preSignUrl, requiresConfirmation, ...result } = await this.getSignedUploadUrl(
+      file,
+      {
+        directory,
+        pathname,
+      },
+    );
     const startTime = Date.now();
 
     // Setup abort listener
@@ -198,6 +230,14 @@ class UploadService {
     await new Promise((resolve, reject) => {
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
+          if (
+            requiresConfirmation &&
+            xhr.getResponseHeader(UPLOAD_CONFIRMATION_HEADER) !== UPLOAD_CONFIRMATION_VALUE
+          ) {
+            reject(createUnconfirmedUploadError(preSignUrl));
+            return;
+          }
+
           onProgress?.('success', {
             progress: 100,
             restTime: 0,
@@ -229,6 +269,7 @@ class UploadService {
     FileMetadata & {
       headers?: Record<string, string>;
       preSignUrl: string;
+      requiresConfirmation?: boolean;
     }
   > => {
     // Generate file path metadata
@@ -243,6 +284,7 @@ class UploadService {
       headers: upload.headers,
       path: pathname,
       preSignUrl: upload.url,
+      requiresConfirmation: upload.requiresConfirmation,
     };
   };
 }

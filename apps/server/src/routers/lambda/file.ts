@@ -19,6 +19,10 @@ import { AsyncTaskModel } from '@/database/models/asyncTask';
 import { ChunkModel } from '@/database/models/chunk';
 import { DocumentModel } from '@/database/models/document';
 import { FileModel } from '@/database/models/file';
+import type {
+  ResourcePermission,
+  ResourceRef,
+} from '@/database/repositories/enterprise/resourceAclRepository';
 import { KnowledgeRepo } from '@/database/repositories/knowledge';
 import { workspaceMembers } from '@/database/schemas';
 import { appEnv } from '@/envs/app';
@@ -31,14 +35,11 @@ import {
   resourceAclService,
 } from '@/server/services/enterprise/resourceAclService';
 import { FileService } from '@/server/services/file';
+import { createStorageObjectAccessError } from '@/server/services/file/errors';
 import { AsyncTaskStatus, AsyncTaskType, type IAsyncTaskError } from '@/types/asyncTask';
 import type { FileListItem, KnowledgeItemStatus } from '@/types/files';
 import { QueryFileListSchema, UploadFileSchema } from '@/types/files';
 import { TransferErrorCode } from '@/types/transferError';
-import type {
-  ResourcePermission,
-  ResourceRef,
-} from '@/database/repositories/enterprise/resourceAclRepository';
 
 /**
  * Generate file proxy URL
@@ -142,6 +143,28 @@ const isStoredObjectAvailable = async (fileService: FileService, url: string): P
     console.error('Failed to verify existing file hash storage object:', error);
     return false;
   }
+};
+
+const FILE_METADATA_MAX_ATTEMPTS = 3;
+const FILE_METADATA_RETRY_DELAY_MS = 50;
+
+const isStorageObjectKey = (url: string): boolean => !/^[a-z][a-z\d+.-]*:/i.test(url);
+
+const getUploadedObjectMetadata = async (fileService: FileService, url: string) => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= FILE_METADATA_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await fileService.getFileMetadata(url);
+    } catch (error) {
+      lastError = error;
+      if (attempt < FILE_METADATA_MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, FILE_METADATA_RETRY_DELAY_MS * attempt));
+      }
+    }
+  }
+
+  throw createStorageObjectAccessError(lastError);
 };
 
 const fileProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
@@ -299,19 +322,9 @@ export const fileRouter = router({
         'write',
       );
 
-      let actualSize = input.size;
-      try {
-        const { contentLength } = await ctx.fileService.getFileMetadata(input.url);
-        if (contentLength >= 1) {
-          actualSize = contentLength;
-        }
-      } catch {
-        // If metadata fetch fails, use original size from input
-      }
-
-      if (actualSize < 0) {
+      if (input.size < 0) {
         await businessFileUploadCheck({
-          actualSize,
+          actualSize: input.size,
           clientIp: ctx.clientIp ?? undefined,
           inputSize: input.size,
           url: input.url,
@@ -319,6 +332,22 @@ export const fileRouter = router({
           workspaceId: ctx.workspaceId,
         });
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'File size cannot be negative' });
+      }
+
+      let actualSize = input.size;
+      const requiresUploadedObjectConfirmation = isStorageObjectKey(input.url);
+
+      try {
+        const { contentLength } = requiresUploadedObjectConfirmation
+          ? await getUploadedObjectMetadata(ctx.fileService, input.url)
+          : await ctx.fileService.getFileMetadata(input.url);
+        if (contentLength >= 1) {
+          actualSize = contentLength;
+        }
+      } catch (error) {
+        if (requiresUploadedObjectConfirmation) throw error;
+        // External URLs retain the legacy input-size fallback; every internal
+        // storage key, including a deduplicated one, must still be confirmed.
       }
 
       const { id } = await ctx.serverDB.transaction(async (trx) => {

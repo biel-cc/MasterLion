@@ -505,33 +505,116 @@ describe('fileRouter', () => {
       );
     });
 
-    it('should fallback to input size when getFileMetadata fails', async () => {
+    it('should reject a missing new storage object after bounded metadata retries', async () => {
       mockFileModelCheckHash.mockResolvedValue({ isExist: false });
       mockFileModelCreate.mockResolvedValue({ id: 'new-file-id' });
-      mockFileServiceGetFileMetadata.mockRejectedValue(new Error('File not found in S3'));
+      mockFileServiceGetFileMetadata.mockRejectedValue({ name: 'NoSuchKey' });
 
-      const result = await caller.createFile({
-        hash: 'test-hash',
-        fileType: 'text',
-        name: 'test.txt',
-        size: 100,
-        url: 'files/non-existent.txt',
-        metadata: {},
+      await expect(
+        caller.createFile({
+          hash: 'test-hash',
+          fileType: 'text',
+          name: 'test.txt',
+          size: 100,
+          url: 'files/non-existent.txt',
+          metadata: {},
+        }),
+      ).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message: 'STORAGE_OBJECT_MISSING',
       });
 
-      expect(result).toEqual({
+      expect(mockFileServiceGetFileMetadata).toHaveBeenCalledTimes(3);
+      expect(routerMocks.serverDB.transaction).not.toHaveBeenCalled();
+      expect(mockFileModelCreate).not.toHaveBeenCalled();
+    });
+
+    it('should create a new file after a transient metadata failure recovers', async () => {
+      mockFileModelCheckHash.mockResolvedValue({ isExist: false });
+      mockFileModelCreate.mockResolvedValue({ id: 'new-file-id' });
+      mockFileServiceGetFileMetadata
+        .mockRejectedValueOnce(new Error('temporary S3 gateway error'))
+        .mockResolvedValueOnce({ contentLength: 4096, contentType: 'text/plain' });
+
+      await expect(
+        caller.createFile({
+          hash: 'test-hash',
+          fileType: 'text',
+          name: 'test.txt',
+          size: 100,
+          url: 'files/recovered.txt',
+          metadata: {},
+        }),
+      ).resolves.toEqual({
         id: 'new-file-id',
         url: 'https://aihub.bielcrystal.com/f/new-file-id',
       });
 
-      // Verify create was called with input size as fallback
+      expect(mockFileServiceGetFileMetadata).toHaveBeenCalledTimes(2);
       expect(mockFileModelCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          size: 100,
-        }),
+        expect.objectContaining({ size: 4096 }),
         true,
         routerMocks.transactionClient,
       );
+    });
+
+    it.each([
+      ['missing', { name: 'NoSuchKey' }, 'NOT_FOUND', 'STORAGE_OBJECT_MISSING'],
+      [
+        'unavailable',
+        new Error('temporary S3 gateway error'),
+        'SERVICE_UNAVAILABLE',
+        'STORAGE_OBJECT_UNAVAILABLE',
+      ],
+    ])(
+      'should reject a deduplicated file record when its storage object is %s',
+      async (_label, storageError, code, message) => {
+        mockFileModelCheckHash.mockResolvedValue({
+          isExist: true,
+          metadata: { path: 'files/existing.txt' },
+          url: 'files/existing.txt',
+        });
+        mockFileModelCreate.mockResolvedValue({ id: 'deduplicated-file-id' });
+        mockFileServiceGetFileMetadata.mockRejectedValue(storageError);
+
+        await expect(
+          caller.createFile({
+            hash: 'test-hash',
+            fileType: 'text',
+            name: 'test.txt',
+            size: 100,
+            url: 'files/existing.txt',
+            metadata: { path: 'files/existing.txt' },
+          }),
+        ).rejects.toMatchObject({ code, message });
+
+        expect(mockFileServiceGetFileMetadata).toHaveBeenCalledTimes(3);
+        expect(routerMocks.serverDB.transaction).not.toHaveBeenCalled();
+        expect(mockFileModelCreate).not.toHaveBeenCalled();
+      },
+    );
+
+    it('should retain external URL file records without requiring an S3 object', async () => {
+      mockFileModelCheckHash.mockResolvedValue({ isExist: false });
+      mockFileModelCreate.mockResolvedValue({ id: 'external-file-id' });
+      mockFileServiceGetFileMetadata.mockRejectedValue(new Error('not an S3 key'));
+
+      await expect(
+        caller.createFile({
+          hash: 'test-hash',
+          fileType: 'application/pdf',
+          name: 'external.pdf',
+          size: 100,
+          url: 'https://example.com/external.pdf',
+          metadata: {},
+        }),
+      ).resolves.toEqual({
+        id: 'external-file-id',
+        url: 'https://aihub.bielcrystal.com/f/external-file-id',
+      });
+
+      expect(mockFileServiceGetFileMetadata).toHaveBeenCalledTimes(1);
+      expect(mockFileModelCreate).toHaveBeenCalled();
     });
 
     it('should throw error when getFileMetadata fails and input size is negative', async () => {

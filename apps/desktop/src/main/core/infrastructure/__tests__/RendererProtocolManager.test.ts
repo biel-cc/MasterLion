@@ -146,6 +146,25 @@ describe('RendererProtocolManager + StaticRendererFallback', () => {
     expect(response.status).toBe(404);
   });
 
+  it('returns 405 instead of serving the SPA entry for an unknown non-read request', async () => {
+    const resolveRendererFilePath = vi.fn(async () => '/export/index.html');
+    mockReadFile.mockImplementation(async () => Buffer.from('static'));
+
+    buildStaticManager(resolveRendererFilePath);
+    const handler = protocolHandlerRef.current;
+
+    const response = await handler({
+      headers: new Headers({ 'Content-Type': 'application/octet-stream' }),
+      method: 'PUT',
+      url: 'app://renderer/api/not-a-backend-route',
+    } as any);
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get('Allow')).toBe('GET, HEAD');
+    expect(resolveRendererFilePath).not.toHaveBeenCalled();
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
   it('supports Range requests for media assets', async () => {
     const resolveRendererFilePath = vi.fn(async (_url: URL) => '/export/intro-video.mp4');
     const payload = Buffer.from('0123456789');

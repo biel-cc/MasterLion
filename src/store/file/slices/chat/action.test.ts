@@ -240,6 +240,52 @@ describe('useFileStore:chat', () => {
     });
   });
 
+  it.each(['STORAGE_OBJECT_MISSING', 'STORAGE_OBJECT_UNAVAILABLE'])(
+    'reports %s as a storage failure instead of a parse failure',
+    async (storageErrorCode) => {
+      mockAgentMode({ enableAgentMode: false, heterogeneous: false });
+
+      const { result } = renderHook(() => useStore());
+      const file = new File(['Masterino marker: storage-missing'], 'note.txt', {
+        type: 'text/plain',
+      });
+      const uploadWithProgress = vi
+        .fn()
+        .mockResolvedValue({ id: 'file-missing', url: 'http://x/4' });
+
+      vi.mocked(ragService.parseFileContent).mockRejectedValue(new Error(storageErrorCode));
+
+      act(() => {
+        useStore.setState({
+          chatUploadFileList: [],
+          uploadWithProgress: uploadWithProgress as any,
+        });
+      });
+
+      await act(async () => {
+        await result.current.uploadChatFiles([file], AGENT_ID);
+      });
+
+      expect(notification.warning).not.toHaveBeenCalled();
+      expect(notification.error).toHaveBeenCalledWith({
+        description: `Error reason: ${storageErrorCode}`,
+        message: 'File upload failed.',
+      });
+      expect(result.current.chatUploadFileList).toHaveLength(1);
+      expect(result.current.chatUploadFileList[0]).toMatchObject({
+        diagnostic: {
+          fileId: 'file-missing',
+          message: storageErrorCode,
+          stage: 'storage_upload_failed',
+        },
+        errorReason: storageErrorCode,
+        id: 'file-missing',
+        processStage: 'storage_upload_failed',
+        status: 'error',
+      });
+    },
+  );
+
   it('keeps non-media chat files processing until content parsing finishes', async () => {
     mockAgentMode({ enableAgentMode: false, heterogeneous: false });
 

@@ -115,25 +115,34 @@ describe('FileService', () => {
       );
     });
 
-    it('should delete file from db and throw error if file not found in storage', async () => {
-      mockFileModel.findById.mockResolvedValue(mockFile);
-      vi.mocked(service['impl'].getFileByteArray).mockRejectedValue({ Code: 'NoSuchKey' });
+    it.each([
+      ['GetObject Code', { Code: 'NoSuchKey' }],
+      ['AWS error name', { name: 'NoSuchKey' }],
+      ['HTTP metadata', { $metadata: { httpStatusCode: 404 } }],
+    ])(
+      'should preserve the file record for a missing storage object reported via %s',
+      async (_label, storageError) => {
+        mockFileModel.findById.mockResolvedValue(mockFile);
+        vi.mocked(service['impl'].getFileByteArray).mockRejectedValue(storageError);
 
-      await expect(service.downloadFileToLocal('test-file-id')).rejects.toThrow(
-        new TRPCError({ code: 'BAD_REQUEST', message: 'File not found' }),
-      );
+        await expect(service.downloadFileToLocal('test-file-id')).rejects.toMatchObject({
+          code: 'NOT_FOUND',
+          message: 'STORAGE_OBJECT_MISSING',
+        });
 
-      expect(mockFileModel.delete).toHaveBeenCalledWith('test-file-id', false);
-    });
+        expect(mockFileModel.delete).not.toHaveBeenCalled();
+      },
+    );
 
-    it('should log error and rethrow for non-NoSuchKey errors', async () => {
+    it('should preserve the file record and report storage unavailable for access errors', async () => {
       const originalError = new Error('Network error');
       mockFileModel.findById.mockResolvedValue(mockFile);
       vi.mocked(service['impl'].getFileByteArray).mockRejectedValue(originalError);
 
-      await expect(service.downloadFileToLocal('test-file-id')).rejects.toThrow(
-        new TRPCError({ code: 'BAD_REQUEST', message: 'File content is empty' }),
-      );
+      await expect(service.downloadFileToLocal('test-file-id')).rejects.toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'STORAGE_OBJECT_UNAVAILABLE',
+      });
 
       // 验证错误被记录到控制台
       expect(consoleErrorSpy).toHaveBeenCalledWith(originalError);

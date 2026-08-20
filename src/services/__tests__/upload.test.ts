@@ -239,6 +239,7 @@ describe('UploadService', () => {
       // Mock XMLHttpRequest
       const xhrMock = {
         addEventListener: vi.fn(),
+        getResponseHeader: vi.fn(),
         open: vi.fn(),
         send: vi.fn(),
         setRequestHeader: vi.fn(),
@@ -273,6 +274,66 @@ describe('UploadService', () => {
         dirname: `${fileEnv.NEXT_PUBLIC_S3_FILE_PATH}/1`,
         filename: 'mock-uuid.png',
         path: `${fileEnv.NEXT_PUBLIC_S3_FILE_PATH}/1/mock-uuid.png`,
+      });
+    });
+
+    it('should require the upload proxy confirmation header before reporting success', async () => {
+      vi.mocked(lambdaClient.upload.createS3PreSignedUpload.mutate).mockResolvedValue({
+        requiresConfirmation: true,
+        url: 'https://app.example.com/api/upload/s3-proxy?signature=sig',
+      });
+      const xhr = new XMLHttpRequest();
+      vi.spyOn(xhr, 'getResponseHeader').mockReturnValue(null);
+      vi.spyOn(xhr, 'addEventListener').mockImplementation((event, handler) => {
+        if (event === 'load') {
+          // @ts-expect-error - mock implementation
+          handler({ target: { status: 200 } });
+        }
+      });
+
+      await expect(uploadService.uploadToServerS3(mockFile, {})).rejects.toMatchObject({
+        message: expect.not.stringContaining('signature=sig'),
+        stage: 'storage_upload_unconfirmed',
+        url: 'https://app.example.com/api/upload/s3-proxy',
+      });
+    });
+
+    it('should accept a confirmed upload proxy response', async () => {
+      vi.mocked(lambdaClient.upload.createS3PreSignedUpload.mutate).mockResolvedValue({
+        requiresConfirmation: true,
+        url: 'https://app.example.com/api/upload/s3-proxy?signature=sig',
+      });
+      const xhr = new XMLHttpRequest();
+      vi.spyOn(xhr, 'getResponseHeader').mockImplementation((name) =>
+        name === 'X-Masterino-Upload-Confirmed' ? '1' : null,
+      );
+      vi.spyOn(xhr, 'addEventListener').mockImplementation((event, handler) => {
+        if (event === 'load') {
+          // @ts-expect-error - mock implementation
+          handler({ target: { status: 200 } });
+        }
+      });
+
+      await expect(uploadService.uploadToServerS3(mockFile, {})).resolves.toMatchObject({
+        path: expect.stringContaining('mock-uuid.png'),
+      });
+    });
+
+    it('should accept a successful proxy upload from an older server without the contract flag', async () => {
+      vi.mocked(lambdaClient.upload.createS3PreSignedUpload.mutate).mockResolvedValue({
+        url: 'https://legacy.example.com/api/upload/s3-proxy?signature=sig',
+      });
+      const xhr = new XMLHttpRequest();
+      vi.spyOn(xhr, 'getResponseHeader').mockReturnValue(null);
+      vi.spyOn(xhr, 'addEventListener').mockImplementation((event, handler) => {
+        if (event === 'load') {
+          // @ts-expect-error - mock implementation
+          handler({ target: { status: 200 } });
+        }
+      });
+
+      await expect(uploadService.uploadToServerS3(mockFile, {})).resolves.toMatchObject({
+        path: expect.stringContaining('mock-uuid.png'),
       });
     });
 
@@ -364,7 +425,10 @@ describe('UploadService', () => {
       );
     });
 
-    it('should include status, url, and response text when upload status text is empty', async () => {
+    it('should include a redacted URL and response text when upload status text is empty', async () => {
+      vi.mocked(lambdaClient.upload.createS3PreSignedUpload.mutate).mockResolvedValueOnce({
+        url: 'https://app.example.com/api/upload/s3-proxy?key=file.txt&signature=secret',
+      });
       const xhr = new XMLHttpRequest();
 
       vi.spyOn(xhr, 'addEventListener').mockImplementation((event, handler) => {
@@ -380,9 +444,11 @@ describe('UploadService', () => {
         }
       });
 
-      await expect(uploadService.uploadToServerS3(mockFile, {})).rejects.toThrow(
-        'Upload failed with HTTP 403 for https://example.com/presign: Invalid or expired upload URL',
-      );
+      await expect(uploadService.uploadToServerS3(mockFile, {})).rejects.toMatchObject({
+        message:
+          'Upload failed with HTTP 403 for https://app.example.com/api/upload/s3-proxy: Invalid or expired upload URL',
+        url: 'https://app.example.com/api/upload/s3-proxy',
+      });
     });
 
     it('should use custom directory when provided', async () => {

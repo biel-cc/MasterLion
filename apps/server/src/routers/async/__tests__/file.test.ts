@@ -1,5 +1,4 @@
 // @vitest-environment node
-import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AsyncTaskModel } from '@/database/models/asyncTask';
@@ -70,31 +69,39 @@ describe('fileRouter.parseFileToChunks — NoSuchKey + internal:// branches', ()
     mockCtx = { serverDB: {}, userId };
   });
 
-  it('does NOT delete the file row when storage returns NoSuchKey; marks task Error and throws', async () => {
-    fileModelMock.findById.mockResolvedValue({
-      id: 'file_xyz',
-      name: 'doc.pdf',
-      url: 'https://example.com/doc.pdf',
-    });
-    fileServiceMock.getFileByteArray.mockRejectedValue({ Code: 'NoSuchKey' });
+  it.each([
+    ['GetObject Code', { Code: 'NoSuchKey' }],
+    ['AWS error name', { name: 'NoSuchKey' }],
+    ['HTTP metadata', { $metadata: { httpStatusCode: 404 } }],
+  ])(
+    'preserves the file row and reports STORAGE_OBJECT_MISSING via %s',
+    async (_label, storageError) => {
+      fileModelMock.findById.mockResolvedValue({
+        id: 'file_xyz',
+        name: 'doc.pdf',
+        url: 'https://example.com/doc.pdf',
+      });
+      fileServiceMock.getFileByteArray.mockRejectedValue(storageError);
 
-    const caller = fileRouter.createCaller(mockCtx);
+      const caller = fileRouter.createCaller(mockCtx);
 
-    await expect(
-      caller.parseFileToChunks({ fileId: 'file_xyz', taskId: 'task_1' }),
-    ).rejects.toThrow(TRPCError);
+      await expect(
+        caller.parseFileToChunks({ fileId: 'file_xyz', taskId: 'task_1' }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'STORAGE_OBJECT_MISSING' });
 
-    expect(fileModelMock.delete).not.toHaveBeenCalled();
-    expect(asyncTaskModelMock.update).toHaveBeenCalledWith(
-      'task_1',
-      expect.objectContaining({
-        status: AsyncTaskStatus.Error,
-        error: expect.objectContaining({
-          name: expect.any(String),
+      expect(fileModelMock.delete).not.toHaveBeenCalled();
+      expect(asyncTaskModelMock.update).toHaveBeenCalledWith(
+        'task_1',
+        expect.objectContaining({
+          status: AsyncTaskStatus.Error,
+          error: expect.objectContaining({
+            body: { detail: 'STORAGE_OBJECT_MISSING' },
+            name: expect.any(String),
+          }),
         }),
-      }),
-    );
-  });
+      );
+    },
+  );
 
   it('skips storage fetch and returns gracefully when url is internal://', async () => {
     fileModelMock.findById.mockResolvedValue({
@@ -148,7 +155,7 @@ describe('fileRouter.parseFileToChunks — NoSuchKey + internal:// branches', ()
     expect(FileModel).toHaveBeenCalledWith(mockCtx.serverDB, userId, 'workspace-1');
   });
 
-  it('marks task Error and propagates for non-NoSuchKey storage errors (does not delete)', async () => {
+  it('marks the task Error and reports STORAGE_OBJECT_UNAVAILABLE for access errors', async () => {
     fileModelMock.findById.mockResolvedValue({
       id: 'file_other',
       name: 'doc.pdf',
@@ -163,12 +170,20 @@ describe('fileRouter.parseFileToChunks — NoSuchKey + internal:// branches', ()
 
     await expect(
       caller.parseFileToChunks({ fileId: 'file_other', taskId: 'task_3' }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'STORAGE_OBJECT_UNAVAILABLE',
+    });
 
     expect(fileModelMock.delete).not.toHaveBeenCalled();
     expect(asyncTaskModelMock.update).toHaveBeenCalledWith(
       'task_3',
-      expect.objectContaining({ status: AsyncTaskStatus.Error }),
+      expect.objectContaining({
+        error: expect.objectContaining({
+          body: { detail: 'STORAGE_OBJECT_UNAVAILABLE' },
+        }),
+        status: AsyncTaskStatus.Error,
+      }),
     );
   });
 });

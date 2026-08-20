@@ -3,7 +3,6 @@ import { inferContentTypeFromImageUrl, nanoid, uuid } from '@lobechat/utils';
 import { TRPCError } from '@trpc/server';
 import { sha256 } from 'js-sha256';
 
-import { serverDBEnv } from '@/config/db';
 import { FileModel } from '@/database/models/file';
 import { type FileItem } from '@/database/schemas';
 import { appEnv } from '@/envs/app';
@@ -11,6 +10,7 @@ import type { PreSignedUploadOptions } from '@/server/modules/S3';
 import { TempFileManager } from '@/server/utils/tempFileManager';
 import { isDev } from '@/utils/env';
 
+import { createStorageObjectAccessError } from './errors';
 import { createFileServiceModule } from './impls';
 import type { FileServiceImpl, PreSignedUpload } from './impls/type';
 
@@ -476,11 +476,9 @@ export class FileService {
       content = await this.getFileByteArray(file.url);
     } catch (e) {
       console.error(e);
-      // if file not found, delete it from db
-      if ((e as any).Code === 'NoSuchKey') {
-        await this.fileModel.delete(fileId, serverDBEnv.REMOVE_GLOBAL_FILE);
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'File not found' });
-      }
+      // Object access failures may be transient or repairable. Preserve the
+      // database record and surface a stable storage-layer error to callers.
+      throw createStorageObjectAccessError(e);
     }
 
     if (!content) throw new TRPCError({ code: 'BAD_REQUEST', message: 'File content is empty' });

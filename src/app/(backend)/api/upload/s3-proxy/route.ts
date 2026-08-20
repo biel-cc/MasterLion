@@ -1,3 +1,4 @@
+import { UPLOAD_CONFIRMATION_HEADER, UPLOAD_CONFIRMATION_VALUE } from '@/const/fileUpload';
 import { FileS3 } from '@/server/modules/S3';
 import { verifyS3UploadProxySignature } from '@/server/services/file/uploadProxyToken';
 
@@ -7,6 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'content-type,x-amz-*',
   'Access-Control-Allow-Methods': 'PUT,OPTIONS',
   'Access-Control-Allow-Origin': '*',
+  'Access-Control-Expose-Headers': UPLOAD_CONFIRMATION_HEADER,
 };
 
 export const OPTIONS = async () =>
@@ -35,7 +37,10 @@ export const PUT = async (req: Request) => {
   await s3.uploadBuffer(key, body, contentType);
 
   return new Response('', {
-    headers: corsHeaders,
+    headers: {
+      ...corsHeaders,
+      [UPLOAD_CONFIRMATION_HEADER]: UPLOAD_CONFIRMATION_VALUE,
+    },
     status: 200,
   });
 };
