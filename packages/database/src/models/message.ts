@@ -7,8 +7,12 @@ import type {
   ChatTranslate,
   ChatTTS,
   ChatVideoItem,
+  CommitToolResultInput,
+  CommitToolResultResult,
   CreateMessageParams,
   DBMessageItem,
+  EnsureToolMessageInput,
+  EnsureToolMessageResult,
   IThreadType,
   MessagePluginItem,
   ModelRankItem,
@@ -17,6 +21,8 @@ import type {
   QueryMessageParams,
   TaskDetail,
   ThreadStatus,
+  ToolMessageIntentLifecycleMetadata,
+  ToolResultLifecycleMetadata,
   UIChatMessage,
   UpdateMessageParams,
   UpdateMessageRAGParams,
@@ -191,6 +197,122 @@ interface SplitCreateMessageParams {
   relations: CreateMessageRelationParams;
 }
 
+export class ToolMessageIntentConflictError extends Error {
+  constructor(id: string) {
+    super(`Tool message intent conflicts with the existing message: ${id}`);
+    this.name = 'ToolMessageIntentConflictError';
+  }
+}
+
+export class ToolResultCommitConflictError extends Error {
+  constructor(id: string) {
+    super(`Tool result conflicts with the result already committed for message: ${id}`);
+    this.name = 'ToolResultCommitConflictError';
+  }
+}
+
+export type ToolResultCommitTargetErrorReason =
+  | 'message-not-found'
+  | 'not-tool-message'
+  | 'plugin-not-found';
+
+export class ToolResultCommitTargetError extends Error {
+  readonly reason: ToolResultCommitTargetErrorReason;
+
+  constructor(id: string, reason: ToolResultCommitTargetErrorReason) {
+    super(`Cannot commit tool result for message ${id}: ${reason}`);
+    this.name = 'ToolResultCommitTargetError';
+    this.reason = reason;
+  }
+}
+
+const normalizeForCanonicalJson = (value: unknown): unknown => {
+  if (value === null || typeof value !== 'object') return value;
+
+  if (typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+    return normalizeForCanonicalJson((value as { toJSON: () => unknown }).toJSON());
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => (item === undefined ? null : normalizeForCanonicalJson(item)));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => [key, normalizeForCanonicalJson(item)]),
+  );
+};
+
+const callerOwnedMetadata = (metadata: unknown): Record<string, unknown> => {
+  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+
+  const { toolLifecycle: _serverOwned, ...callerOwned } = metadata as Record<string, unknown>;
+  return callerOwned;
+};
+
+const fingerprintCanonicalValue = async (value: unknown): Promise<string> => {
+  const canonicalValue = JSON.stringify(normalizeForCanonicalJson(value));
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonicalValue),
+  );
+
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const sanitizeToolResult = (
+  result: CommitToolResultInput['result'],
+): CommitToolResultInput['result'] => {
+  const sanitized = sanitizeNullBytes(result);
+  const { metadata: resultMetadata, ...resultWithoutMetadata } = sanitized;
+  const metadata = callerOwnedMetadata(resultMetadata);
+
+  return Object.keys(metadata).length > 0
+    ? { ...resultWithoutMetadata, metadata }
+    : resultWithoutMetadata;
+};
+
+const fingerprintToolResult = async (result: CommitToolResultInput['result']): Promise<string> => {
+  const { metadata: resultMetadata, ...resultWithoutMetadata } = result;
+  const metadata = callerOwnedMetadata(resultMetadata);
+  const fingerprintPayload =
+    Object.keys(metadata).length > 0
+      ? { ...resultWithoutMetadata, metadata }
+      : resultWithoutMetadata;
+
+  return fingerprintCanonicalValue(fingerprintPayload);
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+type StoredToolLifecycleMetadata = Partial<ToolResultLifecycleMetadata> &
+  Partial<ToolMessageIntentLifecycleMetadata> & {
+    // Read defensively so a partially written/older experimental marker is never treated as an
+    // unexecuted message. Exact replays rely only on the server-owned attempt/result identity.
+    resultProjectionFingerprint?: string;
+  };
+
+const readToolLifecycle = (metadata: unknown): StoredToolLifecycleMetadata | undefined => {
+  const lifecycle = asRecord(metadata).toolLifecycle;
+  if (lifecycle === null || typeof lifecycle !== 'object' || Array.isArray(lifecycle)) return;
+
+  const { executionAttemptId, intentFingerprint, resultFingerprint, resultProjectionFingerprint } =
+    lifecycle as Record<string, unknown>;
+
+  return {
+    executionAttemptId: typeof executionAttemptId === 'string' ? executionAttemptId : undefined,
+    intentFingerprint: typeof intentFingerprint === 'string' ? intentFingerprint : undefined,
+    resultFingerprint: typeof resultFingerprint === 'string' ? resultFingerprint : undefined,
+    resultProjectionFingerprint:
+      typeof resultProjectionFingerprint === 'string' ? resultProjectionFingerprint : undefined,
+  };
+};
+
 export class MessageModel {
   private userId: string;
   private db: LobeChatDatabase;
@@ -207,6 +329,20 @@ export class MessageModel {
 
   private pluginsOwnership = () =>
     buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messagePlugins);
+
+  /**
+   * Lock the message row before merging metadata so a stale caller snapshot cannot overwrite
+   * server-owned lifecycle markers written by ensureToolMessage or commitToolResult.
+   */
+  private selectMessageMetadataForUpdate = async (trx: Transaction, id: string) => {
+    const [message] = await trx
+      .select({ metadata: messages.metadata })
+      .from(messages)
+      .where(and(eq(messages.id, id), this.ownership()))
+      .for('update');
+
+    return message;
+  };
 
   private translatesOwnership = () =>
     buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messageTranslates);
@@ -1822,7 +1958,19 @@ export class MessageModel {
     timing?: ModelTimingContext,
     timingPrefix: string = 'db.message.create',
   ): Promise<DBMessageItem> => {
-    const { insert, relations } = this.splitCreateMessageParams(params);
+    // Generic message creation accepts caller metadata, but toolLifecycle is an acknowledgement
+    // owned exclusively by ensureToolMessage/commitToolResult. Strip a forged marker before the
+    // insert so createMessage cannot bypass the durable prepare barrier.
+    const safeParams = Object.prototype.hasOwnProperty.call(
+      asRecord(params.metadata),
+      'toolLifecycle',
+    )
+      ? {
+          ...params,
+          metadata: callerOwnedMetadata(params.metadata) as CreateMessageParams['metadata'],
+        }
+      : params;
+    const { insert, relations } = this.splitCreateMessageParams(safeParams);
 
     const [item] = (await runTimedStage(
       timing,
@@ -1868,6 +2016,259 @@ export class MessageModel {
         role: params.role,
       },
     );
+  };
+
+  ensureToolMessage = async (input: EnsureToolMessageInput): Promise<EnsureToolMessageResult> => {
+    const {
+      agentId,
+      groupId,
+      id,
+      mode = 'create-or-confirm',
+      parentMessageId,
+      threadId,
+      toolCall,
+      topicId,
+    } = input;
+    const sanitizedToolCall = sanitizeNullBytes(toolCall);
+    const { intervention: _mutableIntervention, ...immutableToolCall } = sanitizedToolCall;
+    const canonicalIntent = {
+      agentId,
+      groupId: groupId ?? null,
+      id,
+      parentMessageId,
+      threadId: threadId ?? null,
+      toolCall: immutableToolCall,
+      topicId: topicId ?? null,
+    };
+    const intentFingerprint = await fingerprintCanonicalValue(canonicalIntent);
+    const params: CreateMessageParams = {
+      agentId,
+      content: '',
+      groupId: groupId ?? undefined,
+      metadata: { toolLifecycle: { intentFingerprint } } as CreateMessageParams['metadata'],
+      parentId: parentMessageId,
+      plugin: {
+        apiName: sanitizedToolCall.apiName,
+        arguments: sanitizedToolCall.arguments,
+        identifier: sanitizedToolCall.identifier,
+        type: sanitizedToolCall.type,
+      },
+      pluginIntervention: sanitizedToolCall.intervention,
+      role: 'tool',
+      threadId,
+      tool_call_id: sanitizedToolCall.toolCallId,
+      topicId: topicId ?? undefined,
+    };
+
+    return this.db.transaction(async (trx) => {
+      const { insert, relations } = this.splitCreateMessageParams(params);
+      let item: { id: string } | undefined;
+      if (mode === 'create-or-confirm') {
+        [item] = (await trx
+          .insert(messages)
+          .values(this.buildMessageInsertValue(insert, id))
+          .onConflictDoNothing({ target: messages.id })
+          .returning({ id: messages.id })) as { id: string }[];
+      }
+
+      if (!item) {
+        // Keep the lock order aligned with commitToolResult and generic tool-message updates:
+        // messages first, then messagePlugins. Explicit queries avoid relying on join row-lock order.
+        const [existingMessage] = await trx
+          .select({
+            agentId: messages.agentId,
+            content: messages.content,
+            groupId: messages.groupId,
+            metadata: messages.metadata,
+            parentId: messages.parentId,
+            role: messages.role,
+            threadId: messages.threadId,
+            topicId: messages.topicId,
+          })
+          .from(messages)
+          .where(and(eq(messages.id, id), this.ownership()))
+          .limit(1)
+          .for('update');
+        const [existingPlugin] = existingMessage
+          ? await trx
+              .select({
+                apiName: messagePlugins.apiName,
+                arguments: messagePlugins.arguments,
+                error: messagePlugins.error,
+                identifier: messagePlugins.identifier,
+                intervention: messagePlugins.intervention,
+                state: messagePlugins.state,
+                toolCallId: messagePlugins.toolCallId,
+                type: messagePlugins.type,
+              })
+              .from(messagePlugins)
+              .where(and(eq(messagePlugins.id, id), this.pluginsOwnership()))
+              .limit(1)
+              .for('update')
+          : [];
+        const existing =
+          existingMessage && existingPlugin ? { ...existingMessage, ...existingPlugin } : undefined;
+
+        const existingLifecycle = readToolLifecycle(existing?.metadata);
+        const existingMetadata = asRecord(existing?.metadata);
+        const hasRawLifecycleMetadata = Object.prototype.hasOwnProperty.call(
+          existingMetadata,
+          'toolLifecycle',
+        );
+        const matchesStoredIntent =
+          existing?.agentId === agentId &&
+          existing.apiName === sanitizedToolCall.apiName &&
+          existing.arguments === sanitizedToolCall.arguments &&
+          existing.groupId === (groupId ?? null) &&
+          existing.identifier === sanitizedToolCall.identifier &&
+          existing.parentId === parentMessageId &&
+          existing.role === 'tool' &&
+          existing.threadId === (threadId ?? null) &&
+          existing.toolCallId === sanitizedToolCall.toolCallId &&
+          existing.topicId === (topicId ?? null) &&
+          existing.type === sanitizedToolCall.type;
+        const hasPartialLifecycleResult =
+          existingLifecycle?.executionAttemptId !== undefined ||
+          existingLifecycle?.resultFingerprint !== undefined ||
+          existingLifecycle?.resultProjectionFingerprint !== undefined;
+        const canAdoptLegacyApproval =
+          mode === 'confirm-existing' &&
+          !hasRawLifecycleMetadata &&
+          Object.keys(callerOwnedMetadata(existing?.metadata)).length === 0 &&
+          !existingLifecycle?.intentFingerprint &&
+          !hasPartialLifecycleResult &&
+          existing?.content === '' &&
+          existing.error == null &&
+          existing.state == null &&
+          existing.intervention?.status === 'approved';
+        const fingerprintMatches = existingLifecycle?.intentFingerprint
+          ? existingLifecycle.intentFingerprint === intentFingerprint
+          : canAdoptLegacyApproval;
+        const existingConfirmationMatches =
+          mode !== 'confirm-existing' ||
+          (existing?.content === '' &&
+            existing.error == null &&
+            existing.state == null &&
+            existing.intervention?.status === 'approved' &&
+            !hasPartialLifecycleResult);
+
+        if (!matchesStoredIntent || !fingerprintMatches || !existingConfirmationMatches) {
+          throw new ToolMessageIntentConflictError(id);
+        }
+
+        // Messages created by the pre-lifecycle approval flow do not have an intent fingerprint.
+        // Adopt only an approved, unexecuted row after validating every immutable field that
+        // legacy storage retained. The row lock makes adoption atomic with result commits.
+        // Intervention is deliberately excluded: pending/approved/rejected is mutable execution
+        // state and must not turn a valid approval resume into an idempotency conflict.
+        if (!existingLifecycle?.intentFingerprint) {
+          await trx
+            .update(messages)
+            .set({
+              metadata: {
+                ...callerOwnedMetadata(existing.metadata),
+                toolLifecycle: { intentFingerprint },
+              },
+            })
+            .where(and(eq(messages.id, id), this.ownership()));
+        }
+
+        return { disposition: 'existing', id };
+      }
+
+      await this.insertMessageRelationsInTransaction(trx, relations, insert.message, id);
+
+      return { disposition: 'created', id };
+    });
+  };
+
+  /**
+   * Atomically persist one local tool execution result.
+   *
+   * The message row is the idempotency record: a stable execution attempt may
+   * replay the exact same canonical result, while every other overwrite is a
+   * conflict. Unlike the legacy updateToolMessage path, storage failures are
+   * deliberately allowed to propagate so the renderer lifecycle can retry.
+   */
+  commitToolResult = async (input: CommitToolResultInput): Promise<CommitToolResultResult> => {
+    const { executionAttemptId, id, result } = input;
+    const sanitizedResult = sanitizeToolResult(result);
+    const resultFingerprint = await fingerprintToolResult(sanitizedResult);
+    const expectedContent = sanitizedResult.content ?? '';
+    const expectedError = sanitizedResult.error ?? null;
+    const expectedMetadata = callerOwnedMetadata(sanitizedResult.metadata);
+    const expectedState = sanitizedResult.state ?? null;
+
+    return this.db.transaction(async (trx) => {
+      const [message] = await trx
+        .select({ metadata: messages.metadata, role: messages.role })
+        .from(messages)
+        .where(and(eq(messages.id, id), this.ownership()))
+        .limit(1)
+        .for('update');
+
+      if (!message) {
+        throw new ToolResultCommitTargetError(id, 'message-not-found');
+      }
+      if (message.role !== 'tool') {
+        throw new ToolResultCommitTargetError(id, 'not-tool-message');
+      }
+
+      const [plugin] = await trx
+        .select({ id: messagePlugins.id })
+        .from(messagePlugins)
+        .where(and(eq(messagePlugins.id, id), this.pluginsOwnership()))
+        .limit(1)
+        .for('update');
+
+      if (!plugin) {
+        throw new ToolResultCommitTargetError(id, 'plugin-not-found');
+      }
+
+      const existingLifecycle = readToolLifecycle(message.metadata);
+      if (!existingLifecycle?.intentFingerprint) {
+        throw new ToolResultCommitConflictError(id);
+      }
+
+      const hasExecutionAttemptId = existingLifecycle.executionAttemptId !== undefined;
+      const hasResultFingerprint = existingLifecycle.resultFingerprint !== undefined;
+      const hasResultProjectionFingerprint =
+        existingLifecycle.resultProjectionFingerprint !== undefined;
+      if (hasExecutionAttemptId || hasResultFingerprint || hasResultProjectionFingerprint) {
+        const isIdenticalReplay =
+          existingLifecycle.executionAttemptId === executionAttemptId &&
+          existingLifecycle.resultFingerprint === resultFingerprint;
+
+        if (!isIdenticalReplay) throw new ToolResultCommitConflictError(id);
+
+        return { disposition: 'existing', id };
+      }
+
+      const callerMetadata = {
+        ...callerOwnedMetadata(message.metadata),
+        ...expectedMetadata,
+      };
+      const metadata = {
+        ...callerMetadata,
+        toolLifecycle: {
+          executionAttemptId,
+          intentFingerprint: existingLifecycle.intentFingerprint,
+          resultFingerprint,
+        },
+      };
+
+      await trx
+        .update(messages)
+        .set({ content: expectedContent, metadata })
+        .where(and(eq(messages.id, id), this.ownership()));
+
+      await trx
+        .update(messagePlugins)
+        .set({ error: expectedError, state: expectedState })
+        .where(and(eq(messagePlugins.id, id), this.pluginsOwnership()));
+
+      return { disposition: 'committed', id };
+    });
   };
 
   createUserAndAssistantMessages = async (
@@ -1995,7 +2396,7 @@ export class MessageModel {
     // patch also keeps it consistent with the column when both are sent.
     const metadataPatch =
       metadata || usageToWrite
-        ? { ...metadata, ...(usageToWrite && { usage: usageToWrite }) }
+        ? { ...callerOwnedMetadata(metadata), ...(usageToWrite && { usage: usageToWrite }) }
         : undefined;
     try {
       await runTimedStage(
@@ -2025,14 +2426,10 @@ export class MessageModel {
             // top-level usage to fold back into `metadata.usage`.
             let mergedMetadata: Record<string, any> | undefined;
             if (metadataPatch) {
-              const [existingMessage] = await runTimedStage(
+              const existingMessage = await runTimedStage(
                 timing,
                 'db.message.update.metadata.select',
-                () =>
-                  trx
-                    .select({ metadata: messages.metadata })
-                    .from(messages)
-                    .where(and(eq(messages.id, id), this.ownership())),
+                () => this.selectMessageMetadataForUpdate(trx, id),
               );
               mergedMetadata = merge(existingMessage?.metadata || {}, metadataPatch);
             }
@@ -2083,21 +2480,21 @@ export class MessageModel {
   };
 
   updateMetadata = async (id: string, metadata: Record<string, any>) => {
-    const item = await this.db.query.messages.findFirst({
-      where: and(eq(messages.id, id), this.ownership()),
+    return this.db.transaction(async (trx) => {
+      const item = await this.selectMessageMetadataForUpdate(trx, id);
+
+      if (!item) return;
+
+      const mergedMetadata = merge(item.metadata || {}, callerOwnedMetadata(metadata));
+      // Keep the dedicated `usage` column in sync when the merged metadata carries
+      // token usage, preferring it over the existing column value.
+      const usageToWrite = (metadata as { usage?: ModelUsage } | undefined)?.usage;
+
+      return trx
+        .update(messages)
+        .set({ metadata: mergedMetadata, ...(usageToWrite && { usage: usageToWrite }) })
+        .where(and(eq(messages.id, id), this.ownership()));
     });
-
-    if (!item) return;
-
-    const mergedMetadata = merge(item.metadata || {}, metadata);
-    // Keep the dedicated `usage` column in sync when the merged metadata carries
-    // token usage, preferring it over the existing column value.
-    const usageToWrite = (metadata as { usage?: ModelUsage } | undefined)?.usage;
-
-    return this.db
-      .update(messages)
-      .set({ metadata: mergedMetadata, ...(usageToWrite && { usage: usageToWrite }) })
-      .where(and(eq(messages.id, id), this.ownership()));
   };
 
   updatePluginState = async (id: string, state: Record<string, any>): Promise<void> => {
@@ -2223,10 +2620,11 @@ export class MessageModel {
 
           if (metadata !== undefined) {
             // Need to merge with existing metadata
-            const existingMessage = await trx.query.messages.findFirst({
-              where: and(eq(messages.id, id), this.ownership()),
-            });
-            messageUpdateData.metadata = merge(existingMessage?.metadata || {}, metadata);
+            const existingMessage = await this.selectMessageMetadataForUpdate(trx, id);
+            messageUpdateData.metadata = merge(
+              existingMessage?.metadata || {},
+              callerOwnedMetadata(metadata),
+            );
           }
 
           if (Object.keys(messageUpdateData).length > 0) {

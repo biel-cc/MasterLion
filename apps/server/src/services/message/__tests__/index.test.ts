@@ -1,4 +1,5 @@
 import { type LobeChatDatabase } from '@lobechat/database';
+import type { CommitToolResultInput, EnsureToolMessageInput } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MessageModel } from '@/database/models/message';
@@ -19,9 +20,11 @@ describe('MessageService', () => {
   beforeEach(() => {
     mockDB = {} as LobeChatDatabase;
     mockMessageModel = {
+      commitToolResult: vi.fn(),
       create: vi.fn(),
       deleteMessage: vi.fn(),
       deleteMessages: vi.fn(),
+      ensureToolMessage: vi.fn(),
       query: vi.fn(),
       update: vi.fn(),
       updateMessagePlugin: vi.fn(),
@@ -39,6 +42,61 @@ describe('MessageService', () => {
     vi.mocked(FileService).mockImplementation(() => mockFileService);
 
     messageService = new MessageService(mockDB, userId);
+  });
+
+  describe('ensureToolMessage', () => {
+    it('returns the create-or-confirm acknowledgement without querying the topic', async () => {
+      const input: EnsureToolMessageInput = {
+        agentId: 'agent-1',
+        id: 'tool-message-1',
+        parentMessageId: 'assistant-message-1',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call-1',
+          type: 'builtin',
+        },
+      };
+      vi.mocked(mockMessageModel.ensureToolMessage).mockResolvedValue({
+        disposition: 'existing',
+        id: input.id,
+      });
+
+      const result = await messageService.ensureToolMessage(input);
+
+      expect(mockMessageModel.ensureToolMessage).toHaveBeenCalledWith(input);
+      expect(mockMessageModel.query).not.toHaveBeenCalled();
+      expect(result).toEqual({ disposition: 'existing', id: input.id });
+    });
+  });
+
+  describe('commitToolResult', () => {
+    const input: CommitToolResultInput = {
+      executionAttemptId: 'attempt-1',
+      id: 'tool-message-1',
+      result: { content: 'done', state: { output: 'done' }, success: true },
+    };
+
+    it('returns a minimal acknowledgement without querying the topic', async () => {
+      vi.mocked(mockMessageModel.commitToolResult).mockResolvedValue({
+        disposition: 'committed',
+        id: input.id,
+      });
+
+      const result = await messageService.commitToolResult(input);
+
+      expect(mockMessageModel.commitToolResult).toHaveBeenCalledWith(input);
+      expect(mockMessageModel.query).not.toHaveBeenCalled();
+      expect(result).toEqual({ disposition: 'committed', id: input.id });
+    });
+
+    it('propagates storage errors so the client lifecycle can retry', async () => {
+      const storageError = Object.assign(new Error('database unavailable'), { code: '57P01' });
+      vi.mocked(mockMessageModel.commitToolResult).mockRejectedValue(storageError);
+
+      await expect(messageService.commitToolResult(input)).rejects.toBe(storageError);
+    });
   });
 
   describe('removeMessage', () => {

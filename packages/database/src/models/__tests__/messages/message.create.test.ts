@@ -1,11 +1,17 @@
-import type { DBMessageItem } from '@lobechat/types';
-import { asc, eq } from 'drizzle-orm';
+import type {
+  CommitToolResultInput,
+  DBMessageItem,
+  EnsureToolMessageInput,
+  MessageMetadata,
+} from '@lobechat/types';
+import { asc, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { uuid } from '@/utils/uuid';
 
 import { getTestDB } from '../../../core/getTestDB';
 import {
+  agents,
   chatGroups,
   chunks,
   embeddings,
@@ -20,7 +26,12 @@ import {
   users,
 } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
-import { MessageModel } from '../../message';
+import {
+  MessageModel,
+  ToolMessageIntentConflictError,
+  ToolResultCommitConflictError,
+  ToolResultCommitTargetError,
+} from '../../message';
 import { codeEmbedding } from '../fixtures/embedding';
 
 const serverDB: LobeChatDatabase = await getTestDB();
@@ -66,7 +77,820 @@ afterEach(async () => {
 });
 
 describe('MessageModel Create Tests', () => {
+  describe('ensureToolMessage', () => {
+    it('creates one canonical tool message from an immutable intent', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_parent',
+      );
+
+      const result = await messageModel.ensureToolMessage({
+        agentId: 'agent-ensure',
+        id: 'msg_ensure_tool',
+        parentMessageId: 'msg_ensure_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          executor: 'client',
+          identifier: 'lobe-local-system',
+          intervention: { status: 'approved' },
+          result_msg_id: 'provider-result-1',
+          source: 'builtin',
+          thoughtSignature: 'signed-thought',
+          toolCallId: 'call_ensure_1',
+          type: 'builtin',
+        },
+      });
+
+      expect(result).toEqual({ disposition: 'created', id: 'msg_ensure_tool' });
+
+      const [storedMessage] = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.id, result.id));
+      const [storedPlugin] = await serverDB
+        .select()
+        .from(messagePlugins)
+        .where(eq(messagePlugins.id, result.id));
+
+      expect(storedMessage).toMatchObject({
+        agentId: 'agent-ensure',
+        content: '',
+        metadata: {
+          toolLifecycle: {
+            intentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+        parentId: 'msg_ensure_parent',
+        role: 'tool',
+      });
+      expect(storedPlugin).toMatchObject({
+        apiName: 'runCommand',
+        arguments: '{"command":"pwd"}',
+        identifier: 'lobe-local-system',
+        intervention: { status: 'approved' },
+        toolCallId: 'call_ensure_1',
+        type: 'builtin',
+      });
+    });
+
+    it('returns existing when the same immutable intent is replayed', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-replay', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-replay',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_replay_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-replay',
+        id: 'msg_ensure_replay_tool',
+        parentMessageId: 'msg_ensure_replay_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_ensure_replay',
+          type: 'builtin',
+        },
+      };
+
+      await messageModel.ensureToolMessage(intent);
+      const replay = await messageModel.ensureToolMessage(intent);
+
+      expect(replay).toEqual({ disposition: 'existing', id: 'msg_ensure_replay_tool' });
+    });
+
+    it('treats intervention status as mutable while preserving the immutable intent', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-intervention', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-intervention',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_intervention_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-intervention',
+        id: 'msg_ensure_intervention_tool',
+        parentMessageId: 'msg_ensure_intervention_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          intervention: { status: 'pending' },
+          toolCallId: 'call_ensure_intervention',
+          type: 'builtin',
+        },
+      };
+
+      await messageModel.ensureToolMessage(intent);
+      await serverDB
+        .update(messagePlugins)
+        .set({ intervention: { status: 'approved' } })
+        .where(eq(messagePlugins.id, intent.id));
+
+      await expect(
+        messageModel.ensureToolMessage({
+          ...intent,
+          mode: 'confirm-existing',
+          toolCall: { ...intent.toolCall, intervention: { status: 'approved' } },
+        }),
+      ).resolves.toEqual({ disposition: 'existing', id: intent.id });
+    });
+
+    it('atomically adopts an approved unexecuted legacy tool message before result commit', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-legacy-approval', userId });
+      const parentMessageId = 'msg_ensure_legacy_approval_parent';
+      const id = 'msg_ensure_legacy_approval_tool';
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-legacy-approval',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        parentMessageId,
+      );
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-legacy-approval',
+          content: '',
+          parentId: parentMessageId,
+          plugin: {
+            apiName: 'runCommand',
+            arguments: '{"command":"pwd"}',
+            identifier: 'lobe-local-system',
+            type: 'builtin',
+          },
+          pluginIntervention: { status: 'approved' },
+          role: 'tool',
+          tool_call_id: 'call_ensure_legacy_approval',
+        },
+        id,
+      );
+
+      await expect(
+        messageModel.ensureToolMessage({
+          agentId: 'agent-ensure-legacy-approval',
+          id,
+          mode: 'confirm-existing',
+          parentMessageId,
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{"command":"pwd"}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'approved' },
+            toolCallId: 'call_ensure_legacy_approval',
+            type: 'builtin',
+          },
+        }),
+      ).resolves.toEqual({ disposition: 'existing', id });
+
+      await expect(
+        messageModel.commitToolResult({
+          executionAttemptId: 'attempt_ensure_legacy_approval',
+          id,
+          result: { content: 'approved result', success: true },
+        }),
+      ).resolves.toEqual({ disposition: 'committed', id });
+    });
+
+    it('refuses to adopt a legacy tool message that is not approved and untouched', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-legacy-invalid', userId });
+      const parentMessageId = 'msg_ensure_legacy_invalid_parent';
+      const id = 'msg_ensure_legacy_invalid_tool';
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-legacy-invalid',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        parentMessageId,
+      );
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-legacy-invalid',
+          content: '',
+          parentId: parentMessageId,
+          plugin: {
+            apiName: 'runCommand',
+            arguments: '{}',
+            identifier: 'lobe-local-system',
+            type: 'builtin',
+          },
+          pluginIntervention: { status: 'pending' },
+          role: 'tool',
+          tool_call_id: 'call_ensure_legacy_invalid',
+        },
+        id,
+      );
+
+      await expect(
+        messageModel.ensureToolMessage({
+          agentId: 'agent-ensure-legacy-invalid',
+          id,
+          mode: 'confirm-existing',
+          parentMessageId,
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'pending' },
+            toolCallId: 'call_ensure_legacy_invalid',
+            type: 'builtin',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+
+      await serverDB
+        .update(messagePlugins)
+        .set({ intervention: { status: 'approved' } })
+        .where(eq(messagePlugins.id, id));
+      await serverDB
+        .update(messages)
+        .set({ content: 'already executed' })
+        .where(eq(messages.id, id));
+      await expect(
+        messageModel.ensureToolMessage({
+          agentId: 'agent-ensure-legacy-invalid',
+          id,
+          mode: 'confirm-existing',
+          parentMessageId,
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'approved' },
+            toolCallId: 'call_ensure_legacy_invalid',
+            type: 'builtin',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+
+      await serverDB
+        .update(messages)
+        .set({ content: '', metadata: { toolLifecycle: { malformed: true } } })
+        .where(eq(messages.id, id));
+      await expect(
+        messageModel.ensureToolMessage({
+          agentId: 'agent-ensure-legacy-invalid',
+          id,
+          mode: 'confirm-existing',
+          parentMessageId,
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'approved' },
+            toolCallId: 'call_ensure_legacy_invalid',
+            type: 'builtin',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+    });
+
+    it('does not create a missing message in confirm-existing mode', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-confirm-existing-missing', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-confirm-existing-missing',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_confirm_existing_missing_parent',
+      );
+
+      await expect(
+        messageModel.ensureToolMessage({
+          agentId: 'agent-confirm-existing-missing',
+          id: 'msg_confirm_existing_missing_tool',
+          mode: 'confirm-existing',
+          parentMessageId: 'msg_confirm_existing_missing_parent',
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'approved' },
+            toolCallId: 'call_confirm_existing_missing',
+            type: 'builtin',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+
+      const rows = await serverDB
+        .select({ id: messages.id })
+        .from(messages)
+        .where(eq(messages.id, 'msg_confirm_existing_missing_tool'));
+      expect(rows).toHaveLength(0);
+    });
+
+    it('settles concurrent identical intents as one create and one existing replay', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-concurrent', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-concurrent',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_concurrent_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-concurrent',
+        id: 'msg_ensure_concurrent_tool',
+        parentMessageId: 'msg_ensure_concurrent_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_ensure_concurrent',
+          type: 'builtin',
+        },
+      };
+
+      const results = await Promise.all([
+        messageModel.ensureToolMessage(intent),
+        messageModel.ensureToolMessage(intent),
+      ]);
+
+      expect(results.map(({ disposition }) => disposition).sort()).toEqual(['created', 'existing']);
+    });
+
+    it('rejects a replay that reuses the id for a different immutable intent', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-conflict', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-conflict',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_conflict_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-conflict',
+        id: 'msg_ensure_conflict_tool',
+        parentMessageId: 'msg_ensure_conflict_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_ensure_conflict',
+          type: 'builtin',
+        },
+      };
+
+      await messageModel.ensureToolMessage(intent);
+
+      await expect(
+        messageModel.ensureToolMessage({
+          ...intent,
+          toolCall: { ...intent.toolCall, arguments: '{"command":"whoami"}' },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+    });
+
+    it('rejects a replay when a marker-only execution field changes', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-source-conflict', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-source-conflict',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_source_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-source-conflict',
+        id: 'msg_ensure_source_tool',
+        parentMessageId: 'msg_ensure_source_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          executor: 'client',
+          identifier: 'lobe-local-system',
+          source: 'builtin',
+          toolCallId: 'call_ensure_source',
+          type: 'builtin',
+        },
+      };
+
+      await messageModel.ensureToolMessage(intent);
+
+      await expect(
+        messageModel.ensureToolMessage({
+          ...intent,
+          toolCall: { ...intent.toolCall, source: 'client' },
+        }),
+      ).rejects.toBeInstanceOf(ToolMessageIntentConflictError);
+    });
+
+    it('returns existing for the same intent after its tool result was committed', async () => {
+      await serverDB.insert(agents).values({ id: 'agent-ensure-after-commit', userId });
+      await messageModel.create(
+        {
+          agentId: 'agent-ensure-after-commit',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        'msg_ensure_after_commit_parent',
+      );
+      const intent: EnsureToolMessageInput = {
+        agentId: 'agent-ensure-after-commit',
+        id: 'msg_ensure_after_commit_tool',
+        parentMessageId: 'msg_ensure_after_commit_parent',
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          executor: 'client',
+          identifier: 'lobe-local-system',
+          source: 'builtin',
+          toolCallId: 'call_ensure_after_commit',
+          type: 'builtin',
+        },
+      };
+
+      await messageModel.ensureToolMessage(intent);
+      await messageModel.commitToolResult({
+        executionAttemptId: 'attempt_ensure_after_commit',
+        id: intent.id,
+        result: { content: 'done', state: { exitCode: 0 }, success: true },
+      });
+
+      await expect(messageModel.ensureToolMessage(intent)).resolves.toEqual({
+        disposition: 'existing',
+        id: intent.id,
+      });
+    });
+  });
+
+  describe('commitToolResult', () => {
+    beforeEach(async () => {
+      await serverDB.insert(agents).values({ id: 'agent-commit-tool-result', userId });
+    });
+
+    const createToolMessage = async (id: string) => {
+      const parentMessageId = `parent_${id}`;
+      await messageModel.create(
+        {
+          agentId: 'agent-commit-tool-result',
+          content: 'assistant tool call',
+          role: 'assistant',
+        },
+        parentMessageId,
+      );
+      await messageModel.ensureToolMessage({
+        agentId: 'agent-commit-tool-result',
+        id,
+        parentMessageId,
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          executor: 'client',
+          identifier: 'lobe-local-system',
+          source: 'builtin',
+          toolCallId: `call_${id}`,
+          type: 'builtin',
+        },
+      });
+      await messageModel.updateMetadata(id, { preserved: 'message metadata' });
+    };
+
+    const createCommit = (id: string): CommitToolResultInput => ({
+      executionAttemptId: `attempt_${id}`,
+      id,
+      result: {
+        content: 'command output',
+        error: {
+          body: { exitCode: 1 },
+          message: 'command failed',
+          type: 'BuiltinToolExecutorError',
+        },
+        metadata: {
+          resultMetadata: 'kept',
+          toolLifecycle: { executionAttemptId: 'caller-controlled' },
+        },
+        state: { stderr: 'permission denied', stdout: '' },
+        stop: true,
+        success: false,
+      },
+    });
+
+    it('atomically commits a complete result and server-owned lifecycle metadata', async () => {
+      const id = 'msg_commit_first';
+      await createToolMessage(id);
+      const input = createCommit(id);
+
+      const result = await messageModel.commitToolResult(input);
+
+      expect(result).toEqual({ disposition: 'committed', id });
+
+      const [storedMessage] = await serverDB.select().from(messages).where(eq(messages.id, id));
+      const [storedPlugin] = await serverDB
+        .select()
+        .from(messagePlugins)
+        .where(eq(messagePlugins.id, id));
+
+      expect(storedMessage).toMatchObject({ content: 'command output' });
+      expect(storedMessage.metadata).toMatchObject({
+        preserved: 'message metadata',
+        resultMetadata: 'kept',
+        toolLifecycle: {
+          executionAttemptId: input.executionAttemptId,
+          intentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          resultFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      });
+      expect(storedPlugin).toMatchObject({
+        error: input.result.error,
+        state: input.result.state,
+      });
+    });
+
+    it('returns existing for the same attempt and canonical result without rewriting', async () => {
+      const id = 'msg_commit_replay';
+      await createToolMessage(id);
+      const input = createCommit(id);
+      await messageModel.commitToolResult(input);
+
+      const replay = await messageModel.commitToolResult({
+        ...input,
+        result: {
+          ...input.result,
+          metadata: {
+            toolLifecycle: { executionAttemptId: 'different-caller-value' },
+            resultMetadata: 'kept',
+          },
+          state: { stdout: '', stderr: 'permission denied' },
+        },
+      });
+
+      expect(replay).toEqual({ disposition: 'existing', id });
+    });
+
+    it('sanitizes null bytes before fingerprinting and writing every result projection', async () => {
+      const id = 'msg_commit_null_bytes';
+      await createToolMessage(id);
+      const input: CommitToolResultInput = {
+        executionAttemptId: 'attempt_null_bytes',
+        id,
+        result: {
+          content: 'out\0put',
+          error: {
+            body: { nested: 'bo\0dy' },
+            message: 'fail\0-ed',
+            type: 'Tool\0Error',
+          },
+          metadata: { nested: { label: 'meta\0-data' } },
+          state: { stdout: 'sta\0te' },
+          success: false,
+        },
+      };
+
+      await expect(messageModel.commitToolResult(input)).resolves.toEqual({
+        disposition: 'committed',
+        id,
+      });
+      await expect(messageModel.commitToolResult(input)).resolves.toEqual({
+        disposition: 'existing',
+        id,
+      });
+
+      const [storedMessage] = await serverDB.select().from(messages).where(eq(messages.id, id));
+      const [storedPlugin] = await serverDB
+        .select()
+        .from(messagePlugins)
+        .where(eq(messagePlugins.id, id));
+      expect(storedMessage.content).toBe('output');
+      expect(storedMessage.metadata).toMatchObject({ nested: { label: 'meta-data' } });
+      expect(storedPlugin.error).toEqual({
+        body: { nested: 'body' },
+        message: 'fail-ed',
+        type: 'ToolError',
+      });
+      expect(storedPlugin.state).toEqual({ stdout: 'state' });
+    });
+
+    it.each([
+      {
+        label: 'content',
+        tamper: async (id: string) =>
+          serverDB.update(messages).set({ content: 'tampered' }).where(eq(messages.id, id)),
+      },
+      {
+        label: 'caller metadata projection',
+        tamper: async (id: string) => {
+          const [stored] = await serverDB.select().from(messages).where(eq(messages.id, id));
+          return serverDB
+            .update(messages)
+            .set({
+              metadata: {
+                ...(stored.metadata as Record<string, unknown>),
+                resultMetadata: 'tampered',
+              },
+            })
+            .where(eq(messages.id, id));
+        },
+      },
+      {
+        label: 'plugin state',
+        tamper: async (id: string) =>
+          serverDB
+            .update(messagePlugins)
+            .set({ state: { stdout: 'tampered' } })
+            .where(eq(messagePlugins.id, id)),
+      },
+      {
+        label: 'plugin error',
+        tamper: async (id: string) =>
+          serverDB
+            .update(messagePlugins)
+            .set({ error: { message: 'tampered', type: 'OtherError' } })
+            .where(eq(messagePlugins.id, id)),
+      },
+    ])('recognizes an identical replay after later $label mutation', async ({ label, tamper }) => {
+      const id = `msg_commit_later_mutation_${label.replaceAll(' ', '_')}`;
+      await createToolMessage(id);
+      const input = createCommit(id);
+      await messageModel.commitToolResult(input);
+      await tamper(id);
+
+      await expect(messageModel.commitToolResult(input)).resolves.toEqual({
+        disposition: 'existing',
+        id,
+      });
+    });
+
+    it('rejects an identical replay after its server-owned result marker was removed', async () => {
+      const id = 'msg_commit_marker_tamper';
+      await createToolMessage(id);
+      const input = createCommit(id);
+      await messageModel.commitToolResult(input);
+      const [stored] = await serverDB.select().from(messages).where(eq(messages.id, id));
+      await serverDB
+        .update(messages)
+        .set({
+          metadata: {
+            ...(stored.metadata as Record<string, unknown>),
+            toolLifecycle: undefined,
+          },
+        })
+        .where(eq(messages.id, id));
+
+      await expect(messageModel.commitToolResult(input)).rejects.toBeInstanceOf(
+        ToolResultCommitConflictError,
+      );
+    });
+
+    it('serializes concurrent identical commits into one write and one replay', async () => {
+      const id = 'msg_commit_concurrent';
+      await createToolMessage(id);
+      const input = createCommit(id);
+
+      const results = await Promise.all([
+        messageModel.commitToolResult(input),
+        messageModel.commitToolResult(input),
+      ]);
+
+      expect(results.map(({ disposition }) => disposition).sort()).toEqual([
+        'committed',
+        'existing',
+      ]);
+    });
+
+    it('rejects the same attempt with a different result', async () => {
+      const id = 'msg_commit_result_conflict';
+      await createToolMessage(id);
+      const input = createCommit(id);
+      await messageModel.commitToolResult(input);
+
+      await expect(
+        messageModel.commitToolResult({
+          ...input,
+          result: { ...input.result, content: 'different output' },
+        }),
+      ).rejects.toBeInstanceOf(ToolResultCommitConflictError);
+    });
+
+    it('rejects a different attempt even when the result is identical', async () => {
+      const id = 'msg_commit_attempt_conflict';
+      await createToolMessage(id);
+      const input = createCommit(id);
+      await messageModel.commitToolResult(input);
+
+      await expect(
+        messageModel.commitToolResult({ ...input, executionAttemptId: 'stale_attempt' }),
+      ).rejects.toBeInstanceOf(ToolResultCommitConflictError);
+    });
+
+    it('fails explicitly when the message does not exist', async () => {
+      await expect(
+        messageModel.commitToolResult(createCommit('msg_commit_missing')),
+      ).rejects.toMatchObject({
+        name: 'ToolResultCommitTargetError',
+        reason: 'message-not-found',
+      });
+    });
+
+    it('fails explicitly when the target is not a tool message', async () => {
+      const id = 'msg_commit_not_tool';
+      await messageModel.create({ content: 'assistant', role: 'assistant' }, id);
+
+      await expect(messageModel.commitToolResult(createCommit(id))).rejects.toMatchObject({
+        name: 'ToolResultCommitTargetError',
+        reason: 'not-tool-message',
+      });
+    });
+
+    it('fails explicitly when the tool message plugin row is missing', async () => {
+      const id = 'msg_commit_plugin_missing';
+      await createToolMessage(id);
+      await serverDB.delete(messagePlugins).where(eq(messagePlugins.id, id));
+
+      await expect(messageModel.commitToolResult(createCommit(id))).rejects.toMatchObject({
+        name: 'ToolResultCommitTargetError',
+        reason: 'plugin-not-found',
+      });
+    });
+
+    it('rolls the message update back when the plugin update fails', async () => {
+      const id = 'msg_commit_rollback';
+      await createToolMessage(id);
+      await serverDB.execute(sql`
+        ALTER TABLE message_plugins
+        ADD CONSTRAINT message_plugins_commit_state_object
+        CHECK (state IS NULL OR jsonb_typeof(state) = 'object')
+      `);
+
+      try {
+        const input = createCommit(id);
+        await expect(
+          messageModel.commitToolResult({
+            ...input,
+            result: { ...input.result, state: 'invalid-for-test-constraint' },
+          }),
+        ).rejects.toThrow();
+
+        const [storedMessage] = await serverDB.select().from(messages).where(eq(messages.id, id));
+        const [storedPlugin] = await serverDB
+          .select()
+          .from(messagePlugins)
+          .where(eq(messagePlugins.id, id));
+        expect(storedMessage.content).toBe('');
+        expect(storedMessage.metadata).toMatchObject({
+          preserved: 'message metadata',
+          toolLifecycle: {
+            intentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        });
+        expect(storedPlugin.state).toBeNull();
+      } finally {
+        await serverDB.execute(sql`
+          ALTER TABLE message_plugins
+          DROP CONSTRAINT message_plugins_commit_state_object
+        `);
+      }
+    });
+
+    it('exposes typed target errors for callers', () => {
+      const error = new ToolResultCommitTargetError('msg', 'message-not-found');
+
+      expect(error.reason).toBe('message-not-found');
+    });
+  });
+
   describe('createMessage', () => {
+    it('strips caller-forged server-owned tool lifecycle metadata', async () => {
+      const id = 'msg_create_forged_tool_lifecycle';
+      await messageModel.create(
+        {
+          content: '',
+          metadata: {
+            finishType: 'preserved',
+            toolLifecycle: { intentFingerprint: 'forged' },
+          } as unknown as MessageMetadata,
+          plugin: {
+            apiName: 'runCommand',
+            arguments: '{"command":"pwd"}',
+            identifier: 'lobe-local-system',
+            type: 'builtin',
+          },
+          role: 'tool',
+          tool_call_id: 'call_forged_tool_lifecycle',
+        },
+        id,
+      );
+
+      const [stored] = await serverDB.select().from(messages).where(eq(messages.id, id));
+      expect(stored.metadata).toEqual({ finishType: 'preserved' });
+    });
+
     it('should create a new message', async () => {
       // Call createMessage method
       await messageModel.create({ role: 'user', content: 'new message', sessionId: '1' });

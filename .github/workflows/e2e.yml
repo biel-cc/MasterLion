@@ -98,3 +98,44 @@ jobs:
             e2e/reports
             e2e/screenshots
           if-no-files-found: ignore
+
+  electron-tool-lifecycle:
+    needs: check-duplicate-run
+    if: >-
+      github.ref == 'refs/heads/main' || github.ref == 'refs/heads/canary' || needs.check-duplicate-run.outputs.should_skip != 'true'
+
+
+    name: Test Electron Tool Lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install production desktop Electron runtime
+        run: pnpm install
+        working-directory: apps/desktop
+
+      - name: Install Linux dependencies
+        run: |
+          bunx playwright install-deps chromium
+
+      - name: Run Electron-hosted lifecycle E2E
+        run: xvfb-run --auto-servernum bunx playwright test --config=e2e/electron/playwright.config.mjs
+
+      - name: Upload Electron E2E artifacts (on failure or timeout)
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v6
+        with:
+          name: electron-tool-lifecycle-e2e-artifacts
+          path: e2e/electron/.artifacts/test-results
+          if-no-files-found: ignore

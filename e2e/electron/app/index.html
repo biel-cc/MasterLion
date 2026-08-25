@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Masterino Electron Tool Lifecycle E2E</title>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-testid="electron-runtime">ready</div>
+    <button data-testid="run-transient" type="button">Run transient prepare scenario</button>
+    <button data-testid="run-exhausted" type="button">Run exhausted prepare scenario</button>
+    <button data-testid="run-sync-exhausted" type="button">
+      Run exhausted result-sync scenario
+    </button>
+    <button data-testid="run-cancelled" type="button">Run cancelled execution scenario</button>
+    <div data-testid="tool-spinner" hidden>Calling tool…</div>
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="tool-status">idle</dd>
+      <dt>Prepare attempts</dt>
+      <dd data-testid="prepare-attempts">0</dd>
+      <dt>Local executions</dt>
+      <dd data-testid="local-execution-count">0</dd>
+      <dt>Result sync attempts</dt>
+      <dd data-testid="result-sync-attempts">0</dd>
+      <dt>Running operations</dt>
+      <dd data-testid="running-operation-count">0</dd>
+    </dl>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

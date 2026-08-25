@@ -2,6 +2,7 @@
 import { type AgentRuntimeContext } from '@lobechat/agent-runtime';
 import { MESSAGE_CANCEL_FLAT } from '@lobechat/const';
 import {
+  type ChatToolPayload,
   type ConversationContext,
   type MessageMetadata,
   type UIChatMessage,
@@ -254,90 +255,103 @@ export class ConversationControlActionImpl {
     });
 
     const optimisticContext = { operationId };
-
-    // 2. Update intervention status to approved
-    await this.#get().optimisticUpdateMessagePlugin(
-      toolMessageId,
-      { intervention: { status: 'approved' } },
-      optimisticContext,
-    );
-    const requestMetadata = this.#getRequestMetadataFromMessageChain(toolMessageId);
-
-    // 2.5. Server-mode: start a **new** Gateway op carrying the approval
-    // decision via `resumeApproval`. The server reads the target tool
-    // message, persists `intervention=approved`, dispatches the approved
-    // tool, and streams results back on the new op. No in-place resume of
-    // the paused op — simpler state + avoids stepIndex races.
-    if (this.#shouldUseGatewayResume(effectiveContext)) {
-      const toolCallId = toolMessage.tool_call_id;
-      if (!toolCallId) {
-        console.warn(
-          '[approveToolCalling][server] tool message missing tool_call_id; skipping resume',
-        );
-        completeOperation(operationId);
+    try {
+      // 2. Update intervention status to approved
+      await this.#get().optimisticUpdateMessagePlugin(
+        toolMessageId,
+        { intervention: { status: 'approved' } },
+        optimisticContext,
+      );
+      const refreshedToolMessage = dbMessageSelectors.getDbMessageById(toolMessageId)(this.#get());
+      const approvedToolCall = refreshedToolMessage?.plugin ?? toolMessage.plugin;
+      if (!approvedToolCall) {
+        this.#get().failOperation(operationId, {
+          message: 'Approved tool message is missing its tool payload',
+          type: 'approveToolCalling',
+        });
         return;
       }
-      // Snapshot paused op IDs before the resume call; retire them only
-      // after executeGatewayAgent succeeds so a transient failure leaves
-      // the running marker intact and `#shouldUseGatewayResume` still flags
-      // Gateway mode on retry.
-      const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
-      try {
-        await this.#get().executeGatewayAgent({
-          context: effectiveContext,
-          message: '',
-          metadata: requestMetadata,
-          parentMessageId: toolMessageId,
-          resumeApproval: {
-            decision: 'approved',
-            parentMessageId: toolMessageId,
-            toolCallId,
-          },
-        });
-        this.#completeOpsById(pausedOpIds);
-        completeOperation(operationId);
-      } catch (error) {
-        const err = error as Error;
-        console.error('[approveToolCalling][server] Gateway resume failed:', err);
+      const toolCallId = refreshedToolMessage?.tool_call_id ?? toolMessage.tool_call_id;
+      if (!toolCallId) {
         this.#get().failOperation(operationId, {
+          message: 'Approved tool message is missing its tool call id',
           type: 'approveToolCalling',
-          message: err.message || 'Unknown error',
         });
+        return;
       }
-      return;
-    }
+      const approvedToolCallPayload: ChatToolPayload = {
+        ...approvedToolCall,
+        id: toolCallId,
+        intervention: { ...approvedToolCall.intervention, status: 'approved' as const },
+      };
+      const requestMetadata = this.#getRequestMetadataFromMessageChain(toolMessageId);
 
-    // 3. Get current messages for state construction using context
-    const chatKey = messageMapKey({ agentId, topicId, threadId, scope });
-    const currentMessages = displayMessageSelectors.getDisplayMessagesByKey(chatKey)(this.#get());
-    const currentRequestMetadata = this.#getRequestMetadataFromMessageChain(
-      toolMessageId,
-      currentMessages,
-    );
+      // 2.5. Server-mode: start a **new** Gateway op carrying the approval
+      // decision via `resumeApproval`. The server reads the target tool
+      // message, persists `intervention=approved`, dispatches the approved
+      // tool, and streams results back on the new op. No in-place resume of
+      // the paused op — simpler state + avoids stepIndex races.
+      if (this.#shouldUseGatewayResume(effectiveContext)) {
+        // Snapshot paused op IDs before the resume call; retire them only
+        // after executeGatewayAgent succeeds so a transient failure leaves
+        // the running marker intact and `#shouldUseGatewayResume` still flags
+        // Gateway mode on retry.
+        const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+        try {
+          await this.#get().executeGatewayAgent({
+            context: effectiveContext,
+            message: '',
+            metadata: requestMetadata,
+            parentMessageId: toolMessageId,
+            resumeApproval: {
+              decision: 'approved',
+              parentMessageId: toolMessageId,
+              toolCallId,
+            },
+          });
+          this.#completeOpsById(pausedOpIds);
+          completeOperation(operationId);
+        } catch (error) {
+          const err = error as Error;
+          console.error('[approveToolCalling][server] Gateway resume failed:', err);
+          this.#get().failOperation(operationId, {
+            type: 'approveToolCalling',
+            message: err.message || 'Unknown error',
+          });
+        }
+        return;
+      }
 
-    // 4. Create agent state and context with user intervention config
-    const { state, context: initialContext } = this.#get().internal_createAgentState({
-      messages: currentMessages,
-      parentMessageId: toolMessageId,
-      agentId,
-      topicId,
-      threadId: threadId ?? undefined,
-      operationId,
-    });
+      // 3. Get current messages for state construction using context
+      const chatKey = messageMapKey({ agentId, topicId, threadId, scope });
+      const currentMessages = displayMessageSelectors.getDisplayMessagesByKey(chatKey)(this.#get());
+      const currentRequestMetadata = this.#getRequestMetadataFromMessageChain(
+        toolMessageId,
+        currentMessages,
+      );
 
-    // 5. Override context with 'human_approved_tool' phase
-    const agentRuntimeContext: AgentRuntimeContext = {
-      ...initialContext,
-      phase: 'human_approved_tool',
-      payload: {
-        approvedToolCall: toolMessage.plugin,
+      // 4. Create agent state and context with user intervention config
+      const { state, context: initialContext } = this.#get().internal_createAgentState({
+        messages: currentMessages,
         parentMessageId: toolMessageId,
-        skipCreateToolMessage: true,
-      },
-    };
+        agentId,
+        topicId,
+        threadId: threadId ?? undefined,
+        operationId,
+      });
 
-    // 7. Execute agent runtime from tool message position
-    try {
+      // 5. Override context with 'human_approved_tool' phase
+      const agentRuntimeContext: AgentRuntimeContext = {
+        ...initialContext,
+        phase: 'human_approved_tool',
+        payload: {
+          approvedToolCall: approvedToolCallPayload,
+          parentMessageId: toolMessageId,
+          skipCreateToolMessage: true,
+        },
+      };
+
+      // 7. Execute agent runtime from tool message position
       await executeClientAgent({
         context: effectiveContext,
         messages: currentMessages,
@@ -353,7 +367,7 @@ export class ConversationControlActionImpl {
       completeOperation(operationId);
     } catch (error) {
       const err = error as Error;
-      console.error('[approveToolCalling] Error executing agent runtime:', err);
+      console.error('[approveToolCalling] Approval lifecycle failed:', err);
       this.#get().failOperation(operationId, {
         type: 'approveToolCalling',
         message: err.message || 'Unknown error',

@@ -1,0 +1,411 @@
+import type { ChatToolPayload } from '@lobechat/types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { mcpService } from '@/services/mcp';
+import { messageService } from '@/services/message';
+import { archiveToolResultViaServer } from '@/services/toolResultArchive';
+import { useToolStore } from '@/store/tool';
+import { hasExecutor } from '@/store/tool/slices/builtin/executors';
+
+import { PluginTypesActionImpl } from './pluginTypes';
+import { PluginPublicApiActionImpl } from './publicApi';
+
+vi.mock('@/services/mcp', () => ({
+  mcpService: { invokeMcpToolCall: vi.fn() },
+}));
+
+vi.mock('@/services/message', () => ({
+  messageService: { updateMessageError: vi.fn() },
+}));
+
+vi.mock('@/services/toolResultArchive', () => ({
+  archiveToolResultViaServer: vi.fn(async ({ content }: { content: string }) => content),
+}));
+
+vi.mock('@/store/chat/slices/message/selectors', () => ({
+  dbMessageSelectors: {
+    getDbMessageById: vi.fn(() => () => ({ agentId: 'agent-1', topicId: 'topic-1' })),
+  },
+  displayMessageSelectors: {
+    getDisplayMessageById: vi.fn(() => () => undefined),
+  },
+}));
+
+vi.mock('@/store/tool', () => ({
+  useToolStore: { getState: vi.fn() },
+}));
+
+vi.mock('@/store/tool/selectors', () => ({
+  composioStoreSelectors: { composioAsLobeTools: vi.fn(() => []) },
+  lobehubSkillStoreSelectors: { lobehubSkillAsLobeTools: vi.fn(() => []) },
+}));
+
+vi.mock('@/store/tool/slices/builtin/executors', () => ({
+  hasExecutor: vi.fn(),
+}));
+
+const builtinPayload = {
+  apiName: 'run',
+  arguments: '{"input":"hello"}',
+  id: 'tool-call-1',
+  identifier: 'local-tool',
+  type: 'builtin',
+} as ChatToolPayload;
+
+const mcpPayload = {
+  ...builtinPayload,
+  identifier: 'mcp-tool',
+  type: 'mcp',
+} as ChatToolPayload;
+
+const createActions = () => {
+  const state: any = {
+    activeAgentId: 'agent-1',
+    messageOperationMap: {},
+    operations: {},
+    optimisticUpdateToolMessage: vi.fn().mockResolvedValue(undefined),
+  };
+  const get = () => state;
+
+  Object.assign(
+    state,
+    new PluginTypesActionImpl(vi.fn() as any, get as any),
+    new PluginPublicApiActionImpl(vi.fn() as any, get as any),
+  );
+
+  return state;
+};
+
+describe('raw tool execution boundary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('executes a builtin exactly once without archiving or writing its message', async () => {
+    const invokeBuiltinTool = vi.fn().mockResolvedValue({
+      content: 'local result',
+      metadata: { source: 'local' },
+      state: { finished: true },
+      success: true,
+    });
+    vi.mocked(hasExecutor).mockReturnValue(true);
+    vi.mocked(useToolStore.getState).mockReturnValue({ invokeBuiltinTool } as any);
+    const actions = createActions();
+    const signal = new AbortController().signal;
+
+    const result = await actions.internal_executeDifferentTypePlugin(
+      'tool-message-1',
+      builtinPayload,
+      undefined,
+      signal,
+    );
+
+    expect(result).toEqual({
+      content: 'local result',
+      metadata: { source: 'local' },
+      state: { finished: true },
+      success: true,
+    });
+    expect(invokeBuiltinTool).toHaveBeenCalledTimes(1);
+    expect(invokeBuiltinTool).toHaveBeenCalledWith(
+      builtinPayload.identifier,
+      builtinPayload.apiName,
+      { input: 'hello' },
+      expect.objectContaining({ signal }),
+    );
+    expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+    expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+    expect(messageService.updateMessageError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      expectedContent: 'composio result',
+      payload: { ...builtinPayload, source: 'composio' as const },
+      setup: () => {
+        const callComposioTool = vi.fn().mockResolvedValue({
+          data: {
+            content: 'composio result',
+            state: { isError: false },
+            success: true,
+          },
+          success: true,
+        });
+        vi.mocked(useToolStore.getState).mockReturnValue({
+          callComposioTool,
+          composioServers: [{ identifier: builtinPayload.identifier }],
+        } as any);
+        return callComposioTool;
+      },
+    },
+    {
+      expectedContent: 'skill result',
+      payload: { ...builtinPayload, identifier: 'skill-provider', source: 'lobehubSkill' as const },
+      setup: () => {
+        const callLobehubSkillTool = vi.fn().mockResolvedValue({
+          data: 'skill result',
+          success: true,
+        });
+        vi.mocked(useToolStore.getState).mockReturnValue({ callLobehubSkillTool } as any);
+        return callLobehubSkillTool;
+      },
+    },
+  ])(
+    'executes a $payload.source tool once and returns the unified result without persistence',
+    async ({ expectedContent, payload, setup }) => {
+      const execute = setup();
+      const actions = createActions();
+
+      const result = await actions.internal_executeDifferentTypePlugin('tool-message-1', payload);
+
+      expect(result).toMatchObject({ content: expectedContent, success: true });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+      expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+      expect(messageService.updateMessageError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('executes an MCP tool once and returns the unified result without persistence', async () => {
+    vi.mocked(mcpService.invokeMcpToolCall).mockResolvedValue({
+      content: 'mcp result',
+      state: { content: [], isError: false },
+      success: true,
+    });
+    const actions = createActions();
+    const signal = new AbortController().signal;
+
+    const result = await actions.internal_executeDifferentTypePlugin(
+      'tool-message-1',
+      mcpPayload,
+      undefined,
+      signal,
+    );
+
+    expect(result).toEqual({
+      content: 'mcp result',
+      state: { content: [], isError: false },
+      success: true,
+    });
+    expect(mcpService.invokeMcpToolCall).toHaveBeenCalledTimes(1);
+    expect(mcpService.invokeMcpToolCall).toHaveBeenCalledWith(
+      mcpPayload,
+      expect.objectContaining({ signal }),
+    );
+    expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+    expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+    expect(messageService.updateMessageError).not.toHaveBeenCalled();
+  });
+
+  it('returns a business failure as success=false without throwing', async () => {
+    vi.mocked(mcpService.invokeMcpToolCall).mockResolvedValue({
+      content: 'permission denied',
+      error: { message: 'permission denied' },
+      state: { content: [], isError: true },
+      success: false,
+    });
+    const actions = createActions();
+
+    const result = await actions.internal_executeDifferentTypePlugin('tool-message-1', mcpPayload);
+
+    expect(result).toMatchObject({
+      content: 'permission denied',
+      error: { message: 'permission denied', type: 'MCPToolExecutionError' },
+      success: false,
+    });
+  });
+
+  it.each([
+    {
+      payload: builtinPayload,
+      setup: (error: Error) => {
+        vi.mocked(hasExecutor).mockReturnValue(true);
+        vi.mocked(useToolStore.getState).mockReturnValue({
+          invokeBuiltinTool: vi.fn().mockRejectedValue(error),
+        } as any);
+      },
+    },
+    {
+      payload: mcpPayload,
+      setup: (error: Error) => {
+        vi.mocked(mcpService.invokeMcpToolCall).mockRejectedValue(error);
+      },
+    },
+    {
+      payload: { ...builtinPayload, source: 'composio' as const },
+      setup: (error: Error) => {
+        vi.mocked(useToolStore.getState).mockReturnValue({
+          callComposioTool: vi.fn().mockRejectedValue(error),
+          composioServers: [{ identifier: builtinPayload.identifier }],
+        } as any);
+      },
+    },
+    {
+      payload: {
+        ...builtinPayload,
+        identifier: 'skill-provider',
+        source: 'lobehubSkill' as const,
+      },
+      setup: (error: Error) => {
+        vi.mocked(useToolStore.getState).mockReturnValue({
+          callLobehubSkillTool: vi.fn().mockRejectedValue(error),
+        } as any);
+      },
+    },
+  ])(
+    'propagates a $payload.type/$payload.source execution exception without persisting',
+    async ({ payload, setup }) => {
+      const error = new Error('execution transport failed');
+      setup(error);
+      const actions = createActions();
+
+      await expect(
+        actions.internal_executeDifferentTypePlugin('tool-message-1', payload),
+      ).rejects.toBe(error);
+      expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+      expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+      expect(messageService.updateMessageError).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('legacy tool invocation composition', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('executes once, archives once, and persists the projected builtin result', async () => {
+    const invokeBuiltinTool = vi.fn().mockResolvedValue({
+      content: 'large local result',
+      metadata: { source: 'local' },
+      state: { finished: true },
+      success: true,
+    });
+    vi.mocked(hasExecutor).mockReturnValue(true);
+    vi.mocked(useToolStore.getState).mockReturnValue({ invokeBuiltinTool } as any);
+    vi.mocked(archiveToolResultViaServer).mockResolvedValue('archived local result');
+    const actions = createActions();
+
+    const result = await actions.internal_invokeDifferentTypePlugin(
+      'tool-message-1',
+      builtinPayload,
+    );
+
+    expect(result).toMatchObject({ content: 'large local result', success: true });
+    expect(invokeBuiltinTool).toHaveBeenCalledTimes(1);
+    expect(archiveToolResultViaServer).toHaveBeenCalledTimes(1);
+    expect(actions.optimisticUpdateToolMessage).toHaveBeenCalledTimes(1);
+    expect(actions.optimisticUpdateToolMessage).toHaveBeenCalledWith(
+      'tool-message-1',
+      {
+        content: 'archived local result',
+        metadata: { source: 'local' },
+        pluginError: undefined,
+        pluginState: { finished: true },
+      },
+      undefined,
+    );
+  });
+
+  it('executes once, archives once, and persists the projected MCP result', async () => {
+    vi.mocked(mcpService.invokeMcpToolCall).mockResolvedValue({
+      content: 'large mcp result',
+      state: { content: [], isError: false },
+      success: true,
+    });
+    vi.mocked(archiveToolResultViaServer).mockResolvedValue('archived mcp result');
+    const actions = createActions();
+
+    const result = await actions.internal_invokeDifferentTypePlugin('tool-message-1', mcpPayload);
+
+    expect(result).toBe('archived mcp result');
+    expect(mcpService.invokeMcpToolCall).toHaveBeenCalledTimes(1);
+    expect(archiveToolResultViaServer).toHaveBeenCalledTimes(1);
+    expect(actions.optimisticUpdateToolMessage).toHaveBeenCalledWith(
+      'tool-message-1',
+      {
+        content: 'archived mcp result',
+        pluginError: undefined,
+        pluginState: { content: [], isError: false },
+      },
+      undefined,
+    );
+  });
+
+  it('preserves the legacy remote return value when a builtin payload routes to Composio', async () => {
+    const callComposioTool = vi.fn().mockResolvedValue({
+      data: {
+        content: 'large composio result',
+        state: { isError: false },
+        success: true,
+      },
+      success: true,
+    });
+    vi.mocked(useToolStore.getState).mockReturnValue({
+      callComposioTool,
+      composioServers: [{ identifier: builtinPayload.identifier }],
+    } as any);
+    vi.mocked(archiveToolResultViaServer).mockResolvedValue('archived composio result');
+    const actions = createActions();
+
+    const result = await actions.internal_invokeDifferentTypePlugin('tool-message-1', {
+      ...builtinPayload,
+      source: 'composio',
+    });
+
+    expect(result).toBe('archived composio result');
+    expect(callComposioTool).toHaveBeenCalledTimes(1);
+    expect(archiveToolResultViaServer).toHaveBeenCalledTimes(1);
+    expect(actions.optimisticUpdateToolMessage).toHaveBeenCalledWith(
+      'tool-message-1',
+      {
+        content: 'archived composio result',
+        pluginError: undefined,
+        pluginState: { isError: false },
+      },
+      undefined,
+    );
+  });
+
+  it('preserves legacy MCP transport-error reporting outside the lifecycle path', async () => {
+    const error = new Error('mcp transport failed');
+    vi.mocked(mcpService.invokeMcpToolCall).mockRejectedValue(error);
+    const actions = createActions();
+
+    await expect(
+      actions.internal_invokeDifferentTypePlugin('tool-message-1', mcpPayload),
+    ).resolves.toBeUndefined();
+
+    expect(messageService.updateMessageError).toHaveBeenCalledWith('tool-message-1', error, {
+      agentId: 'agent-1',
+      topicId: 'topic-1',
+    });
+    expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+    expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy remote transport-error reporting outside the lifecycle path', async () => {
+    const error = new Error('remote transport failed');
+    const callComposioTool = vi.fn().mockRejectedValue(error);
+    vi.mocked(useToolStore.getState).mockReturnValue({
+      callComposioTool,
+      composioServers: [{ identifier: builtinPayload.identifier }],
+    } as any);
+    vi.mocked(archiveToolResultViaServer).mockResolvedValue('remote transport failed');
+    const actions = createActions();
+
+    await expect(
+      actions.internal_invokeDifferentTypePlugin('tool-message-1', {
+        ...builtinPayload,
+        source: 'composio',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(messageService.updateMessageError).toHaveBeenCalledWith('tool-message-1', error, {
+      agentId: 'agent-1',
+      topicId: 'topic-1',
+    });
+    expect(archiveToolResultViaServer).not.toHaveBeenCalled();
+    expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
+  });
+});

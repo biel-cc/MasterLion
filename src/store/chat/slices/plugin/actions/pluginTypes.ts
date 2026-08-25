@@ -1,4 +1,5 @@
 import {
+  type BuiltinToolResult,
   type ChatToolPayload,
   type RuntimeStepContext,
   type SubAgentCallbacks,
@@ -23,6 +24,46 @@ import { composioExecutor, lobehubSkillExecutor } from './exector';
 
 const log = debug('lobe-store:plugin-types');
 
+type ToolResultProjection = 'builtin' | 'external';
+
+const failedToolResult = (message: string, type: string): BuiltinToolResult => ({
+  content: message,
+  error: { message, type },
+  success: false,
+});
+
+const normalizeExternalToolResult = (
+  result: MCPToolCallResult | undefined,
+  fallbackErrorType: string,
+): BuiltinToolResult => {
+  if (!result) return failedToolResult('Tool returned no result', fallbackErrorType);
+
+  if (result.success) {
+    return {
+      content: result.content,
+      state: result.state,
+      success: true,
+    };
+  }
+
+  const rawError = result.error;
+  const message =
+    typeof rawError === 'string'
+      ? rawError
+      : rawError?.message || result.content || 'Tool execution failed';
+
+  return {
+    content: result.content || message,
+    error: {
+      ...(rawError && typeof rawError === 'object' ? rawError : undefined),
+      message,
+      type: rawError?.type || fallbackErrorType,
+    },
+    state: result.state,
+    success: false,
+  };
+};
+
 /**
  * Plugin type-specific implementations
  * Each method handles a specific type of plugin invocation
@@ -46,47 +87,64 @@ export class PluginTypesActionImpl {
     payload: ChatToolPayload,
     stepContext?: RuntimeStepContext,
   ): Promise<any> => {
+    const effectiveSource = this.#resolveEffectiveSource(payload);
+    if (effectiveSource === 'composio') {
+      return this.#get().invokeComposioTypePlugin(id, { ...payload, source: effectiveSource });
+    }
+    if (effectiveSource === 'lobehubSkill') {
+      return this.#get().invokeLobehubSkillTypePlugin(id, { ...payload, source: effectiveSource });
+    }
+
+    const result = await this.#get().internal_executeBuiltinTool(
+      id,
+      payload.source ? payload : { ...payload, source: 'builtin' },
+      stepContext,
+    );
+    await this.#persistToolResult(id, payload, result, 'builtin');
+    return result;
+  };
+
+  internal_executeBuiltinTool = async (
+    id: string,
+    payload: ChatToolPayload,
+    stepContext?: RuntimeStepContext,
+    signal?: AbortSignal,
+  ): Promise<BuiltinToolResult> => {
     // When the tool call comes from a DB-stored message (e.g. after humanIntervention approval),
     // the `source` field is not persisted and arrives as undefined. Fall back to a live store
     // lookup so Composio / LobeHub Skill tools still route correctly.
-    let effectiveSource = payload.source;
-    if (!effectiveSource) {
-      const toolStoreState = useToolStore.getState();
-      const composioTools = composioStoreSelectors.composioAsLobeTools(toolStoreState);
-      if (composioTools.some((t) => t.identifier === payload.identifier)) {
-        effectiveSource = 'composio';
-      } else {
-        const lobehubSkillTools =
-          lobehubSkillStoreSelectors.lobehubSkillAsLobeTools(toolStoreState);
-        if (lobehubSkillTools.some((t) => t.identifier === payload.identifier)) {
-          effectiveSource = 'lobehubSkill';
-        }
-      }
-    }
+    const effectiveSource = this.#resolveEffectiveSource(payload);
 
     if (effectiveSource === 'composio') {
-      return await this.#get().invokeComposioTypePlugin(id, { ...payload, source: effectiveSource });
+      return await this.#get().internal_executeRemoteToolPlugin(
+        id,
+        { ...payload, source: effectiveSource },
+        composioExecutor,
+        'invokeComposioTypePlugin',
+        signal,
+      );
     }
 
     if (effectiveSource === 'lobehubSkill') {
-      return await this.#get().invokeLobehubSkillTypePlugin(id, {
-        ...payload,
-        source: effectiveSource,
-      });
+      return await this.#get().internal_executeRemoteToolPlugin(
+        id,
+        { ...payload, source: effectiveSource },
+        lobehubSkillExecutor,
+        'invokeLobehubSkillTypePlugin',
+        signal,
+      );
     }
 
     const params = safeParseJSON(payload.arguments);
-    if (!params) return { error: 'Invalid arguments', success: false };
+    if (!params) return failedToolResult('Invalid arguments', 'InvalidToolArguments');
 
     // Check if there's a registered executor in Tool Store (new architecture)
     if (hasExecutor(payload.identifier, payload.apiName)) {
-      const { optimisticUpdateToolMessage, registerAfterCompletionCallback } = this.#get();
+      const { registerAfterCompletionCallback } = this.#get();
 
       // Get operation context
       const operationId = this.#get().messageOperationMap[id];
       const operation = operationId ? this.#get().operations[operationId] : undefined;
-      const context = operationId ? { operationId } : undefined;
-
       let rootRuntimeOperationId: string | undefined;
       let rootRuntimeOperationContext = operation?.context;
       if (operationId) {
@@ -206,7 +264,7 @@ export class PluginTypesActionImpl {
           operationId,
           registerAfterCompletion,
           scope,
-          signal: operation?.abortController?.signal,
+          signal: signal ?? operation?.abortController?.signal,
           sourceMessageId:
             operation?.context?.sourceMessageId ??
             rootRuntimeOperationContext?.sourceMessageId ??
@@ -227,34 +285,6 @@ export class PluginTypesActionImpl {
         success: result.success,
       });
 
-      // When error exists but content is empty, backfill error message into content
-      const rawContent = result.content || result.error?.message || '';
-      const content = await archiveToolResultViaServer({
-        agentId,
-        content: rawContent,
-        identifier: payload.identifier,
-        toolCallId: payload.id,
-        topicId,
-      });
-
-      // Use optimisticUpdateToolMessage to batch update content, state, error, metadata
-      await optimisticUpdateToolMessage(
-        id,
-        {
-          content,
-          metadata: result.metadata,
-          pluginError: result.error
-            ? {
-                body: result.error.body,
-                message: result.error.message,
-                type: result.error.type as any,
-              }
-            : undefined,
-          pluginState: result.state,
-        },
-        context,
-      );
-
       // If result.stop is true, the tool wants to stop execution flow
       // This is handled by returning from the function (no further processing)
       if (result.stop) {
@@ -270,11 +300,10 @@ export class PluginTypesActionImpl {
     console.error(
       `[invokeBuiltinTool] No executor found for: ${payload.identifier}/${payload.apiName}`,
     );
-    return {
-      content: `Tool ${payload.identifier}/${payload.apiName} is not available`,
-      error: { type: 'ToolNotFound', message: 'No executor found' },
-      success: false,
-    };
+    return failedToolResult(
+      `Tool ${payload.identifier}/${payload.apiName} is not available`,
+      'ToolNotFound',
+    );
   };
 
   invokeComposioTypePlugin = async (
@@ -305,8 +334,36 @@ export class PluginTypesActionImpl {
     id: string,
     payload: ChatToolPayload,
   ): Promise<string | undefined> => {
-    let data: MCPToolCallResult | undefined;
+    let result: BuiltinToolResult;
+    try {
+      result = await this.#get().internal_executeMCPTypePlugin(id, payload);
+    } catch (error) {
+      console.error(error);
+      const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
+      const executionError = error as Error;
+      if (executionError.message.includes('The user aborted a request.')) {
+        log('[invokeMCPTypePlugin] Request aborted: messageId=%s, tool=%s', id, payload.apiName);
+      } else {
+        const updateResult = await messageService.updateMessageError(id, error as any, {
+          agentId: message?.agentId,
+          topicId: message?.topicId,
+        });
+        if (updateResult?.success && updateResult.messages) {
+          this.#get().replaceMessages(updateResult.messages, {
+            context: { agentId: message?.agentId || '', topicId: message?.topicId },
+          });
+        }
+      }
+      return;
+    }
+    return this.#persistToolResult(id, payload, result, 'external');
+  };
 
+  internal_executeMCPTypePlugin = async (
+    id: string,
+    payload: ChatToolPayload,
+    signal?: AbortSignal,
+  ): Promise<BuiltinToolResult> => {
     // Get message to extract agentId/topicId
     const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
 
@@ -323,62 +380,12 @@ export class PluginTypesActionImpl {
       abortController?.signal.aborted,
     );
 
-    try {
-      const result = await mcpService.invokeMcpToolCall(payload, {
-        signal: abortController?.signal,
-        topicId: message?.topicId,
-      });
-
-      if (!!result) data = result;
-    } catch (error) {
-      console.error(error);
-      const err = error as Error;
-
-      // ignore the aborted request error
-      if (err.message.includes('The user aborted a request.')) {
-        log('[invokeMCPTypePlugin] Request aborted: messageId=%s, tool=%s', id, payload.apiName);
-      } else {
-        const result = await messageService.updateMessageError(id, error as any, {
-          agentId: message?.agentId,
-          topicId: message?.topicId,
-        });
-        if (result?.success && result.messages) {
-          this.#get().replaceMessages(result.messages, {
-            context: { agentId: message?.agentId || '', topicId: message?.topicId },
-          });
-        }
-      }
-    }
-
-    // If error occurred, exit
-
-    if (!data) return;
-
-    // Archive oversized content (or truncate if archive context unavailable)
-    const rawContent = data.content || (data.error as any)?.message || '';
-    const truncatedContent = await archiveToolResultViaServer({
-      agentId: message?.agentId,
-      content: rawContent,
-      identifier: payload.identifier,
-      toolCallId: payload.id,
+    const result = await mcpService.invokeMcpToolCall(payload, {
+      signal: signal ?? abortController?.signal,
       topicId: message?.topicId,
     });
 
-    // operationId already declared above, reuse it
-    const context = operationId ? { operationId } : undefined;
-
-    // Use optimisticUpdateToolMessage to update content and state/error in a single call
-    await this.#get().optimisticUpdateToolMessage(
-      id,
-      {
-        content: truncatedContent,
-        pluginError: data.success ? undefined : data.error,
-        pluginState: data.success ? data.state : undefined,
-      },
-      context,
-    );
-
-    return truncatedContent;
+    return normalizeExternalToolResult(result, 'MCPToolExecutionError');
   };
 
   internal_invokeRemoteToolPlugin = async (
@@ -387,8 +394,38 @@ export class PluginTypesActionImpl {
     executor: RemoteToolExecutor,
     logPrefix: string,
   ): Promise<string | undefined> => {
-    let data: MCPToolCallResult | undefined;
+    let result: BuiltinToolResult;
+    try {
+      result = await this.#get().internal_executeRemoteToolPlugin(id, payload, executor, logPrefix);
+    } catch (error) {
+      console.error(`[${logPrefix}] Error:`, error);
+      const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
+      const executionError = error as Error;
+      if (executionError.message.includes('aborted')) {
+        log('[%s] Request aborted: messageId=%s, tool=%s', logPrefix, id, payload.apiName);
+      } else {
+        const updateResult = await messageService.updateMessageError(id, error as any, {
+          agentId: message?.agentId,
+          topicId: message?.topicId,
+        });
+        if (updateResult?.success && updateResult.messages) {
+          this.#get().replaceMessages(updateResult.messages, {
+            context: { agentId: message?.agentId, topicId: message?.topicId },
+          });
+        }
+      }
+      return;
+    }
+    return this.#persistToolResult(id, payload, result, 'external');
+  };
 
+  internal_executeRemoteToolPlugin = async (
+    id: string,
+    payload: ChatToolPayload,
+    executor: RemoteToolExecutor,
+    logPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<BuiltinToolResult> => {
     // Get message to extract sessionId/topicId
     const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
 
@@ -406,58 +443,107 @@ export class PluginTypesActionImpl {
       abortController?.signal.aborted,
     );
 
-    try {
-      // Pass topicId from message context, not global active state
-      // This ensures tool calls use the correct topic even if user switches topics
-      data = await executor(payload, { topicId: message?.topicId });
-    } catch (error) {
-      console.error(`[${logPrefix}] Error:`, error);
+    // Pass topicId from message context, not global active state. This ensures tool calls use the
+    // correct topic even if the user switches topics while the request is in flight.
+    const result = await executor(payload, {
+      signal: signal ?? abortController?.signal,
+      topicId: message?.topicId,
+    });
 
-      // ignore the aborted request error
-      const err = error as Error;
-      if (err.message.includes('aborted')) {
-        log('[%s] Request aborted: messageId=%s, tool=%s', logPrefix, id, payload.apiName);
-      } else {
-        const result = await messageService.updateMessageError(id, error as any, {
-          agentId: message?.agentId,
-          topicId: message?.topicId,
-        });
-        if (result?.success && result.messages) {
-          this.#get().replaceMessages(result.messages, {
-            context: {
-              agentId: message?.agentId,
-              topicId: message?.topicId,
-            },
-          });
-        }
-      }
+    return normalizeExternalToolResult(result, 'RemoteToolExecutionError');
+  };
+
+  #resolveEffectiveSource = (payload: ChatToolPayload): ChatToolPayload['source'] => {
+    if (payload.source) return payload.source;
+
+    const toolStoreState = useToolStore.getState();
+    const composioTools = composioStoreSelectors.composioAsLobeTools(toolStoreState);
+    if (composioTools.some((tool) => tool.identifier === payload.identifier)) return 'composio';
+
+    const lobehubSkillTools = lobehubSkillStoreSelectors.lobehubSkillAsLobeTools(toolStoreState);
+    if (lobehubSkillTools.some((tool) => tool.identifier === payload.identifier)) {
+      return 'lobehubSkill';
     }
 
-    // If error occurred, exit
-    if (!data) return;
+    return undefined;
+  };
 
-    const rawContent = data.content || (data.error as any)?.message || '';
-    const remoteContent = await archiveToolResultViaServer({
-      agentId: message?.agentId,
+  #persistToolResult = async (
+    id: string,
+    payload: ChatToolPayload,
+    result: BuiltinToolResult,
+    projection: ToolResultProjection,
+  ): Promise<string> => {
+    const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
+    const operationId = this.#get().messageOperationMap[id];
+    const operation = operationId ? this.#get().operations[operationId] : undefined;
+
+    let rootOperationContext = operation?.context;
+    let currentOperation = operation;
+    while (currentOperation) {
+      if (AI_RUNTIME_OPERATION_TYPES.includes(currentOperation.type)) {
+        rootOperationContext = currentOperation.context;
+        break;
+      }
+      currentOperation = currentOperation.parentOperationId
+        ? this.#get().operations[currentOperation.parentOperationId]
+        : undefined;
+    }
+
+    const agentId =
+      operation?.context?.agentId ?? rootOperationContext?.agentId ?? message?.agentId;
+    const topicId =
+      operation?.context?.topicId ?? rootOperationContext?.topicId ?? message?.topicId;
+    const rawContent = result.content || result.error?.message || '';
+    const content = await archiveToolResultViaServer({
+      agentId,
       content: rawContent,
       identifier: payload.identifier,
       toolCallId: payload.id,
-      topicId: message?.topicId,
+      topicId,
     });
     const context = operationId ? { operationId } : undefined;
 
-    // Use optimisticUpdateToolMessage to update content and state/error in a single call
+    if (projection === 'builtin') {
+      await this.#get().optimisticUpdateToolMessage(
+        id,
+        {
+          content,
+          metadata: result.metadata,
+          pluginError: result.error
+            ? {
+                body: result.error.body,
+                message: result.error.message,
+                type: result.error.type as any,
+              }
+            : undefined,
+          pluginState: result.state,
+        },
+        context,
+      );
+      return content;
+    }
+
+    let pluginError = result.error;
+    if (
+      pluginError?.type === 'MCPToolExecutionError' ||
+      pluginError?.type === 'RemoteToolExecutionError'
+    ) {
+      const { type: _, ...legacyError } = pluginError;
+      pluginError = legacyError as BuiltinToolResult['error'];
+    }
+
     await this.#get().optimisticUpdateToolMessage(
       id,
       {
-        content: remoteContent,
-        pluginError: data.success ? undefined : data.error,
-        pluginState: data.success ? data.state : undefined,
+        content,
+        pluginError: result.success ? undefined : pluginError,
+        pluginState: result.success ? result.state : undefined,
       },
       context,
     );
 
-    return remoteContent;
+    return content;
   };
 }
 

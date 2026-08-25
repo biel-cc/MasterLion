@@ -9,12 +9,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as toolEngineering from '@/helpers/toolEngineering';
 import { chatService } from '@/services/chat';
 import * as agentConfigResolver from '@/services/chat/mecha/agentConfigResolver';
+import { messageService } from '@/services/message';
 import { useAgentStore } from '@/store/agent';
 import { useAiInfraStore } from '@/store/aiInfra';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 
 import { useChatStore } from '../../../../store';
 import { messageMapKey } from '../../../../utils/messageMapKey';
+import { buildRunLifecycle } from '../runLifecycle/buildRunLifecycle';
 import {
   createMockAgentConfig,
   createMockChatConfig,
@@ -2479,6 +2481,300 @@ describe('StreamingExecutor actions', () => {
       await runExecutor(result, operationId);
 
       expect(afterCompletion).toHaveBeenCalledTimes(1);
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('terminalizes the root before invoking a never-settling afterCompletion callback', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const context = { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID };
+
+      let operationId!: string;
+      const statusesObservedByCallback: string[] = [];
+      const neverSettlingCallback = vi.fn(() => {
+        statusesObservedByCallback.push(
+          useChatStore.getState().operations[operationId]?.status ?? 'missing',
+        );
+        return new Promise<void>(() => {});
+      });
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context,
+        }).operationId;
+        result.current.registerAfterCompletionCallback(operationId, neverSettlingCallback);
+      });
+
+      const lifecycle = buildRunLifecycle(() => useChatStore.getState(), {
+        context,
+        parentMessageId: TEST_IDS.USER_MESSAGE_ID,
+        parentMessageType: 'user',
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+      });
+      const completion = lifecycle
+        .completeRun({
+          context,
+          operationId,
+          runId: operationId,
+          runScope: 'top_level',
+          runtimeStatus: 'done',
+          runtimeType: 'client',
+        })
+        .then(() => 'completed' as const);
+
+      let watchdogId!: ReturnType<typeof setTimeout>;
+      const outcome = await Promise.race([
+        completion,
+        new Promise<'timed-out'>((resolve) => {
+          watchdogId = setTimeout(() => resolve('timed-out'), 100);
+        }),
+      ]);
+      clearTimeout(watchdogId);
+
+      expect(outcome).toBe('completed');
+      expect(neverSettlingCallback).toHaveBeenCalledOnce();
+      expect(statusesObservedByCallback).toEqual(['completed']);
+      expect(result.current.operations[operationId].status).toBe('completed');
+    });
+
+    it('terminalizes the run when persisting an error event also fails', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+        useChatStore.setState({
+          messagesMap: {
+            [messageMapKey({
+              agentId: TEST_IDS.SESSION_ID,
+              topicId: TEST_IDS.TOPIC_ID,
+            })]: [createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' })],
+          },
+        });
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [{ error: new Error('tool pipeline failed'), type: 'error' }],
+        newState: createMockRuntimeState(operationId, 'error'),
+        nextContext: undefined,
+      });
+      vi.mocked(messageService.updateMessageError).mockRejectedValueOnce(
+        new Error('error persistence unavailable'),
+      );
+
+      await runExecutor(result, operationId);
+
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('terminalizes the run when error persistence throws synchronously', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+        useChatStore.setState({
+          messagesMap: {
+            [messageMapKey({
+              agentId: TEST_IDS.SESSION_ID,
+              topicId: TEST_IDS.TOPIC_ID,
+            })]: [createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' })],
+          },
+        });
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [{ error: new Error('tool pipeline failed'), type: 'error' }],
+        newState: createMockRuntimeState(operationId, 'error'),
+        nextContext: undefined,
+      });
+      vi.mocked(messageService.updateMessageError).mockImplementationOnce(() => {
+        throw new Error('synchronous reporting failure');
+      });
+
+      await runExecutor(result, operationId);
+      await vi.waitFor(() => expect(messageService.updateMessageError).toHaveBeenCalledTimes(1));
+
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('terminalizes the run when error persistence never settles', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+        useChatStore.setState({
+          messagesMap: {
+            [messageMapKey({
+              agentId: TEST_IDS.SESSION_ID,
+              topicId: TEST_IDS.TOPIC_ID,
+            })]: [createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' })],
+          },
+        });
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [{ error: new Error('tool pipeline failed'), type: 'error' }],
+        newState: createMockRuntimeState(operationId, 'error'),
+        nextContext: undefined,
+      });
+      vi.mocked(messageService.updateMessageError).mockReturnValueOnce(new Promise(() => {}));
+
+      const outcome = await Promise.race([
+        runExecutor(result, operationId).then(() => 'completed'),
+        new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
+      ]);
+
+      expect(outcome).toBe('completed');
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('fails safely when post-sub-agent refreshMessages rejects', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      const refreshMessages = vi.fn().mockRejectedValue(new Error('message refresh failed'));
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+        useChatStore.setState({
+          refreshMessages,
+        });
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [],
+        newState: createMockRuntimeState(operationId, 'error'),
+        nextContext: {
+          phase: 'sub_agents_batch_result',
+          session: {
+            messageCount: 0,
+            sessionId: TEST_IDS.SESSION_ID,
+            status: 'error',
+            stepCount: 1,
+          },
+        },
+      });
+
+      await expect(runExecutor(result, operationId)).rejects.toThrow('message refresh failed');
+
+      expect(refreshMessages).toHaveBeenCalledWith({
+        agentId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      });
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('does not refresh the full message list after lifecycle-managed tool batches', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      const refreshMessages = vi.fn();
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+        useChatStore.setState({ refreshMessages });
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [],
+        newState: createMockRuntimeState(operationId, 'done'),
+        nextContext: {
+          phase: 'tools_batch_result',
+          session: {
+            messageCount: 0,
+            sessionId: TEST_IDS.SESSION_ID,
+            status: 'done',
+            stepCount: 1,
+          },
+        },
+      });
+
+      await runExecutor(result, operationId);
+
+      expect(refreshMessages).not.toHaveBeenCalled();
+      expect(result.current.operations[operationId].status).toBe('completed');
+    });
+
+    it('fails the run when a step has no continuation but remains non-terminal', async () => {
+      const { result } = renderHook(() => useChatStore());
+      restoreExecutor();
+
+      let operationId!: string;
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+        }).operationId;
+      });
+
+      driveTerminal(operationId, 'running');
+      vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step').mockResolvedValueOnce({
+        events: [],
+        newState: createMockRuntimeState(operationId, 'running'),
+        nextContext: undefined,
+      });
+
+      await runExecutor(result, operationId);
+
+      expect(result.current.operations[operationId].status).toBe('failed');
+    });
+
+    it('fails a non-terminal run that reaches the completion lifecycle', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const context = { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID };
+
+      let operationId!: string;
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'execAgentRuntime',
+          context,
+        }).operationId;
+      });
+
+      const lifecycle = buildRunLifecycle(() => useChatStore.getState(), {
+        context,
+        parentMessageId: TEST_IDS.USER_MESSAGE_ID,
+        parentMessageType: 'user',
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+      });
+
+      await lifecycle.completeRun({
+        context,
+        operationId,
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeStatus: 'running',
+        runtimeType: 'client',
+      });
+
       expect(result.current.operations[operationId].status).toBe('failed');
     });
 

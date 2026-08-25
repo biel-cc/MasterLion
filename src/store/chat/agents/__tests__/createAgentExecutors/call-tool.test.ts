@@ -1,17 +1,13 @@
 import { type GeneralAgentCallToolResultPayload } from '@lobechat/agent-runtime';
 import { type ChatToolPayload } from '@lobechat/types';
 import { type Mock } from 'vitest';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { messageService } from '@/services/message';
 import { type OperationCancelContext } from '@/store/chat/slices/operation/types';
 
 import { createAssistantMessage, createCallToolInstruction, createMockStore } from './fixtures';
-import {
-  createInitialState,
-  createTestContext,
-  executeWithMockContext,
-  simulateOperationCancellation,
-} from './helpers';
+import { createInitialState, createTestContext, executeWithMockContext } from './helpers';
 
 vi.mock('@/utils/localStorage', () => {
   class AsyncLocalStorage<State> {
@@ -27,7 +23,30 @@ vi.mock('@/utils/localStorage', () => {
   return { AsyncLocalStorage };
 });
 
+vi.mock('@/services/message', () => ({
+  messageService: {
+    commitToolResult: vi.fn(async ({ id }) => ({ disposition: 'committed', id })),
+    ensureToolMessage: vi.fn(async ({ id }) => ({ disposition: 'created', id })),
+  },
+}));
+
+vi.mock('@/services/toolResultArchive', () => ({
+  archiveToolResultViaServer: vi.fn(async ({ content }) => content),
+}));
+
 describe('call_tool executor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(messageService.ensureToolMessage).mockImplementation(async ({ id }) => ({
+      disposition: 'created',
+      id,
+    }));
+    vi.mocked(messageService.commitToolResult).mockImplementation(async ({ id }) => ({
+      disposition: 'committed',
+      id,
+    }));
+  });
+
   describe('Basic Behavior', () => {
     it('should create tool message and execute tool successfully', async () => {
       // Given
@@ -99,10 +118,11 @@ describe('call_tool executor', () => {
       // Then
       const createdMessage = await (mockStore.optimisticCreateMessage as Mock).mock.results[0]
         .value;
-      expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalledWith(
+      expect(mockStore.internal_executeDifferentTypePlugin).toHaveBeenCalledWith(
         createdMessage.id,
         toolCall,
         undefined, // stepContext is undefined when not provided
+        expect.anything(),
       );
     });
 
@@ -135,7 +155,11 @@ describe('call_tool executor', () => {
       expect(result.events).toHaveLength(1);
       expect(result.events[0].type).toBe('tool_result');
       const toolResultEvent = result.events[0] as any;
-      expect(toolResultEvent.result).toEqual({ data: 'search results', error: null });
+      expect(toolResultEvent.result).toEqual({
+        data: 'search results',
+        error: null,
+        success: true,
+      });
     });
   });
 
@@ -322,7 +346,7 @@ describe('call_tool executor', () => {
       const state = createInitialState();
 
       // When
-      const result = await executeWithMockContext({
+      await executeWithMockContext({
         executor: 'call_tool',
         instruction,
         state,
@@ -332,10 +356,11 @@ describe('call_tool executor', () => {
 
       // Then
       expect(mockStore.optimisticCreateMessage).not.toHaveBeenCalled();
-      expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalledWith(
+      expect(mockStore.internal_executeDifferentTypePlugin).toHaveBeenCalledWith(
         'msg_existing_tool',
         expect.any(Object),
         undefined, // stepContext is undefined when not provided
+        expect.anything(),
       );
     });
 
@@ -385,16 +410,17 @@ describe('call_tool executor', () => {
       // Then
       expect(result.events).toHaveLength(1);
       expect(result.events[0].type).toBe('tool_result');
-      expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalledWith(
+      expect(mockStore.internal_executeDifferentTypePlugin).toHaveBeenCalledWith(
         'msg_tool_reuse',
         toolCall,
         undefined, // stepContext is undefined when not provided
+        expect.anything(),
       );
     });
   });
 
   describe('Operation Tree Management', () => {
-    it('should create three-level operation tree', async () => {
+    it('should create the four lifecycle operations across a three-level tree', async () => {
       // Given
       const mockStore = createMockStore();
       const context = createTestContext();
@@ -415,7 +441,7 @@ describe('call_tool executor', () => {
       });
 
       // Then
-      expect(mockStore.startOperation).toHaveBeenCalledTimes(3);
+      expect(mockStore.startOperation).toHaveBeenCalledTimes(4);
 
       // First: toolCalling operation
       expect(mockStore.startOperation).toHaveBeenNthCalledWith(
@@ -439,6 +465,14 @@ describe('call_tool executor', () => {
         3,
         expect.objectContaining({
           type: 'executeToolCall',
+        }),
+      );
+
+      // Fourth: result synchronization operation
+      expect(mockStore.startOperation).toHaveBeenNthCalledWith(
+        4,
+        expect.objectContaining({
+          type: 'syncToolResult',
         }),
       );
     });
@@ -521,10 +555,10 @@ describe('call_tool executor', () => {
 
       expect(mockStore.startOperation).toHaveBeenNthCalledWith(2, {
         type: 'createToolMessage',
-        context: {
+        context: expect.objectContaining({
           agentId: 'sess_child',
           topicId: 'topic_child',
-        },
+        }),
         parentOperationId: toolCallingOpId,
         metadata: expect.objectContaining({
           tool_call_id: 'tool_child_test',
@@ -561,9 +595,9 @@ describe('call_tool executor', () => {
         3,
         expect.objectContaining({
           type: 'executeToolCall',
-          context: {
+          context: expect.objectContaining({
             messageId: createdMessage.id,
-          },
+          }),
           parentOperationId: toolCallingOpId,
         }),
       );
@@ -589,16 +623,19 @@ describe('call_tool executor', () => {
         context,
       });
 
-      // Then - completeOperation called 3 times: createToolMessage, executeToolCall, and toolCalling
-      expect(mockStore.completeOperation).toHaveBeenCalledTimes(3);
+      // Then - all four lifecycle nodes reach completed.
+      expect(mockStore.completeOperation).toHaveBeenCalledTimes(4);
 
       const createToolMsgOpId = (mockStore.startOperation as Mock).mock.results[1].value
         .operationId;
       const executeToolOpId = (mockStore.startOperation as Mock).mock.results[2].value.operationId;
+      const syncToolResultOpId = (mockStore.startOperation as Mock).mock.results[3].value
+        .operationId;
       const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
 
       expect(mockStore.completeOperation).toHaveBeenCalledWith(createToolMsgOpId);
       expect(mockStore.completeOperation).toHaveBeenCalledWith(executeToolOpId);
+      expect(mockStore.completeOperation).toHaveBeenCalledWith(syncToolResultOpId);
       expect(mockStore.completeOperation).toHaveBeenCalledWith(toolCallingOpId);
     });
 
@@ -629,165 +666,118 @@ describe('call_tool executor', () => {
       // Then
       const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
 
-      expect(mockStore.failOperation).toHaveBeenCalledWith(toolCallingOpId, {
-        type: 'ToolExecutionError',
-        message: 'Tool execution failed',
-      });
+      expect(mockStore.failOperation).toHaveBeenCalledWith(
+        toolCallingOpId,
+        expect.objectContaining({
+          type: 'ToolExecutionError',
+          message: 'Tool execution failed',
+        }),
+      );
     });
   });
 
-  describe('CRITICAL: Parent Cancellation Check (Bug Fix Lines 395-406)', () => {
-    it('should skip tool execution if parent operation cancelled after message creation', async () => {
-      // Given
+  describe('Parent Cancellation', () => {
+    it('should reject a tool call whose root operation was already cancelled', async () => {
       const mockStore = createMockStore();
       const context = createTestContext();
+      mockStore.dbMessagesMap[context.messageKey] = [createAssistantMessage()];
+      const abortController = new AbortController();
+      abortController.abort('root operation already cancelled');
+      mockStore.operations[context.operationId] = {
+        abortController,
+        childOperationIds: [],
+        context: { agentId: context.agentId, topicId: context.topicId },
+        id: context.operationId,
+        metadata: { startTime: Date.now() },
+        status: 'cancelled',
+        type: 'execAgentRuntime',
+      } as any;
 
-      const assistantMessage = createAssistantMessage();
-      mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction: createCallToolInstruction(),
+          state: createInitialState(),
+          mockStore,
+          context,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
 
-      const instruction = createCallToolInstruction();
-      const state = createInitialState();
+      expect(messageService.ensureToolMessage).not.toHaveBeenCalled();
+      expect(mockStore.internal_executeDifferentTypePlugin).not.toHaveBeenCalled();
+      expect(
+        Object.values(mockStore.operations).some(({ status }: any) => status === 'running'),
+      ).toBe(false);
+    });
 
-      // Mock optimisticCreateMessage to cancel parent operation before returning
-      mockStore.optimisticCreateMessage = vi.fn().mockImplementation(async (params) => {
-        const message = { id: 'msg_test', ...params };
+    it('should stop before local execution when the root operation is cancelled during prepare', async () => {
+      const mockStore = createMockStore();
+      const context = createTestContext();
+      mockStore.dbMessagesMap[context.messageKey] = [createAssistantMessage()];
 
-        // Cancel the toolCalling operation after message creation
+      vi.mocked(messageService.ensureToolMessage).mockImplementationOnce(async ({ id }) => {
+        mockStore.cancelOperation(context.operationId, 'root cancelled during prepare');
+        return { disposition: 'created', id };
+      });
+
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction: createCallToolInstruction(),
+          state: createInitialState(),
+          mockStore,
+          context,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(messageService.ensureToolMessage).toHaveBeenCalledTimes(1);
+      expect(mockStore.internal_executeDifferentTypePlugin).not.toHaveBeenCalled();
+      expect(
+        Object.values(mockStore.operations).some(({ status }: any) => status === 'running'),
+      ).toBe(false);
+    });
+
+    it('should reject and never execute locally when cancelled during message preparation', async () => {
+      const mockStore = createMockStore();
+      const context = createTestContext();
+      mockStore.dbMessagesMap[context.messageKey] = [createAssistantMessage()];
+
+      vi.mocked(messageService.ensureToolMessage).mockImplementationOnce(async ({ id }) => {
         const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value
           .operationId;
-        const toolCallingOp = mockStore.operations[toolCallingOpId];
-        if (toolCallingOp) {
-          simulateOperationCancellation(toolCallingOp, 'Parent cancelled during message creation');
-        }
-
-        return message;
+        mockStore.cancelOperation(toolCallingOpId, 'cancelled during preparation');
+        return { disposition: 'created', id };
       });
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction: createCallToolInstruction(),
+          state: createInitialState(),
+          mockStore,
+          context,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
 
-      // Then - tool execution should be skipped
       expect(mockStore.internal_invokeDifferentTypePlugin).not.toHaveBeenCalled();
-      expect(result.events).toHaveLength(0);
-      expect(result.newState).toEqual(state);
-    });
-
-    it('should check parent abortController signal after message creation', async () => {
-      // Given
-      const mockStore = createMockStore();
-      const context = createTestContext();
-
-      const assistantMessage = createAssistantMessage();
-      mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
-
-      const instruction = createCallToolInstruction();
-      const state = createInitialState();
-
-      // Setup to abort parent operation during message creation
-      mockStore.optimisticCreateMessage = vi.fn().mockImplementation(async (params) => {
-        const message = { id: 'msg_abort_test', ...params };
-
-        // Abort the parent toolCalling operation
-        const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value
-          .operationId;
-        mockStore.operations[toolCallingOpId].abortController.abort();
-
-        return message;
-      });
-
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
-
-      // Then
-      const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
-      const operation = mockStore.operations[toolCallingOpId];
-
-      expect(operation.abortController.signal.aborted).toBe(true);
-      expect(mockStore.internal_invokeDifferentTypePlugin).not.toHaveBeenCalled();
-    });
-
-    it('should return early without executing tool when parent cancelled', async () => {
-      // Given
-      const mockStore = createMockStore();
-      const context = createTestContext();
-
-      const assistantMessage = createAssistantMessage();
-      mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
-
-      const instruction = createCallToolInstruction();
-      const state = createInitialState({ operationId: 'test-session', stepCount: 5 });
-
-      // Cancel parent during message creation
-      mockStore.optimisticCreateMessage = vi.fn().mockImplementation(async (params) => {
-        const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value
-          .operationId;
-        simulateOperationCancellation(mockStore.operations[toolCallingOpId]);
-        return { id: 'msg_early_return', ...params };
-      });
-
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
-
-      // Then
-      expect(result.events).toHaveLength(0);
-      expect(result.newState).toEqual(state);
-      expect(result.newState.stepCount).toBe(5); // Unchanged
-    });
-
-    it('should not create executeToolCall operation if parent cancelled', async () => {
-      // Given
-      const mockStore = createMockStore();
-      const context = createTestContext();
-
-      const assistantMessage = createAssistantMessage();
-      mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
-
-      const instruction = createCallToolInstruction();
-      const state = createInitialState();
-
-      // Cancel during message creation
-      mockStore.optimisticCreateMessage = vi.fn().mockImplementation(async (params) => {
-        const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value
-          .operationId;
-        mockStore.operations[toolCallingOpId].abortController.abort();
-        return { id: 'msg_no_execute', ...params };
-      });
-
-      // When
-      await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
-
-      // Then - only 2 operations created (toolCalling + createToolMessage), NOT executeToolCall
       expect(mockStore.startOperation).toHaveBeenCalledTimes(2);
       expect(mockStore.startOperation).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: 'executeToolCall' }),
       );
+      expect(
+        Object.values(mockStore.operations)
+          .filter((operation: any) => operation.type !== 'execAgentRuntime')
+          .map((operation: any) => ({
+            status: operation.status,
+            type: operation.type,
+          })),
+      ).toEqual([
+        { status: 'cancelled', type: 'toolCalling' },
+        { status: 'cancelled', type: 'createToolMessage' },
+      ]);
     });
 
-    it('should proceed normally if parent not cancelled', async () => {
+    it('should proceed through all lifecycle phases when not cancelled', async () => {
       // Given
       const mockStore = createMockStore();
       const context = createTestContext();
@@ -808,7 +798,7 @@ describe('call_tool executor', () => {
       });
 
       // Then - normal execution
-      expect(mockStore.startOperation).toHaveBeenCalledTimes(3);
+      expect(mockStore.startOperation).toHaveBeenCalledTimes(4);
       expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalledTimes(1);
       expect(result.events).toHaveLength(1);
     });
@@ -874,7 +864,7 @@ describe('call_tool executor', () => {
       );
     });
 
-    it('should update operation metadata with createMessagePromise', async () => {
+    it('should project retry attempts onto preparation and result-sync operations', async () => {
       // Given
       const mockStore = createMockStore();
       const context = createTestContext();
@@ -897,12 +887,19 @@ describe('call_tool executor', () => {
       // Then
       const createToolMsgOpId = (mockStore.startOperation as Mock).mock.results[1].value
         .operationId;
-      expect(mockStore.updateOperationMetadata).toHaveBeenCalledWith(
-        createToolMsgOpId,
-        expect.objectContaining({
-          createMessagePromise: expect.any(Promise),
-        }),
-      );
+      expect(mockStore.updateOperationMetadata).toHaveBeenCalledWith(createToolMsgOpId, {
+        attempt: 1,
+        maxAttempts: 5,
+        phase: 'prepare-message',
+      });
+
+      const syncToolResultOpId = (mockStore.startOperation as Mock).mock.results[3].value
+        .operationId;
+      expect(mockStore.updateOperationMetadata).toHaveBeenCalledWith(syncToolResultOpId, {
+        attempt: 1,
+        maxAttempts: 5,
+        phase: 'sync-result',
+      });
     });
   });
 
@@ -1142,12 +1139,15 @@ describe('call_tool executor', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle message creation failure', async () => {
+    it('should terminate the tool lifecycle when message creation fails', async () => {
       // Given
-      const mockStore = createMockStore({
-        optimisticCreateMessage: vi.fn().mockResolvedValue(null),
-      });
+      const mockStore = createMockStore();
       const context = createTestContext();
+      vi.mocked(messageService.ensureToolMessage).mockRejectedValueOnce(
+        Object.assign(new Error('Failed to create tool message'), {
+          data: { httpStatus: 400 },
+        }),
+      );
 
       const assistantMessage = createAssistantMessage();
       mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
@@ -1155,27 +1155,31 @@ describe('call_tool executor', () => {
       const instruction = createCallToolInstruction();
       const state = createInitialState();
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      // When / Then
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toThrow('Failed to create tool message');
 
-      // Then
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe('error');
-      expect(result.newState).toEqual(state);
+      const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
+      expect(mockStore.operations[toolCallingOpId].status).toBe('failed');
+      expect(mockStore.internal_invokeDifferentTypePlugin).not.toHaveBeenCalled();
     });
 
     it('should fail createToolMessage operation on message creation error', async () => {
       // Given
-      const mockStore = createMockStore({
-        optimisticCreateMessage: vi.fn().mockResolvedValue(null),
-      });
+      const mockStore = createMockStore();
       const context = createTestContext();
+      vi.mocked(messageService.ensureToolMessage).mockRejectedValueOnce(
+        Object.assign(new Error('Failed to create tool message'), {
+          data: { httpStatus: 400 },
+        }),
+      );
 
       const assistantMessage = createAssistantMessage();
       mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
@@ -1192,21 +1196,26 @@ describe('call_tool executor', () => {
       const state = createInitialState();
 
       // When
-      await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toThrow('Failed to create tool message');
 
       // Then
       const createToolMsgOpId = (mockStore.startOperation as Mock).mock.results[1].value
         .operationId;
-      expect(mockStore.failOperation).toHaveBeenCalledWith(createToolMsgOpId, {
-        type: 'CreateMessageError',
-        message: expect.stringContaining('Failed to create tool message'),
-      });
+      expect(mockStore.failOperation).toHaveBeenCalledWith(
+        createToolMsgOpId,
+        expect.objectContaining({
+          message: expect.stringContaining('Failed to create tool message'),
+          type: 'ToolCallLifecycleError',
+        }),
+      );
     });
 
     it('should return error event on tool execution error', async () => {
@@ -1240,12 +1249,13 @@ describe('call_tool executor', () => {
       });
     });
 
-    it('should handle exception during execution', async () => {
+    it('should propagate a rejected message creation request', async () => {
       // Given
-      const mockStore = createMockStore({
-        optimisticCreateMessage: vi.fn().mockRejectedValue(new Error('Database error')),
-      });
+      const mockStore = createMockStore();
       const context = createTestContext();
+      vi.mocked(messageService.ensureToolMessage).mockRejectedValueOnce(
+        Object.assign(new Error('Database error'), { data: { httpStatus: 400 } }),
+      );
 
       const assistantMessage = createAssistantMessage();
       mockStore.dbMessagesMap[context.messageKey] = [assistantMessage];
@@ -1253,22 +1263,26 @@ describe('call_tool executor', () => {
       const instruction = createCallToolInstruction();
       const state = createInitialState();
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      // When / Then
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toThrow('Database error');
 
-      // Then
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe('error');
-      expect(result.newState).toEqual(state);
+      const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
+      const createToolMsgOpId = (mockStore.startOperation as Mock).mock.results[1].value
+        .operationId;
+      expect(mockStore.operations[toolCallingOpId].status).toBe('failed');
+      expect(mockStore.operations[createToolMsgOpId].status).toBe('failed');
+      expect(mockStore.internal_invokeDifferentTypePlugin).not.toHaveBeenCalled();
     });
 
-    it('should return original state on error', async () => {
+    it('should propagate a thrown tool pipeline error and settle owned operations', async () => {
       // Given
       const mockStore = createMockStore({
         internal_invokeDifferentTypePlugin: vi.fn().mockRejectedValue(new Error('Tool crashed')),
@@ -1281,18 +1295,21 @@ describe('call_tool executor', () => {
       const instruction = createCallToolInstruction();
       const state = createInitialState({ operationId: 'test-session', stepCount: 10 });
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      // When / Then
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toThrow('Tool crashed');
 
-      // Then
-      expect(result.newState).toEqual(state);
-      expect(result.events[0].type).toBe('error');
+      const toolCallingOpId = (mockStore.startOperation as Mock).mock.results[0].value.operationId;
+      const executeToolOpId = (mockStore.startOperation as Mock).mock.results[2].value.operationId;
+      expect(mockStore.operations[toolCallingOpId].status).toBe('failed');
+      expect(mockStore.operations[executeToolOpId].status).toBe('failed');
     });
   });
 
@@ -1379,7 +1396,7 @@ describe('call_tool executor', () => {
 
       const instruction = createCallToolInstruction();
       const state = createInitialState({ operationId: 'immutable-test', stepCount: 5 });
-      const originalState = JSON.parse(JSON.stringify(state));
+      const originalState = structuredClone(state);
 
       // When
       await executeWithMockContext({
@@ -1589,7 +1606,7 @@ describe('call_tool executor', () => {
       const state = createInitialState();
 
       // When
-      const result = await executeWithMockContext({
+      await executeWithMockContext({
         executor: 'call_tool',
         instruction,
         state,
@@ -1645,10 +1662,11 @@ describe('call_tool executor', () => {
 
       // Then
       expect(result.events).toHaveLength(1);
-      expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalledWith(
+      expect(mockStore.internal_executeDifferentTypePlugin).toHaveBeenCalledWith(
         expect.any(String),
         toolCall,
         undefined, // stepContext is undefined when not provided
+        expect.anything(),
       );
     });
 
@@ -1664,7 +1682,7 @@ describe('call_tool executor', () => {
       const state = createInitialState();
 
       // When
-      const result = await executeWithMockContext({
+      await executeWithMockContext({
         executor: 'call_tool',
         instruction,
         state,
@@ -1861,20 +1879,19 @@ describe('call_tool executor', () => {
         return result;
       });
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      // When / Then
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
 
-      // Then
-      // Should return early without executing the tool
-      expect(result.events).toHaveLength(0);
-      // Should have created tool message but not executed it
       expect(mockStore.optimisticCreateMessage).toHaveBeenCalled();
+      expect(mockStore.internal_invokeDifferentTypePlugin).not.toHaveBeenCalled();
     });
 
     it('should handle executeToolCall cancellation and update message to aborted state', async () => {
@@ -1994,19 +2011,17 @@ describe('call_tool executor', () => {
         },
       );
 
-      // When
-      const result = await executeWithMockContext({
-        executor: 'call_tool',
-        instruction,
-        state,
-        mockStore,
-        context,
-      });
+      // When / Then
+      await expect(
+        executeWithMockContext({
+          executor: 'call_tool',
+          instruction,
+          state,
+          mockStore,
+          context,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
 
-      // Then
-      // Should return early without completing operation or logging success
-      expect(result.events).toHaveLength(0);
-      // Should have executed the tool
       expect(mockStore.internal_invokeDifferentTypePlugin).toHaveBeenCalled();
       // Should not have completed the executeToolCall operation (because it was aborted)
       if (executeToolOpId) {
@@ -2342,8 +2357,8 @@ describe('call_tool executor', () => {
       });
 
       // Then
-      // All 3 operations should be completed
-      expect(mockStore.completeOperation).toHaveBeenCalledTimes(3);
+      // All four lifecycle operations should be completed.
+      expect(mockStore.completeOperation).toHaveBeenCalledTimes(4);
     });
   });
 

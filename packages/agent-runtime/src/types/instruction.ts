@@ -52,6 +52,12 @@ export interface AgentRuntimeContext {
   };
 
   /**
+   * Cancellation scoped to the current runtime phase (for example, one parallel tool batch).
+   * Executors must treat it as read-only and stop before committing late side effects.
+   */
+  signal?: AbortSignal;
+
+  /**
    * Step context computed at the beginning of each step
    * Contains dynamic state like lobe-agent todos that changes between steps
    * Computed by AgentRuntime and passed to Context Engine and Tool Executors

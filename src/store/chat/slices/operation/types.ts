@@ -35,6 +35,7 @@ export type OperationType =
   // === (sub-operations) ===
   | 'createToolMessage' // Create tool message (sub-operation of executeToolCall)
   | 'executeToolCall' // Execute tool call (sub-operation of toolCalling)
+  | 'syncToolResult' // Persist one completed local execution (sub-operation of toolCalling)
   // === Tool intervention ===
   | 'approveToolCalling' // Approve tool intervention
   | 'rejectToolCalling' // Reject tool intervention

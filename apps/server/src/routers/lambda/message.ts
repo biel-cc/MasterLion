@@ -1,5 +1,7 @@
 import {
+  CommitToolResultInputSchema,
   CreateNewMessageParamsSchema,
+  EnsureToolMessageInputSchema,
   UpdateMessageParamsSchema,
   UpdateMessagePluginSchema,
   UpdateMessageRAGParamsSchema,
@@ -13,7 +15,12 @@ import {
   cloudWorkspaceAuth,
   wsCompatProcedure,
 } from '@/business/server/trpc-middlewares/workspaceAuth';
-import { MessageModel } from '@/database/models/message';
+import {
+  MessageModel,
+  ToolMessageIntentConflictError,
+  ToolResultCommitConflictError,
+  ToolResultCommitTargetError,
+} from '@/database/models/message';
 import { TopicShareModel } from '@/database/models/topicShare';
 import { CompressionRepository } from '@/database/repositories/compression';
 import { publicProcedure, router } from '@/libs/trpc/lambda';
@@ -173,6 +180,57 @@ export const messageRouter = router({
 
       // Create message with the resolved agentId
       return ctx.messageService.createMessage({ ...input, agentId } as any);
+    }),
+
+  ensureToolMessage: messageProcedure
+    .use(withScopedPermission('message:create'))
+    // The prepare acknowledgement authorizes a local side effect whose result must be committed.
+    // Never acknowledge a caller that can create but cannot complete the update phase.
+    .use(withScopedPermission('message:update'))
+    .input(EnsureToolMessageInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await ctx.messageService.ensureToolMessage(input);
+      } catch (error) {
+        if (error instanceof ToolMessageIntentConflictError) {
+          throw new TRPCError({
+            cause: error,
+            code: 'CONFLICT',
+            message: 'Tool message id is already bound to a different immutable intent',
+          });
+        }
+
+        throw error;
+      }
+    }),
+
+  commitToolResult: messageProcedure
+    .use(withScopedPermission('message:update'))
+    .input(CommitToolResultInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await ctx.messageService.commitToolResult(input);
+      } catch (error) {
+        if (error instanceof ToolResultCommitConflictError) {
+          throw new TRPCError({
+            cause: error,
+            code: 'CONFLICT',
+            message: 'A different result is already committed for this tool message',
+          });
+        }
+
+        if (error instanceof ToolResultCommitTargetError) {
+          const code =
+            error.reason === 'message-not-found'
+              ? 'NOT_FOUND'
+              : error.reason === 'not-tool-message'
+                ? 'BAD_REQUEST'
+                : 'PRECONDITION_FAILED';
+          throw new TRPCError({ cause: error, code, message: error.message });
+        }
+
+        throw error;
+      }
     }),
 
   /**

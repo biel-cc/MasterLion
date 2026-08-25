@@ -3,8 +3,12 @@ import {
   type ChatMessagePluginError,
   type ChatTranslate,
   type ChatTTS,
+  type CommitToolResultInput,
+  type CommitToolResultResult,
   type CreateMessageParams,
   type CreateMessageResult,
+  type EnsureToolMessageInput,
+  type EnsureToolMessageResult,
   type MessageMetadata,
   type MessagePluginItem,
   type ModelRankItem,
@@ -34,6 +38,20 @@ export interface MessageQueryContext {
 export class MessageService {
   createMessage = async (params: CreateMessageParams): Promise<CreateMessageResult> => {
     return lambdaClient.message.createMessage.mutate(params as any);
+  };
+
+  ensureToolMessage = async (
+    input: EnsureToolMessageInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<EnsureToolMessageResult> => {
+    return lambdaClient.message.ensureToolMessage.mutate(input, options);
+  };
+
+  commitToolResult = async (
+    input: CommitToolResultInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<CommitToolResultResult> => {
+    return lambdaClient.message.commitToolResult.mutate(input, options);
   };
 
   getMessages = async (params: MessageQueryContext): Promise<UIChatMessage[]> => {

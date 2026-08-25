@@ -101,6 +101,30 @@ describe('MessageModel Update Tests', () => {
       expect(result[0].content).toBe('message 1');
     });
 
+    it('preserves server-owned tool lifecycle metadata in generic updates', async () => {
+      const toolLifecycle = { intentFingerprint: 'server-intent' };
+      await serverDB.insert(messages).values({
+        content: 'tool result',
+        id: 'tool-lifecycle-generic-update',
+        metadata: { existing: true, toolLifecycle },
+        role: 'tool',
+        userId,
+      });
+
+      await messageModel.update('tool-lifecycle-generic-update', {
+        metadata: {
+          caller: true,
+          toolLifecycle: { intentFingerprint: 'caller-overwrite' },
+        } as any,
+      });
+
+      const [stored] = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.id, 'tool-lifecycle-generic-update'));
+      expect(stored.metadata).toEqual({ caller: true, existing: true, toolLifecycle });
+    });
+
     it('should update message tools', async () => {
       // Create test data
       await serverDB.insert(messages).values([
@@ -582,6 +606,30 @@ describe('MessageModel Update Tests', () => {
       });
     });
 
+    it('preserves server-owned tool lifecycle metadata in tool updates', async () => {
+      const toolLifecycle = { intentFingerprint: 'server-intent' };
+      await serverDB.insert(messages).values({
+        content: 'content',
+        id: 'tool-msg-reserved-metadata',
+        metadata: { existing: true, toolLifecycle },
+        role: 'tool',
+        userId,
+      });
+
+      await messageModel.updateToolMessage('tool-msg-reserved-metadata', {
+        metadata: {
+          caller: true,
+          toolLifecycle: null,
+        },
+      });
+
+      const [stored] = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.id, 'tool-msg-reserved-metadata'));
+      expect(stored.metadata).toEqual({ caller: true, existing: true, toolLifecycle });
+    });
+
     it('should update pluginState only and merge with existing', async () => {
       await serverDB.insert(messages).values({
         id: 'tool-msg-3',
@@ -836,6 +884,28 @@ describe('MessageModel Update Tests', () => {
         existingKey: 'existingValue',
         newKey: 'newValue',
       });
+    });
+
+    it('preserves server-owned tool lifecycle metadata in metadata patches', async () => {
+      const toolLifecycle = { intentFingerprint: 'server-intent' };
+      await serverDB.insert(messages).values({
+        content: 'test message',
+        id: 'msg-reserved-metadata',
+        metadata: { existing: true, toolLifecycle },
+        role: 'tool',
+        userId,
+      });
+
+      await messageModel.updateMetadata('msg-reserved-metadata', {
+        caller: true,
+        toolLifecycle: { intentFingerprint: 'caller-overwrite' },
+      });
+
+      const [stored] = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.id, 'msg-reserved-metadata'));
+      expect(stored.metadata).toEqual({ caller: true, existing: true, toolLifecycle });
     });
 
     it('should merge new metadata with existing metadata using es-toolkit merge behavior', async () => {

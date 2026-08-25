@@ -172,34 +172,66 @@ export const buildRunLifecycle = (
       operationId,
       runtimeStatus,
     }: RunCompleteEvent): Promise<RunCompleteResult> => {
-      // 1. afterCompletion callbacks — fire on ALL terminal states (tools that
-      //    registered post-run actions: speak / broadcast / delegate).
       const operation = get().operations[operationId];
-      const afterCompletionCallbacks = operation?.metadata?.runtimeHooks?.afterCompletionCallbacks;
-      if (afterCompletionCallbacks && afterCompletionCallbacks.length > 0) {
-        for (const callback of afterCompletionCallbacks) {
-          try {
-            await callback();
-          } catch (error) {
-            // Keep the original log prefix — characterization tests lock it (behavior-preserving).
-            console.error('[executeClientAgent] afterCompletion callback error:', error);
-          }
+      const afterCompletionCallbacks = [
+        ...(operation?.metadata?.runtimeHooks?.afterCompletionCallbacks ?? []),
+      ];
+
+      // 1. Put the root operation into its terminal state before starting any optional
+      //    completion work. Tool callbacks are user/plugin code and must never keep the
+      //    operation in `running`, even when one returns a promise that never settles.
+      switch (runtimeStatus) {
+        case 'idle':
+        case 'running': {
+          get().failOperation(operationId, {
+            type: 'runtime_invariant_error',
+            message: `Agent runtime reached completion with non-terminal status: ${runtimeStatus}`,
+          });
+          break;
         }
-      }
-
-      // 2. On success with queued messages: drain, complete, and re-trigger a new
-      //    sendMessage. Only drain on success — on error the queue is preserved.
-      if (runtimeStatus === 'done') {
-        const remainingQueued = get().drainQueuedMessages(contextKey);
-        if (remainingQueued.length > 0) {
-          const merged = mergeQueuedMessages(remainingQueued);
-
+        case 'done': {
           get().completeOperation(operationId);
-
           const completedOp = get().operations[operationId];
           if (completedOp?.context.agentId) {
             get().markUnreadCompleted(completedOp.context.agentId, completedOp.context.topicId);
           }
+          break;
+        }
+        case 'error': {
+          get().failOperation(operationId, {
+            type: 'runtime_error',
+            message: 'Agent runtime execution failed',
+          });
+          break;
+        }
+        case 'waiting_for_human': {
+          // Parked for human intervention: complete this op so the loading UI
+          // clears; a new operation runs when the user approves/rejects.
+          get().completeOperation(operationId);
+          break;
+        }
+      }
+
+      // 2. afterCompletion callbacks — invoke on ALL terminal states, but never await
+      //    them. Attach the rejection handler immediately so a rejection that arrives
+      //    after completeRun returns cannot become unhandled.
+      for (const callback of afterCompletionCallbacks) {
+        try {
+          void Promise.resolve(callback()).catch((error) => {
+            console.error('[executeClientAgent] afterCompletion callback error:', error);
+          });
+        } catch (error) {
+          // A callback can still throw synchronously before returning a promise.
+          console.error('[executeClientAgent] afterCompletion callback error:', error);
+        }
+      }
+
+      // 3. On success with queued messages: drain and re-trigger a new sendMessage.
+      //    Only drain on success — on error the queue is preserved.
+      if (runtimeStatus === 'done') {
+        const remainingQueued = get().drainQueuedMessages(contextKey);
+        if (remainingQueued.length > 0) {
+          const merged = mergeQueuedMessages(remainingQueued);
 
           emitComplete(operationId, runtimeStatus);
 
@@ -232,36 +264,19 @@ export const buildRunLifecycle = (
         }
       }
 
-      // 3. Complete the operation based on the terminal state.
-      switch (runtimeStatus) {
-        case 'done': {
-          get().completeOperation(operationId);
-          const completedOp = get().operations[operationId];
-          if (completedOp?.context.agentId) {
-            get().markUnreadCompleted(completedOp.context.agentId, completedOp.context.topicId);
-          }
-          break;
-        }
-        case 'error': {
-          get().failOperation(operationId, {
-            type: 'runtime_error',
-            message: 'Agent runtime execution failed',
-          });
-          break;
-        }
-        case 'waiting_for_human': {
-          // Parked for human intervention: complete this op so the loading UI
-          // clears; a new operation runs when the user approves/rejects.
-          get().completeOperation(operationId);
-          break;
-        }
-      }
-
       emitComplete(operationId, runtimeStatus);
 
       return { requeued: false };
     },
-    onRunError: NOOP,
+    onRunError: async ({ error, operationId }) => {
+      const operation = get().operations[operationId];
+      if (!operation || !['pending', 'running', 'paused'].includes(operation.status)) return;
+
+      get().failOperation(operationId, {
+        type: error instanceof Error ? error.name || 'runtime_error' : 'runtime_error',
+        message: error instanceof Error ? error.message : 'Agent runtime execution failed',
+      });
+    },
     onRunParked: NOOP,
     onRunResumed: NOOP,
     onRunStarted: NOOP,

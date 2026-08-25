@@ -41,7 +41,7 @@ export class LobehubSkillStoreActionImpl {
   callLobehubSkillTool = async (
     params: CallLobehubSkillToolParams,
   ): Promise<CallLobehubSkillToolResult> => {
-    const { provider, toolName, args, topicId } = params;
+    const { provider, signal, toolName, args, topicId } = params;
     const toolId = `${provider}:${toolName}`;
 
     this.#set(
@@ -53,12 +53,10 @@ export class LobehubSkillStoreActionImpl {
     );
 
     try {
-      const response = await toolsClient.market.connectCallTool.mutate({
-        args,
-        provider,
-        toolName,
-        topicId,
-      });
+      const request = { args, provider, toolName, topicId };
+      const response = signal
+        ? await toolsClient.market.connectCallTool.mutate(request, { signal })
+        : await toolsClient.market.connectCallTool.mutate(request);
 
       this.#set(
         produce((draft: LobehubSkillStoreState) => {
