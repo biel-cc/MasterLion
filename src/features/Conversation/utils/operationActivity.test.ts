@@ -10,6 +10,7 @@ describe('resolveOperationActivity', () => {
       'toolCalling',
       'executeToolCall',
       'createToolMessage',
+      'syncToolResult',
       'pluginApi',
       'builtinToolSearch',
       'builtinToolInterpreter',

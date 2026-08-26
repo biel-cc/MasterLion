@@ -1,7 +1,11 @@
 import { type LobeChatDatabase } from '@lobechat/database';
 import { CompressionRepository } from '@lobechat/database';
 import {
+  type CommitToolResultInput,
+  type CommitToolResultResult,
   type CreateMessageParams,
+  type EnsureToolMessageInput,
+  type EnsureToolMessageResult,
   type QueryMessageParams,
   type UIChatMessage,
   type UpdateMessageParams,
@@ -160,6 +164,19 @@ export class MessageService {
       id: item.id,
       messages,
     };
+  }
+
+  /**
+   * Create the canonical tool message or confirm that an identical intent already exists.
+   * This deliberately returns a minimal acknowledgement instead of re-querying the topic.
+   */
+  async ensureToolMessage(input: EnsureToolMessageInput): Promise<EnsureToolMessageResult> {
+    return this.messageModel.ensureToolMessage(input);
+  }
+
+  /** Persist a local tool result without the legacy topic re-query or error swallowing. */
+  async commitToolResult(input: CommitToolResultInput): Promise<CommitToolResultResult> {
+    return this.messageModel.commitToolResult(input);
   }
 
   /**

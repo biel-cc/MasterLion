@@ -1,4 +1,8 @@
-import { type ChatToolPayload, type RuntimeStepContext } from '@lobechat/types';
+import {
+  type BuiltinToolResult,
+  type ChatToolPayload,
+  type RuntimeStepContext,
+} from '@lobechat/types';
 
 import { type ChatStore } from '@/store/chat/store';
 import { type StoreSetter } from '@/store/types';
@@ -52,10 +56,34 @@ export class PluginPublicApiActionImpl {
         return await this.#get().invokeMCPTypePlugin(id, payload);
       }
 
-      case 'builtin':
       default: {
         // Pass stepContext to builtin tools for dynamic state access
         return await this.#get().invokeBuiltinTool(id, payload, stepContext);
+      }
+    }
+  };
+
+  /**
+   * Execute one tool call without archiving or mutating its message.
+   *
+   * Persistence belongs to the caller's lifecycle so a local execution cannot be repeated merely
+   * because synchronizing its result failed. Keep re-invocation on the legacy method above because
+   * that UI flow intentionally executes and persists in one action.
+   */
+  internal_executeDifferentTypePlugin = async (
+    id: string,
+    payload: ChatToolPayload,
+    stepContext?: RuntimeStepContext,
+    signal?: AbortSignal,
+  ): Promise<BuiltinToolResult> => {
+    switch (payload.type) {
+      // @ts-ignore legacy MCP payloads are not represented in every ChatToolPayload variant
+      case 'mcp': {
+        return await this.#get().internal_executeMCPTypePlugin(id, payload, signal);
+      }
+
+      default: {
+        return await this.#get().internal_executeBuiltinTool(id, payload, stepContext, signal);
       }
     }
   };

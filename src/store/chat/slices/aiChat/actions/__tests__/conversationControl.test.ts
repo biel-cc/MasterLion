@@ -466,6 +466,7 @@ describe('ConversationControl actions', () => {
         id: 'tool-msg-1',
         role: 'tool',
         plugin: { identifier: 'test-plugin', type: 'default', arguments: '{}', apiName: 'test' },
+        tool_call_id: 'call-tool-msg-1',
       });
 
       // Setup store with global context and builder context messages
@@ -531,6 +532,14 @@ describe('ConversationControl actions', () => {
             topicId: builderTopicId,
             scope: 'agent_builder',
           }),
+          initialContext: expect.objectContaining({
+            payload: expect.objectContaining({
+              approvedToolCall: expect.objectContaining({
+                id: 'call-tool-msg-1',
+                intervention: { status: 'approved' },
+              }),
+            }),
+          }),
         }),
       );
     });
@@ -546,6 +555,7 @@ describe('ConversationControl actions', () => {
         id: 'tool-msg-1',
         role: 'tool',
         plugin: { identifier: 'test-plugin', type: 'default', arguments: '{}', apiName: 'test' },
+        tool_call_id: 'call-tool-msg-1',
       });
 
       const globalKey = messageMapKey({ agentId: globalAgentId, topicId: globalTopicId });
@@ -599,6 +609,127 @@ describe('ConversationControl actions', () => {
           }),
         }),
       );
+    });
+
+    it('fails the approval operation when persisting approved state rejects', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'approval-error-agent';
+      const topicId = 'approval-error-topic';
+      const key = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-approval-error',
+        plugin: { apiName: 'test', arguments: '{}', identifier: 'test-plugin', type: 'default' },
+        role: 'tool',
+        tool_call_id: 'call-approval-error',
+      });
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [key]: [toolMessage] },
+          messagesMap: { [key]: [toolMessage] },
+        });
+      });
+      const failure = new Error('approval update failed');
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockRejectedValue(failure);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.approveToolCalling(toolMessage.id, 'group-1');
+      });
+
+      const approvalOperation = Object.values(result.current.operations).find(
+        ({ type }) => type === 'approveToolCalling',
+      );
+      expect(approvalOperation).toMatchObject({
+        metadata: { error: { message: failure.message, type: 'approveToolCalling' } },
+        status: 'failed',
+      });
+      expect(executeClientAgent).not.toHaveBeenCalled();
+    });
+
+    it('fails the approval operation when agent-state reconstruction throws', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'approval-state-error-agent';
+      const topicId = 'approval-state-error-topic';
+      const key = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-state-error',
+        plugin: { apiName: 'test', arguments: '{}', identifier: 'test-plugin', type: 'default' },
+        role: 'tool',
+        tool_call_id: 'call-state-error',
+      });
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [key]: [toolMessage] },
+          messagesMap: { [key]: [toolMessage] },
+        });
+      });
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      const failure = new Error('state reconstruction failed');
+      vi.spyOn(result.current, 'internal_createAgentState').mockImplementation(() => {
+        throw failure;
+      });
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.approveToolCalling(toolMessage.id, 'group-1');
+      });
+
+      const approvalOperation = Object.values(result.current.operations).find(
+        ({ type }) => type === 'approveToolCalling',
+      );
+      expect(approvalOperation).toMatchObject({
+        metadata: { error: { message: failure.message, type: 'approveToolCalling' } },
+        status: 'failed',
+      });
+      expect(executeClientAgent).not.toHaveBeenCalled();
+    });
+
+    it('fails the approval operation when the stored tool call id is missing', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'approval-missing-id-agent';
+      const topicId = 'approval-missing-id-topic';
+      const key = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-missing-id',
+        plugin: { apiName: 'test', arguments: '{}', identifier: 'test-plugin', type: 'default' },
+        role: 'tool',
+      });
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [key]: [toolMessage] },
+          messagesMap: { [key]: [toolMessage] },
+        });
+      });
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      const createAgentState = vi.spyOn(result.current, 'internal_createAgentState');
+
+      await act(async () => {
+        await result.current.approveToolCalling(toolMessage.id, 'group-1');
+      });
+
+      const approvalOperation = Object.values(result.current.operations).find(
+        ({ type }) => type === 'approveToolCalling',
+      );
+      expect(approvalOperation).toMatchObject({
+        metadata: {
+          error: {
+            message: 'Approved tool message is missing its tool call id',
+            type: 'approveToolCalling',
+          },
+        },
+        status: 'failed',
+      });
+      expect(createAgentState).not.toHaveBeenCalled();
     });
 
     it('should not execute when tool message not found', async () => {

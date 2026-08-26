@@ -2,6 +2,7 @@
 import { type LobeChatDatabase } from '@lobechat/database';
 import { messages, sessions, topics } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
+import type { CommitToolResultInput, EnsureToolMessageInput } from '@lobechat/types';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -219,6 +220,126 @@ describe('Message Router Integration Tests', () => {
           topicId: anotherTopic.id, // This topic does not belong to testSessionId
         }),
       ).rejects.toThrow();
+    });
+  });
+
+  describe('ensureToolMessage', () => {
+    it('creates once and confirms an identical replay through the router', async () => {
+      const caller = messageRouter.createCaller(createTestContext(userId));
+      const parent = await caller.createMessage({
+        agentId: testAgentId,
+        content: 'assistant tool call',
+        role: 'assistant',
+        topicId: testTopicId,
+      });
+      const intent: EnsureToolMessageInput = {
+        agentId: testAgentId,
+        id: 'msg_router_ensure_tool',
+        parentMessageId: parent.id,
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_router_ensure',
+          type: 'builtin',
+        },
+        topicId: testTopicId,
+      };
+
+      const created = await caller.ensureToolMessage(intent);
+      const replay = await caller.ensureToolMessage(intent);
+
+      expect(created).toEqual({ disposition: 'created', id: intent.id });
+      expect(replay).toEqual({ disposition: 'existing', id: intent.id });
+    });
+
+    it('maps a reused id with different immutable intent to CONFLICT', async () => {
+      const caller = messageRouter.createCaller(createTestContext(userId));
+      const parent = await caller.createMessage({
+        agentId: testAgentId,
+        content: 'assistant tool call',
+        role: 'assistant',
+        topicId: testTopicId,
+      });
+      const intent: EnsureToolMessageInput = {
+        agentId: testAgentId,
+        id: 'msg_router_ensure_conflict',
+        parentMessageId: parent.id,
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_router_ensure_conflict',
+          type: 'builtin',
+        },
+        topicId: testTopicId,
+      };
+      await caller.ensureToolMessage(intent);
+
+      await expect(
+        caller.ensureToolMessage({
+          ...intent,
+          toolCall: { ...intent.toolCall, arguments: '{"command":"whoami"}' },
+        }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
+  });
+
+  describe('commitToolResult', () => {
+    const prepareToolMessage = async (
+      caller: ReturnType<typeof messageRouter.createCaller>,
+      id: string,
+    ) => {
+      const parent = await caller.createMessage({
+        agentId: testAgentId,
+        content: 'assistant tool call',
+        role: 'assistant',
+        topicId: testTopicId,
+      });
+      await caller.ensureToolMessage({
+        agentId: testAgentId,
+        id,
+        parentMessageId: parent.id,
+        toolCall: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          toolCallId: `call_${id}`,
+          type: 'builtin',
+        },
+        topicId: testTopicId,
+      });
+    };
+
+    it('commits once and acknowledges an identical result replay', async () => {
+      const caller = messageRouter.createCaller(createTestContext(userId));
+      const input: CommitToolResultInput = {
+        executionAttemptId: 'attempt_router_commit',
+        id: 'msg_router_commit',
+        result: { content: 'done', state: { output: 'done' }, success: true },
+      };
+      await prepareToolMessage(caller, input.id);
+
+      const committed = await caller.commitToolResult(input);
+      const replay = await caller.commitToolResult(input);
+
+      expect(committed).toEqual({ disposition: 'committed', id: input.id });
+      expect(replay).toEqual({ disposition: 'existing', id: input.id });
+    });
+
+    it('maps an attempt or result mismatch to CONFLICT', async () => {
+      const caller = messageRouter.createCaller(createTestContext(userId));
+      const input: CommitToolResultInput = {
+        executionAttemptId: 'attempt_router_conflict',
+        id: 'msg_router_commit_conflict',
+        result: { content: 'done', success: true },
+      };
+      await prepareToolMessage(caller, input.id);
+      await caller.commitToolResult(input);
+
+      await expect(
+        caller.commitToolResult({ ...input, result: { content: 'changed', success: true } }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
     });
   });
 

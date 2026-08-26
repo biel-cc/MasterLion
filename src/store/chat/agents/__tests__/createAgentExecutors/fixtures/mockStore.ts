@@ -12,8 +12,24 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
   const messageOperationMap: Record<string, string> = {};
   const operationsByMessage: Record<string, string[]> = {};
   const dbMessagesMap: Record<string, any[]> = {};
+  const optimisticCreateMessage =
+    overrides.optimisticCreateMessage ??
+    vi.fn().mockImplementation(async (params, createContext) => {
+      const id = createContext?.tempMessageId || nanoid();
+      return { id, ...params, createdAt: Date.now(), updatedAt: Date.now() };
+    });
+  const internalInvokeDifferentTypePlugin =
+    overrides.internal_invokeDifferentTypePlugin ??
+    vi.fn().mockResolvedValue({ error: null, success: true });
+  const store = {} as ChatStore;
+  const internalExecuteDifferentTypePlugin =
+    overrides.internal_executeDifferentTypePlugin ??
+    vi.fn(async (...args: Parameters<ChatStore['internal_executeDifferentTypePlugin']>) => {
+      const result = await store.internal_invokeDifferentTypePlugin(args[0], args[1], args[2]);
+      return { ...result, success: result?.success ?? !result?.error };
+    });
 
-  const store = {
+  Object.assign(store, {
     // Other store properties (add as needed)
     activeAgentId: 'test-session',
 
@@ -34,6 +50,9 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
       if (operations[operationId]) {
         operations[operationId].abortController.abort();
         operations[operationId].status = 'cancelled';
+        for (const childId of operations[operationId].childOperationIds || []) {
+          store.cancelOperation(childId, 'Parent operation cancelled');
+        }
       }
     }),
 
@@ -58,7 +77,9 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
     // AI chat methods
     internal_dispatchMessage: vi.fn(),
 
-    internal_invokeDifferentTypePlugin: vi.fn().mockResolvedValue({ error: null }),
+    internal_executeDifferentTypePlugin: internalExecuteDifferentTypePlugin,
+
+    internal_invokeDifferentTypePlugin: internalInvokeDifferentTypePlugin,
 
     internal_toggleToolCallingStreaming: vi.fn(),
 
@@ -88,10 +109,11 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
     optimisticAddToolToAssistantMessage: vi.fn().mockResolvedValue(undefined),
 
     // Message management methods
-    optimisticCreateMessage: vi.fn().mockImplementation(async (params) => {
-      const id = nanoid();
-      const message = { id, ...params, createdAt: Date.now(), updatedAt: Date.now() };
-      return message;
+    optimisticCreateMessage,
+
+    optimisticCreateTmpMessage: vi.fn().mockImplementation((params, createContext) => {
+      void optimisticCreateMessage(params, createContext);
+      return createContext?.tempMessageId || nanoid();
     }),
 
     optimisticUpdateMessageContent: vi.fn().mockResolvedValue(undefined),
@@ -116,13 +138,17 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
         childOperationIds: [],
         context: config.context || {},
         id: operationId,
-        metadata: config.metadata || { startTime: Date.now() },
+        metadata: { startTime: Date.now(), ...config.metadata },
         parentOperationId: config.parentOperationId,
         status: 'running',
         type: config.type,
       };
 
       operations[operationId] = operation;
+
+      if (config.parentOperationId && operations[config.parentOperationId]) {
+        operations[config.parentOperationId].childOperationIds.push(operationId);
+      }
 
       // Auto-associate message with operation if messageId exists
       if (config.context?.messageId) {
@@ -146,7 +172,7 @@ export const createMockStore = (overrides: Partial<ChatStore> = {}): ChatStore =
     }),
 
     ...overrides,
-  } as unknown as ChatStore;
+  });
 
   return store;
 };

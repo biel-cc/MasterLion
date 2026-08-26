@@ -9,6 +9,7 @@ import type {
   Cost,
   CostCalculationContext,
   CostLimit,
+  InstructionExecutor,
   RuntimeConfig,
   Usage,
 } from '../../types';
@@ -1110,6 +1111,77 @@ describe('AgentRuntime', () => {
   });
 
   describe('Batch Tool Execution', () => {
+    it('aborts sibling tool lifecycles before returning a batch error', async () => {
+      let slowToolAborted = false;
+      let slowToolSettled = false;
+
+      class FailingBatchAgent implements Agent {
+        async runner() {
+          return {
+            payload: {
+              parentMessageId: 'assistant-batch',
+              toolsCalling: [
+                {
+                  apiName: 'slow',
+                  arguments: '{}',
+                  id: 'call_slow',
+                  identifier: 'test',
+                  type: 'default' as const,
+                },
+                {
+                  apiName: 'fail',
+                  arguments: '{}',
+                  id: 'call_fail',
+                  identifier: 'test',
+                  type: 'default' as const,
+                },
+              ],
+            },
+            type: 'call_tools_batch' as const,
+          };
+        }
+      }
+
+      const callTool: InstructionExecutor = vi.fn(async (instruction, _state, context) => {
+        if (instruction.type !== 'call_tool') throw new Error('Unexpected instruction type');
+        if (instruction.payload.toolCalling.id === 'call_fail') {
+          throw new Error('prepare failed');
+        }
+
+        const signal = context?.signal;
+        if (!signal) throw new Error('Batch cancellation signal was not provided');
+
+        return await new Promise<never>((_, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              slowToolAborted = true;
+              setTimeout(() => {
+                slowToolSettled = true;
+                reject(signal.reason);
+              }, 0);
+            },
+            { once: true },
+          );
+        });
+      });
+
+      const runtime = new AgentRuntime(new FailingBatchAgent(), {
+        executors: { call_tool: callTool },
+      });
+      const state = AgentRuntime.createInitialState({
+        messages: [{ content: 'Run both tools', role: 'user' }],
+        operationId: 'batch-settlement-test',
+      });
+
+      const result = await runtime.step(state);
+
+      expect(callTool).toHaveBeenCalledTimes(2);
+      expect(slowToolAborted).toBe(true);
+      expect(slowToolSettled).toBe(true);
+      expect(result.newState.status).toBe('error');
+    });
+
     it('should execute multiple tools concurrently with call_tools_batch instruction', async () => {
       // Agent that returns multiple tool calls
       class BatchToolAgent implements Agent {

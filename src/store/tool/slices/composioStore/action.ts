@@ -38,7 +38,7 @@ export class ComposioStoreActionImpl {
   }
 
   callComposioTool = async (params: CallComposioToolParams): Promise<CallComposioToolResult> => {
-    const { identifier, toolSlug, toolArgs } = params;
+    const { identifier, signal, toolSlug, toolArgs } = params;
 
     const toolId = `${identifier}:${toolSlug}`;
 
@@ -51,11 +51,10 @@ export class ComposioStoreActionImpl {
     );
 
     try {
-      const response = await toolsClient.composio.executeAction.mutate({
-        identifier,
-        toolArgs,
-        toolSlug,
-      });
+      const request = { identifier, toolArgs, toolSlug };
+      const response = signal
+        ? await toolsClient.composio.executeAction.mutate(request, { signal })
+        : await toolsClient.composio.executeAction.mutate(request);
 
       this.#set(
         produce((draft: ComposioStoreState) => {

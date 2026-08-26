@@ -36,6 +36,7 @@ export interface CreateComposioServerParams {
 
 export interface CallComposioToolParams {
   identifier: string;
+  signal?: AbortSignal;
   toolArgs?: Record<string, unknown>;
   toolSlug: string;
 }

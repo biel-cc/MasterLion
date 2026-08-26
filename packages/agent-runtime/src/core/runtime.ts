@@ -1,5 +1,4 @@
 import type { ChatToolPayload } from '@lobechat/types';
-import pMap from 'p-map';
 
 import type {
   Agent,
@@ -720,7 +719,7 @@ export class AgentRuntime {
   private async executeToolsBatch(
     instruction: AgentInstructionCallToolsBatch,
     baseState: AgentState,
-    context?: AgentRuntimeContext,
+    context: AgentRuntimeContext,
   ): Promise<{
     events: AgentEvent[];
     newState: AgentState;
@@ -728,17 +727,38 @@ export class AgentRuntime {
   }> {
     const { payload } = instruction;
 
-    // Execute all tools concurrently based on the same state
-    const results = await pMap(instruction.payload.toolsCalling, (toolCalling: ChatToolPayload) =>
-      this.executors.call_tool(
-        {
-          payload: { parentMessageId: payload.parentMessageId, toolCalling },
-          type: 'call_tool',
-        } as AgentInstructionCallTool,
-        structuredClone(baseState), // Each tool starts from the same base state
-        context, // Pass context to each tool call
-      ),
+    // Execute all tools concurrently based on the same state. The first failed lifecycle
+    // cancels its siblings, then the batch waits for every started lifecycle to finish its local
+    // operation cleanup before the original error escapes.
+    const batchController = new AbortController();
+    let primaryError: unknown;
+    const toolExecutions = instruction.payload.toolsCalling.map((toolCalling: ChatToolPayload) =>
+      this.executors
+        .call_tool(
+          {
+            payload: { parentMessageId: payload.parentMessageId, toolCalling },
+            type: 'call_tool',
+          } as AgentInstructionCallTool,
+          structuredClone(baseState), // Each tool starts from the same base state
+          { ...context, signal: batchController.signal },
+        )
+        .catch((error) => {
+          if (!batchController.signal.aborted) {
+            primaryError = error;
+            batchController.abort(error);
+          }
+          throw error;
+        }),
     );
+    const settledResults = await Promise.allSettled(toolExecutions);
+    const rejectedResult = settledResults.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (rejectedResult) throw primaryError ?? rejectedResult.reason;
+    const results = settledResults.map((result) => {
+      if (result.status === 'rejected') throw result.reason;
+      return result.value;
+    });
 
     const lastParentMessageId = (results.at(-1)!.nextContext?.payload as any)
       ?.parentMessageId as string;

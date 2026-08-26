@@ -23,6 +23,7 @@ export const resolveOperationActivity = (type: OperationType): ActivityKey | und
     type === 'toolCalling' ||
     type === 'executeToolCall' ||
     type === 'createToolMessage' ||
+    type === 'syncToolResult' ||
     type === 'pluginApi' ||
     type.startsWith('builtinTool')
   )

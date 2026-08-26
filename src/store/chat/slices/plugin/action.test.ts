@@ -251,7 +251,11 @@ describe('ChatPluginAction', () => {
       });
 
       // Should return error result for invalid JSON
-      expect(returnValue).toEqual({ error: 'Invalid arguments', success: false });
+      expect(returnValue).toEqual({
+        content: 'Invalid arguments',
+        error: { message: 'Invalid arguments', type: 'InvalidToolArguments' },
+        success: false,
+      });
     });
 
     it('should pass page document context to Tool Store executor', async () => {

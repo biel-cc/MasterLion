@@ -81,6 +81,8 @@ export interface CallLobehubSkillToolParams {
   args?: Record<string, unknown>;
   /** Provider ID (e.g., 'linear') */
   provider: string;
+  /** Optional lifecycle cancellation signal. */
+  signal?: AbortSignal;
   /** Tool name */
   toolName: string;
   /** Topic ID from message context (not global active state) */

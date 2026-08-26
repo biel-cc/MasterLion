@@ -7,6 +7,8 @@ import { safeParseJSON } from '@/utils/safeParseJSON';
  * Context for remote tool execution, derived from the invoking message
  */
 export interface RemoteToolExecutorContext {
+  /** Abort the in-flight transport when the owning lifecycle is cancelled. */
+  signal?: AbortSignal;
   /** Topic ID from the message that triggered this tool call */
   topicId?: string;
 }
@@ -34,7 +36,7 @@ const createFailedResult = (
   success: false,
 });
 
-export const composioExecutor: RemoteToolExecutor = async (p, _context) => {
+export const composioExecutor: RemoteToolExecutor = async (p, context) => {
   const identifier = p.identifier;
   const composioServers = useToolStore.getState().composioServers || [];
   const server = composioServers.find((s) => s.identifier === identifier);
@@ -47,6 +49,7 @@ export const composioExecutor: RemoteToolExecutor = async (p, _context) => {
 
   const result = await useToolStore.getState().callComposioTool({
     identifier,
+    ...(context?.signal ? { signal: context.signal } : {}),
     toolArgs: args,
     toolSlug: p.apiName,
   });
@@ -80,6 +83,7 @@ export const lobehubSkillExecutor: RemoteToolExecutor = async (p, context) => {
   const result = await useToolStore.getState().callLobehubSkillTool({
     args,
     provider,
+    ...(context?.signal ? { signal: context.signal } : {}),
     toolName: p.apiName,
     topicId: context?.topicId,
   });
