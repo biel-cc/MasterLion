@@ -88,6 +88,89 @@ describe('NewApiService', () => {
     delete process.env.AIHUB_READONLY_DATABASE_URL;
     delete process.env.AIHUB_DEFAULT_MODEL;
     delete process.env.AIHUB_HIDDEN_MODELS;
+    delete process.env.AIHUB_BRIDGE_TOKEN;
+    delete process.env.AIHUB_BRIDGE_URL;
+    vi.unstubAllGlobals();
+  });
+
+  it('rebinds only the current WeCom user to the persisted Aihub account', async () => {
+    mocks.bindingStore.set('wecom-user', {
+      iamOAuthBindingStatus: 'error',
+      newApiUserId: 27,
+      status: 'active',
+      userId: 'wecom-user',
+    });
+    process.env.AIHUB_BRIDGE_URL = 'http://bridge.internal';
+    process.env.AIHUB_BRIDGE_TOKEN = 'bridge-secret';
+    const where = vi.fn().mockResolvedValue(undefined);
+    const set = vi.fn(() => ({ where }));
+    const values = vi.fn().mockResolvedValue(undefined);
+    const db = {
+      insert: vi.fn(() => ({ values })),
+      query: {
+        enterpriseUserProfiles: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValue({ employeeNumber: '768164', employmentStatus: 'active' }),
+        },
+        externalIdentities: {
+          findFirst: vi.fn().mockResolvedValue({ externalUserId: 'wecom-768164' }),
+        },
+      },
+      update: vi.fn(() => ({ set })),
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { status: 'repaired' }, success: true }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+    const service = new NewApiService({
+      db: db as any,
+      gateKeeper: createGateKeeper(),
+      userId: 'wecom-user',
+    });
+
+    await expect(service.rebindCurrentUser()).resolves.toMatchObject({
+      repaired: true,
+      status: 'active',
+    });
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('http://bridge.internal/v1/users/27/oauth-binding');
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)).toEqual({
+      providerId: 1,
+      providerUserId: '768164',
+    });
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        iamOAuthBindingError: null,
+        iamOAuthBindingStatus: 'active',
+      }),
+    );
+  });
+
+  it('refuses self-service rebinding without a WeCom identity', async () => {
+    mocks.bindingStore.set('plain-user', {
+      newApiUserId: 27,
+      status: 'active',
+      userId: 'plain-user',
+    });
+    const db = {
+      query: {
+        enterpriseUserProfiles: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValue({ employeeNumber: '768164', employmentStatus: 'active' }),
+        },
+        externalIdentities: { findFirst: vi.fn().mockResolvedValue(undefined) },
+      },
+    };
+    const service = new NewApiService({
+      db: db as any,
+      gateKeeper: createGateKeeper(),
+      userId: 'plain-user',
+    });
+
+    await expect(service.rebindCurrentUser()).rejects.toThrow('WeCom identity was not found');
   });
 
   it('imports a binding by matching the Masterino email to an Aihub user with admin auth', async () => {

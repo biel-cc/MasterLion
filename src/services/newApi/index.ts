@@ -1,4 +1,5 @@
 import type {
+  AihubRebindResult,
   NewApiAccountSummary,
   NewApiBindingImportResult,
   NewApiBindingImportRow,
@@ -24,9 +25,11 @@ class AihubService {
     return lambdaClient.aihub.getUsageSummary.query(params);
   };
 
-  importBindings = async (
-    rows: NewApiBindingImportRow[],
-  ): Promise<NewApiBindingImportResult[]> => {
+  rebindCurrentUser = async (): Promise<AihubRebindResult> => {
+    return lambdaClient.aihub.rebindCurrentUser.mutate();
+  };
+
+  importBindings = async (rows: NewApiBindingImportRow[]): Promise<NewApiBindingImportResult[]> => {
     return lambdaClient.aihub.importBindings.mutate({ rows });
   };
 

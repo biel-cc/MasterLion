@@ -1,16 +1,16 @@
 import { eq } from 'drizzle-orm';
 
-import type {
-  NewApiBindingItem,
-  NewApiBindingStatusType,
-  NewNewApiBindingItem,
-} from '../schemas';
+import type { NewApiBindingItem, NewApiBindingStatusType, NewNewApiBindingItem } from '../schemas';
 import { newApiBindings } from '../schemas';
 import type { LobeChatDatabase } from '../type';
 
 interface BaseUpsertNewApiBindingParams {
   encryptedAccessToken?: string | null;
   errorMessage?: string | null;
+  iamOAuthBindingError?: string | null;
+  iamOAuthBindingErrorCode?: string | null;
+  iamOAuthBindingStatus?: NewApiBindingItem['iamOAuthBindingStatus'];
+  iamOAuthBindingSyncedAt?: Date | null;
   managedTokenId?: number | null;
 }
 
@@ -65,6 +65,18 @@ export class NewApiBindingModel {
       encryptedAccessToken: params.encryptedAccessToken ?? null,
       errorMessage: params.errorMessage ?? null,
       managedTokenId: params.managedTokenId ?? null,
+      ...(params.iamOAuthBindingError !== undefined && {
+        iamOAuthBindingError: params.iamOAuthBindingError,
+      }),
+      ...(params.iamOAuthBindingErrorCode !== undefined && {
+        iamOAuthBindingErrorCode: params.iamOAuthBindingErrorCode,
+      }),
+      ...(params.iamOAuthBindingStatus !== undefined && {
+        iamOAuthBindingStatus: params.iamOAuthBindingStatus,
+      }),
+      ...(params.iamOAuthBindingSyncedAt !== undefined && {
+        iamOAuthBindingSyncedAt: params.iamOAuthBindingSyncedAt,
+      }),
       newApiUserId: params.newApiUserId ?? null,
       status,
       updatedAt: now,
@@ -79,6 +91,18 @@ export class NewApiBindingModel {
           encryptedAccessToken: values.encryptedAccessToken,
           errorMessage: values.errorMessage,
           managedTokenId: values.managedTokenId,
+          ...(params.iamOAuthBindingError !== undefined && {
+            iamOAuthBindingError: params.iamOAuthBindingError,
+          }),
+          ...(params.iamOAuthBindingErrorCode !== undefined && {
+            iamOAuthBindingErrorCode: params.iamOAuthBindingErrorCode,
+          }),
+          ...(params.iamOAuthBindingStatus !== undefined && {
+            iamOAuthBindingStatus: params.iamOAuthBindingStatus,
+          }),
+          ...(params.iamOAuthBindingSyncedAt !== undefined && {
+            iamOAuthBindingSyncedAt: params.iamOAuthBindingSyncedAt,
+          }),
           newApiUserId: values.newApiUserId,
           status: values.status,
           updatedAt: now,

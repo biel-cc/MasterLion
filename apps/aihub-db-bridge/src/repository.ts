@@ -6,12 +6,14 @@ import type {
   AihubBridgeToken,
   AihubBridgeUsageLog,
   AihubBridgeUser,
+  AihubOAuthBindingResult,
 } from './types.js';
 
 export type AihubBridgeDialect = 'mysql' | 'postgres';
 
 export interface QueryClient {
   query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }>;
+  transaction?: <T>(callback: (client: QueryClient) => Promise<T>) => Promise<T>;
 }
 
 export interface RepositoryOptions {
@@ -75,6 +77,27 @@ class MySqlQueryClient implements QueryClient {
 
     return { rows: rows as T[] };
   }
+
+  async transaction<T>(callback: (client: QueryClient) => Promise<T>) {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const client: QueryClient = {
+        query: async <R = Record<string, unknown>>(text: string, values: unknown[] = []) => {
+          const [rows] = await connection.execute(text, values);
+          return { rows: rows as R[] };
+        },
+      };
+      const result = await callback(client);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 }
 
 class PgQueryClient implements QueryClient {
@@ -88,6 +111,27 @@ class PgQueryClient implements QueryClient {
     const result = await this.pool.query(convertQuestionPlaceholdersToPg(text), values);
 
     return { rows: result.rows as T[] };
+  }
+
+  async transaction<T>(callback: (client: QueryClient) => Promise<T>) {
+    const connection = await this.pool.connect();
+    try {
+      await connection.query('begin');
+      const client: QueryClient = {
+        query: async <R = Record<string, unknown>>(text: string, values: unknown[] = []) => {
+          const result = await connection.query(convertQuestionPlaceholdersToPg(text), values);
+          return { rows: result.rows as R[] };
+        },
+      };
+      const result = await callback(client);
+      await connection.query('commit');
+      return result;
+    } catch (error) {
+      await connection.query('rollback');
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 }
 
@@ -128,6 +172,15 @@ export class AihubBridgeRepository {
     const result = await this.getClient().query<T>(text, values);
 
     return result.rows;
+  }
+
+  private async withTransaction<T>(callback: (client: QueryClient) => Promise<T>) {
+    const client = this.getClient();
+    if (client.transaction) return client.transaction(callback);
+
+    // Test and legacy injected clients may not expose transaction support. The
+    // production clients above always do.
+    return callback(client);
   }
 
   private normalizeToken(token?: AihubBridgeToken): AihubBridgeToken | undefined {
@@ -380,34 +433,109 @@ where id = ?
     return updated[0]?.name === name;
   }
 
-  /**
-   * Link an Aihub user to an OAuth provider (e.g. BIEL IAM) by inserting into
-   * `user_oauth_bindings`. Uses INSERT IGNORE so it is idempotent — if a
-   * binding already exists (same provider_id + provider_user_id, or same
-   * user_id + provider_id), the call succeeds without error.
-   * Requires INSERT privilege on the `user_oauth_bindings` table.
-   */
+  /** Reconcile one OAuth binding without ever overwriting a non-empty value. */
+  async inspectOAuthBinding(
+    userId: number,
+    providerId: number,
+    providerUserId: string,
+  ): Promise<AihubOAuthBindingResult> {
+    const rows = await this.query<{
+      provider_user_id?: string | null;
+      user_id: number;
+    }>(
+      `select user_id, provider_user_id from user_oauth_bindings
+       where provider_id = ? and (user_id = ? or provider_user_id = ?)`,
+      [providerId, userId, providerUserId],
+    );
+    if (rows.some((row) => row.user_id === userId && row.provider_user_id === providerUserId)) {
+      return { status: 'existing' };
+    }
+    if (rows.some((row) => row.user_id !== userId && row.provider_user_id === providerUserId)) {
+      return { reason: 'provider_user_id_in_use', status: 'conflict' };
+    }
+    if (
+      rows.some((row) => row.user_id === userId && String(row.provider_user_id || '').trim() !== '')
+    ) {
+      return { reason: 'user_already_bound', status: 'conflict' };
+    }
+    return { status: 'missing' };
+  }
+
   async linkOAuthBinding(
     userId: number,
     providerId: number,
     providerUserId: string,
-  ): Promise<boolean> {
-    await this.query(
-      `
-insert ignore into user_oauth_bindings (user_id, provider_id, provider_user_id, created_at)
-values (?, ?, ?, now(3))
-      `.trim(),
-      [userId, providerId, providerUserId],
-    );
+  ): Promise<AihubOAuthBindingResult> {
+    return this.withTransaction(async (client) => {
+      const query = async <T>(text: string, values: unknown[] = []) =>
+        (await client.query<T>(text, values)).rows;
+      const rows = await query<{
+        id: number;
+        provider_user_id?: string | null;
+        user_id: number;
+      }>(
+        `
+select id, user_id, provider_user_id from user_oauth_bindings
+where provider_id = ? and (user_id = ? or provider_user_id = ?)
+for update
+        `.trim(),
+        [providerId, userId, providerUserId],
+      );
 
-    const rows = await this.query<{ id: number }>(
-      `
-select id from user_oauth_bindings
-where user_id = ? and provider_id = ? and provider_user_id = ?
-      `.trim(),
-      [userId, providerId, providerUserId],
-    );
+      const exact = rows.find(
+        (row) => row.user_id === userId && row.provider_user_id === providerUserId,
+      );
+      if (exact) return { status: 'existing' };
 
-    return rows.length > 0;
+      const claimedByOtherUser = rows.find(
+        (row) => row.user_id !== userId && row.provider_user_id === providerUserId,
+      );
+      if (claimedByOtherUser) {
+        return { reason: 'provider_user_id_in_use', status: 'conflict' };
+      }
+
+      const currentUserRows = rows.filter((row) => row.user_id === userId);
+      const conflictingCurrentBinding = currentUserRows.find(
+        (row) => String(row.provider_user_id || '').trim() !== '',
+      );
+      if (conflictingCurrentBinding) {
+        return { reason: 'user_already_bound', status: 'conflict' };
+      }
+
+      const emptyBinding = currentUserRows[0];
+      if (emptyBinding) {
+        await query(
+          `
+update user_oauth_bindings set provider_user_id = ?
+where id = ? and trim(coalesce(provider_user_id, '')) = ''
+          `.trim(),
+          [providerUserId, emptyBinding.id],
+        );
+
+        const repaired = await query<{ id: number }>(
+          `select id from user_oauth_bindings where id = ? and provider_user_id = ?`,
+          [emptyBinding.id, providerUserId],
+        );
+        if (repaired.length > 0) return { status: 'repaired' };
+
+        return { reason: 'user_already_bound', status: 'conflict' };
+      }
+
+      const insertSql =
+        this.dialect === 'postgres'
+          ? `insert into user_oauth_bindings (user_id, provider_id, provider_user_id, created_at)
+             values (?, ?, ?, current_timestamp) on conflict do nothing`
+          : `insert ignore into user_oauth_bindings (user_id, provider_id, provider_user_id, created_at)
+             values (?, ?, ?, now(3))`;
+      await query(insertSql, [userId, providerId, providerUserId]);
+
+      const inserted = await query<{ user_id: number }>(
+        `select user_id from user_oauth_bindings where provider_id = ? and provider_user_id = ?`,
+        [providerId, providerUserId],
+      );
+      if (inserted[0]?.user_id === userId) return { status: 'created' };
+
+      return { reason: 'provider_user_id_in_use', status: 'conflict' };
+    });
   }
 }

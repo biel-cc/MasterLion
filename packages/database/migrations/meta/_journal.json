@@ -826,6 +826,13 @@
       "when": 1784871076634,
       "tag": "0117_use_halfvec_for_user_memory_embeddings",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1787772293236,
+      "tag": "0118_add_aihub_oauth_binding_status",
+      "breakpoints": true
     }
   ],
   "version": "6"

@@ -1,3 +1,22 @@
+export type AihubOAuthBindingStatus =
+  | 'unknown'
+  | 'pending'
+  | 'active'
+  | 'error'
+  | 'conflict'
+  | 'missing';
+
+export interface AihubOAuthBindingState {
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  lastSyncedAt?: Date | null;
+  status: AihubOAuthBindingStatus;
+}
+
+export interface AihubRebindResult extends AihubOAuthBindingState {
+  repaired: boolean;
+}
+
 export type NewApiBindingSyncStatus = 'pending' | 'active' | 'error' | 'missing';
 
 export interface NewApiBindingStatus {
@@ -7,6 +26,7 @@ export interface NewApiBindingStatus {
   managedTokenId?: number | null;
   managedTokens?: NewApiManagedTokenOption[];
   newApiUserId?: number;
+  oauthBinding?: AihubOAuthBindingState;
   status: NewApiBindingSyncStatus;
 }
 
@@ -19,8 +39,8 @@ export interface NewApiAccountSummary {
   email?: string;
   group?: string;
   newApiUserId: number;
-  quotaPolicy?: NewApiQuotaPolicy;
   quota?: number;
+  quotaPolicy?: NewApiQuotaPolicy;
   requestCount?: number;
   usedQuota?: number;
   username?: string;
@@ -78,9 +98,9 @@ export interface NewApiUsageSummary {
       totalTokens: number;
     }
   >;
+  quotaPolicy?: NewApiQuotaPolicy;
   recentLogs: NewApiUsageLogItem[];
   requestCount: number;
-  quotaPolicy?: NewApiQuotaPolicy;
   tokenUsage: NewApiTokenUsage;
   totalCompletionTokens: number;
   totalPromptTokens: number;

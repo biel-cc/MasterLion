@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { NewApiBridgeError } from './bridgeClient';
 import { NewApiBridgeClient } from './bridgeClient';
 
 describe('NewApiBridgeClient', () => {
@@ -130,5 +131,44 @@ describe('NewApiBridgeClient', () => {
       'http://bridge:3218/v1/users/7/models?tokenName=managed',
       expect.any(Object),
     );
+  });
+
+  it('returns structured OAuth binding outcomes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { status: 'repaired' }, success: true }), {
+        status: 200,
+      }),
+    );
+    const client = new NewApiBridgeClient({
+      baseUrl: 'http://bridge:3218',
+      fetchImpl: fetchImpl as any,
+      token: 'bridge-secret',
+    });
+
+    await expect(client.linkOAuthBinding(27, '768164', 1)).resolves.toEqual({
+      status: 'repaired',
+    });
+  });
+
+  it('preserves OAuth binding conflict codes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: 'binding_conflict', message: 'provider_user_id_in_use' },
+          success: false,
+        }),
+        { status: 409 },
+      ),
+    );
+    const client = new NewApiBridgeClient({
+      baseUrl: 'http://bridge:3218',
+      fetchImpl: fetchImpl as any,
+      token: 'bridge-secret',
+    });
+
+    await expect(client.linkOAuthBinding(27, '768164', 1)).rejects.toMatchObject({
+      code: 'binding_conflict',
+      status: 409,
+    } satisfies Partial<NewApiBridgeError>);
   });
 });

@@ -22,6 +22,16 @@ const success = (data: unknown, status = 200) => json({ data, success: true }, s
 const failure = (status: number, code: string, message: string) =>
   json({ error: { code, message }, success: false }, status);
 
+const isDatabaseWriteForbidden = (error: unknown) => {
+  if (!error || typeof error !== 'object') return false;
+  const code = String((error as { code?: unknown }).code || '');
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    ['42501', 'ER_TABLEACCESS_DENIED_ERROR', 'ER_DBACCESS_DENIED_ERROR'].includes(code) ||
+    /permission denied|command denied|access denied/i.test(message)
+  );
+};
+
 const parsePositiveInt = (value: string | null, fallback?: number) => {
   if (!value) return fallback;
 
@@ -154,12 +164,36 @@ export const createBridgeHandler = ({
           return failure(400, 'bad_request', 'providerUserId must be a non-empty string');
         }
 
-        const ok = await repository.linkOAuthBinding(userId, effectiveProviderId, providerUserId);
-        if (!ok) {
-          return failure(500, 'internal_error', 'OAuth binding could not be created');
-        }
+        try {
+          const result = await repository.linkOAuthBinding(
+            userId,
+            effectiveProviderId,
+            providerUserId,
+          );
+          if (result.status === 'conflict') {
+            return failure(409, 'binding_conflict', result.reason);
+          }
 
-        return success({ ok: true });
+          return success(result);
+        } catch (error) {
+          if (isDatabaseWriteForbidden(error)) {
+            return failure(403, 'database_write_forbidden', 'Database write is not permitted');
+          }
+          throw error;
+        }
+      }
+
+      if (url.pathname === `/v1/users/${userId}/oauth-binding` && request.method === 'GET') {
+        const providerId = Number(url.searchParams.get('providerId'));
+        const providerUserId = url.searchParams.get('providerUserId')?.trim() || '';
+        const effectiveProviderId =
+          Number.isInteger(providerId) && providerId > 0 ? providerId : iamProviderId;
+        if (!providerUserId) {
+          return failure(400, 'bad_request', 'providerUserId is required');
+        }
+        return success(
+          await repository.inspectOAuthBinding(userId, effectiveProviderId, providerUserId),
+        );
       }
 
       if (url.pathname === `/v1/users/${userId}`) {

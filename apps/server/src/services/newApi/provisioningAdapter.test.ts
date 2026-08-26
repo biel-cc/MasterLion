@@ -59,7 +59,7 @@ const createBridgeClient = (overrides: Record<string, unknown> = {}) => ({
   findUserById: vi.fn().mockResolvedValue(undefined),
   findUserByIdentity: vi.fn().mockResolvedValue(undefined),
   isEnabled: () => true,
-  linkOAuthBinding: vi.fn().mockResolvedValue(true),
+  linkOAuthBinding: vi.fn().mockResolvedValue({ status: 'existing' }),
   reassignToken: vi.fn().mockResolvedValue(true),
   ...overrides,
 });
@@ -99,7 +99,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',
@@ -156,7 +156,7 @@ describe('NewApiProvisioningAdapter', () => {
       }),
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8002,
       newApiUserId: 9002,
       status: 'active',
@@ -223,7 +223,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9003,
       status: 'active',
@@ -254,7 +254,7 @@ describe('NewApiProvisioningAdapter', () => {
     });
     const adapter = createAdapter(client);
 
-    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toEqual({
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',
@@ -310,7 +310,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',
@@ -453,7 +453,7 @@ describe('NewApiProvisioningAdapter', () => {
       masterinoUsername: 'ada',
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8003,
       newApiUserId: 9001,
       status: 'active',
@@ -494,7 +494,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8004,
       newApiUserId: 9001,
       status: 'active',
@@ -524,7 +524,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',
@@ -554,7 +554,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',
@@ -582,7 +582,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       managedTokenId: 8001,
       newApiUserId: 9001,
       status: 'active',

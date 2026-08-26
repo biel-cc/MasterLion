@@ -19,12 +19,22 @@ export const newApiBindings = pgTable(
       .notNull(),
     lastSyncedAt: timestamptz('last_synced_at'),
     errorMessage: text('error_message'),
+    iamOAuthBindingStatus: varchar('iam_oauth_binding_status', {
+      enum: ['unknown', 'pending', 'active', 'error', 'conflict'],
+      length: 16,
+    })
+      .default('unknown')
+      .notNull(),
+    iamOAuthBindingErrorCode: varchar('iam_oauth_binding_error_code', { length: 64 }),
+    iamOAuthBindingError: text('iam_oauth_binding_error'),
+    iamOAuthBindingSyncedAt: timestamptz('iam_oauth_binding_synced_at'),
 
     ...timestamps,
   },
   (table) => [
     index('new_api_bindings_new_api_user_id_idx').on(table.newApiUserId),
     index('new_api_bindings_status_idx').on(table.status),
+    index('new_api_bindings_iam_oauth_status_idx').on(table.iamOAuthBindingStatus),
   ],
 );
 

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
       { id: 21, name: 'backup-token' },
     ],
     newApiUserId: 6,
+    oauthBinding: { status: 'active' } as { errorMessage?: string; status: string },
     status: 'active',
   },
   messageError: vi.fn(),
@@ -35,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   mutateUsage: vi.fn(),
   refreshAiModelList: vi.fn(),
   refreshAiProviderDetail: vi.fn(),
+  rebindCurrentUser: vi.fn(),
   syncModels: vi.fn(),
   usage: {
     quotaPolicy: {
@@ -173,6 +175,7 @@ vi.mock('@/store/newApi', () => ({
 
 vi.mock('@/services/newApi', () => ({
   newApiService: {
+    rebindCurrentUser: mocks.rebindCurrentUser,
     syncModels: mocks.syncModels,
   },
 }));
@@ -190,6 +193,8 @@ beforeEach(() => {
   mocks.syncModels.mockResolvedValue({
     models: [{ id: 'glm-5.1' }, { id: 'deepseek-v4-flash' }],
   });
+  mocks.rebindCurrentUser.mockResolvedValue({ repaired: true, status: 'active' });
+  mocks.binding.oauthBinding = { status: 'active' };
 });
 
 afterEach(() => {
@@ -203,7 +208,7 @@ describe('Aihub provider detail page', () => {
     expect(screen.getByText('Aihub绑定情况')).toBeInTheDocument();
     expect(screen.getByText('已绑定')).toHaveAttribute('data-color', 'success');
     expect(screen.getByText('Masterino状态')).toBeInTheDocument();
-    expect(screen.getByText('正常')).toBeInTheDocument();
+    expect(screen.getAllByText('正常')).toHaveLength(2);
     expect(screen.getByLabelText('托管 Token')).toHaveValue('13');
     expect(screen.getByRole('option', { name: 'masterlion-managed' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'backup-token' })).toBeInTheDocument();
@@ -232,5 +237,20 @@ describe('Aihub provider detail page', () => {
     expect(mocks.refreshAiModelList).toHaveBeenCalled();
     expect(mocks.refreshAiProviderDetail).toHaveBeenCalled();
     expect(mocks.messageSuccess).toHaveBeenCalledWith('已同步 2 个 Aihub 模型');
+  });
+
+  it('shows a rebind action for an OAuth binding error and refreshes the page state', async () => {
+    mocks.binding.oauthBinding = { errorMessage: 'bridge unavailable', status: 'error' };
+    render(<Page />);
+
+    expect(screen.getByText('绑定异常')).toHaveAttribute('data-color', 'error');
+    expect(screen.getByText('绑定失败')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重新绑定' }));
+
+    await waitFor(() => expect(mocks.rebindCurrentUser).toHaveBeenCalledTimes(1));
+    expect(mocks.mutateBinding).toHaveBeenCalled();
+    expect(mocks.mutateAccount).toHaveBeenCalled();
+    expect(mocks.mutateUsage).toHaveBeenCalled();
+    expect(mocks.messageSuccess).toHaveBeenCalledWith('重新绑定成功');
   });
 });

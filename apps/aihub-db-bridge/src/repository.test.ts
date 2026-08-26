@@ -201,4 +201,51 @@ describe('AihubBridgeRepository', () => {
       [7, 1709990000, 1710003600, 10, 10],
     );
   });
+
+  it('returns existing for an identical OAuth binding', async () => {
+    const client = createClient([{ id: 1, provider_user_id: '768164', user_id: 27 }]);
+    const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
+
+    await expect(repo.linkOAuthBinding(27, 1, '768164')).resolves.toEqual({
+      status: 'existing',
+    });
+  });
+
+  it('repairs an empty OAuth binding without overwriting non-empty values', async () => {
+    const client = createClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [{ id: 1, provider_user_id: '', user_id: 27 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
+
+    await expect(repo.linkOAuthBinding(27, 1, '768164')).resolves.toEqual({
+      status: 'repaired',
+    });
+    expect(client.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("trim(coalesce(provider_user_id, '')) = ''"),
+      ['768164', 1],
+    );
+  });
+
+  it('rejects an employee number already owned by another Aihub user', async () => {
+    const client = createClient([{ id: 2, provider_user_id: '768164', user_id: 99 }]);
+    const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
+
+    await expect(repo.linkOAuthBinding(27, 1, '768164')).resolves.toEqual({
+      reason: 'provider_user_id_in_use',
+      status: 'conflict',
+    });
+  });
+
+  it('rejects replacing a different non-empty binding for the same user', async () => {
+    const client = createClient([{ id: 1, provider_user_id: 'OTHER', user_id: 27 }]);
+    const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
+
+    await expect(repo.linkOAuthBinding(27, 1, '768164')).resolves.toEqual({
+      reason: 'user_already_bound',
+      status: 'conflict',
+    });
+  });
 });

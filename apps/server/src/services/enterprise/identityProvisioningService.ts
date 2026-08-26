@@ -416,6 +416,7 @@ export class IdentityProvisioningService {
           }
 
           const bindingStatus = normalizeSuccessfulBindingStatus(provisioningResult.status);
+          const iamOAuthBinding = provisioningResult.iamOAuthBinding;
           aihub = {
             ...provisioningResult,
             newApiUserId: provisioningResult.newApiUserId,
@@ -425,6 +426,12 @@ export class IdentityProvisioningService {
             .insert(newApiBindings)
             .values({
               errorMessage: null,
+              iamOAuthBindingError:
+                iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorMessage,
+              iamOAuthBindingErrorCode:
+                iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorCode,
+              iamOAuthBindingStatus: iamOAuthBinding?.status ?? 'unknown',
+              iamOAuthBindingSyncedAt: iamOAuthBinding ? new Date() : null,
               managedTokenId: provisioningResult.managedTokenId ?? null,
               newApiUserId: provisioningResult.newApiUserId,
               status: bindingStatus,
@@ -433,6 +440,12 @@ export class IdentityProvisioningService {
             .onConflictDoUpdate({
               set: {
                 errorMessage: null,
+                iamOAuthBindingError:
+                  iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorMessage,
+                iamOAuthBindingErrorCode:
+                  iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorCode,
+                iamOAuthBindingStatus: iamOAuthBinding?.status ?? 'unknown',
+                iamOAuthBindingSyncedAt: iamOAuthBinding ? new Date() : null,
                 managedTokenId: provisioningResult.managedTokenId ?? null,
                 newApiUserId: provisioningResult.newApiUserId,
                 status: bindingStatus,

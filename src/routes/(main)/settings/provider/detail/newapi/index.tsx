@@ -5,7 +5,7 @@ import { Button, Flexbox, FormGroup, Tag, Text } from '@lobehub/ui';
 import { Select, type SelectProps } from '@lobehub/ui/base-ui';
 import { App, Divider } from 'antd';
 import { createStyles } from 'antd-style';
-import { RefreshCwIcon } from 'lucide-react';
+import { LinkIcon, RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useAiInfraStore } from '@/store/aiInfra';
@@ -28,9 +28,9 @@ const useStyles = createStyles(({ css, token }) => ({
     min-width: 180px;
   `,
   fieldValue: css`
-    white-space: nowrap;
     font-weight: 600;
     color: ${token.colorText};
+    white-space: nowrap;
   `,
   tokenSelect: css`
     min-width: 220px;
@@ -48,7 +48,7 @@ const Field = ({
 }) => (
   <Flexbox className={classNames.field} gap={4}>
     <Text type="secondary">{label}</Text>
-    <Text className={classNames.fieldValue} strong>
+    <Text strong className={classNames.fieldValue}>
       {value ?? '-'}
     </Text>
   </Flexbox>
@@ -85,10 +85,20 @@ const BINDING_STATUS_TEXT: Record<string, string> = {
   pending: '待同步',
 };
 
+const OAUTH_BINDING_STATUS_TEXT: Record<string, string> = {
+  active: '正常',
+  conflict: '绑定冲突',
+  error: '绑定失败',
+  missing: '未绑定',
+  pending: '绑定中',
+  unknown: '待校验',
+};
+
 const Page = () => {
   const { styles } = useStyles();
   const { message } = App.useApp();
   const [syncing, setSyncing] = useState(false);
+  const [rebinding, setRebinding] = useState(false);
   const [selectedManagedTokenId, setSelectedManagedTokenId] = useState<string>();
   const { data: binding, mutate: mutateBinding } = useNewApiBindingStatus();
   const isBound = !!binding?.isBound;
@@ -97,6 +107,16 @@ const Page = () => {
   const useFetchAiProviderList = useAiInfraStore((s) => s.useFetchAiProviderList);
   const useFetchAiProviderItem = useAiInfraStore((s) => s.useFetchAiProviderItem);
   const quotaPolicy = usage?.quotaPolicy || account?.quotaPolicy;
+  const oauthBindingStatus = binding?.oauthBinding?.status || 'unknown';
+  const canRebind = ['conflict', 'error', 'missing'].includes(oauthBindingStatus);
+  const showRebind = canRebind || oauthBindingStatus === 'pending';
+  const bindingTag = !isBound
+    ? { color: 'warning', text: '未绑定' }
+    : oauthBindingStatus === 'active'
+      ? { color: 'success', text: '已绑定' }
+      : oauthBindingStatus === 'unknown' || oauthBindingStatus === 'pending'
+        ? { color: 'warning', text: '待校验' }
+        : { color: 'error', text: '绑定异常' };
 
   useFetchAiProviderList();
   useFetchAiProviderItem('newapi');
@@ -137,44 +157,84 @@ const Page = () => {
     }
   };
 
+  const handleRebind = async () => {
+    if (rebinding) return;
+    setRebinding(true);
+    try {
+      const { newApiService } = await import('@/services/newApi');
+      const result = await newApiService.rebindCurrentUser();
+      await Promise.all([mutateBinding(), mutateAccount(), mutateUsage()]);
+
+      if (result.status === 'active') {
+        message.success('重新绑定成功');
+      } else if (result.status === 'conflict') {
+        message.error('该企业微信工号已绑定其他 Aihub 用户，请联系管理员处理');
+      } else {
+        message.error(result.errorMessage || '重新绑定失败，请稍后重试');
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRebinding(false);
+    }
+  };
+
   return (
     <Flexbox gap={24} paddingBlock={8}>
       <FormGroup
         collapsible={false}
+        variant="filled"
         extra={
-          <Button
-            disabled={!isBound}
-            icon={RefreshCwIcon}
-            loading={syncing}
-            size="small"
-            onClick={handleSyncModels}
-          >
-            刷新模型
-          </Button>
+          <Flexbox horizontal gap={8}>
+            {showRebind && (
+              <Button
+                disabled={!canRebind}
+                icon={LinkIcon}
+                loading={rebinding || oauthBindingStatus === 'pending'}
+                size="small"
+                onClick={handleRebind}
+              >
+                重新绑定
+              </Button>
+            )}
+            <Button
+              disabled={!isBound}
+              icon={RefreshCwIcon}
+              loading={syncing}
+              size="small"
+              onClick={handleSyncModels}
+            >
+              刷新模型
+            </Button>
+          </Flexbox>
         }
         title={
           <Flexbox horizontal align="center" gap={8}>
             <ProviderCombine provider="newapi" size={24} />
             <span>Aihub绑定情况</span>
-            <Tag color={binding?.status === 'active' ? 'success' : 'warning'}>
-              {binding?.status === 'active' ? '已绑定' : '未绑定'}
-            </Tag>
+            <Tag color={bindingTag.color}>{bindingTag.text}</Tag>
           </Flexbox>
         }
-        variant="filled"
       >
         <Flexbox gap={16}>
           <Flexbox horizontal gap={24} style={{ flexWrap: 'wrap' }}>
             <Field
               classNames={styles}
               label="Masterino状态"
-              value={BINDING_STATUS_TEXT[binding?.status || 'missing'] || binding?.status || '未绑定'}
+              value={
+                BINDING_STATUS_TEXT[binding?.status || 'missing'] || binding?.status || '未绑定'
+              }
             />
             <ManagedTokenSelect
               classNames={styles}
               options={managedTokenOptions}
               value={selectedManagedTokenId}
               onChange={setSelectedManagedTokenId}
+            />
+            <Field
+              classNames={styles}
+              label="企业微信与 Aihub"
+              value={OAUTH_BINDING_STATUS_TEXT[oauthBindingStatus] || oauthBindingStatus}
             />
             <Field
               classNames={styles}
@@ -185,6 +245,11 @@ const Page = () => {
           {binding?.errorMessage && (
             <Text style={{ whiteSpace: 'pre-wrap' }} type="danger">
               {binding.errorMessage}
+            </Text>
+          )}
+          {binding?.oauthBinding?.errorMessage && (
+            <Text style={{ whiteSpace: 'pre-wrap' }} type="danger">
+              {binding.oauthBinding.errorMessage}
             </Text>
           )}
           <Divider style={{ margin: 0 }} />

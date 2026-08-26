@@ -23,6 +23,7 @@ const createRepo = () => ({
   findUserById: vi.fn().mockResolvedValue({ group: 'vip', id: 7, username: 'ada' }),
   findUserByIdentity: vi.fn().mockResolvedValue({ id: 7, username: 'ada' }),
   getUsageLogs: vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 1 }),
+  inspectOAuthBinding: vi.fn().mockResolvedValue({ status: 'missing' }),
   listAccessibleModels: vi.fn().mockResolvedValue(['gpt-4o-mini']),
   listManagedTokens: vi.fn().mockResolvedValue([
     { id: 12, name: 'managed' },
@@ -30,7 +31,7 @@ const createRepo = () => ({
   ]),
   reassignToken: vi.fn().mockResolvedValue(true),
   updateTokenName: vi.fn().mockResolvedValue(true),
-  linkOAuthBinding: vi.fn().mockResolvedValue(true),
+  linkOAuthBinding: vi.fn().mockResolvedValue({ status: 'repaired' }),
 });
 
 describe('createBridgeHandler', () => {
@@ -252,5 +253,69 @@ describe('createBridgeHandler', () => {
     const response = await readResponse(await handler(request));
 
     expect(response.status).toBe(404);
+  });
+
+  it('returns a structured OAuth binding repair result', async () => {
+    const repo = createRepo();
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+    const request = new Request('http://bridge.local/v1/users/27/oauth-binding', {
+      body: JSON.stringify({ providerUserId: '768164' }),
+      headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+
+    const response = await readResponse(await handler(request));
+
+    expect(response).toEqual({
+      body: { data: { status: 'repaired' }, success: true },
+      status: 200,
+    });
+  });
+
+  it('maps OAuth binding conflicts to 409', async () => {
+    const repo = createRepo();
+    repo.linkOAuthBinding.mockResolvedValue({
+      reason: 'provider_user_id_in_use',
+      status: 'conflict',
+    });
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+    const request = new Request('http://bridge.local/v1/users/27/oauth-binding', {
+      body: JSON.stringify({ providerUserId: '768164' }),
+      headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+
+    const response = await readResponse(await handler(request));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('binding_conflict');
+  });
+
+  it('inspects an OAuth binding without mutating it', async () => {
+    const repo = createRepo();
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+
+    const response = await readResponse(
+      await handler(makeRequest('/v1/users/27/oauth-binding?providerUserId=768164')),
+    );
+
+    expect(response).toEqual({ body: { data: { status: 'missing' }, success: true }, status: 200 });
+    expect(repo.inspectOAuthBinding).toHaveBeenCalledWith(27, 1, '768164');
+    expect(repo.linkOAuthBinding).not.toHaveBeenCalled();
   });
 });

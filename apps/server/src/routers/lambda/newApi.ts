@@ -50,6 +50,10 @@ export const newApiRouter = router({
       return ctx.newApiService.getUsageSummary(input);
     }),
 
+  rebindCurrentUser: newApiProcedure.mutation(async ({ ctx }) => {
+    return ctx.newApiService.rebindCurrentUser();
+  }),
+
   importBindings: newApiProcedure
     .input(z.object({ rows: z.array(bindingImportRowSchema).min(1) }))
     .mutation(async ({ ctx, input }) => {
@@ -61,10 +65,12 @@ export const newApiRouter = router({
     return ctx.newApiService.syncModels();
   }),
 
-  validateBinding: newApiProcedure.input(bindingImportRowSchema).mutation(async ({ ctx, input }) => {
-    await requireAihubManage(ctx);
-    return ctx.newApiService.validateBinding(input);
-  }),
+  validateBinding: newApiProcedure
+    .input(bindingImportRowSchema)
+    .mutation(async ({ ctx, input }) => {
+      await requireAihubManage(ctx);
+      return ctx.newApiService.validateBinding(input);
+    }),
 });
 
 export type NewApiRouter = typeof newApiRouter;

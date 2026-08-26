@@ -1,6 +1,7 @@
 import { DEFAULT_MODEL, isAihubModelHidden } from '@lobechat/business-const';
 import { processMultiProviderModelList } from '@lobechat/model-runtime';
 import type {
+  AihubRebindResult,
   ChatModelCard,
   NewApiAccountSummary,
   NewApiBindingImportResult,
@@ -20,10 +21,19 @@ import { AiModelModel } from '@/database/models/aiModel';
 import { AiProviderModel } from '@/database/models/aiProvider';
 import { NewApiBindingModel } from '@/database/models/newApiBinding';
 import { UserModel } from '@/database/models/user';
-import { account as authAccount, type NewApiBindingItem, type UserItem } from '@/database/schemas';
+import {
+  account as authAccount,
+  enterpriseAuditLogs,
+  enterpriseUserProfiles,
+  externalIdentities,
+  type NewApiBindingItem,
+  newApiBindings,
+  type UserItem,
+} from '@/database/schemas';
 import type { LobeChatDatabase } from '@/database/type';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 
+import { NewApiBridgeClient, NewApiBridgeError } from './bridgeClient';
 import {
   NewApiClient,
   NewApiError,
@@ -405,6 +415,12 @@ export class NewApiService {
       errorMessage: binding.errorMessage,
       lastSyncedAt: binding.lastSyncedAt,
       managedTokenId: binding.managedTokenId,
+      oauthBinding: {
+        errorCode: binding.iamOAuthBindingErrorCode,
+        errorMessage: binding.iamOAuthBindingError,
+        lastSyncedAt: binding.iamOAuthBindingSyncedAt,
+        status: binding.iamOAuthBindingStatus ?? 'unknown',
+      },
     };
 
     if (!isValidNewApiUserId(newApiUserId)) {
@@ -779,6 +795,7 @@ export class NewApiService {
         return {
           errorMessage: error instanceof Error ? error.message : String(error),
           isBound: false,
+          oauthBinding: { status: 'unknown' },
           status: 'missing',
         };
       }
@@ -788,6 +805,112 @@ export class NewApiService {
       ...this.toBindingStatus(binding),
       managedTokens: await this.getManagedTokenOptionsForBinding(binding),
     };
+  }
+
+  async rebindCurrentUser(): Promise<AihubRebindResult> {
+    const binding = await new NewApiBindingModel(this.db, this.userId).find();
+    if (!binding || !isValidNewApiUserId(binding.newApiUserId)) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Current Masterino user is not bound to an Aihub account',
+      });
+    }
+
+    const [identity, profile] = await Promise.all([
+      this.db.query.externalIdentities.findFirst({
+        where: and(
+          eq(externalIdentities.userId, this.userId),
+          eq(externalIdentities.provider, 'wecom'),
+        ),
+      }),
+      this.db.query.enterpriseUserProfiles.findFirst({
+        where: and(
+          eq(enterpriseUserProfiles.userId, this.userId),
+          eq(enterpriseUserProfiles.provider, 'wecom'),
+        ),
+      }),
+    ]);
+    const employeeNumber = profile?.employeeNumber?.trim();
+    if (!identity || !employeeNumber) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: !identity
+          ? 'WeCom identity was not found for the current user'
+          : 'Enterprise employee number was not found for the current user',
+      });
+    }
+    if (profile.employmentStatus !== 'active') {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Enterprise employment status is not active for the current user',
+      });
+    }
+
+    const syncedAt = new Date();
+    const bridge = new NewApiBridgeClient();
+    try {
+      const result = await bridge.linkOAuthBinding(
+        binding.newApiUserId,
+        employeeNumber,
+        Number(process.env.AIHUB_IAM_PROVIDER_ID) || 1,
+      );
+      await this.db
+        .update(newApiBindings)
+        .set({
+          iamOAuthBindingError: null,
+          iamOAuthBindingErrorCode: null,
+          iamOAuthBindingStatus: 'active',
+          iamOAuthBindingSyncedAt: syncedAt,
+          updatedAt: syncedAt,
+        })
+        .where(eq(newApiBindings.userId, this.userId));
+      await this.writeOAuthBindingAudit('success', { outcome: result.status });
+      return {
+        lastSyncedAt: syncedAt,
+        repaired: result.status === 'created' || result.status === 'repaired',
+        status: 'active',
+      };
+    } catch (error) {
+      const errorCode = error instanceof NewApiBridgeError ? error.code : 'binding_failed';
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const status = errorCode === 'binding_conflict' ? 'conflict' : 'error';
+      await this.db
+        .update(newApiBindings)
+        .set({
+          iamOAuthBindingError: errorMessage,
+          iamOAuthBindingErrorCode: errorCode,
+          iamOAuthBindingStatus: status,
+          iamOAuthBindingSyncedAt: syncedAt,
+          updatedAt: syncedAt,
+        })
+        .where(eq(newApiBindings.userId, this.userId));
+      await this.writeOAuthBindingAudit('failed', { errorCode });
+      return {
+        errorCode,
+        errorMessage,
+        lastSyncedAt: syncedAt,
+        repaired: false,
+        status,
+      };
+    }
+  }
+
+  private async writeOAuthBindingAudit(
+    result: 'failed' | 'success',
+    metadata: Record<string, unknown>,
+  ) {
+    try {
+      await this.db.insert(enterpriseAuditLogs).values({
+        action: 'identity.aihub_oauth_binding.retry',
+        actorUserId: this.userId,
+        metadata,
+        result,
+        targetId: this.userId,
+        targetType: 'user',
+      });
+    } catch (error) {
+      console.warn('[Aihub Binding] Failed to write retry audit log:', error);
+    }
   }
 
   private async syncModelsForBinding(binding: UsableNewApiBindingItem, key: string) {
