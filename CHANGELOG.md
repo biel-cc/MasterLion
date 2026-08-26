@@ -2,6 +2,31 @@
 
 # Changelog
 
+### [Version 1.2.5](https://github.com/chaaak6/Masterino/compare/v1.2.4...v1.2.5)
+
+<sup>Released on **2026-08-26**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: harden Electron tool call lifecycle.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: harden Electron tool call lifecycle ([10c3f76](https://github.com/chaaak6/Masterino/commit/10c3f76))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ## [Version 1.0.16](https://github.com/chaaak6/Masterino/compare/v1.0.15...v1.0.16)
 
 <sup>Released on **2026-07-29**</sup>

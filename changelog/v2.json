@@ -2443,6 +2443,15 @@
   },
   {
     "children": {
+      "fixes": [
+        "harden Electron tool call lifecycle."
+      ]
+    },
+    "date": "2026-08-26",
+    "version": "1.2.5"
+  },
+  {
+    "children": {
       "features": [
         "enable opt-in personal memory."
       ],
