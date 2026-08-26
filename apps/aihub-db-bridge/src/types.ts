@@ -54,3 +54,10 @@ export interface AihubBridgeFailure {
   };
   success: false;
 }
+
+export type AihubOAuthBindingConflictReason = 'provider_user_id_in_use' | 'user_already_bound';
+
+export type AihubOAuthBindingResult =
+  | { status: 'created' | 'existing' | 'repaired' }
+  | { status: 'missing' }
+  | { reason: AihubOAuthBindingConflictReason; status: 'conflict' };

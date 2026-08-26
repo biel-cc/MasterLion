@@ -1,4 +1,4 @@
-import { NewApiBridgeClient } from './bridgeClient';
+import { NewApiBridgeClient, NewApiBridgeError, type OAuthBindingResult } from './bridgeClient';
 import {
   NewApiClient,
   type NewApiCreateUserInput,
@@ -38,11 +38,16 @@ export type ProvisionEnterpriseUserInput = {
 };
 
 export type ProvisionEnterpriseUserResult = {
+  iamOAuthBinding?: ProvisionOAuthBindingResult;
   managedTokenId?: number;
   newApiUserId?: number;
   status?: unknown;
   [key: string]: unknown;
 };
+
+export type ProvisionOAuthBindingResult =
+  | { outcome: OAuthBindingResult['status']; status: 'active' }
+  | { errorCode: string; errorMessage: string; status: 'conflict' | 'error' };
 
 type ProvisioningClient = Pick<
   NewApiClient,
@@ -260,11 +265,12 @@ export class NewApiProvisioningAdapter {
     // the user later logs in to Aihub directly via IAM SSO, they are matched
     // to this same account instead of creating a new one. Uses the employee
     // number (工号) as provider_user_id — the same value IAM returns.
-    await this.ensureOAuthBinding(targetUser.id, input);
+    const iamOAuthBinding = await this.ensureOAuthBinding(targetUser.id, input);
 
     return {
       managedTokenId: token.id,
       newApiUserId: targetUser.id,
+      iamOAuthBinding,
       status: 'active',
     };
   }
@@ -538,28 +544,43 @@ export class NewApiProvisioningAdapter {
   private async ensureOAuthBinding(
     newApiUserId: number,
     input: ProvisionEnterpriseUserInput,
-  ): Promise<void> {
+  ): Promise<ProvisionOAuthBindingResult> {
     // The OAuth provider_user_id is the employee number (工号) — the same
     // value BIEL IAM returns as account_no. This lets IAM login match the
     // existing Aihub account instead of creating a new one.
     const providerUserId = asTrimmedString(input.employeeNumber);
-    if (!providerUserId) return;
+    if (!providerUserId) {
+      return {
+        errorCode: 'employee_number_missing',
+        errorMessage: 'Enterprise employee number is required for Aihub OAuth binding',
+        status: 'error',
+      };
+    }
 
-    if (!this.bridgeClient?.isEnabled()) return;
+    if (!this.bridgeClient?.isEnabled()) {
+      return {
+        errorCode: 'bridge_unavailable',
+        errorMessage: 'Aihub bridge is not configured',
+        status: 'error',
+      };
+    }
 
     const providerId = Number(process.env.AIHUB_IAM_PROVIDER_ID) || 1;
 
-    const linked = await this.bridgeClient.linkOAuthBinding(
-      newApiUserId,
-      providerUserId,
-      providerId,
-    );
-
-    if (!linked) {
-      console.warn(
-        `[Aihub Provisioning] Failed to link OAuth binding for user ${newApiUserId} ` +
-          `(providerUserId="${providerUserId}"); the user may get a duplicate account on IAM login.`,
+    try {
+      const result = await this.bridgeClient.linkOAuthBinding(
+        newApiUserId,
+        providerUserId,
+        providerId,
       );
+      return { outcome: result.status, status: 'active' };
+    } catch (error) {
+      const errorCode = error instanceof NewApiBridgeError ? error.code : 'binding_failed';
+      return {
+        errorCode,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        status: errorCode === 'binding_conflict' ? 'conflict' : 'error',
+      };
     }
   }
 }

@@ -13,6 +13,7 @@ const {
   mockImportBindings,
   mockInitWithEnvKey,
   mockNewApiServiceConstructor,
+  mockRebindCurrentUser,
   mockValidateBinding,
 } = vi.hoisted(() => ({
   mockFindUserById: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockImportBindings: vi.fn(),
   mockInitWithEnvKey: vi.fn(),
   mockNewApiServiceConstructor: vi.fn(),
+  mockRebindCurrentUser: vi.fn(),
   mockValidateBinding: vi.fn(),
 }));
 
@@ -55,6 +57,7 @@ vi.mock('@/server/services/newApi', () => ({
       getBindingStatus: vi.fn(),
       getUsageSummary: vi.fn(),
       importBindings: mockImportBindings,
+      rebindCurrentUser: mockRebindCurrentUser,
       syncModels: vi.fn(),
       validateBinding: mockValidateBinding,
     };
@@ -77,6 +80,7 @@ describe('newApiRouter admin permission guard', () => {
     mockImportBindings.mockResolvedValue([
       { lobeUserId: 'lobe-user', newApiUserId: 7, ok: true, source: 'admin-api' },
     ]);
+    mockRebindCurrentUser.mockResolvedValue({ repaired: true, status: 'active' });
     mockValidateBinding.mockResolvedValue({
       lobeUserId: 'lobe-user',
       newApiUserId: 7,
@@ -90,9 +94,7 @@ describe('newApiRouter admin permission guard', () => {
     mockHasAnyPermission.mockResolvedValue(true);
     const caller = await createCallerForUser('user-member');
 
-    await expect(
-      caller.importBindings({ rows: [{ email: 'ada@example.com' }] }),
-    ).resolves.toEqual([
+    await expect(caller.importBindings({ rows: [{ email: 'ada@example.com' }] })).resolves.toEqual([
       { lobeUserId: 'lobe-user', newApiUserId: 7, ok: true, source: 'admin-api' },
     ]);
     expect(mockHasAnyPermission.mock.calls[0]?.[0]).toEqual(['aihub:manage']);
@@ -127,5 +129,16 @@ describe('newApiRouter admin permission guard', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockHasAnyPermission.mock.calls[0]?.[0]).toEqual(['aihub:manage']);
     expect(mockImportBindings).not.toHaveBeenCalled();
+  });
+
+  it('allows an authenticated user to rebind only the current account without admin permission', async () => {
+    const caller = await createCallerForUser('user-member');
+
+    await expect(caller.rebindCurrentUser()).resolves.toEqual({
+      repaired: true,
+      status: 'active',
+    });
+    expect(mockRebindCurrentUser).toHaveBeenCalledTimes(1);
+    expect(mockHasAnyPermission).not.toHaveBeenCalled();
   });
 });

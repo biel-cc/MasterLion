@@ -8,15 +8,19 @@ interface NewApiBridgeClientOptions {
   token?: string;
 }
 
-class NewApiBridgeError extends Error {
+export class NewApiBridgeError extends Error {
+  code: string;
   status: number;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = 'bridge_error') {
     super(message);
     this.name = 'NewApiBridgeError';
+    this.code = code;
     this.status = status;
   }
 }
+
+export type OAuthBindingResult = { status: 'created' | 'existing' | 'repaired' };
 
 const normalizeBaseUrl = (baseUrl: string) => baseUrl.replace(/\/+$/, '');
 
@@ -30,6 +34,17 @@ const readErrorMessage = (body: unknown, fallback: string) => {
     }
   }
 
+  return fallback;
+};
+
+const readErrorCode = (body: unknown, fallback: string) => {
+  if (body && typeof body === 'object') {
+    const error = (body as Record<string, unknown>).error;
+    if (error && typeof error === 'object') {
+      const code = (error as Record<string, unknown>).code;
+      if (typeof code === 'string' && code.trim()) return code;
+    }
+  }
   return fallback;
 };
 
@@ -91,6 +106,7 @@ export class NewApiBridgeClient implements NewApiReadSource {
         throw new NewApiBridgeError(
           readErrorMessage(body, `Aihub bridge request failed with ${response.status}`),
           response.status,
+          readErrorCode(body, 'bridge_request_failed'),
         );
       }
 
@@ -98,7 +114,7 @@ export class NewApiBridgeClient implements NewApiReadSource {
     } catch (error) {
       if (error instanceof NewApiBridgeError) throw error;
       if ((error as Error).name === 'AbortError') {
-        throw new NewApiBridgeError('Aihub bridge request timed out', 408);
+        throw new NewApiBridgeError('Aihub bridge request timed out', 408, 'bridge_timeout');
       }
 
       throw error;
@@ -206,47 +222,57 @@ export class NewApiBridgeClient implements NewApiReadSource {
    * later logs in to Aihub directly via IAM SSO, they are matched to the same
    * Aihub account instead of creating a new one.
    *
-   * Requires the bridge DB account to have INSERT privilege on the
-   * `user_oauth_bindings` table. Returns true on success, false otherwise
-   * (including when the bridge is disabled — degraded mode, never throws).
+   * Requires the bridge DB account to have narrowly scoped INSERT/UPDATE
+   * privileges on `user_oauth_bindings`.
    */
   async linkOAuthBinding(
     userId: number,
     providerUserId: string,
     providerId?: number,
-  ): Promise<boolean> {
-    if (!this.baseUrl || !this.token) return false;
+  ): Promise<OAuthBindingResult> {
+    if (!this.baseUrl || !this.token) {
+      throw new NewApiBridgeError('Aihub bridge is not configured', 503, 'bridge_unavailable');
+    }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      const payload: Record<string, unknown> = { providerUserId };
+      if (providerId) payload.providerId = providerId;
 
-      try {
-        const payload: Record<string, unknown> = { providerUserId };
-        if (providerId) payload.providerId = providerId;
+      const response = await this.fetchImpl(`${this.baseUrl}/v1/users/${userId}/oauth-binding`, {
+        body: JSON.stringify(payload),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+        signal: controller.signal,
+      });
 
-        const response = await this.fetchImpl(`${this.baseUrl}/v1/users/${userId}/oauth-binding`, {
-          body: JSON.stringify(payload),
-          headers: {
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${this.token}`,
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
-          signal: controller.signal,
-        });
-
-        if (!response.ok) return false;
-
-        const text = await response.text();
-        const body = text ? JSON.parse(text) : undefined;
-
-        return body?.success === true;
-      } finally {
-        clearTimeout(timeout);
+      const text = await response.text();
+      const body = text ? JSON.parse(text) : undefined;
+      if (!response.ok || body?.success === false) {
+        throw new NewApiBridgeError(
+          readErrorMessage(body, `Aihub bridge request failed with ${response.status}`),
+          response.status,
+          readErrorCode(body, 'bridge_request_failed'),
+        );
       }
-    } catch {
-      return false;
+      return body?.data as OAuthBindingResult;
+    } catch (error) {
+      if (error instanceof NewApiBridgeError) throw error;
+      if ((error as Error).name === 'AbortError') {
+        throw new NewApiBridgeError('Aihub bridge request timed out', 408, 'bridge_timeout');
+      }
+      throw new NewApiBridgeError(
+        error instanceof Error ? error.message : String(error),
+        503,
+        'bridge_unavailable',
+      );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }
