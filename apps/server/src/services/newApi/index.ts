@@ -831,7 +831,7 @@ export class NewApiService {
       }),
     ]);
     const employeeNumber = profile?.employeeNumber?.trim();
-    if (!identity || !employeeNumber) {
+    if (!identity || !profile || !employeeNumber) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: !identity
