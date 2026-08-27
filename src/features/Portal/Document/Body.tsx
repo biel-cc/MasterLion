@@ -376,7 +376,7 @@ const DocumentBody = memo(() => {
       <div className={fullPage ? styles.contentFull : styles.content}>
         {fullPage ? <WideScreenContainer>{editorContent}</WideScreenContainer> : editorContent}
       </div>
-      <TodoList />
+      <TodoList document={documentMeta} />
       {/* The full-page route surfaces chat through the working sidebar, so the
           floating panel only belongs to the compact in-chat portal. */}
       {!fullPage && enableFloatingChatPanel && activeAgentId && (

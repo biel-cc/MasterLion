@@ -83,9 +83,8 @@ const clientPlanService: PlanRuntimeService = {
   },
 
   findPlanByTopic: async (topicId) => {
-    const result = await notebookService.listDocuments({ topicId, type: PLAN_DOC_TYPE });
-    const first = result.data[0];
-    return first ? normalizePlanDoc(first) : null;
+    const plan = await notebookService.getLatestPlan(topicId);
+    return plan ? normalizePlanDoc(plan) : null;
   },
 
   updatePlan: async (id, { goal, description, content }, topicId) => {

@@ -1,4 +1,4 @@
-import { type NotebookDocument } from '@lobechat/types';
+import { type NotebookDocumentSummary } from '@lobechat/types';
 import { ActionIcon, Flexbox, Text } from '@lobehub/ui';
 import { confirmModal } from '@lobehub/ui/base-ui';
 import { createStaticStyles } from 'antd-style';
@@ -32,7 +32,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 interface DocumentItemProps {
-  document: NotebookDocument;
+  document: NotebookDocumentSummary;
   topicId: string;
 }
 

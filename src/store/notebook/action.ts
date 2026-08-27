@@ -1,7 +1,7 @@
 import { type DocumentType } from '@lobechat/builtin-tool-notebook';
 import type { AGENT_PLAN_FILE_TYPE } from '@lobechat/const';
 import { type DocumentItem } from '@lobechat/database/schemas';
-import { type NotebookDocument } from '@lobechat/types';
+import { type NotebookDocumentSummary } from '@lobechat/types';
 import isEqual from 'fast-deep-equal';
 import { type SWRResponse } from 'swr';
 
@@ -13,6 +13,10 @@ import { useChatStore } from '@/store/chat';
 import { type StoreSetter } from '@/store/types';
 import { setNamespace } from '@/utils/storeDebug';
 
+import {
+  isRetryableNotebookListError,
+  notebookListRetryHandler,
+} from './retryPolicy';
 import { type NotebookStore } from './store';
 
 const n = setNamespace('notebook');
@@ -92,17 +96,20 @@ export class NotebookActionImpl {
     return document;
   };
 
-  useFetchDocuments = (topicId: string | undefined): SWRResponse<NotebookDocument[]> => {
-    return useClientDataSWR<NotebookDocument[]>(
+  useFetchDocuments = (topicId: string | undefined): SWRResponse<NotebookDocumentSummary[]> => {
+    return useClientDataSWR<NotebookDocumentSummary[]>(
       topicId ? notebookSWRKeys.documents(topicId) : null,
       async () => {
         if (!topicId) return [];
 
-        const result = await notebookService.listDocuments({ topicId });
+        const result = await notebookService.listDocumentSummaries(topicId);
 
         return result.data;
       },
       {
+        dedupingInterval: 5000,
+        keepPreviousData: true,
+        onErrorRetry: notebookListRetryHandler,
         onSuccess: (documents) => {
           if (!topicId) return;
 
@@ -119,6 +126,9 @@ export class NotebookActionImpl {
             n('useFetchDocuments(onSuccess)', { topicId }),
           );
         },
+        revalidateOnFocus: false,
+        revalidateOnReconnect: true,
+        shouldRetryOnError: isRetryableNotebookListError,
       },
     );
   };

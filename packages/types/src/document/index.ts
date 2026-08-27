@@ -252,3 +252,26 @@ export interface NotebookDocument {
    */
   updatedAt: Date;
 }
+
+/**
+ * Bounded topic document data for human-facing lists.
+ *
+ * Full content, editor data, pages and metadata intentionally do not belong to
+ * this interface. Callers that need them must use a document detail or plan
+ * interface explicitly.
+ */
+export interface NotebookDocumentSummary
+  extends Pick<
+    NotebookDocument,
+    | 'associatedAt'
+    | 'createdAt'
+    | 'description'
+    | 'fileType'
+    | 'id'
+    | 'title'
+    | 'totalCharCount'
+    | 'totalLineCount'
+    | 'updatedAt'
+  > {
+  filename: string | null;
+}

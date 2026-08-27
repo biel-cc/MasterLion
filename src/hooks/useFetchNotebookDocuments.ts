@@ -8,11 +8,14 @@ export const useFetchNotebookDocuments = (topicId?: string) => {
   const useFetchDocuments = useNotebookStore((s) => s.useFetchDocuments);
   const documents = useNotebookStore((s) => notebookSelectors.getDocumentsByTopicId(topicId)(s));
 
-  const { isLoading } = useFetchDocuments(topicId);
+  const { error, isLoading, isValidating, mutate } = useFetchDocuments(topicId);
 
   return {
     documents,
+    error,
     isLoading,
+    isValidating,
+    refresh: mutate,
     topicId,
   };
 };

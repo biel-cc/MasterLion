@@ -644,15 +644,14 @@ export class AgentDocumentsService {
     sourceType?: AgentDocumentListSourceType,
     options?: { includeArchivedToolResults?: boolean },
   ) {
-    const topicDocs = await this.topicDocumentModel.findByTopicId(topicId);
-    const documentIds = topicDocs.map((doc) => doc.id);
+    const documentIds = await this.topicDocumentModel.findDocumentIdsByTopicId(topicId);
     const docs = sourceType
       ? await this.agentDocumentModel.listByDocumentIds(agentId, documentIds, { sourceType })
       : await this.agentDocumentModel.listByDocumentIds(agentId, documentIds);
     const docsByDocumentId = new Map(docs.map((doc) => [doc.documentId, doc]));
 
-    const ordered = topicDocs
-      .map((topicDoc) => docsByDocumentId.get(topicDoc.id))
+    const ordered = documentIds
+      .map((documentId) => docsByDocumentId.get(documentId))
       .filter((doc): doc is AgentDocumentListItem => Boolean(doc));
 
     if (options?.includeArchivedToolResults) return ordered;

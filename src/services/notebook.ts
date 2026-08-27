@@ -43,6 +43,14 @@ class NotebookService {
     return lambdaClient.notebook.getDocument.query({ id });
   };
 
+  getLatestPlan = async (topicId: string) => {
+    return lambdaClient.notebook.getLatestPlan.query({ topicId });
+  };
+
+  listDocumentSummaries = async (topicId: string) => {
+    return lambdaClient.notebook.listDocumentSummaries.query({ topicId });
+  };
+
   listDocuments = async (params: ListDocumentsParams) => {
     return lambdaClient.notebook.listDocuments.query(params);
   };

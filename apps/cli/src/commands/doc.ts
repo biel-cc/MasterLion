@@ -343,16 +343,43 @@ export function registerDocCommand(program: Command) {
     .action(async (topicId: string, options: { json?: string | boolean; type?: string }) => {
       const client = await getTrpcClient();
 
-      const query: { topicId: string; type?: any } = { topicId };
-      if (options.type) query.type = options.type;
-      const result = await client.notebook.listDocuments.query(query);
-      const docs = Array.isArray(result) ? result : ((result as any).data ?? []);
+      const result = await client.notebook.listDocumentSummaries.query({ topicId });
+      const summaries = Array.isArray(result) ? result : ((result as any).data ?? []);
+      const filteredSummaries = options.type
+        ? summaries.filter((document: any) => document.fileType === options.type)
+        : summaries;
 
       if (options.json !== undefined) {
+        // Preserve the CLI JSON contract without bringing full rows back into
+        // the latency-sensitive topic list query. CLI detail reads are explicit
+        // and user initiated, so fetching each selected document is acceptable.
+        const docs = [];
+        for (const summary of filteredSummaries) {
+          const detail = await client.notebook.getDocument.query({ id: summary.id });
+          docs.push(
+            detail
+              ? {
+                  associatedAt: summary.associatedAt,
+                  content: detail.content,
+                  createdAt: detail.createdAt,
+                  description: detail.description,
+                  fileType: detail.fileType,
+                  id: detail.id,
+                  metadata: detail.metadata,
+                  title: detail.title,
+                  totalCharCount: detail.totalCharCount,
+                  totalLineCount: detail.totalLineCount,
+                  updatedAt: detail.updatedAt,
+                }
+              : { ...summary, content: null, metadata: null },
+          );
+        }
         const fields = typeof options.json === 'string' ? options.json : undefined;
         outputJson(docs, fields);
         return;
       }
+
+      const docs = filteredSummaries;
 
       if (docs.length === 0) {
         console.log('No documents found for this topic.');

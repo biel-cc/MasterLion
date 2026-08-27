@@ -230,6 +230,129 @@ describe('TopicDocumentModel', () => {
     });
   });
 
+  describe('findSummariesByTopicId', () => {
+    it('returns only bounded list fields even when the document stores large content', async () => {
+      const doc = await documentModel.create({
+        content: 'x'.repeat(1024 * 1024),
+        editorData: { root: { children: ['y'.repeat(1024 * 1024)] } },
+        fileType: 'markdown',
+        filename: 'large-report.md',
+        metadata: { privateContext: 'z'.repeat(1024 * 1024) },
+        pages: [
+          {
+            charCount: 1024 * 1024,
+            lineCount: 1,
+            metadata: {},
+            pageContent: 'p'.repeat(1024 * 1024),
+          },
+        ],
+        source: `notebook:${topicId}`,
+        sourceType: 'api',
+        title: 'Large report',
+        totalCharCount: 1024 * 1024,
+        totalLineCount: 1,
+      });
+      await topicDocumentModel.associate({ documentId: doc.id, topicId });
+
+      const summaries = await topicDocumentModel.findSummariesByTopicId(topicId);
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toEqual({
+        associatedAt: expect.any(Date),
+        createdAt: expect.any(Date),
+        description: null,
+        fileType: 'markdown',
+        filename: 'large-report.md',
+        id: doc.id,
+        title: 'Large report',
+        totalCharCount: 1024 * 1024,
+        totalLineCount: 1,
+        updatedAt: expect.any(Date),
+      });
+      expect(JSON.stringify(summaries).length).toBeLessThan(2048);
+    });
+
+    it('filters summaries by document type', async () => {
+      const markdownDoc = await createTestDocument(documentModel, 'Markdown Doc', 'markdown');
+      const reportDoc = await createTestDocument(documentModel, 'Report Doc', 'report');
+      await topicDocumentModel.associate({ documentId: markdownDoc.id, topicId });
+      await topicDocumentModel.associate({ documentId: reportDoc.id, topicId });
+
+      const summaries = await topicDocumentModel.findSummariesByTopicId(topicId, {
+        type: 'report',
+      });
+
+      expect(summaries.map((document) => document.id)).toEqual([reportDoc.id]);
+    });
+  });
+
+  describe('findLatestPlanByTopicId', () => {
+    it('returns one latest full document for the requested type', async () => {
+      const previousPlan = await createTestDocument(documentModel, 'Previous Plan', 'agent/plan');
+      const latestPlan = await documentModel.create({
+        content: 'Latest plan full content',
+        fileType: 'agent/plan',
+        metadata: { todos: { items: [{ completed: false, text: 'Ship fix' }] } },
+        source: `notebook:${topicId}`,
+        sourceType: 'api',
+        title: 'Latest Plan',
+        totalCharCount: 24,
+        totalLineCount: 1,
+      });
+      await topicDocumentModel.associate({ documentId: previousPlan.id, topicId });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await topicDocumentModel.associate({ documentId: latestPlan.id, topicId });
+
+      const plan = await topicDocumentModel.findLatestPlanByTopicId(topicId);
+
+      expect(plan).toMatchObject({
+        content: 'Latest plan full content',
+        id: latestPlan.id,
+        metadata: { todos: { items: [{ completed: false, text: 'Ship fix' }] } },
+        title: 'Latest Plan',
+      });
+      expect(plan).not.toHaveProperty('editorData');
+      expect(plan).not.toHaveProperty('pages');
+    });
+  });
+
+  describe('findPlanMetadataByTopicId', () => {
+    it('selects only id and metadata for associated plans', async () => {
+      const metadata = { todos: { items: [{ completed: false, text: 'Ship' }] } };
+      const plan = await documentModel.create({
+        content: 'full plan content must stay outside this projection',
+        fileType: 'agent/plan',
+        metadata,
+        source: `notebook:${topicId}`,
+        sourceType: 'api',
+        title: 'Plan',
+        totalCharCount: 51,
+        totalLineCount: 1,
+      });
+      await topicDocumentModel.associate({ documentId: plan.id, topicId });
+
+      const result = await topicDocumentModel.findPlanMetadataByTopicId(topicId);
+
+      expect(result).toEqual([{ id: plan.id, metadata }]);
+      expect(result[0]).not.toHaveProperty('content');
+    });
+  });
+
+  describe('findDocumentIdsByTopicId', () => {
+    it('returns topic document ids without loading document rows', async () => {
+      const first = await createTestDocument(documentModel, 'First');
+      const second = await createTestDocument(documentModel, 'Second');
+      await topicDocumentModel.associate({ documentId: first.id, topicId });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await topicDocumentModel.associate({ documentId: second.id, topicId });
+
+      await expect(topicDocumentModel.findDocumentIdsByTopicId(topicId)).resolves.toEqual([
+        second.id,
+        first.id,
+      ]);
+    });
+  });
+
   describe('findByDocumentId', () => {
     it('should return all topic IDs associated with a document', async () => {
       const doc = await createTestDocument(documentModel, 'Shared Document');

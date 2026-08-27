@@ -69,9 +69,8 @@ export const createServerPlanRuntimeService = (
     },
 
     findPlanByTopic: async (topicId) => {
-      const docs = await topicDocumentModel.findByTopicId(topicId, { type: AGENT_PLAN_FILE_TYPE });
-      const first = docs[0];
-      return first ? toPlanDocument(first) : null;
+      const plan = await topicDocumentModel.findLatestPlanByTopicId(topicId);
+      return plan ? toPlanDocument(plan) : null;
     },
 
     updatePlan: async (id, { goal, description, content }) => {
