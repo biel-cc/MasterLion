@@ -1,4 +1,4 @@
-# Electron tool lifecycle E2E
+# Electron lifecycle E2E
 
 This Electron-hosted integration suite launches a real Electron process with Playwright. The test-only app imports the
 production `ToolCallLifecycle` source after transpiling it into the ignored `.artifacts/`
@@ -6,6 +6,10 @@ directory, then supplies deterministic message, operation, retry, and local-exec
 It uses the same Electron runtime version declared by `apps/desktop`. The test renderer clears its
 pending indicator only when the lifecycle promise settles, and separately asserts that the
 production operation snapshot has no `running` nodes.
+
+The same real Electron harness also imports the production `AihubReadiness` state machine. It verifies that concurrent
+OIDC/runtime requests enter provisioning once and that a same-user Electron relaunch reuses persisted readiness instead
+of creating another managed token.
 
 This is a focused Electron-hosted lifecycle contract, not a packaged Masterino UI test: the
 production Zustand adapters, approval action, message service, and TRPC router are covered by their

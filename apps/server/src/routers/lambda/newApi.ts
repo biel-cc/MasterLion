@@ -5,6 +5,7 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { requireAihubManage } from '@/server/services/enterprise/adminPermissionService';
 import { NewApiService } from '@/server/services/newApi';
+import { createAihubReadiness } from '@/server/services/newApi/readiness/production';
 
 const newApiProcedure = authedProcedure.use(serverDatabase).use(async ({ ctx, next }) => {
   const gateKeeper = await KeyVaultsGateKeeper.initWithEnvKey();
@@ -15,6 +16,10 @@ const newApiProcedure = authedProcedure.use(serverDatabase).use(async ({ ctx, ne
         db: ctx.serverDB,
         gateKeeper,
         userId: ctx.userId,
+      }),
+      aihubReadiness: createAihubReadiness({
+        db: ctx.serverDB,
+        gateKeeper,
       }),
     },
   });
@@ -34,8 +39,18 @@ export const newApiRouter = router({
   }),
 
   getBindingStatus: newApiProcedure.query(async ({ ctx }) => {
-    return ctx.newApiService.getBindingStatus();
+    return ctx.aihubReadiness.get(ctx.userId);
   }),
+
+  ensureReadiness: newApiProcedure
+    .input(z.object({ repairIamBinding: z.boolean().optional() }).optional())
+    .mutation(async ({ ctx, input }) => {
+      return ctx.aihubReadiness.ensure(ctx.userId, {
+        force: true,
+        repairIamBinding: input?.repairIamBinding,
+        trigger: 'manual_retry',
+      });
+    }),
 
   getUsageSummary: newApiProcedure
     .input(
@@ -51,7 +66,16 @@ export const newApiRouter = router({
     }),
 
   rebindCurrentUser: newApiProcedure.mutation(async ({ ctx }) => {
-    return ctx.newApiService.rebindCurrentUser();
+    const state = await ctx.aihubReadiness.ensure(ctx.userId, {
+      force: true,
+      repairIamBinding: true,
+      trigger: 'manual_retry',
+    });
+    const oauthBinding = state.oauthBinding ?? state.iamOAuthBinding ?? { status: 'unknown' };
+    return {
+      ...oauthBinding,
+      repaired: oauthBinding.status === 'active',
+    };
   }),
 
   importBindings: newApiProcedure
@@ -62,7 +86,14 @@ export const newApiRouter = router({
     }),
 
   syncModels: newApiProcedure.mutation(async ({ ctx }) => {
-    return ctx.newApiService.syncModels();
+    const state = await ctx.aihubReadiness.ensure(ctx.userId, {
+      force: true,
+      trigger: 'manual_model_sync',
+    });
+    if (state.status !== 'active') {
+      throw new Error(state.errorMessage || 'Aihub readiness could not be established');
+    }
+    return { models: state.models ?? [] };
   }),
 
   validateBinding: newApiProcedure

@@ -9,12 +9,7 @@ const electronRoot = path.resolve(supportDirectory, '..');
 const repositoryRoot = path.resolve(electronRoot, '../..');
 const artifactDirectory = path.resolve(electronRoot, '.artifacts');
 
-const transpile = async (sourceName) => {
-  const sourcePath = path.resolve(
-    repositoryRoot,
-    'src/store/chat/agents/toolCallLifecycle',
-    `${sourceName}.ts`,
-  );
+const transpile = async (sourceName, sourcePath) => {
   const source = await readFile(sourcePath, 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: {
@@ -42,5 +37,18 @@ const transpile = async (sourceName) => {
 
 export const buildProductionLifecycle = async () => {
   await mkdir(artifactDirectory, { recursive: true });
-  await Promise.all([transpile('ToolCallLifecycle'), transpile('retryPolicy')]);
+  await Promise.all([
+    transpile(
+      'ToolCallLifecycle',
+      path.resolve(repositoryRoot, 'src/store/chat/agents/toolCallLifecycle/ToolCallLifecycle.ts'),
+    ),
+    transpile(
+      'retryPolicy',
+      path.resolve(repositoryRoot, 'src/store/chat/agents/toolCallLifecycle/retryPolicy.ts'),
+    ),
+    transpile(
+      'AihubReadiness',
+      path.resolve(repositoryRoot, 'apps/server/src/services/newApi/readiness/index.ts'),
+    ),
+  ]);
 };

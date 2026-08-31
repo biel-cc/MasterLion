@@ -135,6 +135,7 @@ prepare_secret_files() {
     S3_SECRET_ACCESS_KEY
     SEARXNG_SECRET
     AIHUB_BRIDGE_TOKEN
+    AIHUB_ADMIN_ACCESS_TOKEN
     AIHUB_READONLY_DATABASE_URL
     AUTH_WECOM_AGENT_ID
     AUTH_WECOM_CORP_ID
@@ -199,6 +200,7 @@ prepare_secret_files() {
   write_env "$APP_SECRET_FILE" S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
   write_env "$APP_SECRET_FILE" S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
   write_env "$APP_SECRET_FILE" AIHUB_BRIDGE_TOKEN "$AIHUB_BRIDGE_TOKEN"
+  write_env "$APP_SECRET_FILE" AIHUB_ADMIN_ACCESS_TOKEN "$AIHUB_ADMIN_ACCESS_TOKEN"
   write_env "$APP_SECRET_FILE" MARKET_TRUSTED_CLIENT_SECRET \
     "$MARKET_TRUSTED_CLIENT_SECRET"
   write_env "$APP_SECRET_FILE" AUTH_SSO_PROVIDERS "${AUTH_SSO_PROVIDERS:-wecom}"
@@ -242,21 +244,53 @@ prepare_secret_files() {
 
 check_aihub_authorization() {
   require_env ACK_TEST_AIHUB_USERNAME
-  require_env AIHUB_MANAGED_TOKEN_NAME
   require_env AIHUB_REQUIRED_CHAT_MODEL
   require_env AIHUB_REQUIRED_EMBEDDING_MODEL
+
+  [[ "$ACK_TEST_AIHUB_USERNAME" =~ ^[A-Za-z0-9._@-]+$ ]] \
+    || fail "ACK_TEST_AIHUB_USERNAME contains unsupported characters"
+
+  local binding_row
+  binding_row="$(
+    kubectl -n "$NAMESPACE" exec statefulset/masterino-postgres -- sh -lc '
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -d lobechat -AtF "|" -c \
+        "select u.id, b.status, b.new_api_user_id, b.managed_token_id, b.readiness_version from users u join new_api_bindings b on b.user_id = u.id where u.username = '\''$1'\'';"
+    ' sh "$ACK_TEST_AIHUB_USERNAME"
+  )"
+  [[ -n "$binding_row" ]] \
+    || fail "Masterino Aihub binding was not found for $ACK_TEST_AIHUB_USERNAME"
+
+  local lobe_user_id binding_status new_api_user_id managed_token_id readiness_version
+  IFS='|' read -r \
+    lobe_user_id binding_status new_api_user_id managed_token_id readiness_version \
+    <<< "$binding_row"
+  [[ -n "$lobe_user_id" ]] || fail "Masterino user id is missing from the Aihub binding"
+  [[ "$binding_status" == "active" ]] || fail "Masterino Aihub binding is not active"
+  [[ "$new_api_user_id" =~ ^[1-9][0-9]*$ ]] || fail "Aihub user id is missing from the binding"
+  [[ "$managed_token_id" =~ ^[1-9][0-9]*$ ]] || fail "managed token id is missing from the binding"
+  [[ "$readiness_version" =~ ^[2-9][0-9]*$ ]] \
+    || fail "Masterino Aihub binding has not reached readiness v2"
 
   kubectl -n "$NAMESPACE" exec deployment/masterino-aihub-db-bridge -- \
     node --input-type=module -e '
       const [
         username,
-        tokenName,
+        expectedUserIdValue,
+        managedTokenIdValue,
         requiredChatModel,
         requiredEmbeddingModel,
       ] = process.argv.slice(1);
+      const expectedUserId = Number(expectedUserIdValue);
+      const managedTokenId = Number(managedTokenIdValue);
       const baseUrl = "http://127.0.0.1:3218";
       const bridgeToken = process.env.AIHUB_BRIDGE_TOKEN;
       if (!bridgeToken) throw new Error("AIHUB_BRIDGE_TOKEN is missing in the bridge pod");
+      if (!Number.isInteger(expectedUserId) || expectedUserId <= 0) {
+        throw new Error("Invalid Aihub user id from Masterino binding");
+      }
+      if (!Number.isInteger(managedTokenId) || managedTokenId <= 0) {
+        throw new Error("Invalid managed token id from Masterino binding");
+      }
 
       const request = async (path) => {
         const response = await fetch(`${baseUrl}${path}`, {
@@ -269,32 +303,33 @@ check_aihub_authorization() {
         return body.data;
       };
 
-      const user = await request(
-        `/v1/users/resolve?username=${encodeURIComponent(username)}`,
+      const user = await request(`/v1/users/${expectedUserId}`);
+      if (Number(user.id) !== expectedUserId || String(user.username) !== username) {
+        throw new Error("Aihub user identity does not match the Masterino binding");
+      }
+      const exactToken = await request(
+        `/v1/users/${expectedUserId}/managed-tokens/${managedTokenId}`,
       );
-      const tokens = await request(
-        `/v1/users/${user.id}/managed-tokens?name=${encodeURIComponent(tokenName)}`,
-      );
-      const exactToken = Array.isArray(tokens)
-        ? tokens.find((token) => token.name === tokenName)
-        : undefined;
-      if (!exactToken) {
-        throw new Error(`Aihub token "${tokenName}" was not found for the test user`);
+      if (Number(exactToken.id) !== managedTokenId) {
+        throw new Error("Aihub managed token id does not match the Masterino binding");
+      }
+      if (Number(exactToken.user_id) !== expectedUserId) {
+        throw new Error("Aihub managed token owner does not match the Masterino binding");
       }
 
       const now = Math.floor(Date.now() / 1000);
       if (Number(exactToken.status) !== 1) {
-        throw new Error(`Aihub token "${tokenName}" is disabled`);
+        throw new Error(`Aihub token ${managedTokenId} is disabled`);
       }
       if (Number(exactToken.expired_time) !== -1 && Number(exactToken.expired_time) <= now) {
-        throw new Error(`Aihub token "${tokenName}" is expired`);
+        throw new Error(`Aihub token ${managedTokenId} is expired`);
       }
       if (!exactToken.unlimited_quota && Number(exactToken.remain_quota) <= 0) {
-        throw new Error(`Aihub token "${tokenName}" has no remaining quota`);
+        throw new Error(`Aihub token ${managedTokenId} has no remaining quota`);
       }
 
       const models = await request(
-        `/v1/users/${user.id}/models?tokenName=${encodeURIComponent(tokenName)}`,
+        `/v1/users/${expectedUserId}/models?tokenName=${encodeURIComponent(exactToken.name)}`,
       );
       const accessibleModels = new Set(Array.isArray(models) ? models : []);
       const missingModels = [requiredChatModel, requiredEmbeddingModel].filter(
@@ -302,19 +337,58 @@ check_aihub_authorization() {
       );
       if (missingModels.length > 0) {
         throw new Error(
-          `Aihub user group or token "${tokenName}" does not authorize: ${missingModels.join(", ")}`,
+          `Aihub user group or token ${managedTokenId} does not authorize: ${missingModels.join(", ")}`,
         );
       }
 
       console.log(
-        `Aihub authorization check passed for token "${tokenName}": ` +
+        `Aihub authorization check passed for binding token ${managedTokenId}: ` +
           `${requiredChatModel}, ${requiredEmbeddingModel}`,
       );
     ' \
     "$ACK_TEST_AIHUB_USERNAME" \
-    "$AIHUB_MANAGED_TOKEN_NAME" \
+    "$new_api_user_id" \
+    "$managed_token_id" \
     "$AIHUB_REQUIRED_CHAT_MODEL" \
     "$AIHUB_REQUIRED_EMBEDDING_MODEL"
+}
+
+check_aihub_readiness_prerequisites() {
+  kubectl -n "$NAMESPACE" exec deployment/masterino -- \
+    node -e '
+      const token = process.env.AIHUB_ADMIN_ACCESS_TOKEN?.trim();
+      const adminUserId = Number(process.env.AIHUB_ADMIN_USER_ID);
+      if (!token) throw new Error("AIHUB_ADMIN_ACCESS_TOKEN is missing");
+      if (!Number.isInteger(adminUserId) || adminUserId <= 0) {
+        throw new Error("AIHUB_ADMIN_USER_ID must be a positive integer");
+      }
+      if (process.env.AIHUB_DATA_SOURCE !== "bridge") {
+        throw new Error("AIHUB_DATA_SOURCE must be bridge");
+      }
+      console.log("Aihub readiness server configuration passed");
+    '
+
+  local policy_enabled
+  policy_enabled="$(
+    kubectl -n "$NAMESPACE" exec statefulset/masterino-postgres -- sh -lc '
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -d lobechat -Atc \
+        "select case when count(*) = 0 then true else bool_and(enabled and coalesce((config -> '\''aihubProvisioning'\'' ->> '\''enabled'\'')::boolean, true)) end from sso_provider_configs where provider = '\''wecom'\'';"
+    '
+  )"
+  [[ "$policy_enabled" == "t" ]] \
+    || fail "WeCom aihubProvisioning policy is disabled in the test database"
+
+  local migration_applied
+  migration_applied="$(
+    kubectl -n "$NAMESPACE" exec statefulset/masterino-postgres -- sh -lc '
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -U postgres -d lobechat -Atc \
+        "select to_regclass('\''public.aihub_readiness_leases'\'') is not null and (select count(*) = 6 from information_schema.columns where table_schema = '\''public'\'' and table_name = '\''new_api_bindings'\'' and column_name in ('\''error_code'\'', '\''error_kind'\'', '\''attempt_count'\'', '\''last_attempt_at'\'', '\''next_retry_at'\'', '\''readiness_version'\''));"
+    '
+  )"
+  [[ "$migration_applied" == "t" ]] \
+    || fail "Aihub readiness migration has not been applied in the test database"
+
+  echo "Aihub readiness test prerequisites passed"
 }
 
 require_command bash
@@ -343,6 +417,9 @@ case "$ACK_TEST_ACTION" in
     ;;
   aihub-check)
     check_aihub_authorization
+    ;;
+  aihub-readiness-preflight)
+    check_aihub_readiness_prerequisites
     ;;
   validate)
     require_digest MASTERINO_IMAGE_DIGEST
@@ -393,6 +470,6 @@ case "$ACK_TEST_ACTION" in
     bash ./deploy.sh --env test status
     ;;
   *)
-    fail "ACK_TEST_ACTION must be preflight, aihub-check, validate, deploy, gateway-update, app-update, or status"
+    fail "ACK_TEST_ACTION must be preflight, aihub-check, aihub-readiness-preflight, validate, deploy, gateway-update, app-update, or status"
     ;;
 esac

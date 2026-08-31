@@ -56,10 +56,12 @@ const createClient = () => ({
 
 const createBridgeClient = (overrides: Record<string, unknown> = {}) => ({
   findManagedToken: vi.fn().mockResolvedValue(undefined),
+  findManagedTokenById: vi.fn().mockResolvedValue(undefined),
   findUserById: vi.fn().mockResolvedValue(undefined),
   findUserByIdentity: vi.fn().mockResolvedValue(undefined),
   isEnabled: () => true,
   linkOAuthBinding: vi.fn().mockResolvedValue({ status: 'existing' }),
+  listManagedTokens: vi.fn().mockResolvedValue([]),
   reassignToken: vi.fn().mockResolvedValue(true),
   ...overrides,
 });
@@ -114,7 +116,7 @@ describe('NewApiProvisioningAdapter', () => {
     );
     expect(client.listTokens).toHaveBeenCalledWith(
       adminAuth,
-      expect.objectContaining({ keyword: 'masterlion-managed' }),
+      expect.objectContaining({ keyword: 'Masterino_E-1001' }),
     );
     expect(client.createUser).not.toHaveBeenCalled();
     expect(client.createToken).not.toHaveBeenCalled();
@@ -132,7 +134,7 @@ describe('NewApiProvisioningAdapter', () => {
     };
     const createdToken = {
       id: 8002,
-      name: 'masterlion-managed',
+      name: 'Masterino_E-1001',
       remain_quota: 500,
       unlimited_quota: true,
       user_id: 9002,
@@ -143,6 +145,7 @@ describe('NewApiProvisioningAdapter', () => {
       .mockResolvedValueOnce({ items: [createdUser], total: 1 });
     client.createUser.mockResolvedValue(createdUser);
     client.listTokens
+      .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [createdToken], total: 1 });
     client.createToken.mockResolvedValue(createdToken);
@@ -182,7 +185,7 @@ describe('NewApiProvisioningAdapter', () => {
     expect(client.createToken).toHaveBeenCalledWith(
       adminAuth,
       expect.objectContaining({
-        name: 'masterlion-managed',
+        name: 'Masterino_E-1001',
         remain_quota: 500,
         unlimited_quota: true,
       }),
@@ -232,21 +235,44 @@ describe('NewApiProvisioningAdapter', () => {
     expect(client.createUser).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores same-name tokens that do not belong to the target Aihub user', async () => {
+  it('rejects a post-create authoritative user whose username differs from the employee number', async () => {
+    const client = createClient();
+    client.searchUsers
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0 });
+    client.createUser.mockResolvedValue({ id: 9003 });
+    const bridgeClient = createBridgeClient({
+      findUserById: vi.fn().mockResolvedValue({
+        email: 'ada@example.com',
+        id: 9003,
+        username: 'OTHER-1001',
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      /identity conflict.*OTHER-1001.*E-1001/i,
+    );
+    expect(client.listTokens).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-name token owned by a different non-admin Aihub user', async () => {
     const client = createClient();
     client.searchUsers.mockResolvedValue({
       items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
       total: 1,
     });
-    client.listTokens
-      .mockResolvedValueOnce({
-        items: [{ id: 7001, name: 'masterlion-managed', user_id: 7777 }],
-        total: 1,
-      })
-      .mockResolvedValueOnce({
-        items: [{ id: 8001, name: 'masterlion-managed', user_id: 9001 }],
-        total: 1,
-      });
+    client.listTokens.mockImplementation(async (_auth, query) => ({
+      items:
+        query.keyword === 'masterlion-managed'
+          ? [{ id: 7001, name: 'masterlion-managed', user_id: 7777 }]
+          : [],
+      total: query.keyword === 'masterlion-managed' ? 1 : 0,
+    }));
     client.createToken.mockResolvedValue({
       id: 8001,
       name: 'masterlion-managed',
@@ -254,12 +280,10 @@ describe('NewApiProvisioningAdapter', () => {
     });
     const adapter = createAdapter(client);
 
-    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toMatchObject({
-      managedTokenId: 8001,
-      newApiUserId: 9001,
-      status: 'active',
-    });
-    expect(client.createToken).toHaveBeenCalledTimes(1);
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      /identity conflict.*7777/i,
+    );
+    expect(client.createToken).not.toHaveBeenCalled();
   });
 
   it('throws a clear error when autoCreateUser is disabled and lookup misses', async () => {
@@ -450,7 +474,7 @@ describe('NewApiProvisioningAdapter', () => {
 
     const result = await adapter.provisionEnterpriseUser({
       ...enterpriseUserInput,
-      masterinoUsername: 'ada',
+      masterinoUsername: 'E-1001',
     });
 
     expect(result).toMatchObject({
@@ -458,10 +482,10 @@ describe('NewApiProvisioningAdapter', () => {
       newApiUserId: 9001,
       status: 'active',
     });
-    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8003, 9001, 'Masterino_ada');
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8003, 9001);
   });
 
-  it('continues without error when bridge reassign fails (degraded mode)', async () => {
+  it('fails readiness when bridge cannot assign a newly-created token to the target user', async () => {
     const client = createClient();
     client.searchUsers.mockResolvedValue({
       items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
@@ -492,14 +516,111 @@ describe('NewApiProvisioningAdapter', () => {
       client: client as any,
     });
 
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      /reassign.*target Aihub user/i,
+    );
+    expect(bridgeClient.reassignToken).toHaveBeenCalled();
+  });
+
+  it('recovers the canonical admin-owned token left by a crash instead of creating another', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    client.listTokens.mockResolvedValue({
+      items: [{ id: 8100, name: 'Masterino_E-1001', user_id: 1 }],
+      total: 1,
+    });
+    const bridgeClient = createBridgeClient();
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
     const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
-    expect(result).toMatchObject({
-      managedTokenId: 8004,
-      newApiUserId: 9001,
-      status: 'active',
+    expect(result.managedTokenId).toBe(8100);
+    expect(client.createToken).not.toHaveBeenCalled();
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8100, 9001);
+  });
+
+  it('queries the legacy managed-token name when the canonical lookup misses', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
     });
-    expect(bridgeClient.reassignToken).toHaveBeenCalled();
+    client.listTokens.mockImplementation(async (_auth, query) => ({
+      items:
+        query.keyword === 'masterlion-managed'
+          ? [{ id: 8101, name: 'masterlion-managed', user_id: 9001 }]
+          : [],
+      total: query.keyword === 'masterlion-managed' ? 1 : 0,
+    }));
+    const adapter = createAdapter(client);
+
+    const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
+
+    expect(result.managedTokenId).toBe(8101);
+    expect(client.listTokens).toHaveBeenNthCalledWith(
+      1,
+      adminAuth,
+      expect.objectContaining({ keyword: 'Masterino_E-1001' }),
+    );
+    expect(client.listTokens).toHaveBeenNthCalledWith(
+      2,
+      adminAuth,
+      expect.objectContaining({ keyword: 'masterlion-managed' }),
+    );
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('prefers the token id already recorded in the Masterino binding', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        id: 8200,
+        name: 'older-custom-name',
+        user_id: 9001,
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    const result = await adapter.provisionEnterpriseUser({
+      ...enterpriseUserInput,
+      preferredManagedTokenId: 8200,
+    });
+
+    expect(result.managedTokenId).toBe(8200);
+    expect(client.listTokens).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects an Aihub identity whose username is not the enterprise employee number', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'newapi_9001' }],
+      total: 1,
+    });
+    const adapter = createAdapter(client);
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        policy: createPolicy({ autoCreateUser: false, lookupField: 'email' }),
+      }),
+    ).rejects.toThrow(/username.*employee number/i);
+    expect(client.createToken).not.toHaveBeenCalled();
   });
 
   it('reuses an existing Aihub user on duplicate-username conflict instead of failing', async () => {
@@ -530,6 +651,54 @@ describe('NewApiProvisioningAdapter', () => {
       status: 'active',
     });
     expect(client.createUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a duplicate-user fallback whose username differs from the employee number', async () => {
+    const client = createClient();
+    client.searchUsers
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({
+        items: [{ email: 'E-1001', id: 9001, username: 'OTHER-1001' }],
+        total: 1,
+      });
+    const { NewApiError } = await import('./client');
+    client.createUser.mockRejectedValue(
+      new NewApiError('username already exists', 409, { message: 'username already exists' }),
+    );
+    const adapter = createAdapter(client);
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      /identity conflict.*OTHER-1001.*E-1001/i,
+    );
+    expect(client.listTokens).not.toHaveBeenCalled();
+  });
+
+  it('rejects a newly-created token that reappears under a different non-admin user', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    client.listTokens
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({
+        items: [{ id: 8300, name: 'Masterino_E-1001', user_id: 7777 }],
+        total: 1,
+      });
+    client.createToken.mockResolvedValue({ id: 8300, name: 'Masterino_E-1001', user_id: 1 });
+    const bridgeClient = createBridgeClient();
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      /identity conflict.*7777/i,
+    );
+    expect(bridgeClient.reassignToken).not.toHaveBeenCalled();
   });
 
   it('falls back to the bridge to resolve an existing user when admin search misses', async () => {

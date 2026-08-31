@@ -151,7 +151,6 @@ describe('provisionWecomLoginAccount', () => {
         externalUserId: account.accountId,
         name: 'Employee One',
         policy: expect.objectContaining({
-          aihubProvisioning,
           departmentSync: {
             enabled: true,
             mode: 'login',
@@ -171,6 +170,9 @@ describe('provisionWecomLoginAccount', () => {
           assignDefaultWorkspace: expect.any(Function),
         }),
       }),
+    );
+    expect(provisionFromSsoProfile.mock.calls[0]?.[0]?.policy).not.toHaveProperty(
+      'aihubProvisioning',
     );
   });
 

@@ -147,10 +147,7 @@ describe('aiProviderRouter', () => {
       const result = await caller.getAiProviderRuntimeState({});
 
       expect(result).toEqual(mockRuntimeState);
-      expect(mockGetProvider).toHaveBeenCalledWith(
-        ModelProvider.NewAPI,
-        KeyVaultsGateKeeper.getUserKeyVaults,
-      );
+      expect(mockGetProvider).not.toHaveBeenCalled();
       expect(mockGetState).toHaveBeenCalledWith(KeyVaultsGateKeeper.getUserKeyVaults);
     });
   });

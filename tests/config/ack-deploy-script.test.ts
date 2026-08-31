@@ -35,6 +35,24 @@ describe('guarded ACK deployment script', () => {
     expect(helper).toContain(
       'AIHUB_REQUIRED_EMBEDDING_MODEL="${AIHUB_REQUIRED_EMBEDDING_MODEL:-text-embedding-3-large}"',
     );
+    expect(helper).toContain('b.managed_token_id');
+    expect(helper).toContain('`/v1/users/${expectedUserId}/managed-tokens/${managedTokenId}`');
+    expect(helper).toContain('Number(exactToken.user_id) !== expectedUserId');
+  });
+
+  it('requires the server-only Aihub administrator credential before test deployment', async () => {
+    const [deploy, helper, config, secretExample] = await Promise.all([
+      readFile('deploy.sh', 'utf8'),
+      readFile('scripts/operations/deployAckTestWithAliyunCli.sh', 'utf8'),
+      readFile('k8s/overlays/test/configmap.yaml', 'utf8'),
+      readFile('k8s/overlays/test/secret.env.example', 'utf8'),
+    ]);
+
+    expect(deploy).toContain('AIHUB_BRIDGE_TOKEN AIHUB_ADMIN_ACCESS_TOKEN');
+    expect(helper).toContain('write_env "$APP_SECRET_FILE" AIHUB_ADMIN_ACCESS_TOKEN');
+    expect(helper).toContain('aihub-readiness-preflight)');
+    expect(config).toContain("AIHUB_ADMIN_USER_ID: '1'");
+    expect(secretExample).toContain('AIHUB_ADMIN_ACCESS_TOKEN=CHANGE_ME_PRESERVE_FROM_PRODUCTION');
   });
 
   it('renders the production Device Gateway privately with an immutable single-replica image', async () => {
@@ -74,7 +92,9 @@ describe('guarded ACK deployment script', () => {
     expect(script).toContain('CONFIRM_GATEWAY_CUTOVER');
     expect(script).toContain('CONFIRM_GATEWAY_ROLLBACK');
     expect(script).toContain('JWKS_PUBLIC_KEY must contain public-only RS256 signing keys');
-    expect(script).toContain('production SERVICE_TOKEN must not reuse the test Device Gateway token');
+    expect(script).toContain(
+      'production SERVICE_TOKEN must not reuse the test Device Gateway token',
+    );
     expect(script).toContain('private Device Gateway health check did not return OK');
     expect(script).toContain('apply --server-side --field-manager=masterino-gateway-cutover');
     expect(script).toContain('delete ingress masterino-device-gateway');

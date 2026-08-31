@@ -108,7 +108,9 @@ const Page = () => {
   const useFetchAiProviderItem = useAiInfraStore((s) => s.useFetchAiProviderItem);
   const quotaPolicy = usage?.quotaPolicy || account?.quotaPolicy;
   const oauthBindingStatus = binding?.oauthBinding?.status || 'unknown';
-  const canRebind = ['conflict', 'error', 'missing'].includes(oauthBindingStatus);
+  const readinessNeedsRepair = binding?.status === 'error' || binding?.status === 'missing';
+  const canRebind =
+    readinessNeedsRepair || ['conflict', 'error', 'missing'].includes(oauthBindingStatus);
   const showRebind = canRebind || oauthBindingStatus === 'pending';
   const bindingTag = !isBound
     ? { color: 'warning', text: '未绑定' }

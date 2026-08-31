@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, lte } from 'drizzle-orm';
 
 import type { NewApiBindingItem, NewApiBindingStatusType, NewNewApiBindingItem } from '../schemas';
-import { newApiBindings } from '../schemas';
+import { aihubReadinessLeases, newApiBindings } from '../schemas';
 import type { LobeChatDatabase } from '../type';
 
 interface BaseUpsertNewApiBindingParams {
@@ -51,6 +51,29 @@ export class NewApiBindingModel {
     return this.db.query.newApiBindings.findFirst({
       where: eq(newApiBindings.userId, this.userId),
     });
+  };
+
+  upsertRemoteIdentifiers = async (params: { managedTokenId: number; newApiUserId: number }) => {
+    const now = new Date();
+    return this.db
+      .insert(newApiBindings)
+      .values({
+        managedTokenId: params.managedTokenId,
+        newApiUserId: params.newApiUserId,
+        status: 'pending',
+        updatedAt: now,
+        userId: this.userId,
+      })
+      .onConflictDoUpdate({
+        set: {
+          managedTokenId: params.managedTokenId,
+          newApiUserId: params.newApiUserId,
+          status: 'pending',
+          updatedAt: now,
+        },
+        target: newApiBindings.userId,
+      })
+      .returning();
   };
 
   upsert = async (params: UpsertNewApiBindingParams) => {
@@ -123,5 +146,42 @@ export class NewApiBindingModel {
         updatedAt: new Date(),
       })
       .where(eq(newApiBindings.userId, this.userId));
+  };
+}
+
+export class AihubReadinessLeaseModel {
+  private db: LobeChatDatabase;
+  private leaseTtlMs: number;
+
+  constructor(db: LobeChatDatabase, leaseTtlMs = 60_000) {
+    this.db = db;
+    this.leaseTtlMs = leaseTtlMs;
+  }
+
+  acquire = async (userId: string, ownerId: string, now = new Date()) => {
+    const expiresAt = new Date(now.getTime() + this.leaseTtlMs);
+    const rows = await this.db
+      .insert(aihubReadinessLeases)
+      .values({ acquiredAt: now, expiresAt, ownerId, userId })
+      .onConflictDoUpdate({
+        set: { acquiredAt: now, expiresAt, ownerId },
+        setWhere: lte(aihubReadinessLeases.expiresAt, now),
+        target: aihubReadinessLeases.userId,
+      })
+      .returning();
+
+    return rows[0];
+  };
+
+  release = async (userId: string, ownerId: string) => {
+    return this.db
+      .delete(aihubReadinessLeases)
+      .where(
+        and(eq(aihubReadinessLeases.userId, userId), eq(aihubReadinessLeases.ownerId, ownerId)),
+      );
+  };
+
+  clearExpired = async (now = new Date()) => {
+    return this.db.delete(aihubReadinessLeases).where(lte(aihubReadinessLeases.expiresAt, now));
   };
 }

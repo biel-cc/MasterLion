@@ -194,7 +194,9 @@ beforeEach(() => {
     models: [{ id: 'glm-5.1' }, { id: 'deepseek-v4-flash' }],
   });
   mocks.rebindCurrentUser.mockResolvedValue({ repaired: true, status: 'active' });
+  mocks.binding.isBound = true;
   mocks.binding.oauthBinding = { status: 'active' };
+  mocks.binding.status = 'active';
 });
 
 afterEach(() => {
@@ -202,6 +204,17 @@ afterEach(() => {
 });
 
 describe('Aihub provider detail page', () => {
+  it('offers a repair action when the core Aihub binding is missing', async () => {
+    mocks.binding.isBound = false;
+    mocks.binding.oauthBinding = { status: 'unknown' };
+    mocks.binding.status = 'missing';
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole('button', { name: '重新绑定' }));
+
+    await waitFor(() => expect(mocks.rebindCurrentUser).toHaveBeenCalledOnce());
+  });
+
   it('renders binding, visible RMB rows, model list, and refreshes models', async () => {
     render(<Page />);
 

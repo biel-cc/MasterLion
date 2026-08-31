@@ -13,6 +13,113 @@ const lifecycleModuleUrl = pathToFileURL(
 const retryPolicyModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/retryPolicy.mjs'),
 ).href;
+const aihubReadinessModuleUrl = pathToFileURL(
+  path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
+).href;
+
+const createAihubHarness = async () => {
+  const { AihubReadiness } = await import(aihubReadinessModuleUrl);
+  let binding;
+  let leaseOwner;
+  let localRuntimeReady = false;
+  let provisionCount = 0;
+  const bindingStore = {
+    get: async () => binding,
+    markActive: async (_userId, input) => {
+      binding = { ...binding, ...input, status: 'active' };
+      localRuntimeReady = true;
+    },
+    markError: async (_userId, input) => {
+      binding = { ...binding, ...input, status: 'error' };
+    },
+    markPending: async () => {
+      binding = {
+        ...binding,
+        attemptCount: (binding?.attemptCount ?? 0) + 1,
+        status: 'pending',
+      };
+    },
+    updateIamBinding: async (_userId, input) => {
+      binding = {
+        ...binding,
+        iamOAuthBindingStatus: input.status,
+      };
+    },
+  };
+  const lease = {
+    acquire: async (_userId, ownerId) => {
+      if (leaseOwner) return undefined;
+      leaseOwner = ownerId;
+      return { expiresAt: new Date(Date.now() + 60_000), ownerId };
+    },
+    release: async (_userId, ownerId) => {
+      if (leaseOwner === ownerId) leaseOwner = undefined;
+    },
+  };
+  const workflow = {
+    inspectLocalRuntime: async () => ({
+      hasApiKey: localRuntimeReady,
+      modelCount: localRuntimeReady ? 3 : 0,
+    }),
+    provision: async () => {
+      provisionCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      return {
+        iamOAuthBinding: { status: 'active' },
+        managedTokenId: 8001,
+        modelCount: 3,
+        newApiUserId: 9001,
+      };
+    },
+  };
+  const options = {
+    bindingStore,
+    identitySource: {
+      getEnterpriseIdentity: async () => ({
+        employeeNumber: '10184591',
+        employmentStatus: 'active',
+        masterinoUsername: '10184591',
+      }),
+    },
+    lease,
+    workflow,
+  };
+
+  return {
+    createRuntime: () => new AihubReadiness(options),
+    getProvisionCount: () => provisionCount,
+  };
+};
+
+ipcMain.handle('masterino-e2e:run-aihub-readiness', async (_event, scenario) => {
+  const harness = await createAihubHarness();
+  if (scenario === 'concurrent') {
+    const runtime = harness.createRuntime();
+    const states = await Promise.all(
+      Array.from({ length: 20 }, () => runtime.ensure('user-1', { trigger: 'oidc_authorized' })),
+    );
+    return {
+      activeCount: states.filter(({ status }) => status === 'active').length,
+      pendingCount: states.filter(({ status }) => status === 'pending').length,
+      provisionCount: harness.getProvisionCount(),
+      status: 'completed',
+    };
+  }
+  if (scenario === 'relaunch') {
+    await harness.createRuntime().ensure('user-1', { trigger: 'oidc_authorized' });
+    const relaunchedState = await harness
+      .createRuntime()
+      .ensure('user-1', { trigger: 'model_runtime' });
+    return {
+      activeCount: relaunchedState.status === 'active' ? 1 : 0,
+      pendingCount: 0,
+      provisionCount: harness.getProvisionCount(),
+      status: relaunchedState.status,
+    };
+  }
+
+  return { activeCount: 0, pendingCount: 0, provisionCount: 0, status: 'failed' };
+});
 
 const toSnapshot = (state) => ({
   localExecutionCount: state.localExecutionCount,

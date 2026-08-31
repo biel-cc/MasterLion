@@ -16,13 +16,16 @@ import {
   type VertexAIKeyVault,
 } from '@lobechat/types';
 import { safeParseJSON } from '@lobechat/utils';
+import { and, eq } from 'drizzle-orm';
 import { ModelProvider } from 'model-bank';
 
 import { getBusinessModelRuntimeHooks } from '@/business/server/model-runtime';
 import { AiProviderModel } from '@/database/models/aiProvider';
+import { account as authAccount, externalIdentities, newApiBindings } from '@/database/schemas';
 import { type LobeChatDatabase } from '@/database/type';
 import { getLLMConfig } from '@/envs/llm';
 import { createLLMGenerationTracingHook } from '@/server/services/llmGenerationTracing/hook';
+import { createAihubReadiness } from '@/server/services/newApi/readiness/production';
 
 import { KeyVaultsGateKeeper } from '../KeyVaultsEncrypt';
 import apiKeyManager from './apiKeyManager';
@@ -30,6 +33,49 @@ import { withTransientDatabaseReadRetry } from './databaseReadRetry';
 import { assertModelProviderEndpointAllowed } from './endpointPolicy';
 
 export * from './trace';
+
+type ReadinessFactory = typeof createAihubReadiness;
+type ManagedAihubUserPredicate = (db: LobeChatDatabase, userId: string) => Promise<boolean>;
+
+export const isEnterpriseManagedAihubUser: ManagedAihubUserPredicate = async (db, userId) => {
+  const [externalIdentity, betterAuthAccount, binding] = await Promise.all([
+    db.query.externalIdentities.findFirst({
+      columns: { id: true },
+      where: and(eq(externalIdentities.userId, userId), eq(externalIdentities.provider, 'wecom')),
+    }),
+    db.query.account.findFirst({
+      columns: { id: true },
+      where: and(eq(authAccount.userId, userId), eq(authAccount.providerId, 'wecom')),
+    }),
+    db.query.newApiBindings.findFirst({
+      columns: { readinessVersion: true },
+      where: eq(newApiBindings.userId, userId),
+    }),
+  ]);
+
+  return Boolean(externalIdentity || betterAuthAccount || (binding?.readinessVersion ?? 0) >= 2);
+};
+
+export const ensureModelProviderReadiness = async (
+  db: LobeChatDatabase,
+  userId: string,
+  provider: string,
+  readinessFactory: ReadinessFactory = createAihubReadiness,
+  isManagedUser: ManagedAihubUserPredicate = isEnterpriseManagedAihubUser,
+) => {
+  if (provider !== ModelProvider.NewAPI) return;
+  if (!(await isManagedUser(db, userId))) return;
+
+  const readiness = await readinessFactory({ db }).ensure(userId, {
+    trigger: 'model_runtime',
+  });
+  if (readiness.status !== 'active') {
+    throw new Error(
+      readiness.errorMessage ||
+        `Aihub is not ready for this user (status=${readiness.status}, code=${readiness.errorCode ?? 'unknown'})`,
+    );
+  }
+};
 
 /**
  * Combined KeyVaults type for all providers
@@ -449,6 +495,8 @@ export const initModelRuntimeFromDB = async (
   workspaceId?: string,
   options: RuntimeInitializationOptions = {},
 ): Promise<ModelRuntime> => {
+  await ensureModelProviderReadiness(db, userId, provider);
+
   // 1. Get user's provider configuration from database
   // NOTE: workspace-scoped ai_infra is deferred until the ai_infra surrogate-`_id`
   // PK migration lands; AiProviderModel stays personal-scoped for now.

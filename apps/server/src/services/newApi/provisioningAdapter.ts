@@ -34,6 +34,7 @@ export type ProvisionEnterpriseUserInput = {
   masterinoUsername?: string;
   name?: string;
   policy: ProvisioningPolicy;
+  preferredManagedTokenId?: number;
   userId: string;
 };
 
@@ -137,22 +138,21 @@ const findExactUser = (users: NewApiUser[], keyword: string) =>
 
 const isSameUserIdentity = (user: NewApiUser, input: ProvisionEnterpriseUserInput) => {
   const expectedUsername = getCreateUsername(input);
-  const expectedEmail = asTrimmedString(input.email);
-  const expectedName = asTrimmedString(input.name);
-
-  return (
-    asTrimmedString(user.username) === expectedUsername ||
-    (!!expectedEmail && asTrimmedString(user.email) === expectedEmail) ||
-    (!!expectedName && asTrimmedString(user.display_name) === expectedName)
-  );
+  return asTrimmedString(user.username) === expectedUsername;
 };
 
-const findExactToken = (tokens: NewApiToken[], name: string, newApiUserId: number) =>
-  tokens.find(
-    (token) =>
-      asTrimmedString(token.name) === name &&
-      (token.user_id === undefined || Number(token.user_id) === Number(newApiUserId)),
+const assertSameUserIdentity = (
+  user: NewApiUser,
+  input: ProvisionEnterpriseUserInput,
+): NewApiUser => {
+  if (isSameUserIdentity(user, input)) return user;
+
+  const actualUsername = asTrimmedString(user.username) ?? '<missing>';
+  const expectedUsername = getCreateUsername(input);
+  throw new Error(
+    `Aihub user identity conflict: username "${actualUsername}" does not match employee number "${expectedUsername}"`,
   );
+};
 
 // Bug 1b: detect Aihub "username already exists" conflicts so createUser can
 // fall back to reusing the existing user instead of failing permanently.
@@ -223,9 +223,20 @@ export class NewApiProvisioningAdapter {
     const policy = input.policy.aihubProvisioning ?? {};
     const lookupField = getLookupField(policy);
     const keyword = getLookupKeyword(input, lookupField);
-    const managedTokenName = getRequiredManagedTokenName(policy);
+    const legacyManagedTokenName = getRequiredManagedTokenName(policy);
+    const expectedUsername = getCreateUsername(input);
+    const masterinoUsername = asTrimmedString(input.masterinoUsername);
+    if (masterinoUsername && masterinoUsername !== expectedUsername) {
+      throw new Error('Masterino username must match the enterprise employee number');
+    }
+    const managedTokenName = `Masterino_${expectedUsername}`;
 
     let targetUser = await this.findUser(keyword);
+    let identityMismatch = false;
+    if (targetUser && !isSameUserIdentity(targetUser, input)) {
+      identityMismatch = true;
+      targetUser = undefined;
+    }
 
     // Email fallback: only accept the match when the found user's username
     // equals the expected Masterino username (employeeNumber). This prevents
@@ -233,10 +244,15 @@ export class NewApiProvisioningAdapter {
     // username (e.g. newapi_320) but happens to share the same email.
     if (!targetUser && lookupField !== 'email' && asTrimmedString(input.email)) {
       const emailMatch = await this.findUser(input.email!);
-      const expectedUsername = getCreateUsername(input);
       if (emailMatch && asTrimmedString(emailMatch.username) === expectedUsername) {
         targetUser = emailMatch;
+      } else if (emailMatch) {
+        identityMismatch = true;
       }
+    }
+
+    if (!targetUser && lookupField === 'email' && identityMismatch) {
+      throw new Error('Aihub username must match the enterprise employee number');
     }
 
     if (!targetUser) {
@@ -257,8 +273,9 @@ export class NewApiProvisioningAdapter {
     const token = await this.ensureManagedToken(
       targetUser.id,
       managedTokenName,
+      legacyManagedTokenName,
       policy,
-      input.masterinoUsername,
+      input.preferredManagedTokenId,
     );
 
     // Link the Aihub user to the OAuth provider (e.g. BIEL IAM) so that when
@@ -346,7 +363,7 @@ export class NewApiProvisioningAdapter {
       if (isDuplicateUserError(error)) {
         const existing = await this.findUser(username);
         if (existing && isValidId(existing.id)) {
-          return existing;
+          return assertSameUserIdentity(existing, input);
         }
       }
       throw error;
@@ -363,16 +380,16 @@ export class NewApiProvisioningAdapter {
 
       const reconfirmed = await this.refetchUser(createdUser.id, username);
       if (reconfirmed && isValidId(reconfirmed.id)) {
-        return reconfirmed;
+        return assertSameUserIdentity(reconfirmed, input);
       }
 
-      return createdUser;
+      return assertSameUserIdentity(createdUser, input);
     }
 
     // No valid id returned — try to locate the user we just created.
     const targetUser = await this.findUser(username);
     if (targetUser && isValidId(targetUser.id)) {
-      return targetUser;
+      return assertSameUserIdentity(targetUser, input);
     }
 
     throw new Error(`Aihub user "${username}" was created but no NewAPI user id was returned`);
@@ -456,44 +473,63 @@ export class NewApiProvisioningAdapter {
   private async ensureManagedToken(
     newApiUserId: number,
     managedTokenName: string,
+    legacyManagedTokenName: string,
     policy: AihubProvisioningPolicy,
-    masterinoUsername?: string,
+    preferredManagedTokenId?: number,
   ) {
-    // 1. Try the bridge (direct DB read) to find an existing managed token for the target user.
-    //    The Aihub API only lists the authenticated user's own tokens, so admin can't see
-    //    other users' tokens via /api/token/. The bridge queries the DB directly.
+    // 1. The locally recorded token id is authoritative when it still belongs
+    //    to this Aihub user. This keeps historical/custom token names compatible.
     if (this.bridgeClient?.isEnabled()) {
       try {
-        const bridgedToken = await this.bridgeClient.findManagedToken(
-          newApiUserId,
-          managedTokenName,
-        );
-        if (bridgedToken && isValidId(bridgedToken.id)) return bridgedToken;
+        if (preferredManagedTokenId) {
+          const recorded = await this.bridgeClient.findManagedTokenById(
+            newApiUserId,
+            preferredManagedTokenId,
+          );
+          if (recorded && isValidId(recorded.id)) return recorded;
+        }
+
+        // 2. Prefer the stable canonical name, then accept the legacy name.
+        for (const name of new Set([managedTokenName, legacyManagedTokenName])) {
+          const bridgedToken = await this.bridgeClient.findManagedToken(newApiUserId, name);
+          if (bridgedToken && isValidId(bridgedToken.id)) return bridgedToken;
+        }
       } catch {
         // Bridge lookup failed — fall through to admin API approach
       }
     }
 
-    // 2. Fall back to admin API: list admin's own tokens for a name match.
-    const findToken = async (filterByUserId = true) => {
-      const page = await this.client.listTokens(this.adminAuth, {
-        keyword: managedTokenName,
-        pageSize: 100,
-      });
-
-      if (!filterByUserId) {
-        return (page.items ?? []).find((token) => asTrimmedString(token.name) === managedTokenName);
+    // 3. Recover a token left under the admin user by a crash between remote
+    //    creation and bridge reassignment. Search both canonical and legacy
+    //    names because older releases created `masterlion-managed` first.
+    const findAdminVisibleToken = async () => {
+      for (const name of new Set([managedTokenName, legacyManagedTokenName])) {
+        const page = await this.client.listTokens(this.adminAuth, {
+          keyword: name,
+          pageSize: 100,
+        });
+        const exact = (page.items ?? [])
+          .filter((token) => asTrimmedString(token.name) === name)
+          .sort((a, b) => Number(b.id) - Number(a.id))[0];
+        if (exact) return exact;
       }
 
-      return findExactToken(page.items ?? [], managedTokenName, newApiUserId);
+      return undefined;
     };
 
-    const existingToken = await findToken();
-    if (existingToken && isValidId(existingToken.id)) return existingToken;
+    let token = await findAdminVisibleToken();
+    if (token && isValidId(token.id)) {
+      if (Number(token.user_id) === newApiUserId) return token;
+      if (token.user_id !== undefined && Number(token.user_id) !== this.adminAuth.newApiUserId) {
+        throw new Error(
+          `Aihub managed token identity conflict: token ${token.id} belongs to user ${token.user_id}`,
+        );
+      }
+      return this.reassignManagedToken(token, newApiUserId);
+    }
 
-    // 3. Create a new token as admin. The Aihub API always assigns the token to the
-    //    authenticated user (admin), not the target user. After creation, we reassign
-    //    ownership to the target Aihub user via the bridge's direct DB write capability.
+    // 4. Create the canonical name from the start. Do not trust createToken's
+    //    response id: some Aihub versions omit it. Re-list by the stable name.
     await this.client.createToken(this.adminAuth, {
       expired_time: -1,
       name: managedTokenName,
@@ -501,44 +537,33 @@ export class NewApiProvisioningAdapter {
       unlimited_quota: policy.managedTokenUnlimitedQuota,
     });
 
-    // After creation, the token is under admin (user_id=1), so we search by name
-    // without filtering by user_id. The reassign step below will correct the ownership.
-    const createdToken = await findToken(false);
-    if (createdToken && isValidId(createdToken.id)) {
-      // 4. Reassign the token to the target Aihub user via the bridge.
-      //    This corrects the user_id from admin (1) to the target user,
-      //    so the token appears under the correct user in Aihub and quota
-      //    is tracked properly. If the bridge is unavailable or lacks write
-      //    permission, the token remains under admin — a degraded but
-      //    functional state (the token key still works for API calls).
-      if (this.bridgeClient?.isEnabled()) {
-        const desiredName =
-          masterinoUsername && `Masterino_${masterinoUsername}` !== managedTokenName
-            ? `Masterino_${masterinoUsername}`
-            : undefined;
-        const reassigned = await this.bridgeClient.reassignToken(
-          createdToken.id,
-          newApiUserId,
-          desiredName,
-        );
-        if (!reassigned) {
-          console.warn(
-            `[Aihub Provisioning] Failed to reassign token ${createdToken.id} to user ${newApiUserId}; ` +
-              'token remains under admin user. Ensure the bridge DB account has UPDATE privilege on the tokens table.',
-          );
-        }
-      } else {
-        console.warn(
-          `[Aihub Provisioning] Bridge is not enabled; token ${createdToken.id} remains under admin user.`,
+    token = await findAdminVisibleToken();
+    if (token && isValidId(token.id)) {
+      if (Number(token.user_id) === newApiUserId) return token;
+      if (token.user_id !== undefined && Number(token.user_id) !== this.adminAuth.newApiUserId) {
+        throw new Error(
+          `Aihub managed token identity conflict: token ${token.id} belongs to user ${token.user_id}`,
         );
       }
-
-      return createdToken;
+      return this.reassignManagedToken(token, newApiUserId);
     }
 
     throw new Error(
       `Aihub managed token "${managedTokenName}" was not found after creation for user ${newApiUserId}`,
     );
+  }
+
+  private async reassignManagedToken(token: NewApiToken, newApiUserId: number) {
+    if (!this.bridgeClient?.isEnabled()) {
+      throw new Error('Aihub bridge is required to assign the managed token to the target user');
+    }
+
+    const reassigned = await this.bridgeClient.reassignToken(token.id, newApiUserId);
+    if (!reassigned) {
+      throw new Error(`Failed to reassign Aihub token ${token.id} to target Aihub user`);
+    }
+
+    return { ...token, user_id: newApiUserId };
   }
 
   private async ensureOAuthBinding(

@@ -18,15 +18,27 @@ export interface AihubRebindResult extends AihubOAuthBindingState {
 }
 
 export type NewApiBindingSyncStatus = 'pending' | 'active' | 'error' | 'missing';
+export type AihubReadinessErrorKind =
+  | 'configuration'
+  | 'transient'
+  | 'identity_conflict'
+  | 'entitlement'
+  | 'permanent';
 
 export interface NewApiBindingStatus {
+  errorCode?: string | null;
+  errorKind?: AihubReadinessErrorKind | null;
   errorMessage?: string | null;
   isBound: boolean;
   lastSyncedAt?: Date | null;
   managedTokenId?: number | null;
   managedTokens?: NewApiManagedTokenOption[];
+  modelCount?: number;
   newApiUserId?: number;
   oauthBinding?: AihubOAuthBindingState;
+  readinessVersion?: number;
+  retryable?: boolean;
+  retryAfterMs?: number;
   status: NewApiBindingSyncStatus;
 }
 
