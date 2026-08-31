@@ -2,6 +2,47 @@
 
 # Changelog
 
+## [Version 1.2.6](https://github.com/chaaak6/Masterino/compare/v1.2.5...v1.2.6)
+
+<sup>Released on **2026-08-31**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: close Aihub readiness review gaps.
+- **misc**: harden Aihub readiness hot path.
+- **misc**: unify Aihub readiness lifecycle.
+- **misc**: bound notebook document list reads.
+- **misc**: 收窄企业用户重绑前置条件.
+
+#### ✨ Features
+
+- **misc**: 支持 Aihub OAuth 自助重新绑定.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: close Aihub readiness review gaps ([0bc5f19](https://github.com/chaaak6/Masterino/commit/0bc5f19))
+- **misc**: harden Aihub readiness hot path ([50d79f5](https://github.com/chaaak6/Masterino/commit/50d79f5))
+- **misc**: unify Aihub readiness lifecycle ([86217e8](https://github.com/chaaak6/Masterino/commit/86217e8))
+- **misc**: bound notebook document list reads ([86f481e](https://github.com/chaaak6/Masterino/commit/86f481e))
+- **misc**: 收窄企业用户重绑前置条件 ([037c89b](https://github.com/chaaak6/Masterino/commit/037c89b))
+
+#### What's improved
+
+- **misc**: 支持 Aihub OAuth 自助重新绑定 ([0bbb02a](https://github.com/chaaak6/Masterino/commit/0bbb02a))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.2.5](https://github.com/chaaak6/Masterino/compare/v1.2.4...v1.2.5)
 
 <sup>Released on **2026-08-26**</sup>

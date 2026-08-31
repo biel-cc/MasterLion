@@ -2444,6 +2444,22 @@
   {
     "children": {
       "fixes": [
+        "close Aihub readiness review gaps.",
+        "harden Aihub readiness hot path.",
+        "unify Aihub readiness lifecycle.",
+        "bound notebook document list reads.",
+        "收窄企业用户重绑前置条件."
+      ],
+      "features": [
+        "支持 Aihub OAuth 自助重新绑定."
+      ]
+    },
+    "date": "2026-08-31",
+    "version": "1.2.6"
+  },
+  {
+    "children": {
+      "fixes": [
         "harden Electron tool call lifecycle."
       ]
     },
