@@ -63,7 +63,7 @@ export class DatabaseAihubReadinessBindingStore implements AihubReadinessBinding
     await this.db
       .insert(newApiBindings)
       .values({
-        attemptCount: 1,
+        attemptCount: 0,
         errorCode: null,
         errorKind: null,
         errorMessage: null,
@@ -78,6 +78,7 @@ export class DatabaseAihubReadinessBindingStore implements AihubReadinessBinding
       })
       .onConflictDoUpdate({
         set: {
+          attemptCount: 0,
           errorCode: null,
           errorKind: null,
           errorMessage: null,

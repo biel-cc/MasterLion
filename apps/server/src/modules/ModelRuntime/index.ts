@@ -25,6 +25,10 @@ import { account as authAccount, externalIdentities, newApiBindings } from '@/da
 import { type LobeChatDatabase } from '@/database/type';
 import { getLLMConfig } from '@/envs/llm';
 import { createLLMGenerationTracingHook } from '@/server/services/llmGenerationTracing/hook';
+import type {
+  AihubReadinessErrorKind,
+  AihubReadinessState,
+} from '@/server/services/newApi/readiness';
 import { createAihubReadiness } from '@/server/services/newApi/readiness/production';
 
 import { KeyVaultsGateKeeper } from '../KeyVaultsEncrypt';
@@ -37,8 +41,51 @@ export * from './trace';
 type ReadinessFactory = typeof createAihubReadiness;
 type ManagedAihubUserPredicate = (db: LobeChatDatabase, userId: string) => Promise<boolean>;
 
+export class AihubModelProviderReadinessError extends Error {
+  readonly code: string;
+  readonly error: {
+    code: string;
+    kind?: AihubReadinessErrorKind | null;
+    retryAfterMs?: number;
+    retryable: boolean;
+    status: AihubReadinessState['status'];
+  };
+  readonly errorType = 'AihubReadinessUnavailable';
+  readonly kind?: AihubReadinessErrorKind | null;
+  readonly retryAfterMs?: number;
+  readonly retryable: boolean;
+  readonly status: AihubReadinessState['status'];
+
+  constructor(readiness: AihubReadinessState) {
+    const code = readiness.errorCode ?? 'aihub_readiness_unavailable';
+    const message =
+      readiness.errorMessage ||
+      `Aihub is not ready for this user (status=${readiness.status}, code=${code})`;
+    super(message);
+    this.name = 'AihubModelProviderReadinessError';
+    this.code = code;
+    this.kind = readiness.errorKind;
+    this.retryAfterMs = readiness.retryAfterMs;
+    this.retryable = readiness.retryable === true;
+    this.status = readiness.status;
+    this.error = {
+      code,
+      kind: readiness.errorKind,
+      retryAfterMs: readiness.retryAfterMs,
+      retryable: this.retryable,
+      status: readiness.status,
+    };
+  }
+}
+
 export const isEnterpriseManagedAihubUser: ManagedAihubUserPredicate = async (db, userId) => {
-  const [externalIdentity, betterAuthAccount, binding] = await Promise.all([
+  const binding = await db.query.newApiBindings.findFirst({
+    columns: { readinessVersion: true },
+    where: eq(newApiBindings.userId, userId),
+  });
+  if ((binding?.readinessVersion ?? 0) >= 2) return true;
+
+  const [externalIdentity, betterAuthAccount] = await Promise.all([
     db.query.externalIdentities.findFirst({
       columns: { id: true },
       where: and(eq(externalIdentities.userId, userId), eq(externalIdentities.provider, 'wecom')),
@@ -47,13 +94,9 @@ export const isEnterpriseManagedAihubUser: ManagedAihubUserPredicate = async (db
       columns: { id: true },
       where: and(eq(authAccount.userId, userId), eq(authAccount.providerId, 'wecom')),
     }),
-    db.query.newApiBindings.findFirst({
-      columns: { readinessVersion: true },
-      where: eq(newApiBindings.userId, userId),
-    }),
   ]);
 
-  return Boolean(externalIdentity || betterAuthAccount || (binding?.readinessVersion ?? 0) >= 2);
+  return Boolean(externalIdentity || betterAuthAccount);
 };
 
 export const ensureModelProviderReadiness = async (
@@ -70,10 +113,7 @@ export const ensureModelProviderReadiness = async (
     trigger: 'model_runtime',
   });
   if (readiness.status !== 'active') {
-    throw new Error(
-      readiness.errorMessage ||
-        `Aihub is not ready for this user (status=${readiness.status}, code=${readiness.errorCode ?? 'unknown'})`,
-    );
+    throw new AihubModelProviderReadinessError(readiness);
   }
 };
 

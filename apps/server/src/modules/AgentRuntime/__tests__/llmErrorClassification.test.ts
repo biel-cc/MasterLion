@@ -92,6 +92,28 @@ describe('classifyLLMError', () => {
     });
   });
 
+  describe('explicit typed retryability', () => {
+    it('honors an explicit retryable readiness error without parsing its message', () => {
+      expect(
+        classifyLLMError({
+          errorType: 'AihubReadinessUnavailable',
+          message: '正在准备 AIHub',
+          retryable: true,
+        }).kind,
+      ).toBe('retry');
+    });
+
+    it('does not retry a typed permanent readiness error', () => {
+      expect(
+        classifyLLMError({
+          errorType: 'AihubReadinessUnavailable',
+          message: '企业身份冲突',
+          retryable: false,
+        }).kind,
+      ).toBe('stop');
+    });
+  });
+
   describe('legacy retry overrides', () => {
     // These four codes are `retryable: false` in the spec but the runtime
     // intentionally retries them because they're catch-alls / harness-level

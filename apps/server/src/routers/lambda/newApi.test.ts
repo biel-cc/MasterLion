@@ -158,10 +158,20 @@ describe('newApiRouter admin permission guard', () => {
     });
     expect(mockReadinessEnsure).toHaveBeenCalledWith('user-member', {
       force: true,
-      repairIamBinding: true,
       trigger: 'manual_retry',
     });
     expect(mockRebindCurrentUser).not.toHaveBeenCalled();
     expect(mockHasAnyPermission).not.toHaveBeenCalled();
+  });
+
+  it('accepts the legacy repair flag but uses the unified idempotent readiness workflow', async () => {
+    const caller = await createCallerForUser('user-member');
+
+    await caller.ensureReadiness({ repairIamBinding: true });
+
+    expect(mockReadinessEnsure).toHaveBeenCalledWith('user-member', {
+      force: true,
+      trigger: 'manual_retry',
+    });
   });
 });

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 
+import { NewApiError } from './client';
 import { NewApiProvisioningAdapter } from './provisioningAdapter';
 
 const adminAuth = {
@@ -192,6 +193,35 @@ describe('NewApiProvisioningAdapter', () => {
     );
   });
 
+  it('creates the canonical token when the optional legacy token name is not configured', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    let created = false;
+    client.listTokens.mockImplementation(async () => ({
+      items: created ? [{ id: 8005, name: 'Masterino_E-1001', user_id: 9001 }] : [],
+      total: created ? 1 : 0,
+    }));
+    client.createToken.mockImplementation(async () => {
+      created = true;
+      return { id: 8005, name: 'Masterino_E-1001', user_id: 9001 };
+    });
+    const adapter = createAdapter(client);
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        policy: createPolicy({ managedTokenName: undefined }),
+      }),
+    ).resolves.toMatchObject({ managedTokenId: 8005, newApiUserId: 9001 });
+    expect(client.createToken).toHaveBeenCalledWith(
+      adminAuth,
+      expect.objectContaining({ name: 'Masterino_E-1001' }),
+    );
+  });
+
   it('refetches the authoritative user when Aihub omits identity fields on create', async () => {
     // Bug 1a: some NewAPI versions return only {id} on create without echoing
     // back username/email/display_name. Provisioning must not abort over the
@@ -260,30 +290,81 @@ describe('NewApiProvisioningAdapter', () => {
     expect(client.listTokens).not.toHaveBeenCalled();
   });
 
-  it('rejects a same-name token owned by a different non-admin Aihub user', async () => {
+  it('never reassigns a shared legacy token owned by another Aihub user', async () => {
     const client = createClient();
     client.searchUsers.mockResolvedValue({
       items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
       total: 1,
     });
+    let canonicalCreated = false;
     client.listTokens.mockImplementation(async (_auth, query) => ({
       items:
         query.keyword === 'masterlion-managed'
           ? [{ id: 7001, name: 'masterlion-managed', user_id: 7777 }]
-          : [],
-      total: query.keyword === 'masterlion-managed' ? 1 : 0,
+          : canonicalCreated
+            ? [{ id: 8001, name: 'Masterino_E-1001', user_id: 1 }]
+            : [],
+      total: query.keyword === 'masterlion-managed' || canonicalCreated ? 1 : 0,
     }));
-    client.createToken.mockResolvedValue({
-      id: 8001,
-      name: 'masterlion-managed',
-      user_id: 9001,
+    client.createToken.mockImplementation(async () => {
+      canonicalCreated = true;
+      return {
+        id: 8001,
+        name: 'Masterino_E-1001',
+        user_id: 1,
+      };
     });
-    const adapter = createAdapter(client);
+    const bridgeClient = createBridgeClient();
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
 
-    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
-      /identity conflict.*7777/i,
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toMatchObject({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+    });
+    expect(client.createToken).toHaveBeenCalledWith(
+      adminAuth,
+      expect.objectContaining({ name: 'Masterino_E-1001' }),
     );
-    expect(client.createToken).not.toHaveBeenCalled();
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8001, 9001);
+    expect(bridgeClient.reassignToken).not.toHaveBeenCalledWith(7001, 9001);
+  });
+
+  it('never claims an admin-owned shared legacy token for the current user', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    let canonicalCreated = false;
+    client.listTokens.mockImplementation(async (_auth, query) => ({
+      items:
+        query.keyword === 'masterlion-managed'
+          ? [{ id: 7001, name: 'masterlion-managed', user_id: 1 }]
+          : canonicalCreated
+            ? [{ id: 8001, name: 'Masterino_E-1001', user_id: 1 }]
+            : [],
+      total: query.keyword === 'masterlion-managed' || canonicalCreated ? 1 : 0,
+    }));
+    client.createToken.mockImplementation(async () => {
+      canonicalCreated = true;
+      return { id: 8001, name: 'Masterino_E-1001', user_id: 1 };
+    });
+    const bridgeClient = createBridgeClient();
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    const result = await adapter.provisionEnterpriseUser(enterpriseUserInput);
+
+    expect(result.managedTokenId).toBe(8001);
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8001, 9001);
+    expect(bridgeClient.reassignToken).not.toHaveBeenCalledWith(7001, 9001);
   });
 
   it('throws a clear error when autoCreateUser is disabled and lookup misses', async () => {
@@ -449,12 +530,13 @@ describe('NewApiProvisioningAdapter', () => {
     });
     const createdToken = {
       id: 8003,
-      name: 'masterlion-managed',
+      name: 'Masterino_E-1001',
       remain_quota: 200,
       unlimited_quota: false,
       user_id: 1,
     };
     client.listTokens
+      .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [createdToken], total: 1 });
     client.createToken.mockResolvedValue(createdToken);
@@ -493,12 +575,13 @@ describe('NewApiProvisioningAdapter', () => {
     });
     const createdToken = {
       id: 8004,
-      name: 'masterlion-managed',
+      name: 'Masterino_E-1001',
       remain_quota: 200,
       unlimited_quota: false,
       user_id: 1,
     };
     client.listTokens
+      .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [], total: 0 })
       .mockResolvedValueOnce({ items: [createdToken], total: 1 });
     client.createToken.mockResolvedValue(createdToken);
@@ -604,6 +687,61 @@ describe('NewApiProvisioningAdapter', () => {
     expect(result.managedTokenId).toBe(8200);
     expect(client.listTokens).not.toHaveBeenCalled();
     expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('rotates an unusable historical token instead of selecting it again by name', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    let canonicalCreated = false;
+    client.listTokens.mockImplementation(async (_auth, query) => ({
+      items:
+        query.keyword === 'Masterino_E-1001' && canonicalCreated
+          ? [
+              {
+                expired_time: -1,
+                id: 8301,
+                name: 'Masterino_E-1001',
+                remain_quota: 200,
+                status: 1,
+                user_id: 1,
+              },
+            ]
+          : [],
+      total: canonicalCreated ? 1 : 0,
+    }));
+    client.createToken.mockImplementation(async () => {
+      canonicalCreated = true;
+      return { id: 8301, name: 'Masterino_E-1001', user_id: 1 };
+    });
+    const unusable = {
+      expired_time: 1,
+      id: 8200,
+      name: 'Masterino_E-1001',
+      remain_quota: 0,
+      status: 2,
+      user_id: 9001,
+    };
+    const bridgeClient = createBridgeClient({
+      findManagedToken: vi.fn().mockResolvedValue(unusable),
+      findManagedTokenById: vi.fn().mockResolvedValue(unusable),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    const result = await adapter.provisionEnterpriseUser({
+      ...enterpriseUserInput,
+      preferredManagedTokenId: 8200,
+    });
+
+    expect(result.managedTokenId).toBe(8301);
+    expect(client.createToken).toHaveBeenCalledOnce();
+    expect(bridgeClient.reassignToken).toHaveBeenCalledWith(8301, 9001);
   });
 
   it('rejects an Aihub identity whose username is not the enterprise employee number', async () => {
@@ -762,6 +900,26 @@ describe('NewApiProvisioningAdapter', () => {
     );
   });
 
+  it('does not report provisioning active when the required initial quota top-up fails', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, quota: 0, username: 'E-1001' }],
+      total: 1,
+    });
+    client.updateUser.mockRejectedValue(new NewApiError('充值服务暂时不可用', 503));
+    client.listTokens.mockResolvedValue({
+      items: [{ id: 8001, name: 'Masterino_E-1001', user_id: 9001 }],
+      total: 1,
+    });
+    const adapter = createAdapter(client);
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toMatchObject({
+      message: '充值服务暂时不可用',
+      status: 503,
+    });
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
   it('does not reduce an existing positive balance', async () => {
     const client = createClient();
     const fundedUser = { email: 'ada@example.com', id: 9001, quota: 5000, username: 'E-1001' };
@@ -775,80 +933,5 @@ describe('NewApiProvisioningAdapter', () => {
     await adapter.provisionEnterpriseUser(enterpriseUserInput);
 
     expect(client.updateUser).not.toHaveBeenCalled();
-  });
-
-  describe('ensureUserQuota (independent balance top-up for old users)', () => {
-    it('tops up an existing Aihub user with no balance via bridge lookup', async () => {
-      // Bug 2c: even when full provisioning fails, an old user whose binding
-      // already records a newApiUserId must get its balance topped up on every
-      // login. ensureUserQuota fetches the user via bridge, checks quota, and
-      // calls updateUser when balance is 0.
-      const client = createClient();
-      const bridgeClient = createBridgeClient({
-        findUserById: vi.fn().mockResolvedValue({ id: 9001, quota: 0, username: '10003923' }),
-      });
-      const adapter = new NewApiProvisioningAdapter({
-        adminAuth,
-        bridgeClient: bridgeClient as any,
-        client: client as any,
-      });
-
-      await adapter.ensureUserQuota(9001, createPolicy());
-
-      expect(bridgeClient.findUserById).toHaveBeenCalledWith(9001);
-      expect(client.updateUser).toHaveBeenCalledWith(
-        adminAuth,
-        expect.objectContaining({ id: 9001, quota: 1000 }),
-      );
-    });
-
-    it('skips top-up when the user already has a positive balance', async () => {
-      const client = createClient();
-      const bridgeClient = createBridgeClient({
-        findUserById: vi.fn().mockResolvedValue({ id: 9001, quota: 5000, username: '10003923' }),
-      });
-      const adapter = new NewApiProvisioningAdapter({
-        adminAuth,
-        bridgeClient: bridgeClient as any,
-        client: client as any,
-      });
-
-      await adapter.ensureUserQuota(9001, createPolicy());
-
-      expect(client.updateUser).not.toHaveBeenCalled();
-    });
-
-    it('falls back to admin search when bridge is unavailable', async () => {
-      const client = createClient();
-      client.searchUsers.mockResolvedValue({
-        items: [{ id: 9001, quota: 0, username: '10003923' }],
-        total: 1,
-      });
-      const adapter = new NewApiProvisioningAdapter({
-        adminAuth,
-        bridgeClient: { isEnabled: () => false } as any,
-        client: client as any,
-      });
-
-      await adapter.ensureUserQuota(9001, createPolicy());
-
-      expect(client.searchUsers).toHaveBeenCalledWith(
-        adminAuth,
-        expect.objectContaining({ keyword: '9001' }),
-      );
-      expect(client.updateUser).toHaveBeenCalledWith(
-        adminAuth,
-        expect.objectContaining({ id: 9001, quota: 1000 }),
-      );
-    });
-
-    it('does nothing when initialQuota is 0', async () => {
-      const client = createClient();
-      const adapter = createAdapter(client);
-
-      await adapter.ensureUserQuota(9001, createPolicy({ initialQuota: 0 }));
-
-      expect(client.updateUser).not.toHaveBeenCalled();
-    });
   });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 
-import { inspectAihubLocalRuntime } from './persistence';
+import { DatabaseAihubReadinessBindingStore, inspectAihubLocalRuntime } from './persistence';
 
 const createDb = (keyVaults: string | null) => ({
   query: {
@@ -52,5 +52,28 @@ describe('inspectAihubLocalRuntime', () => {
     await expect(
       inspectAihubLocalRuntime(createDb('ciphertext') as any, 'user-1', gateKeeper as any),
     ).resolves.toEqual({ hasApiKey: false, modelCount: 2 });
+  });
+});
+
+describe('DatabaseAihubReadinessBindingStore', () => {
+  it('resets the failure attempt count after readiness becomes active', async () => {
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const values = vi.fn(() => ({ onConflictDoUpdate }));
+    const db = { insert: vi.fn(() => ({ values })) };
+    const store = new DatabaseAihubReadinessBindingStore(db as any);
+
+    await store.markActive('user-1', {
+      managedTokenId: 8001,
+      modelCount: 3,
+      newApiUserId: 9001,
+      readinessVersion: 2,
+    });
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ attemptCount: 0 }));
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: expect.objectContaining({ attemptCount: 0 }),
+      }),
+    );
   });
 });

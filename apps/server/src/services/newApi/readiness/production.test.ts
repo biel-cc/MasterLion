@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 
+import { NewApiBridgeError } from '../bridgeClient';
+import { NewApiError } from '../client';
+import { NewApiProvisioningError } from '../provisioningAdapter';
 import { ProductionAihubReadinessWorkflow } from './production';
 
 const identity = {
@@ -101,7 +104,11 @@ describe('ProductionAihubReadinessWorkflow', () => {
       provisionEnterpriseUser: vi
         .fn()
         .mockRejectedValue(
-          new Error('AIHUB_ADMIN_ACCESS_TOKEN is required for Aihub provisioning'),
+          new NewApiProvisioningError(
+            'AIHUB_ADMIN_ACCESS_TOKEN is required for Aihub provisioning',
+            'configuration',
+            'aihub_admin_token_missing',
+          ),
         ),
     });
 
@@ -113,9 +120,78 @@ describe('ProductionAihubReadinessWorkflow', () => {
       }),
     ).rejects.toEqual(
       expect.objectContaining({
-        code: 'aihub_configuration_invalid',
+        code: 'aihub_admin_token_missing',
         kind: 'configuration',
       }),
     );
+  });
+
+  it('classifies a typed provisioning error without depending on its localized message', async () => {
+    const { workflow } = createHarness();
+    (workflow as any).provisionerFactory = () => ({
+      provisionEnterpriseUser: vi
+        .fn()
+        .mockRejectedValue(
+          new NewApiProvisioningError(
+            '任意本地化文案',
+            'identity_conflict',
+            'aihub_identity_conflict',
+          ),
+        ),
+    });
+
+    await expect(
+      workflow.provision({ identity, trigger: 'manual_retry', userId: 'user-1' }),
+    ).rejects.toMatchObject({
+      code: 'aihub_identity_conflict',
+      kind: 'identity_conflict',
+      message: '任意本地化文案',
+    });
+  });
+
+  it.each([
+    [401, 'configuration', 'aihub_admin_auth_rejected'],
+    [422, 'permanent', 'aihub_request_rejected'],
+    [503, 'transient', 'aihub_upstream_unavailable'],
+  ] as const)(
+    'classifies NewAPI HTTP %s structurally as %s',
+    async (status, expectedKind, expectedCode) => {
+      const { workflow } = createHarness();
+      (workflow as any).provisionerFactory = () => ({
+        provisionEnterpriseUser: vi
+          .fn()
+          .mockRejectedValue(new NewApiError('上游文案可以改变', status)),
+      });
+
+      await expect(
+        workflow.provision({ identity, trigger: 'manual_retry', userId: 'user-1' }),
+      ).rejects.toMatchObject({ code: expectedCode, kind: expectedKind });
+    },
+  );
+
+  it('uses the bridge error code for identity conflicts', async () => {
+    const { workflow } = createHarness();
+    (workflow as any).provisionerFactory = () => ({
+      provisionEnterpriseUser: vi
+        .fn()
+        .mockRejectedValue(new NewApiBridgeError('绑定冲突', 409, 'binding_conflict')),
+    });
+
+    await expect(
+      workflow.provision({ identity, trigger: 'manual_retry', userId: 'user-1' }),
+    ).rejects.toMatchObject({ code: 'aihub_identity_conflict', kind: 'identity_conflict' });
+  });
+
+  it('does not infer a stable cooldown from an untyped error message', async () => {
+    const { workflow } = createHarness();
+    (workflow as any).provisionerFactory = () => ({
+      provisionEnterpriseUser: vi
+        .fn()
+        .mockRejectedValue(new Error('does not belong to user; wording is not a contract')),
+    });
+
+    await expect(
+      workflow.provision({ identity, trigger: 'manual_retry', userId: 'user-1' }),
+    ).rejects.toMatchObject({ code: 'aihub_provisioning_failed', kind: 'transient' });
   });
 });

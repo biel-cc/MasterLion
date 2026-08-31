@@ -2,7 +2,47 @@
 import { ModelProvider } from 'model-bank';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ensureModelProviderReadiness } from './index';
+import {
+  AihubModelProviderReadinessError,
+  ensureModelProviderReadiness,
+  isEnterpriseManagedAihubUser,
+} from './index';
+
+const createManagedUserDb = (input: {
+  account?: { id: string };
+  binding?: { readinessVersion: number };
+  identity?: { id: string };
+}) => ({
+  query: {
+    account: { findFirst: vi.fn().mockResolvedValue(input.account) },
+    externalIdentities: { findFirst: vi.fn().mockResolvedValue(input.identity) },
+    newApiBindings: { findFirst: vi.fn().mockResolvedValue(input.binding) },
+  },
+});
+
+describe('isEnterpriseManagedAihubUser', () => {
+  it('short-circuits on a v2 binding without reading historical identity tables', async () => {
+    const db = createManagedUserDb({ binding: { readinessVersion: 2 } });
+
+    await expect(isEnterpriseManagedAihubUser(db as any, 'user-1')).resolves.toBe(true);
+
+    expect(db.query.newApiBindings.findFirst).toHaveBeenCalledOnce();
+    expect(db.query.externalIdentities.findFirst).not.toHaveBeenCalled();
+    expect(db.query.account.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('falls back to historical WeCom identities before a user reaches v2', async () => {
+    const db = createManagedUserDb({
+      binding: { readinessVersion: 1 },
+      identity: { id: 'wecom-identity' },
+    });
+
+    await expect(isEnterpriseManagedAihubUser(db as any, 'user-1')).resolves.toBe(true);
+
+    expect(db.query.externalIdentities.findFirst).toHaveBeenCalledOnce();
+    expect(db.query.account.findFirst).toHaveBeenCalledOnce();
+  });
+});
 
 describe('ensureModelProviderReadiness', () => {
   it('does not invoke Aihub readiness for unrelated providers', async () => {
@@ -70,7 +110,40 @@ describe('ensureModelProviderReadiness', () => {
       ensure: vi.fn().mockResolvedValue({
         errorCode: 'aihub_readiness_initializing',
         errorMessage: 'Aihub is still initializing. Please retry shortly.',
+        errorKind: 'transient',
+        retryAfterMs: 2000,
+        retryable: true,
         status: 'pending',
+      }),
+    }));
+
+    const promise = ensureModelProviderReadiness(
+      {} as any,
+      'user-1',
+      ModelProvider.NewAPI,
+      factory as any,
+      vi.fn().mockResolvedValue(true),
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(AihubModelProviderReadinessError);
+    await expect(promise).rejects.toMatchObject({
+      code: 'aihub_readiness_initializing',
+      errorType: 'AihubReadinessUnavailable',
+      kind: 'transient',
+      retryAfterMs: 2000,
+      retryable: true,
+      status: 'pending',
+    });
+  });
+
+  it('preserves a non-retryable readiness classification', async () => {
+    const factory = vi.fn(() => ({
+      ensure: vi.fn().mockResolvedValue({
+        errorCode: 'masterino_username_mismatch',
+        errorKind: 'identity_conflict',
+        errorMessage: 'Masterino username does not match enterprise employee number',
+        retryable: false,
+        status: 'error',
       }),
     }));
 
@@ -82,6 +155,12 @@ describe('ensureModelProviderReadiness', () => {
         factory as any,
         vi.fn().mockResolvedValue(true),
       ),
-    ).rejects.toThrow('Aihub is still initializing. Please retry shortly.');
+    ).rejects.toMatchObject({
+      code: 'masterino_username_mismatch',
+      errorType: 'AihubReadinessUnavailable',
+      kind: 'identity_conflict',
+      retryable: false,
+      status: 'error',
+    });
   });
 });

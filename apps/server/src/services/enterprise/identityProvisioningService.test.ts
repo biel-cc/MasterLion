@@ -239,7 +239,6 @@ const flattenValues = (operations: DbWriteOperation[]) =>
   });
 
 const createAihubAdapter = (result?: Record<string, unknown>) => ({
-  ensureUserQuota: vi.fn(async () => undefined),
   provisionEnterpriseUser: vi.fn(async () => ({
     managedTokenId: 8001,
     newApiUserId: 9001,
@@ -334,7 +333,7 @@ describe('identityProvisioningService', () => {
     expect(findWrites(operations, newApiBindings)).toHaveLength(0);
   });
 
-  it('leaves balance repair to AihubReadiness even when an old binding exists', async () => {
+  it('leaves Aihub repair to AihubReadiness even when an old binding exists', async () => {
     const { db } = createRecordingDb({ existingNewApiUserId: 9001 });
     const adapter = createAihubAdapter();
     adapter.provisionEnterpriseUser.mockRejectedValue(new Error('duplicate username'));
@@ -346,21 +345,6 @@ describe('identityProvisioningService', () => {
     const result = await service.provisionFromSsoProfile(defaultProfile);
 
     expect(result).not.toHaveProperty('aihub');
-    expect(adapter.ensureUserQuota).not.toHaveBeenCalled();
-  });
-
-  it('does not call ensureUserQuota when there is no prior newApiUserId', async () => {
-    const { db } = createRecordingDb();
-    const adapter = createAihubAdapter();
-    adapter.provisionEnterpriseUser.mockRejectedValue(new Error('create failed'));
-    const service = new IdentityProvisioningService({
-      aihubProvisioningAdapter: adapter,
-      db,
-    });
-
-    await service.provisionFromSsoProfile(defaultProfile);
-
-    expect(adapter.ensureUserQuota).not.toHaveBeenCalled();
   });
 
   it('upserts normalized SSO identity and memberships without touching Aihub state', async () => {

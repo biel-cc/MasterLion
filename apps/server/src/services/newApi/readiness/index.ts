@@ -139,7 +139,6 @@ export type AihubReadinessWorkflow = {
   provision: (input: {
     binding?: AihubReadinessBindingRecord;
     identity: EnterpriseIdentity;
-    repairIamBinding?: boolean;
     trigger: AihubReadinessTrigger;
     userId: string;
   }) => Promise<{
@@ -165,7 +164,6 @@ export type AihubReadinessOptions = {
 
 export type EnsureAihubReadinessOptions = {
   force?: boolean;
-  repairIamBinding?: boolean;
   trigger: AihubReadinessTrigger;
 };
 
@@ -307,7 +305,6 @@ export class AihubReadiness {
       const resources = await this.workflow.provision({
         binding,
         identity: identity!,
-        repairIamBinding: options.repairIamBinding,
         trigger: options.trigger,
         userId,
       });

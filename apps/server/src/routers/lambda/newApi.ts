@@ -43,11 +43,13 @@ export const newApiRouter = router({
   }),
 
   ensureReadiness: newApiProcedure
+    // `repairIamBinding` remains accepted for older clients. The unified
+    // readiness workflow always reconciles IAM idempotently, so there is no
+    // separate repair mode to pass through.
     .input(z.object({ repairIamBinding: z.boolean().optional() }).optional())
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ ctx }) => {
       return ctx.aihubReadiness.ensure(ctx.userId, {
         force: true,
-        repairIamBinding: input?.repairIamBinding,
         trigger: 'manual_retry',
       });
     }),
@@ -68,7 +70,6 @@ export const newApiRouter = router({
   rebindCurrentUser: newApiProcedure.mutation(async ({ ctx }) => {
     const state = await ctx.aihubReadiness.ensure(ctx.userId, {
       force: true,
-      repairIamBinding: true,
       trigger: 'manual_retry',
     });
     const oauthBinding = state.oauthBinding ?? state.iamOAuthBinding ?? { status: 'unknown' };

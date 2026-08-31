@@ -3,8 +3,11 @@ import type { LobeChatDatabase } from '@/database/type';
 import type { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { getWecomSsoConfig } from '@/server/services/enterprise/wecomSsoService';
 import { NewApiService } from '@/server/services/newApi';
+import { NewApiBridgeError } from '@/server/services/newApi/bridgeClient';
+import { NewApiError } from '@/server/services/newApi/client';
 import {
   NewApiProvisioningAdapter,
+  NewApiProvisioningError,
   type ProvisionEnterpriseUserInput,
   type ProvisionEnterpriseUserResult,
   type ProvisioningPolicy,
@@ -44,28 +47,47 @@ const classifyProvisioningError = (error: unknown) => {
   if (error instanceof AihubReadinessError) return error;
 
   const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-  if (
-    normalized.includes('aihub_admin_') ||
-    normalized.includes('aihub bridge is required') ||
-    normalized.includes('aihub_bridge_') ||
-    normalized.includes('is required for aihub provisioning')
-  ) {
-    return new AihubReadinessError(message, 'configuration', 'aihub_configuration_invalid');
+  if (error instanceof NewApiProvisioningError) {
+    return new AihubReadinessError(message, error.kind, error.code);
   }
-  if (
-    normalized.includes('identity conflict') ||
-    normalized.includes('username must match') ||
-    normalized.includes('does not belong to user')
-  ) {
-    return new AihubReadinessError(message, 'identity_conflict', 'aihub_identity_conflict');
+
+  if (error instanceof NewApiBridgeError) {
+    if (error.code === 'binding_conflict' || error.status === 409) {
+      return new AihubReadinessError(message, 'identity_conflict', 'aihub_identity_conflict');
+    }
+    if (error.status === 401 || error.status === 403) {
+      return new AihubReadinessError(message, 'configuration', 'aihub_bridge_auth_rejected');
+    }
+    if ([400, 404, 422].includes(error.status)) {
+      return new AihubReadinessError(message, 'permanent', 'aihub_bridge_request_rejected');
+    }
+
+    return new AihubReadinessError(message, 'transient', 'aihub_bridge_unavailable');
   }
-  if (normalized.includes('accessible models') || normalized.includes('no aihub models')) {
-    return new AihubReadinessError(message, 'entitlement', 'aihub_models_unavailable');
+
+  if (error instanceof NewApiError) {
+    if (error.status === 401 || error.status === 403) {
+      return new AihubReadinessError(message, 'configuration', 'aihub_admin_auth_rejected');
+    }
+    if (error.status === 402) {
+      return new AihubReadinessError(message, 'entitlement', 'aihub_entitlement_required');
+    }
+    if ([400, 404, 409, 422].includes(error.status)) {
+      return new AihubReadinessError(message, 'permanent', 'aihub_request_rejected');
+    }
+
+    return new AihubReadinessError(message, 'transient', 'aihub_upstream_unavailable');
   }
 
   return new AihubReadinessError(message, 'transient', 'aihub_provisioning_failed');
 };
+
+const invalidProvisioningResult = () =>
+  new AihubReadinessError(
+    'Aihub provisioning did not return a valid user and managed token',
+    'transient',
+    'aihub_provisioning_incomplete',
+  );
 
 export class ProductionAihubReadinessWorkflow implements AihubReadinessWorkflow {
   private readonly getPolicy: () => Promise<ProvisioningPolicy>;
@@ -126,7 +148,7 @@ export class ProductionAihubReadinessWorkflow implements AihubReadinessWorkflow 
         !isPositiveInteger(provisioned.newApiUserId) ||
         !isPositiveInteger(provisioned.managedTokenId)
       ) {
-        throw new Error('Aihub provisioning did not return a valid user and managed token');
+        throw invalidProvisioningResult();
       }
 
       // Persist the remote identifiers before reading the token key. If this
