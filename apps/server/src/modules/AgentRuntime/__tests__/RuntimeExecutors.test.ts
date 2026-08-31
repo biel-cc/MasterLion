@@ -4570,6 +4570,59 @@ describe('RuntimeExecutors', () => {
       }
     });
 
+    it('should honor a structured retryAfterMs hint from the readiness gate', async () => {
+      vi.useFakeTimers();
+
+      const readinessError = Object.assign(new Error('Aihub provisioning is still pending'), {
+        errorType: 'AihubReadinessUnavailable',
+        retryAfterMs: 2000,
+        retryable: true,
+      });
+      const mockChat = vi
+        .fn()
+        .mockRejectedValueOnce(readinessError)
+        .mockImplementationOnce(async (_payload: any, options: any) => {
+          await options.callback.onText?.('ready');
+          await options.callback.onCompletion?.({
+            usage: { totalInputTokens: 1, totalOutputTokens: 1, totalTokens: 2 },
+          });
+          return new Response('done');
+        });
+
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat: mockChat } as any);
+
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState();
+      const instruction = {
+        payload: {
+          messages: [{ content: 'Hello', role: 'user' }],
+          model: 'gpt-4',
+          parentMessageId: 'parent-msg-123',
+          provider: 'openai',
+          tools: [],
+        },
+        type: 'call_llm' as const,
+      };
+
+      try {
+        const resultPromise = executors.call_llm!(instruction, state);
+
+        await vi.runOnlyPendingTimersAsync();
+        await resultPromise;
+
+        expect(mockChat).toHaveBeenCalledTimes(2);
+        expect(mockStreamManager.publishStreamEvent).toHaveBeenCalledWith(
+          'op-123',
+          expect.objectContaining({
+            type: 'stream_retry',
+            data: { attempt: 2, delayMs: 2000, maxAttempts: 6 },
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should not retry llm execution after operation is interrupted', async () => {
       const mockChat = vi.fn().mockRejectedValue(new Error('network timeout'));
       vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat: mockChat } as any);

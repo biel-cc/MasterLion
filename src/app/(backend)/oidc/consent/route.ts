@@ -1,10 +1,11 @@
 import { getUserAuth } from '@lobechat/utils/server';
 import debug from 'debug';
-import { type NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 
 import { appEnv } from '@/envs/app';
 import { OIDCService } from '@/server/services/oidc';
+
+import { scheduleAihubReadinessAfterOidcAuthorization } from './aihubReadiness';
 
 const log = debug('lobe-oidc:consent');
 
@@ -51,6 +52,8 @@ export async function POST(request: NextRequest) {
       log(`User accepted the request, Handling 'login' prompt`);
       const { userId } = await getUserAuth();
       log('Obtained userId: %s', userId);
+      if (!userId) throw new Error('Authenticated user id is required for OIDC consent');
+      scheduleAihubReadinessAfterOidcAuthorization(userId);
 
       if (details.prompt.name === 'login') {
         result = {

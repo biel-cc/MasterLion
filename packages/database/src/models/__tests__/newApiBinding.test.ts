@@ -3,9 +3,9 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../core/getTestDB';
-import { newApiBindings, users } from '../../schemas';
+import { users } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
-import { NewApiBindingModel } from '../newApiBinding';
+import { AihubReadinessLeaseModel, NewApiBindingModel } from '../newApiBinding';
 
 const serverDB: LobeChatDatabase = await getTestDB();
 
@@ -80,6 +80,25 @@ describe('NewApiBindingModel', () => {
     });
   });
 
+  it('updates remote readiness ids without clearing a historical encrypted access token', async () => {
+    const model = new NewApiBindingModel(serverDB, userId);
+    await model.upsert({
+      encryptedAccessToken: 'historical-encrypted-token',
+      managedTokenId: 17,
+      newApiUserId: 42,
+      status: 'active',
+    });
+
+    await model.upsertRemoteIdentifiers({ managedTokenId: 21, newApiUserId: 43 });
+
+    await expect(model.find()).resolves.toMatchObject({
+      encryptedAccessToken: 'historical-encrypted-token',
+      managedTokenId: 21,
+      newApiUserId: 43,
+      status: 'pending',
+    });
+  });
+
   it('allows an error binding without a real Aihub user id', async () => {
     const model = new NewApiBindingModel(serverDB, userId);
 
@@ -130,5 +149,34 @@ describe('NewApiBindingModel', () => {
 
     const bindings = await serverDB.query.newApiBindings.findMany();
     expect(bindings).toHaveLength(0);
+  });
+});
+
+describe('AihubReadinessLeaseModel', () => {
+  it('allows only one active owner and permits takeover after expiry', async () => {
+    const model = new AihubReadinessLeaseModel(serverDB, 60_000);
+    const now = new Date('2026-08-31T01:00:00.000Z');
+
+    const first = await model.acquire(userId, 'owner-a', now);
+    const blocked = await model.acquire(userId, 'owner-b', new Date(now.getTime() + 1000));
+    const takeover = await model.acquire(userId, 'owner-b', new Date(now.getTime() + 60_001));
+
+    expect(first).toMatchObject({ ownerId: 'owner-a', userId });
+    expect(blocked).toBeUndefined();
+    expect(takeover).toMatchObject({ ownerId: 'owner-b', userId });
+  });
+
+  it('only lets the current owner release its lease', async () => {
+    const model = new AihubReadinessLeaseModel(serverDB, 60_000);
+    const now = new Date('2026-08-31T01:00:00.000Z');
+
+    await model.acquire(userId, 'owner-a', now);
+    await model.release(userId, 'owner-b');
+    expect(await model.acquire(userId, 'owner-c', new Date(now.getTime() + 1000))).toBeUndefined();
+
+    await model.release(userId, 'owner-a');
+    await expect(
+      model.acquire(userId, 'owner-c', new Date(now.getTime() + 2000)),
+    ).resolves.toMatchObject({ ownerId: 'owner-c' });
   });
 });

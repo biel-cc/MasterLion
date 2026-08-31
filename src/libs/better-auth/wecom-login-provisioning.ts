@@ -95,7 +95,11 @@ const getMappedString = (profile: WecomProfile, field: string) => asTrimmedStrin
 
 const getDepartmentExternalIds = (profile: WecomProfile, field: string) => {
   const value = profile[field];
-  const values = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+  const values = Array.isArray(value)
+    ? value
+    : value === undefined || value === null
+      ? []
+      : [value];
 
   return values.map(asTrimmedString).filter((item): item is string => Boolean(item));
 };
@@ -215,9 +219,8 @@ const resolveDefaultDependencies = async (deps: ProvisionWecomLoginDeps) => {
 
 export const resolveWecomProfile = async (accountId: string): Promise<WecomProfile> => {
   try {
-    const { getWecomSsoRuntimeConfig } = await import(
-      '@/server/services/enterprise/wecomSsoService'
-    );
+    const { getWecomSsoRuntimeConfig } =
+      await import('@/server/services/enterprise/wecomSsoService');
     const runtimeConfig = await getWecomSsoRuntimeConfig();
     const tokenUrl = new URL(WECOM_TOKEN_URL);
     tokenUrl.searchParams.set('corpid', runtimeConfig.corpId);
@@ -296,7 +299,6 @@ export const provisionWecomLoginAccount = async (
     externalUserId: account.accountId,
     name: mappedName,
     policy: {
-      aihubProvisioning: ssoConfig.config.aihubProvisioning,
       departmentSync: ssoConfig.config.departmentSync,
       defaultRole: ssoConfig.config.defaultRole,
       defaultWorkspaceId: ssoConfig.config.defaultWorkspaceId,

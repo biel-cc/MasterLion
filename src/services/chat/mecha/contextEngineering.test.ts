@@ -1,9 +1,11 @@
+import { LobeAgentIdentifier } from '@lobechat/builtin-tool-lobe-agent';
 import { type UIChatMessage } from '@lobechat/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as isCanUseFCModule from '@/helpers/isCanUseFC';
 import { agentService } from '@/services/agent';
 import { agentDocumentService } from '@/services/agentDocument';
+import { notebookService } from '@/services/notebook';
 import { useAgentStore } from '@/store/agent';
 
 import * as helpers from '../helper';
@@ -56,6 +58,12 @@ vi.mock('@/services/agent', () => ({
   },
 }));
 
+vi.mock('@/services/notebook', () => ({
+  notebookService: {
+    getLatestPlan: vi.fn(),
+  },
+}));
+
 // 默认设置运行环境为 browser/client
 const runtimeFlags = vi.hoisted(() => ({
   isServerMode: false,
@@ -75,6 +83,7 @@ vi.mock('@lobechat/const', async (importOriginal) => {
 
 beforeEach(() => {
   vi.mocked(agentService.queryAgents).mockResolvedValue([]);
+  vi.mocked(notebookService.getLatestPlan).mockResolvedValue(null);
   useAgentStore.setState({
     agentMap: {},
     availableAgents: undefined,
@@ -98,6 +107,39 @@ const getCurrentDateContent = () => {
 };
 
 describe('contextEngineering', () => {
+  it('injects full plan content from the dedicated latest plan interface', async () => {
+    vi.mocked(notebookService.getLatestPlan).mockResolvedValue({
+      associatedAt: new Date('2026-08-27T00:00:00.000Z'),
+      content: '# Verify database recovery\nRun the load test.',
+      createdAt: new Date('2026-08-27T00:00:00.000Z'),
+      description: 'Stop the OOM read amplification',
+      fileType: 'agent/plan',
+      id: 'plan-1',
+      metadata: { todos: { items: [{ completed: false, text: 'Run test' }] } },
+      title: 'Notebook OOM plan',
+      totalCharCount: 46,
+      totalLineCount: 2,
+      updatedAt: new Date('2026-08-27T01:00:00.000Z'),
+    });
+
+    const output = await contextEngineering({
+      messages: [{ content: 'Continue', role: 'user' }] as UIChatMessage[],
+      model: 'gpt-4',
+      provider: 'openai',
+      tools: [LobeAgentIdentifier],
+      topicId: 'topic-1',
+    });
+    const injectedUserContent = output
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+      .join('\n');
+
+    expect(notebookService.getLatestPlan).toHaveBeenCalledWith('topic-1');
+    expect(injectedUserContent).toContain('<goal>Notebook OOM plan</goal>');
+    expect(injectedUserContent).toContain('# Verify database recovery');
+    expect(injectedUserContent).toContain('<todos>');
+  });
+
   it('should not fetch agent documents implicitly when agentId is provided', async () => {
     const messages = [{ content: 'Hello', role: 'user' }] as UIChatMessage[];
 

@@ -12,7 +12,6 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { getServerGlobalConfig } from '@/server/globalConfig';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
-import { NewApiService } from '@/server/services/newApi';
 import { type AiProviderDetailItem, type AiProviderRuntimeState } from '@/types/aiProvider';
 import {
   CreateAiProviderSchema,
@@ -32,7 +31,6 @@ const assertNewApiProvider = (id: string) => {
 
 const aiProviderProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
-  const wsId = ctx.workspaceId ?? undefined;
 
   const { aiProvider } = await getServerGlobalConfig();
 
@@ -96,11 +94,11 @@ export const aiProviderRouter = router({
         return { error: errorBody, model, ok: false, status: response.status };
       } catch (error: any) {
         const errorType = error.errorType || error.type;
-        const msg = errorType
-          ? errorType
-          : typeof error === 'string'
+        const msg =
+          errorType ||
+          (typeof error === 'string'
             ? error
-            : error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+            : error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
         return { error: msg, model, ok: false };
       }
     }),
@@ -131,30 +129,8 @@ export const aiProviderRouter = router({
   getAiProviderRuntimeState: aiProviderProcedure
     .input(z.object({ isLogin: z.boolean().optional() }))
     .query(async ({ ctx }): Promise<AiProviderRuntimeState> => {
-      // 在返回 runtime state 前，检测 Aihub 凭证是否缺失。
-      // 企业 provisioning 重建 binding 元数据后，ai_providers.keyVaults（apiKey）
-      // 不会自动恢复，导致模型列表为空、聊天报错。此处自动恢复凭证 + 同步模型，
-      // 确保 runtime state 返回时凭证和模型列表都已就绪。
-      const aiProviderModel = new AiProviderModel(ctx.serverDB, ctx.userId);
-      const provider = await aiProviderModel.getAiProviderById(
-        ModelProvider.NewAPI,
-        KeyVaultsGateKeeper.getUserKeyVaults,
-      );
-
-      if (!provider?.enabled || !provider?.keyVaults?.apiKey) {
-        try {
-          const newApiService = new NewApiService({
-            db: ctx.serverDB,
-            gateKeeper: ctx.gateKeeper,
-            userId: ctx.userId,
-          });
-          await newApiService.syncModels();
-        } catch {
-          // 凭证恢复失败不阻断 runtime state 返回；
-          // 用户会看到空模型列表，但不会因抛错导致页面白屏。
-        }
-      }
-
+      // This query is deliberately read-only. Aihub repair is coordinated by
+      // AihubReadiness at explicit lifecycle gates, never by SWR polling.
       return ctx.aiInfraRepos.getAiProviderRuntimeState(KeyVaultsGateKeeper.getUserKeyVaults);
     }),
 

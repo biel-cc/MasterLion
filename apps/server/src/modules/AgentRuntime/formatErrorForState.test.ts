@@ -27,6 +27,33 @@ describe('formatErrorForState', () => {
       expect(result.body).toEqual({ name: 'TypeError' });
     });
 
+    it('preserves structured retry metadata from a typed readiness error', () => {
+      const result = formatErrorForState({
+        error: {
+          code: 'aihub_readiness_initializing',
+          retryAfterMs: 2000,
+          retryable: true,
+          status: 'pending',
+        },
+        errorType: 'AihubReadinessUnavailable' as any,
+        message: 'Aihub is still initializing. Please retry shortly.',
+        retryAfterMs: 2000,
+        retryable: true,
+      });
+
+      expect(result).toMatchObject({
+        body: {
+          code: 'aihub_readiness_initializing',
+          retryAfterMs: 2000,
+          retryable: true,
+          status: 'pending',
+        },
+        retryAfterMs: 2000,
+        retryable: true,
+        type: 'AihubReadinessUnavailable',
+      });
+    });
+
     it('falls back to AgentRuntimeError for unknown thrown values', () => {
       const result = formatErrorForState('plain string failure');
 

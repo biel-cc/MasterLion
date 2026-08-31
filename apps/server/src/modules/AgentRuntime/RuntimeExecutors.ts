@@ -730,8 +730,24 @@ const resolveRuntimeHistoryCount = (historyCount?: number) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const getLLMRetryDelayMs = (attempt: number) =>
-  Math.min(LLM_RETRY_BASE_DELAY_MS * 2 ** Math.max(attempt - 1, 0), LLM_RETRY_MAX_DELAY_MS);
+const getStructuredRetryAfterMs = (error: unknown): number | undefined => {
+  if (!error || typeof error !== 'object') return;
+
+  const payload = error as { error?: unknown; retryAfterMs?: unknown };
+  const direct = payload.retryAfterMs;
+  if (typeof direct === 'number' && Number.isFinite(direct) && direct >= 0) return direct;
+
+  if (!payload.error || typeof payload.error !== 'object') return;
+  const nested = (payload.error as { retryAfterMs?: unknown }).retryAfterMs;
+  if (typeof nested === 'number' && Number.isFinite(nested) && nested >= 0) return nested;
+};
+
+const getLLMRetryDelayMs = (attempt: number, error?: unknown) => {
+  const retryAfterMs = getStructuredRetryAfterMs(error);
+  if (retryAfterMs !== undefined) return Math.min(retryAfterMs, LLM_RETRY_MAX_DELAY_MS);
+
+  return Math.min(LLM_RETRY_BASE_DELAY_MS * 2 ** Math.max(attempt - 1, 0), LLM_RETRY_MAX_DELAY_MS);
+};
 
 const isOperationInterrupted = async (ctx: RuntimeExecutorContext) => {
   if (!ctx.loadAgentState) return false;
@@ -2318,7 +2334,7 @@ export const createRuntimeExecutors = (
               const retryBudget = resolveLLMRetryBudget(provider, error);
 
               if (!interrupted && shouldRetryLLM(classified.kind, attempt, retryBudget)) {
-                const delayMs = getLLMRetryDelayMs(attempt);
+                const delayMs = getLLMRetryDelayMs(attempt, error);
 
                 log(
                   '[%s] LLM call failed with kind=%s (attempt %d/%d), retrying in %dms ...',

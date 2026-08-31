@@ -9,6 +9,7 @@ import { type BetterAuthOptions } from 'better-auth/minimal';
 import { betterAuth } from 'better-auth/minimal';
 import { emailOTP, genericOAuth, magicLink } from 'better-auth/plugins';
 import { type BetterAuthPlugin } from 'better-auth/types';
+import { after as scheduleAfter } from 'next/server';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
 
 import { appEnv } from '@/envs/app';
@@ -26,6 +27,7 @@ import { createSecondaryStorage, getTrustedOrigins } from '@/libs/better-auth/ut
 import { parseSSOProviders } from '@/libs/better-auth/utils/server';
 import { provisionWecomLoginAccount } from '@/libs/better-auth/wecom-login-provisioning';
 import { EmailService } from '@/server/services/email';
+import { ensureAihubReadinessBestEffort } from '@/server/services/newApi/readiness/bestEffort';
 import { UserService } from '@/server/services/user';
 
 // Configure HTTP proxy for OAuth provider requests in development (e.g., Google token exchange)
@@ -78,6 +80,17 @@ const MAGIC_LINK_EXPIRES_IN = 900;
 const OTP_EXPIRES_IN = 300;
 const enabledSSOProviders = parseSSOProviders(authEnv.AUTH_SSO_PROVIDERS);
 
+const scheduleAihubPrewarm = (work: () => Promise<unknown>) => {
+  try {
+    scheduleAfter(work);
+  } catch (error) {
+    console.warn(
+      '[Aihub Readiness] Better Auth prewarm could not be scheduled:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+};
+
 const { socialProviders, genericOAuthProviders } = initBetterAuthSSOProviders();
 
 interface CustomBetterAuthOptions {
@@ -107,6 +120,13 @@ const provisionWecomSessionAccount = async (
     },
     context,
   });
+  scheduleAihubPrewarm(() =>
+    ensureAihubReadinessBestEffort({
+      db: serverDB,
+      trigger: 'better_auth_session',
+      userId: session.userId!,
+    }),
+  );
 };
 
 export function defineConfig(customOptions: CustomBetterAuthOptions) {
@@ -238,6 +258,13 @@ export function defineConfig(customOptions: CustomBetterAuthOptions) {
               },
               context,
             });
+            scheduleAihubPrewarm(() =>
+              ensureAihubReadinessBestEffort({
+                db: serverDB,
+                trigger: 'better_auth_account',
+                userId: account.userId,
+              }),
+            );
           },
         },
       },

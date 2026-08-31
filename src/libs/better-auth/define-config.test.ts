@@ -11,8 +11,10 @@ const mocks = vi.hoisted(() => ({
   },
   betterAuth: vi.fn((options) => options),
   emailOTP: vi.fn((options) => ({ id: 'email-otp', options })),
+  ensureAihubReadinessBestEffort: vi.fn(),
   magicLink: vi.fn((options) => ({ id: 'magic-link', options })),
   provisionWecomLoginAccount: vi.fn(),
+  scheduleAfter: vi.fn((callback: () => unknown) => callback()),
   serverDB: {
     query: {
       account: {
@@ -73,6 +75,10 @@ vi.mock('undici', () => ({
   setGlobalDispatcher: vi.fn(),
 }));
 
+vi.mock('next/server', () => ({
+  after: mocks.scheduleAfter,
+}));
+
 vi.mock('@/envs/app', () => ({
   appEnv: {
     APP_URL: 'https://example.com',
@@ -124,6 +130,10 @@ vi.mock('@/server/services/email', () => ({
 
 vi.mock('@/server/services/user', () => ({
   UserService: vi.fn(),
+}));
+
+vi.mock('@/server/services/newApi/readiness/bestEffort', () => ({
+  ensureAihubReadinessBestEffort: mocks.ensureAihubReadinessBestEffort,
 }));
 
 describe('defineConfig', () => {
@@ -261,6 +271,9 @@ describe('defineConfig', () => {
         context,
       }),
     );
+    expect(mocks.ensureAihubReadinessBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: 'better_auth_account', userId: 'user-1001' }),
+    );
   });
 
   it('does not call WeCom login provisioning for non-WeCom account providers', async () => {
@@ -302,6 +315,9 @@ describe('defineConfig', () => {
         account,
         context,
       }),
+    );
+    expect(mocks.ensureAihubReadinessBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: 'better_auth_session', userId: 'user-1001' }),
     );
   });
 

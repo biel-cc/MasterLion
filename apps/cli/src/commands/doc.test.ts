@@ -19,7 +19,8 @@ const { mockTrpcClient } = vi.hoisted(() => ({
     },
     notebook: {
       createDocument: { mutate: vi.fn() },
-      listDocuments: { query: vi.fn() },
+      getDocument: { query: vi.fn() },
+      listDocumentSummaries: { query: vi.fn() },
     },
   },
 }));
@@ -583,7 +584,7 @@ describe('doc command', () => {
 
   describe('topic-docs', () => {
     it('should list documents for a topic', async () => {
-      mockTrpcClient.notebook.listDocuments.query.mockResolvedValue({
+      mockTrpcClient.notebook.listDocumentSummaries.query.mockResolvedValue({
         data: [
           {
             fileType: 'markdown',
@@ -599,15 +600,21 @@ describe('doc command', () => {
       const program = createProgram();
       await program.parseAsync(['node', 'test', 'doc', 'topic-docs', 'topic_123']);
 
-      expect(mockTrpcClient.notebook.listDocuments.query).toHaveBeenCalledWith(
-        expect.objectContaining({ topicId: 'topic_123' }),
-      );
+      expect(mockTrpcClient.notebook.listDocumentSummaries.query).toHaveBeenCalledWith({
+        topicId: 'topic_123',
+      });
       // Header + 2 rows
       expect(consoleSpy).toHaveBeenCalledTimes(3);
     });
 
     it('should filter by --type', async () => {
-      mockTrpcClient.notebook.listDocuments.query.mockResolvedValue({ data: [], total: 0 });
+      mockTrpcClient.notebook.listDocumentSummaries.query.mockResolvedValue({
+        data: [
+          { fileType: 'markdown', id: 'doc1', title: 'Markdown' },
+          { fileType: 'article', id: 'doc2', title: 'Article' },
+        ],
+        total: 2,
+      });
 
       const program = createProgram();
       await program.parseAsync([
@@ -620,23 +627,62 @@ describe('doc command', () => {
         'article',
       ]);
 
-      expect(mockTrpcClient.notebook.listDocuments.query).toHaveBeenCalledWith(
-        expect.objectContaining({ topicId: 'topic_123', type: 'article' }),
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('doc2'));
+      expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('doc1'));
     });
 
     it('should output JSON with --json flag', async () => {
-      const docs = [{ id: 'doc1', title: 'Note' }];
-      mockTrpcClient.notebook.listDocuments.query.mockResolvedValue({ data: docs, total: 1 });
+      const summaries = [{ associatedAt: '2026-08-27T00:00:00.000Z', id: 'doc1', title: 'Note' }];
+      const detail = {
+        content: 'Full body',
+        createdAt: '2026-08-26T00:00:00.000Z',
+        description: 'Description',
+        editorData: { root: {} },
+        fileType: 'markdown',
+        id: 'doc1',
+        metadata: { source: 'cli' },
+        pages: [{ pageContent: 'must not leak into the legacy output' }],
+        title: 'Note',
+        totalCharCount: 9,
+        totalLineCount: 1,
+        updatedAt: '2026-08-27T00:00:00.000Z',
+        userId: 'must-not-leak',
+      };
+      mockTrpcClient.notebook.listDocumentSummaries.query.mockResolvedValue({
+        data: summaries,
+        total: 1,
+      });
+      mockTrpcClient.notebook.getDocument.query.mockResolvedValue(detail);
 
       const program = createProgram();
       await program.parseAsync(['node', 'test', 'doc', 'topic-docs', 'topic_123', '--json']);
 
-      expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(docs, null, 2));
+      expect(mockTrpcClient.notebook.getDocument.query).toHaveBeenCalledWith({ id: 'doc1' });
+      expect(consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(
+          [
+            {
+              associatedAt: summaries[0].associatedAt,
+              content: detail.content,
+              createdAt: detail.createdAt,
+              description: detail.description,
+              fileType: detail.fileType,
+              id: detail.id,
+              metadata: detail.metadata,
+              title: detail.title,
+              totalCharCount: detail.totalCharCount,
+              totalLineCount: detail.totalLineCount,
+              updatedAt: detail.updatedAt,
+            },
+          ],
+          null,
+          2,
+        ),
+      );
     });
 
     it('should show message when no documents found', async () => {
-      mockTrpcClient.notebook.listDocuments.query.mockResolvedValue({ data: [], total: 0 });
+      mockTrpcClient.notebook.listDocumentSummaries.query.mockResolvedValue({ data: [], total: 0 });
 
       const program = createProgram();
       await program.parseAsync(['node', 'test', 'doc', 'topic-docs', 'topic_123']);

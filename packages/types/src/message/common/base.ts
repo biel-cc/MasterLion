@@ -42,6 +42,8 @@ export interface ChatMessageError {
   numericId?: number;
   /** Transport-level retryability hint. */
   retryable?: boolean;
+  /** Server-supplied minimum delay before an automatic retry. */
+  retryAfterMs?: number;
   severity?: ChatMessageErrorSeverity;
   type: ErrorType | IToolErrorType | ILobeAgentRuntimeErrorType;
 }
@@ -55,6 +57,7 @@ export const ChatMessageErrorSchema = z.object({
   isFallback: z.boolean().optional(),
   message: z.string().optional(),
   numericId: z.number().optional(),
+  retryAfterMs: z.number().nonnegative().optional(),
   retryable: z.boolean().optional(),
   severity: z.enum(['info', 'warning', 'error', 'critical']).optional(),
   type: z.union([z.string(), z.number()]),

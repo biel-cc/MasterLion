@@ -83,10 +83,14 @@ export const formatErrorForState = (error: unknown): ChatMessageError => {
       error?: unknown;
       errorType: ChatMessageError['type'];
       message?: string;
+      retryAfterMs?: number;
+      retryable?: boolean;
     };
     return enrichWithSpec({
       body: payload.error || error,
       message: payload.message || String(payload.errorType),
+      retryAfterMs: payload.retryAfterMs,
+      retryable: payload.retryable,
       type: payload.errorType,
     });
   }

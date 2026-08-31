@@ -13,12 +13,7 @@ import { GroupAgentBuilderIdentifier } from '@lobechat/builtin-tool-group-agent-
 import { LobeAgentIdentifier } from '@lobechat/builtin-tool-lobe-agent';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { WebOnboardingIdentifier } from '@lobechat/builtin-tool-web-onboarding';
-import {
-  AGENT_PLAN_FILE_TYPE,
-  COMPOSIO_APP_TYPES,
-  isDesktop,
-  LOBEHUB_SKILL_PROVIDERS,
-} from '@lobechat/const';
+import { COMPOSIO_APP_TYPES, isDesktop, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
 import type {
   AgentBuilderContext,
   AgentContextDocument,
@@ -341,15 +336,11 @@ export const contextEngineering = async ({
 
   if (isPlanTodoEnabled && topicId) {
     try {
-      // Fetch plan document for the current topic
-      const planResult = await notebookService.listDocuments({
-        topicId,
-        type: AGENT_PLAN_FILE_TYPE,
-      });
+      // Fetch one full latest plan. Notebook summaries intentionally do not
+      // carry content or metadata and must never be used for model context.
+      const planDoc = await notebookService.getLatestPlan(topicId);
 
-      if (planResult.data.length > 0) {
-        const planDoc = planResult.data[0]; // Most recent plan
-
+      if (planDoc) {
         // Build plan object for injection
         const plan = {
           completed: false, // TODO: Add completed field to document if needed

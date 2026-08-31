@@ -18,7 +18,16 @@ export const newApiBindings = pgTable(
       .default('pending')
       .notNull(),
     lastSyncedAt: timestamptz('last_synced_at'),
+    errorCode: varchar('error_code', { length: 64 }),
+    errorKind: varchar('error_kind', {
+      enum: ['configuration', 'transient', 'identity_conflict', 'entitlement', 'permanent'],
+      length: 32,
+    }),
     errorMessage: text('error_message'),
+    attemptCount: integer('attempt_count').default(0).notNull(),
+    lastAttemptAt: timestamptz('last_attempt_at'),
+    nextRetryAt: timestamptz('next_retry_at'),
+    readinessVersion: integer('readiness_version').default(1).notNull(),
     iamOAuthBindingStatus: varchar('iam_oauth_binding_status', {
       enum: ['unknown', 'pending', 'active', 'error', 'conflict'],
       length: 16,
@@ -38,6 +47,17 @@ export const newApiBindings = pgTable(
   ],
 );
 
+export const aihubReadinessLeases = pgTable('aihub_readiness_leases', {
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .primaryKey()
+    .notNull(),
+  ownerId: text('owner_id').notNull(),
+  acquiredAt: timestamptz('acquired_at').notNull(),
+  expiresAt: timestamptz('expires_at').notNull(),
+});
+
 export type NewApiBindingStatusType = (typeof newApiBindings.$inferSelect)['status'];
 export type NewApiBindingItem = typeof newApiBindings.$inferSelect;
 export type NewNewApiBindingItem = typeof newApiBindings.$inferInsert;
+export type AihubReadinessLeaseItem = typeof aihubReadinessLeases.$inferSelect;

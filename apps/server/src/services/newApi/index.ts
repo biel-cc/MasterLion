@@ -948,7 +948,9 @@ export class NewApiService {
     await aiModelModel.clearRemoteModels(ModelProvider.NewAPI);
     await aiModelModel.batchUpdateAiModels(ModelProvider.NewAPI, models);
 
-    if (defaultModel) await this.saveManagedProviderToken(key, defaultModel);
+    // The credential is part of core Aihub readiness even when the user's
+    // current model set has no chat default (for example embedding-only).
+    await this.saveManagedProviderToken(key, defaultModel);
 
     return {
       defaultModel,

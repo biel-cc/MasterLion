@@ -13,6 +13,8 @@ const {
   mockImportBindings,
   mockInitWithEnvKey,
   mockNewApiServiceConstructor,
+  mockReadinessEnsure,
+  mockReadinessGet,
   mockRebindCurrentUser,
   mockValidateBinding,
 } = vi.hoisted(() => ({
@@ -22,6 +24,8 @@ const {
   mockImportBindings: vi.fn(),
   mockInitWithEnvKey: vi.fn(),
   mockNewApiServiceConstructor: vi.fn(),
+  mockReadinessEnsure: vi.fn(),
+  mockReadinessGet: vi.fn(),
   mockRebindCurrentUser: vi.fn(),
   mockValidateBinding: vi.fn(),
 }));
@@ -64,6 +68,13 @@ vi.mock('@/server/services/newApi', () => ({
   }),
 }));
 
+vi.mock('@/server/services/newApi/readiness/production', () => ({
+  createAihubReadiness: vi.fn(() => ({
+    ensure: mockReadinessEnsure,
+    get: mockReadinessGet,
+  })),
+}));
+
 const createCaller = createCallerFactory(newApiRouter);
 const mockServerDB = { kind: 'server-db' };
 const mockGateKeeper = { kind: 'gate-keeper' };
@@ -81,6 +92,13 @@ describe('newApiRouter admin permission guard', () => {
       { lobeUserId: 'lobe-user', newApiUserId: 7, ok: true, source: 'admin-api' },
     ]);
     mockRebindCurrentUser.mockResolvedValue({ repaired: true, status: 'active' });
+    mockReadinessEnsure.mockResolvedValue({
+      iamOAuthBinding: { status: 'active' },
+      isBound: true,
+      oauthBinding: { status: 'active' },
+      status: 'active',
+    });
+    mockReadinessGet.mockResolvedValue({ isBound: false, status: 'missing' });
     mockValidateBinding.mockResolvedValue({
       lobeUserId: 'lobe-user',
       newApiUserId: 7,
@@ -138,7 +156,22 @@ describe('newApiRouter admin permission guard', () => {
       repaired: true,
       status: 'active',
     });
-    expect(mockRebindCurrentUser).toHaveBeenCalledTimes(1);
+    expect(mockReadinessEnsure).toHaveBeenCalledWith('user-member', {
+      force: true,
+      trigger: 'manual_retry',
+    });
+    expect(mockRebindCurrentUser).not.toHaveBeenCalled();
     expect(mockHasAnyPermission).not.toHaveBeenCalled();
+  });
+
+  it('accepts the legacy repair flag but uses the unified idempotent readiness workflow', async () => {
+    const caller = await createCallerForUser('user-member');
+
+    await caller.ensureReadiness({ repairIamBinding: true });
+
+    expect(mockReadinessEnsure).toHaveBeenCalledWith('user-member', {
+      force: true,
+      trigger: 'manual_retry',
+    });
   });
 });

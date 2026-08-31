@@ -18,6 +18,17 @@
       Run exhausted result-sync scenario
     </button>
     <button data-testid="run-cancelled" type="button">Run cancelled execution scenario</button>
+    <button data-testid="run-aihub-concurrent" type="button">Run concurrent Aihub readiness</button>
+    <button data-testid="run-aihub-relaunch" type="button">Run Aihub relaunch recovery</button>
+    <div data-testid="aihub-spinner" hidden>Opening Aihub…</div>
+    <dl>
+      <dt>Aihub status</dt>
+      <dd data-testid="aihub-status">idle</dd>
+      <dt>Aihub provision count</dt>
+      <dd data-testid="aihub-provision-count">0</dd>
+      <dt>Aihub active results</dt>
+      <dd data-testid="aihub-active-count">0</dd>
+    </dl>
     <div data-testid="tool-spinner" hidden>Calling tool…</div>
     <dl>
       <dt>Status</dt>
@@ -31,6 +42,8 @@
       <dt>Running operations</dt>
       <dd data-testid="running-operation-count">0</dd>
     </dl>
+    <section id="notebook-production-root"></section>
     <script src="./renderer.js"></script>
+    <script src="../.artifacts/notebookRenderer.js" type="module"></script>
   </body>
 </html>

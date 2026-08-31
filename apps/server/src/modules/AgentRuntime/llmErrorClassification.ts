@@ -12,6 +12,7 @@ interface LLMErrorSignal {
   code?: string;
   errorType?: string;
   message: string;
+  retryable?: boolean;
   status?: number;
 }
 
@@ -125,6 +126,7 @@ const normalizeSignal = (error: unknown): LLMErrorSignal => {
     const raw = error as Error & {
       code?: unknown;
       errorType?: unknown;
+      retryable?: boolean;
       status?: number;
       statusCode?: number;
       type?: unknown;
@@ -135,6 +137,7 @@ const normalizeSignal = (error: unknown): LLMErrorSignal => {
       code: normalizeCode(raw.code),
       errorType: normalizeErrorType(raw.errorType || raw.type),
       message,
+      retryable: raw.retryable,
       status:
         typeof raw.status === 'number'
           ? raw.status
@@ -152,11 +155,13 @@ const normalizeSignal = (error: unknown): LLMErrorSignal => {
         error?: { code?: unknown; message?: string; status?: number; type?: unknown };
         errorType?: unknown;
         message?: string;
+        retryable?: boolean;
         status?: number;
         type?: unknown;
       };
       errorType?: unknown;
       message?: string;
+      retryable?: boolean;
       status?: number;
       statusCode?: number;
       type?: unknown;
@@ -176,6 +181,12 @@ const normalizeSignal = (error: unknown): LLMErrorSignal => {
         raw.errorType || raw.type || nested?.errorType || nested?.type || nestedError?.type,
       ),
       message,
+      retryable:
+        typeof raw.retryable === 'boolean'
+          ? raw.retryable
+          : typeof nested?.retryable === 'boolean'
+            ? nested.retryable
+            : undefined,
       status:
         typeof raw.status === 'number'
           ? raw.status
@@ -193,7 +204,15 @@ const normalizeSignal = (error: unknown): LLMErrorSignal => {
   return { message: 'unknown error' };
 };
 
-const classifyKind = ({ code, errorType, message, status }: LLMErrorSignal): LLMErrorKind => {
+const classifyKind = ({
+  code,
+  errorType,
+  message,
+  retryable,
+  status,
+}: LLMErrorSignal): LLMErrorKind => {
+  if (retryable !== undefined) return retryable ? 'retry' : 'stop';
+
   if (errorType === 'ProviderBizError') {
     if (status === 400 || status === 422) return 'stop';
     if (message.includes('invalid_request_error') || message.includes('invalid request')) {
@@ -270,7 +289,7 @@ export const classifyLLMError = (error: unknown): ClassifiedLLMError => {
       kind: classifyKind(signal),
       message: signal.message,
     };
-  } catch (classificationError) {
+  } catch {
     return {
       kind: 'stop',
       message: bestEffortMessage(error),

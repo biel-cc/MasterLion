@@ -6,17 +6,9 @@ import {
   enterpriseDepartments,
   enterpriseUserProfiles,
   externalIdentities,
-  newApiBindings,
-  type NewApiBindingStatusType,
-  users,
 } from '@/database/schemas';
 
-import {
-  NewApiProvisioningAdapter,
-  type ProvisionEnterpriseUserInput,
-  type ProvisionEnterpriseUserResult,
-  type ProvisioningPolicy,
-} from '../newApi/provisioningAdapter';
+import type { ProvisioningPolicy } from '../newApi/provisioningAdapter';
 
 type DbLike = {
   insert: (table: unknown) => any;
@@ -24,33 +16,8 @@ type DbLike = {
     enterpriseDepartments?: {
       findMany?: (args: unknown) => Promise<EnterpriseDepartmentRow[]>;
     };
-    newApiBindings?: {
-      findFirst?: (args: unknown) => Promise<{ newApiUserId?: number | null } | undefined>;
-    };
-    users?: {
-      findFirst?: (
-        args: unknown,
-      ) => Promise<{ email?: string | null; username?: string | null } | undefined>;
-    };
-  };
-  select?: (fields: Record<string, unknown>) => {
-    from: (table: unknown) => {
-      where: (condition: unknown) => {
-        limit: (n: number) => Promise<Array<{ email?: string | null; username?: string | null }>>;
-      };
-    };
   };
   update: (table: unknown) => any;
-};
-
-type AihubProvisioningAdapter = {
-  provisionEnterpriseUser: (
-    input: ProvisionEnterpriseUserInput,
-  ) => Promise<ProvisionEnterpriseUserResult>;
-  // Bug 2: independently ensure an existing Aihub user has the default initial
-  // quota, even when full provisioning fails. Called from the error path so
-  // old users with a recorded newApiUserId still get their balance topped up.
-  ensureUserQuota?: (newApiUserId: number, policy: ProvisioningPolicy) => Promise<void>;
 };
 
 type RoleAssigner = {
@@ -95,7 +62,8 @@ export type IdentityProvisioningInput = {
 };
 
 type IdentityProvisioningServiceOptions = {
-  aihubProvisioningAdapter?: AihubProvisioningAdapter;
+  /** @deprecated Aihub provisioning is coordinated by AihubReadiness. */
+  aihubProvisioningAdapter?: unknown;
   db: DbLike;
   roleAssigner?: RoleAssigner;
   workspaceAssigner?: WorkspaceAssigner;
@@ -107,19 +75,6 @@ type TopLevelProvisioningInput = IdentityProvisioningInput &
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-const asTrimmedString = (value: unknown) => {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
-};
-
-const isValidNewApiUserId = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0;
-
-const normalizeSuccessfulBindingStatus = (
-  status: unknown,
-): Exclude<NewApiBindingStatusType, 'error'> => (status === 'pending' ? 'pending' : 'active');
-
 const shouldSyncDepartmentsOnLogin = (policy: ProvisioningPolicy) => {
   const departmentSync = policy.departmentSync as DepartmentSyncPolicy | undefined;
 
@@ -127,18 +82,11 @@ const shouldSyncDepartmentsOnLogin = (policy: ProvisioningPolicy) => {
 };
 
 export class IdentityProvisioningService {
-  private aihubProvisioningAdapter?: AihubProvisioningAdapter;
   private db: DbLike;
   private roleAssigner?: RoleAssigner;
   private workspaceAssigner?: WorkspaceAssigner;
 
-  constructor({
-    aihubProvisioningAdapter,
-    db,
-    roleAssigner,
-    workspaceAssigner,
-  }: IdentityProvisioningServiceOptions) {
-    this.aihubProvisioningAdapter = aihubProvisioningAdapter;
+  constructor({ db, roleAssigner, workspaceAssigner }: IdentityProvisioningServiceOptions) {
     this.db = db;
     this.roleAssigner = roleAssigner;
     this.workspaceAssigner = workspaceAssigner;
@@ -339,201 +287,18 @@ export class IdentityProvisioningService {
       }
     }
 
-    let aihub: ProvisionEnterpriseUserResult | { error: string; status: 'error' } | undefined;
-    if (policy.aihubProvisioning?.enabled) {
-      const skipReason = this.aihubProvisioningAdapter
-        ? null
-        : (() => {
-            const adminToken = process.env.AIHUB_ADMIN_ACCESS_TOKEN?.trim();
-            const adminUserId = Number(process.env.AIHUB_ADMIN_USER_ID);
-            if (!adminToken || !Number.isInteger(adminUserId) || adminUserId <= 0) {
-              return 'AIHUB_ADMIN_ACCESS_TOKEN and AIHUB_ADMIN_USER_ID must be configured to enable Aihub provisioning. Set these env vars or disable aihubProvisioning in WeCom SSO config.';
-            }
-            return null;
-          })();
-
-      if (skipReason) {
-        console.warn(`[Aihub Provisioning] Skipped: ${skipReason}`);
-
-        await this.writeAuditLogBestEffort({
-          action: 'identity.provision.aihub_skipped',
-          metadata: {
-            reason: 'admin_credentials_not_configured',
-            provider: input.provider,
-          },
-          result: 'success',
-          targetId: input.userId,
-          targetType: 'user',
-        });
-      } else {
-        // Bug 2: capture the previously-recorded Aihub user id before
-        // provisioning. If full provisioning fails (e.g. a duplicate-username
-        // conflict that could not be resolved, or a managed-token error) we
-        // still want to top up the balance of the *existing* Aihub user on
-        // every login — otherwise old users with no balance stay stuck.
-        let existingNewApiUserId: number | undefined;
-        if (typeof this.db.query?.newApiBindings?.findFirst === 'function') {
-          const existingBinding = await this.db.query.newApiBindings.findFirst({
-            columns: { newApiUserId: true },
-            where: eq(newApiBindings.userId, input.userId),
-          });
-          existingNewApiUserId = existingBinding?.newApiUserId ?? undefined;
-        }
-
-        let adapter: AihubProvisioningAdapter | undefined = this.aihubProvisioningAdapter;
-
-        try {
-          adapter = adapter ?? new NewApiProvisioningAdapter();
-
-          // Fetch the Masterino username for token naming (Masterino_{username}),
-          // and the email — WeCom profiles often lack an email field, but the user
-          // may have one in the Masterino users table (e.g. self-registered in
-          // Aihub with the same email). Falling back to this email lets the
-          // provisioning lookup match an existing Aihub user instead of creating
-          // a duplicate.
-          let masterinoUsername: string | undefined;
-          let masterinoEmail: string | undefined;
-          if (typeof this.db.query?.users?.findFirst === 'function') {
-            const userRow = await this.db.query.users.findFirst({
-              columns: { email: true, username: true },
-              where: eq(users.id, input.userId),
-            });
-            masterinoUsername = userRow?.username ?? undefined;
-            masterinoEmail = userRow?.email ?? undefined;
-          }
-
-          const provisioningResult = await adapter.provisionEnterpriseUser({
-            email: asTrimmedString(input.email) ?? masterinoEmail,
-            employeeNumber: input.employeeNumber,
-            masterinoUsername,
-            name: input.name,
-            policy,
-            userId: input.userId,
-          });
-
-          if (!isValidNewApiUserId(provisioningResult.newApiUserId)) {
-            throw new Error('Aihub provisioning did not return a valid NewAPI user id');
-          }
-
-          const bindingStatus = normalizeSuccessfulBindingStatus(provisioningResult.status);
-          const iamOAuthBinding = provisioningResult.iamOAuthBinding;
-          aihub = {
-            ...provisioningResult,
-            newApiUserId: provisioningResult.newApiUserId,
-            status: bindingStatus,
-          };
-          await this.db
-            .insert(newApiBindings)
-            .values({
-              errorMessage: null,
-              iamOAuthBindingError:
-                iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorMessage,
-              iamOAuthBindingErrorCode:
-                iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorCode,
-              iamOAuthBindingStatus: iamOAuthBinding?.status ?? 'unknown',
-              iamOAuthBindingSyncedAt: iamOAuthBinding ? new Date() : null,
-              managedTokenId: provisioningResult.managedTokenId ?? null,
-              newApiUserId: provisioningResult.newApiUserId,
-              status: bindingStatus,
-              userId: input.userId,
-            })
-            .onConflictDoUpdate({
-              set: {
-                errorMessage: null,
-                iamOAuthBindingError:
-                  iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorMessage,
-                iamOAuthBindingErrorCode:
-                  iamOAuthBinding?.status === 'active' ? null : iamOAuthBinding?.errorCode,
-                iamOAuthBindingStatus: iamOAuthBinding?.status ?? 'unknown',
-                iamOAuthBindingSyncedAt: iamOAuthBinding ? new Date() : null,
-                managedTokenId: provisioningResult.managedTokenId ?? null,
-                newApiUserId: provisioningResult.newApiUserId,
-                status: bindingStatus,
-              },
-              target: newApiBindings.userId,
-            })
-            .returning();
-
-          await this.writeAuditLogBestEffort({
-            action: 'identity.provision.success',
-            metadata: {
-              departmentIds: orderedDepartments.map((department) => department.id),
-              provider: input.provider,
-            },
-            result: 'success',
-            targetId: input.userId,
-            targetType: 'user',
-          });
-        } catch (error) {
-          const errorMessage = getErrorMessage(error);
-          aihub = {
-            error: errorMessage,
-            status: 'error',
-          };
-
-          await this.db
-            .insert(newApiBindings)
-            .values({
-              errorMessage,
-              newApiUserId: null,
-              status: 'error',
-              userId: input.userId,
-            })
-            .onConflictDoUpdate({
-              set: {
-                errorMessage,
-                status: 'error',
-              },
-              target: newApiBindings.userId,
-            })
-            .returning();
-
-          // Bug 2: even when full provisioning fails, independently top up the
-          // balance of an already-recorded Aihub user. This ensures old users
-          // (e.g. 10003923) whose Aihub account exists but has no quota get
-          // their default 700 RMB on every login, regardless of whether the
-          // rest of provisioning (token assignment, etc.) succeeds.
-          if (
-            existingNewApiUserId &&
-            isValidNewApiUserId(existingNewApiUserId) &&
-            typeof adapter?.ensureUserQuota === 'function'
-          ) {
-            try {
-              await adapter.ensureUserQuota(existingNewApiUserId, policy);
-            } catch (quotaError) {
-              console.warn(
-                `[Aihub Provisioning] Independent quota top-up failed for user ${existingNewApiUserId}: ${getErrorMessage(quotaError)}`,
-              );
-            }
-          }
-
-          await this.writeAuditLogBestEffort({
-            action: 'identity.provision.aihub_error',
-            metadata: {
-              error: errorMessage,
-              provider: input.provider,
-            },
-            result: 'failed',
-            targetId: input.userId,
-            targetType: 'user',
-          });
-        }
-      }
-    } else {
-      await this.writeAuditLogBestEffort({
-        action: 'identity.provision.success',
-        metadata: {
-          departmentIds: orderedDepartments.map((department) => department.id),
-          provider: input.provider,
-        },
-        result: 'success',
-        targetId: input.userId,
-        targetType: 'user',
-      });
-    }
+    await this.writeAuditLogBestEffort({
+      action: 'identity.provision.success',
+      metadata: {
+        departmentIds: orderedDepartments.map((department) => department.id),
+        provider: input.provider,
+      },
+      result: 'success',
+      targetId: input.userId,
+      targetType: 'user',
+    });
 
     return {
-      aihub,
       departmentIds: orderedDepartments.map((department) => department.id),
       enterpriseProfile,
       externalIdentity,
@@ -561,19 +326,26 @@ export class IdentityProvisioningService {
   }) {
     try {
       await this.writeAuditLog(input);
-    } catch {}
+    } catch {
+      // Identity writes must not fail because an audit sink is unavailable.
+    }
   }
 }
 
 export const provisionFromSsoProfile = async (input: TopLevelProvisioningInput) => {
-  const { aihubProvisioningAdapter, db, roleAssigner, workspaceAssigner, ...profile } = input;
+  const {
+    aihubProvisioningAdapter: _ignored,
+    db,
+    roleAssigner,
+    workspaceAssigner,
+    ...profile
+  } = input;
 
   if (!db) {
     throw new Error('provisionFromSsoProfile requires a db option');
   }
 
   return new IdentityProvisioningService({
-    aihubProvisioningAdapter,
     db,
     roleAssigner,
     workspaceAssigner,

@@ -155,7 +155,9 @@ const createRecordingDb = (
         const shouldFailAudit =
           table === enterpriseAuditLogs &&
           values.some((value) =>
-            options.failAuditActions?.includes((value as Record<string, unknown>)?.action as string),
+            options.failAuditActions?.includes(
+              (value as Record<string, unknown>)?.action as string,
+            ),
           );
         if (shouldFailAudit) {
           throw new Error('Audit log write failed');
@@ -237,7 +239,6 @@ const flattenValues = (operations: DbWriteOperation[]) =>
   });
 
 const createAihubAdapter = (result?: Record<string, unknown>) => ({
-  ensureUserQuota: vi.fn(async () => undefined),
   provisionEnterpriseUser: vi.fn(async () => ({
     managedTokenId: 8001,
     newApiUserId: 9001,
@@ -284,40 +285,21 @@ describe('identityProvisioningService', () => {
     expect(provisionFromSsoProfile).toBeTypeOf('function');
   });
 
-  it('uses the default NewAPI provisioning adapter in the top-level helper when aihub provisioning is enabled', async () => {
+  it('keeps top-level identity provisioning independent from Aihub readiness', async () => {
     const { db, operations } = createRecordingDb();
 
     await expect(provisionFromSsoProfile({ ...defaultProfile, db })).resolves.toMatchObject({
-      aihub: {
-        managedTokenId: 8001,
-        newApiUserId: 9001,
-        status: 'active',
-      },
       userId: 'user-ada',
     });
 
-    expect(newApiProvisioningAdapterMock.constructor).toHaveBeenCalled();
-    expect(newApiProvisioningAdapterMock.provisionEnterpriseUser).toHaveBeenCalledWith({
-      email: 'ada@example.com',
-      employeeNumber: 'E-1001',
-      name: 'Ada Lovelace',
-      policy: defaultPolicy,
-      userId: 'user-ada',
-    });
-    expect(findInsert(operations, newApiBindings).values).toMatchObject({
-      managedTokenId: 8001,
-      newApiUserId: 9001,
-      status: 'active',
-      userId: 'user-ada',
-    });
+    expect(newApiProvisioningAdapterMock.constructor).not.toHaveBeenCalled();
+    expect(findWrites(operations, newApiBindings)).toHaveLength(0);
   });
 
-  it('falls back to the Masterino users table email when the SSO profile has no email', async () => {
-    // WeCom profiles often lack an email field. The user may have registered
-    // in Aihub independently with their real email. Falling back to the email
-    // stored in the Masterino users table lets the provisioning lookup match
-    // the existing Aihub user instead of creating a duplicate.
-    const { db } = createRecordingDb({ userRow: { username: '10003923', email: 'you.yan@example.com' } });
+  it('does not perform Aihub lookup while syncing an identity with no email', async () => {
+    const { db } = createRecordingDb({
+      userRow: { username: '10003923', email: 'you.yan@example.com' },
+    });
     const adapter = createAihubAdapter();
     const service = new IdentityProvisioningService({ aihubProvisioningAdapter: adapter, db });
 
@@ -326,25 +308,16 @@ describe('identityProvisioningService', () => {
       email: undefined, // WeCom profile has no email
     });
 
-    expect(adapter.provisionEnterpriseUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        email: 'you.yan@example.com', // fell back to users table
-        employeeNumber: 'E-1001',
-      }),
-    );
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
   });
 
-  it('records a binding error without blocking enterprise identity writes when the default NewAPI adapter cannot initialize', async () => {
+  it('does not require Aihub administrator configuration to write enterprise identity', async () => {
     const { db, operations } = createRecordingDb();
     newApiProvisioningAdapterMock.constructor.mockImplementationOnce(() => {
       throw new Error('AIHUB_ADMIN_ACCESS_TOKEN is required for Aihub provisioning');
     });
 
     await expect(provisionFromSsoProfile({ ...defaultProfile, db })).resolves.toMatchObject({
-      aihub: {
-        error: 'AIHUB_ADMIN_ACCESS_TOKEN is required for Aihub provisioning',
-        status: 'error',
-      },
       enterpriseProfile: expect.objectContaining({
         userId: 'user-ada',
       }),
@@ -357,32 +330,10 @@ describe('identityProvisioningService', () => {
 
     expect(db.insert).toHaveBeenCalledWith(externalIdentities);
     expect(db.insert).toHaveBeenCalledWith(enterpriseUserProfiles);
-
-    const bindingValues = flattenValues(findWrites(operations, newApiBindings));
-    expect(bindingValues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          errorMessage: 'AIHUB_ADMIN_ACCESS_TOKEN is required for Aihub provisioning',
-          newApiUserId: null,
-          status: 'error',
-          userId: 'user-ada',
-        }),
-      ]),
-    );
-
-    const auditInsert = findInsert(operations, enterpriseAuditLogs);
-    expect(auditInsert.values).toMatchObject({
-      action: 'identity.provision.aihub_error',
-      result: 'failed',
-      targetId: 'user-ada',
-      targetType: 'user',
-    });
+    expect(findWrites(operations, newApiBindings)).toHaveLength(0);
   });
 
-  it('independently tops up balance for an old user when full provisioning fails', async () => {
-    // Bug 2d: when provisionEnterpriseUser throws but a previous binding
-    // already recorded a newApiUserId, ensureUserQuota must still be called
-    // so old users (e.g. 10003923) get their default balance on every login.
+  it('leaves Aihub repair to AihubReadiness even when an old binding exists', async () => {
     const { db } = createRecordingDb({ existingNewApiUserId: 9001 });
     const adapter = createAihubAdapter();
     adapter.provisionEnterpriseUser.mockRejectedValue(new Error('duplicate username'));
@@ -393,25 +344,10 @@ describe('identityProvisioningService', () => {
 
     const result = await service.provisionFromSsoProfile(defaultProfile);
 
-    expect(result.aihub).toMatchObject({ status: 'error' });
-    expect(adapter.ensureUserQuota).toHaveBeenCalledWith(9001, defaultPolicy);
+    expect(result).not.toHaveProperty('aihub');
   });
 
-  it('does not call ensureUserQuota when there is no prior newApiUserId', async () => {
-    const { db } = createRecordingDb();
-    const adapter = createAihubAdapter();
-    adapter.provisionEnterpriseUser.mockRejectedValue(new Error('create failed'));
-    const service = new IdentityProvisioningService({
-      aihubProvisioningAdapter: adapter,
-      db,
-    });
-
-    await service.provisionFromSsoProfile(defaultProfile);
-
-    expect(adapter.ensureUserQuota).not.toHaveBeenCalled();
-  });
-
-  it('upserts normalized SSO identity, memberships, NewAPI binding, and success audit log', async () => {
+  it('upserts normalized SSO identity and memberships without touching Aihub state', async () => {
     const { db, operations } = createRecordingDb();
     const adapter = createAihubAdapter();
     const roleAssigner = createRoleAssigner();
@@ -497,13 +433,7 @@ describe('identityProvisioningService', () => {
       target: [enterpriseDepartmentMembers.departmentId, enterpriseDepartmentMembers.userId],
     });
 
-    expect(adapter.provisionEnterpriseUser).toHaveBeenCalledWith({
-      email: 'ada@example.com',
-      employeeNumber: 'E-1001',
-      name: 'Ada Lovelace',
-      policy: defaultPolicy,
-      userId: 'user-ada',
-    });
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
     expect(roleAssigner.assignDefaultRole).toHaveBeenCalledWith({
       roleName: 'member',
       userId: 'user-ada',
@@ -513,23 +443,7 @@ describe('identityProvisioningService', () => {
       userId: 'user-ada',
       workspaceId: 'workspace_001',
     });
-    const bindingInsert = findInsert(operations, newApiBindings);
-    expect(bindingInsert.values).toMatchObject({
-      errorMessage: null,
-      managedTokenId: 8001,
-      newApiUserId: 9001,
-      status: 'active',
-      userId: 'user-ada',
-    });
-    expect(bindingInsert.conflict).toMatchObject({
-      set: expect.objectContaining({
-        errorMessage: null,
-        managedTokenId: 8001,
-        newApiUserId: 9001,
-        status: 'active',
-      }),
-      target: newApiBindings.userId,
-    });
+    expect(findWrites(operations, newApiBindings)).toHaveLength(0);
 
     const auditInsert = findInsert(operations, enterpriseAuditLogs);
     expect(auditInsert.values).toMatchObject({
@@ -540,11 +454,6 @@ describe('identityProvisioningService', () => {
     });
 
     expect(result).toMatchObject({
-      aihub: {
-        managedTokenId: 8001,
-        newApiUserId: 9001,
-        status: 'active',
-      },
       departmentIds: ['dept-primary', 'dept-secondary'],
       enterpriseProfile: expect.objectContaining({
         employeeNumber: 'E-1001',
@@ -564,7 +473,7 @@ describe('identityProvisioningService', () => {
     });
   });
 
-  it('records NewAPI binding errors and audit failure without losing profile sync', async () => {
+  it('ignores legacy Aihub adapters while preserving profile sync', async () => {
     const { db, operations } = createRecordingDb();
     const adapter = {
       provisionEnterpriseUser: vi.fn(async () => {
@@ -579,10 +488,6 @@ describe('identityProvisioningService', () => {
     });
 
     await expect(service.provisionFromSsoProfile(defaultProfile)).resolves.toMatchObject({
-      aihub: {
-        error: 'NewAPI quota service timed out',
-        status: 'error',
-      },
       departmentIds: ['dept-primary', 'dept-secondary'],
       enterpriseProfile: expect.objectContaining({
         primaryDepartmentId: 'dept-primary',
@@ -595,7 +500,7 @@ describe('identityProvisioningService', () => {
       userId: 'user-ada',
     });
 
-    expect(adapter.provisionEnterpriseUser).toHaveBeenCalledTimes(1);
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
     expect(roleAssigner.assignDefaultRole).toHaveBeenCalledWith({
       roleName: 'member',
       userId: 'user-ada',
@@ -604,31 +509,17 @@ describe('identityProvisioningService', () => {
     expect(db.insert).toHaveBeenCalledWith(enterpriseUserProfiles);
     expect(db.insert).toHaveBeenCalledWith(enterpriseDepartmentMembers);
 
-    const bindingWrites = findWrites(operations, newApiBindings);
-    const bindingValues = flattenValues(bindingWrites);
-    expect(bindingValues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          errorMessage: 'NewAPI quota service timed out',
-          newApiUserId: null,
-          status: 'error',
-          userId: 'user-ada',
-        }),
-      ]),
-    );
+    expect(findWrites(operations, newApiBindings)).toHaveLength(0);
 
     const auditInsert = findInsert(operations, enterpriseAuditLogs);
     expect(auditInsert.values).toMatchObject({
-      action: 'identity.provision.aihub_error',
-      result: 'failed',
+      action: 'identity.provision.success',
+      result: 'success',
       targetId: 'user-ada',
       targetType: 'user',
     });
     expect(auditInsert.values).toMatchObject({
-      metadata: expect.objectContaining({
-        error: 'NewAPI quota service timed out',
-        provider: 'wecom',
-      }),
+      metadata: expect.objectContaining({ provider: 'wecom' }),
     });
   });
 
@@ -832,7 +723,7 @@ describe('identityProvisioningService', () => {
     },
   );
 
-  it('records a workspace provisioning audit failure without blocking Aihub provisioning', async () => {
+  it('records a workspace provisioning audit failure without invoking Aihub provisioning', async () => {
     const { db, operations } = createRecordingDb();
     const adapter = createAihubAdapter();
     const workspaceAssigner = {
@@ -847,10 +738,6 @@ describe('identityProvisioningService', () => {
     });
 
     await expect(service.provisionFromSsoProfile(defaultProfile)).resolves.toMatchObject({
-      aihub: {
-        newApiUserId: 9001,
-        status: 'active',
-      },
       userId: 'user-ada',
       workspace: {
         error: 'Default workspace was not found',
@@ -858,7 +745,7 @@ describe('identityProvisioningService', () => {
       },
     });
 
-    expect(adapter.provisionEnterpriseUser).toHaveBeenCalledTimes(1);
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
     expect(workspaceAssigner.assignDefaultWorkspace).toHaveBeenCalledWith({
       role: 'member',
       userId: 'user-ada',
@@ -877,7 +764,7 @@ describe('identityProvisioningService', () => {
     );
   });
 
-  it('treats a missing NewAPI user id as a provisioning error instead of writing a zero placeholder', async () => {
+  it('does not interpret legacy adapter output inside identity provisioning', async () => {
     const { db, operations } = createRecordingDb();
     const adapter = {
       provisionEnterpriseUser: vi.fn(async () => ({
@@ -891,34 +778,15 @@ describe('identityProvisioningService', () => {
     });
 
     await expect(service.provisionFromSsoProfile(defaultProfile)).resolves.toMatchObject({
-      aihub: {
-        error: 'Aihub provisioning did not return a valid NewAPI user id',
-        status: 'error',
-      },
       userId: 'user-ada',
     });
 
     const bindingValues = flattenValues(findWrites(operations, newApiBindings));
-    expect(bindingValues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          errorMessage: 'Aihub provisioning did not return a valid NewAPI user id',
-          newApiUserId: null,
-          status: 'error',
-          userId: 'user-ada',
-        }),
-      ]),
-    );
-    expect(bindingValues).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          newApiUserId: 0,
-        }),
-      ]),
-    );
+    expect(bindingValues).toHaveLength(0);
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
   });
 
-  it('normalizes unexpected adapter statuses and clears stale binding errors on success', async () => {
+  it('never normalizes adapter statuses in the identity-only service', async () => {
     const { db, operations } = createRecordingDb();
     const adapter = createAihubAdapter({
       status: 'failed',
@@ -930,27 +798,12 @@ describe('identityProvisioningService', () => {
 
     const result = await service.provisionFromSsoProfile(defaultProfile);
 
-    const bindingInsert = findInsert(operations, newApiBindings);
-    expect(bindingInsert.values).toMatchObject({
-      errorMessage: null,
-      managedTokenId: 8001,
-      newApiUserId: 9001,
-      status: 'active',
-      userId: 'user-ada',
-    });
-    expect(bindingInsert.conflict).toMatchObject({
-      set: expect.objectContaining({
-        errorMessage: null,
-        status: 'active',
-      }),
-    });
-    expect(result.aihub).toMatchObject({
-      newApiUserId: 9001,
-      status: 'active',
-    });
+    expect(result).not.toHaveProperty('aihub');
+    expect(findWrites(operations, newApiBindings)).toHaveLength(0);
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
   });
 
-  it('does not overwrite an active NewAPI binding when success audit logging fails', async () => {
+  it('does not touch an active NewAPI binding when identity audit logging fails', async () => {
     const { db, operations } = createRecordingDb({
       failAuditActions: ['identity.provision.success'],
     });
@@ -961,32 +814,11 @@ describe('identityProvisioningService', () => {
     });
 
     await expect(service.provisionFromSsoProfile(defaultProfile)).resolves.toMatchObject({
-      aihub: {
-        newApiUserId: 9001,
-        status: 'active',
-      },
       userId: 'user-ada',
     });
 
     const bindingValues = flattenValues(findWrites(operations, newApiBindings));
-    expect(bindingValues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          errorMessage: null,
-          newApiUserId: 9001,
-          status: 'active',
-          userId: 'user-ada',
-        }),
-      ]),
-    );
-    expect(bindingValues).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          errorMessage: 'Audit log write failed',
-          status: 'error',
-          userId: 'user-ada',
-        }),
-      ]),
-    );
+    expect(bindingValues).toHaveLength(0);
+    expect(adapter.provisionEnterpriseUser).not.toHaveBeenCalled();
   });
 });
