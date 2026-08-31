@@ -162,15 +162,93 @@ describe('AihubReadiness', () => {
     expect(lease.release).toHaveBeenCalledWith('user-1', 'attempt-1');
   });
 
-  it('returns pending without provisioning when another process owns the user lease', async () => {
+  it('returns pending immediately for a background trigger when another process owns the lease', async () => {
     const { lease, readiness, workflow } = createHarness();
     lease.acquire.mockResolvedValue(undefined);
 
-    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+    const state = await readiness.ensure('user-1', { trigger: 'oidc_authorized' });
 
     expect(state).toMatchObject({ status: 'pending' });
     expect(workflow.provision).not.toHaveBeenCalled();
     expect(lease.release).not.toHaveBeenCalled();
+  });
+
+  it('waits for an in-flight owner to activate readiness for the model runtime', async () => {
+    let binding: any;
+    const sleep = vi.fn(async () => {
+      binding = {
+        managedTokenId: 8001,
+        newApiUserId: 9001,
+        readinessVersion: 2,
+        status: 'active',
+      };
+    });
+    const { bindingStore, lease, readiness, workflow } = createHarness({
+      pendingWaitDelaysMs: [10],
+      sleep,
+    });
+    bindingStore.get.mockImplementation(async () => binding);
+    lease.acquire.mockResolvedValue(undefined);
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({ isBound: true, status: 'active' });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(workflow.provision).not.toHaveBeenCalled();
+  });
+
+  it('returns the persisted owner error while waiting for model runtime readiness', async () => {
+    let binding: any;
+    const sleep = vi.fn(async () => {
+      binding = {
+        errorCode: 'admin_token_missing',
+        errorKind: 'configuration',
+        errorMessage: 'Aihub administrator token is missing',
+        status: 'error',
+      };
+    });
+    const { bindingStore, lease, readiness, workflow } = createHarness({
+      pendingWaitDelaysMs: [10],
+      sleep,
+    });
+    bindingStore.get.mockImplementation(async () => binding);
+    lease.acquire.mockResolvedValue(undefined);
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      errorCode: 'admin_token_missing',
+      errorMessage: 'Aihub administrator token is missing',
+      status: 'error',
+    });
+    expect(workflow.inspectLocalRuntime).not.toHaveBeenCalled();
+    expect(workflow.provision).not.toHaveBeenCalled();
+  });
+
+  it('returns a stable retryable pending error when the in-flight owner does not finish in time', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const { bindingStore, lease, readiness, workflow } = createHarness({
+      pendingWaitDelaysMs: [10, 20],
+      sleep,
+    });
+    bindingStore.get.mockResolvedValue({ status: 'pending' });
+    lease.acquire.mockResolvedValue(undefined);
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      errorCode: 'aihub_readiness_initializing',
+      errorKind: 'transient',
+      errorMessage: 'Aihub is still initializing. Please retry shortly.',
+      retryAfterMs: 2000,
+      retryable: true,
+      status: 'pending',
+    });
+    expect(bindingStore.get).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+    expect(workflow.inspectLocalRuntime).not.toHaveBeenCalled();
+    expect(workflow.provision).not.toHaveBeenCalled();
   });
 
   it('persists a non-retryable identity conflict instead of provisioning a different account', async () => {
@@ -225,8 +303,71 @@ describe('AihubReadiness', () => {
     expect(workflow.provision).not.toHaveBeenCalled();
   });
 
-  it('persists classified configuration failures without scheduling automatic retries', async () => {
-    const { bindingStore, readiness, workflow } = createHarness();
+  it('honors a persisted configuration cooldown without acquiring a lease', async () => {
+    const { bindingStore, lease, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      errorCode: 'admin_token_missing',
+      errorKind: 'configuration',
+      nextRetryAt: new Date('2026-08-31T01:10:00.000Z'),
+      status: 'error',
+    });
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      errorCode: 'admin_token_missing',
+      retryAfterMs: 600_000,
+      retryable: false,
+      status: 'error',
+    });
+    expect(bindingStore.get).toHaveBeenCalledOnce();
+    expect(workflow.inspectLocalRuntime).not.toHaveBeenCalled();
+    expect(lease.acquire).not.toHaveBeenCalled();
+    expect(workflow.provision).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicit retry to bypass a persisted configuration cooldown', async () => {
+    const { bindingStore, lease, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      errorCode: 'admin_token_missing',
+      errorKind: 'configuration',
+      nextRetryAt: new Date('2026-08-31T01:10:00.000Z'),
+      status: 'error',
+    });
+
+    const state = await readiness.ensure('user-1', {
+      force: true,
+      trigger: 'manual_retry',
+    });
+
+    expect(state).toMatchObject({ isBound: true, status: 'active' });
+    expect(lease.acquire).toHaveBeenCalledOnce();
+    expect(workflow.provision).toHaveBeenCalledOnce();
+  });
+
+  it('does not automatically retry a permanent error from the model runtime hot path', async () => {
+    const { bindingStore, lease, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      errorCode: 'employment_inactive',
+      errorKind: 'permanent',
+      errorMessage: 'Enterprise employment status is not active',
+      nextRetryAt: null,
+      status: 'error',
+    });
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      errorCode: 'employment_inactive',
+      retryable: false,
+      status: 'error',
+    });
+    expect(lease.acquire).not.toHaveBeenCalled();
+    expect(workflow.provision).not.toHaveBeenCalled();
+  });
+
+  it('schedules a jittered long cooldown for classified configuration failures', async () => {
+    const { bindingStore, readiness, workflow } = createHarness({ random: () => 0.5 });
     workflow.provision.mockRejectedValue(
       new AihubReadinessError(
         'AIHUB_ADMIN_ACCESS_TOKEN is required',
@@ -240,12 +381,38 @@ describe('AihubReadiness', () => {
     expect(state).toMatchObject({
       errorCode: 'admin_token_missing',
       errorKind: 'configuration',
+      retryAfterMs: 1_800_000,
       retryable: false,
       status: 'error',
     });
     expect(bindingStore.markError).toHaveBeenCalledWith(
       'user-1',
-      expect.objectContaining({ nextRetryAt: null }),
+      expect.objectContaining({ nextRetryAt: new Date('2026-08-31T01:30:00.000Z') }),
+    );
+  });
+
+  it('schedules the same load-protecting cooldown for entitlement failures', async () => {
+    const { bindingStore, readiness, workflow } = createHarness({ random: () => 0.5 });
+    workflow.provision.mockRejectedValue(
+      new AihubReadinessError(
+        'No accessible Aihub models are available',
+        'entitlement',
+        'aihub_models_unavailable',
+      ),
+    );
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      errorCode: 'aihub_models_unavailable',
+      errorKind: 'entitlement',
+      retryAfterMs: 1_800_000,
+      retryable: false,
+      status: 'error',
+    });
+    expect(bindingStore.markError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ nextRetryAt: new Date('2026-08-31T01:30:00.000Z') }),
     );
   });
 
@@ -300,10 +467,7 @@ describe('AihubReadiness', () => {
       updateIamBinding: vi.fn(),
     };
     const workflow = {
-      inspectLocalRuntime: vi
-        .fn()
-        .mockResolvedValueOnce({ hasApiKey: false, modelCount: 0 })
-        .mockResolvedValue({ hasApiKey: true, modelCount: 3 }),
+      inspectLocalRuntime: vi.fn().mockResolvedValue({ hasApiKey: true, modelCount: 3 }),
       provision: vi.fn().mockResolvedValue(activeResources),
     };
     const options = {

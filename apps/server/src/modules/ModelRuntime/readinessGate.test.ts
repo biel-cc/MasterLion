@@ -64,4 +64,24 @@ describe('ensureModelProviderReadiness', () => {
       ),
     ).rejects.toThrow('Aihub administrator token is missing');
   });
+
+  it('surfaces the bounded-wait timeout instead of a generic readiness error', async () => {
+    const factory = vi.fn(() => ({
+      ensure: vi.fn().mockResolvedValue({
+        errorCode: 'aihub_readiness_initializing',
+        errorMessage: 'Aihub is still initializing. Please retry shortly.',
+        status: 'pending',
+      }),
+    }));
+
+    await expect(
+      ensureModelProviderReadiness(
+        {} as any,
+        'user-1',
+        ModelProvider.NewAPI,
+        factory as any,
+        vi.fn().mockResolvedValue(true),
+      ),
+    ).rejects.toThrow('Aihub is still initializing. Please retry shortly.');
+  });
 });

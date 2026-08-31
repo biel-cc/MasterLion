@@ -76,9 +76,27 @@ export type AihubReadinessBindingRecord = {
 };
 
 const RETRY_DELAYS_MS = [3000, 10_000, 30_000, 120_000, 300_000] as const;
+const STABLE_ERROR_RETRY_DELAY_MS = 30 * 60 * 1000;
+const DEFAULT_PENDING_WAIT_DELAYS_MS = [250, 500, 1000, 1500, 2000] as const;
+
+const sleep = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 
 const getRetryDelay = (attemptCount: number | null | undefined) =>
   RETRY_DELAYS_MS[Math.min(Math.max((attemptCount ?? 1) - 1, 0), RETRY_DELAYS_MS.length - 1)];
+
+const getProvisioningRetryDelay = (
+  errorKind: AihubReadinessErrorKind,
+  attemptCount: number | null | undefined,
+  random: () => number,
+) => {
+  if (errorKind === 'transient') return getRetryDelay(attemptCount);
+  if (errorKind !== 'configuration' && errorKind !== 'entitlement') return;
+
+  return Math.round(STABLE_ERROR_RETRY_DELAY_MS * (0.8 + random() * 0.4));
+};
 
 export type AihubReadinessBindingStore = {
   get: (userId: string) => Promise<AihubReadinessBindingRecord | undefined>;
@@ -138,7 +156,10 @@ export type AihubReadinessOptions = {
   identitySource: AihubReadinessIdentitySource;
   lease: AihubReadinessLease;
   now?: () => Date;
+  pendingWaitDelaysMs?: readonly number[];
+  random?: () => number;
   randomId?: () => string;
+  sleep?: (delayMs: number) => Promise<void>;
   workflow: AihubReadinessWorkflow;
 };
 
@@ -198,7 +219,10 @@ export class AihubReadiness {
   private identitySource: AihubReadinessIdentitySource;
   private lease: AihubReadinessLease;
   private now: () => Date;
+  private pendingWaitDelaysMs: readonly number[];
+  private random: () => number;
   private randomId: () => string;
+  private sleep: (delayMs: number) => Promise<void>;
   private workflow: AihubReadinessWorkflow;
 
   constructor({
@@ -206,14 +230,20 @@ export class AihubReadiness {
     identitySource,
     lease,
     now = () => new Date(),
+    pendingWaitDelaysMs = DEFAULT_PENDING_WAIT_DELAYS_MS,
+    random = Math.random,
     randomId = () => crypto.randomUUID(),
+    sleep: wait = sleep,
     workflow,
   }: AihubReadinessOptions) {
     this.bindingStore = bindingStore;
     this.identitySource = identitySource;
     this.lease = lease;
     this.now = now;
+    this.pendingWaitDelaysMs = pendingWaitDelaysMs;
+    this.random = random;
     this.randomId = randomId;
+    this.sleep = wait;
     this.workflow = workflow;
   }
 
@@ -227,27 +257,38 @@ export class AihubReadiness {
   }
 
   async ensure(userId: string, options: EnsureAihubReadinessOptions): Promise<AihubReadinessState> {
-    const current = await this.get(userId);
-    if (current.status === 'active' && (current.readinessVersion ?? 1) >= 2 && !options.force)
-      return current;
-
     const binding = await this.bindingStore.get(userId);
+    let current = toState(binding);
     if (
       !options.force &&
-      binding?.nextRetryAt &&
-      binding.nextRetryAt > this.now() &&
-      binding.errorKind === 'transient'
+      options.trigger === 'model_runtime' &&
+      binding?.status === 'error' &&
+      (binding.errorKind === 'permanent' || binding.errorKind === 'identity_conflict')
     ) {
+      return current;
+    }
+    if (!options.force && binding?.nextRetryAt && binding.nextRetryAt > this.now()) {
       return {
         ...current,
         retryAfterMs: binding.nextRetryAt.getTime() - this.now().getTime(),
-        retryable: true,
+        retryable: binding.errorKind === 'transient',
       };
+    }
+
+    if (!options.force && binding?.status === 'active' && (binding.readinessVersion ?? 1) >= 2) {
+      current = toState(binding, await this.workflow.inspectLocalRuntime(userId));
+      if (current.status === 'active') return current;
     }
 
     const requestedOwnerId = this.randomId();
     const acquired = await this.lease.acquire(userId, requestedOwnerId);
-    if (!acquired) return { ...current, isBound: false, status: 'pending' };
+    if (!acquired) {
+      if (options.trigger !== 'model_runtime') {
+        return { ...current, isBound: false, status: 'pending' };
+      }
+
+      return this.waitForInFlightReadiness(userId, current);
+    }
 
     try {
       await this.bindingStore.markPending(userId, { trigger: options.trigger });
@@ -306,10 +347,11 @@ export class AihubReadiness {
         error instanceof AihubReadinessError
           ? error
           : new AihubReadinessError(errorMessage, 'transient', 'aihub_provisioning_failed');
-      const retryDelay =
-        classified.kind === 'transient'
-          ? getRetryDelay((binding?.attemptCount ?? 0) + 1)
-          : undefined;
+      const retryDelay = getProvisioningRetryDelay(
+        classified.kind,
+        (binding?.attemptCount ?? 0) + 1,
+        this.random,
+      );
       const failure = {
         errorCode: classified.code,
         errorKind: classified.kind,
@@ -332,6 +374,35 @@ export class AihubReadiness {
         console.warn('[Aihub Readiness] Failed to release readiness lease:', error);
       }
     }
+  }
+
+  private async waitForInFlightReadiness(
+    userId: string,
+    current: AihubReadinessState,
+  ): Promise<AihubReadinessState> {
+    let latest = current;
+
+    for (const delayMs of this.pendingWaitDelaysMs) {
+      await this.sleep(delayMs);
+      const binding = await this.bindingStore.get(userId);
+
+      if (!binding || binding.status === 'pending') continue;
+      if (binding.status === 'error') return toState(binding);
+
+      latest = toState(binding, await this.workflow.inspectLocalRuntime(userId));
+      if (latest.status === 'active') return latest;
+    }
+
+    return {
+      ...latest,
+      errorCode: 'aihub_readiness_initializing',
+      errorKind: 'transient',
+      errorMessage: 'Aihub is still initializing. Please retry shortly.',
+      isBound: false,
+      retryAfterMs: 2000,
+      retryable: true,
+      status: 'pending',
+    };
   }
 
   private validateIdentity(identity: EnterpriseIdentity | undefined) {
