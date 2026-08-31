@@ -19,6 +19,7 @@
   "notebook.confirmDelete": "Delete this Page?",
   "notebook.delete": "Delete",
   "notebook.empty": "No pages yet. Pages linked to this Topic will show up here.",
+  "notebook.loadError": "Pages could not be loaded. Please try again.",
   "notebook.title": "Notebook",
   "openInPageEditor": "Edit in Page",
   "title": "Workspace"

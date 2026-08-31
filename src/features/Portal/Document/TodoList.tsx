@@ -1,16 +1,12 @@
 'use client';
 
 import { AGENT_PLAN_FILE_TYPE } from '@lobechat/const';
+import { type DocumentItem } from '@lobechat/database/schemas';
 import { Checkbox, Flexbox, Icon, Tag } from '@lobehub/ui';
 import { createStaticStyles, cssVar, cx } from 'antd-style';
 import { ChevronDown, ChevronUp, ListTodo } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-
-import { useChatStore } from '@/store/chat';
-import { chatPortalSelectors } from '@/store/chat/selectors';
-import { useNotebookStore } from '@/store/notebook';
-import { notebookSelectors } from '@/store/notebook/selectors';
 
 interface TodoItem {
   completed: boolean;
@@ -110,18 +106,16 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   `,
 }));
 
-const TodoList = memo(() => {
+interface TodoListProps {
+  document?: Pick<DocumentItem, 'fileType' | 'metadata'>;
+}
+
+const TodoList = memo<TodoListProps>(({ document }) => {
   const { t } = useTranslation('portal');
   const [expanded, setExpanded] = useState(false);
 
-  const [topicId, documentId] = useChatStore((s) => [
-    s.activeTopicId,
-    chatPortalSelectors.portalDocumentId(s),
-  ]);
-
-  const document = useNotebookStore(notebookSelectors.getDocumentById(topicId, documentId));
-
-  // Only show for agent/plan documents with todos in metadata
+  // The list projection intentionally excludes metadata; the already-loaded
+  // document detail is the source of truth for plan todos.
   if (!document || document.fileType !== AGENT_PLAN_FILE_TYPE) return null;
 
   const todos: TodoState | undefined = document.metadata?.todos;

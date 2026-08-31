@@ -1,4 +1,4 @@
-# Electron lifecycle E2E
+# Electron focused lifecycle E2E
 
 This Electron-hosted integration suite launches a real Electron process with Playwright. The test-only app imports the
 production `ToolCallLifecycle` source after transpiling it into the ignored `.artifacts/`
@@ -11,10 +11,17 @@ The same real Electron harness also imports the production `AihubReadiness` stat
 OIDC/runtime requests enter provisioning once and that a same-user Electron relaunch reuses persisted readiness instead
 of creating another managed token.
 
-This is a focused Electron-hosted lifecycle contract, not a packaged Masterino UI test: the
-production Zustand adapters, approval action, message service, and TRPC router are covered by their
-Vitest and database integration suites. A packaged desktop smoke test remains separate follow-up
-work.
+The Notebook scenarios mount the production `NotebookBody`, `useFetchNotebookDocuments`, Zustand
+Notebook action, SWR configuration, and `NotebookService` inside the Electron renderer. Only the
+TRPC transport is replaced with a deterministic in-process fake. They verify the real 5s/15s
+bounded retry path, terminal error UI, and recovery after the user clicks the production Retry
+button.
+
+This remains a focused Electron-hosted contract rather than a signed packaged-app smoke test. The
+tool-call and Aihub scenarios use deterministic lifecycle adapters; the Notebook scenarios run the
+production renderer data and UI chain through the TRPC client boundary. Production Zustand adapters,
+approval actions, message services, routers, and database behavior remain covered by their Vitest
+and database integration suites. A packaged desktop smoke test remains separate follow-up work.
 
 It intentionally does not use the Chromium/Next.js harness under `e2e/src`: that harness cannot
 exercise Electron preload or IPC.

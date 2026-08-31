@@ -121,7 +121,7 @@ describe('AgentDocumentsService', () => {
   };
   const mockTopicDocumentModel = {
     associate: vi.fn(),
-    findByTopicId: vi.fn(),
+    findDocumentIdsByTopicId: vi.fn(),
   };
   const mockSkillResourceService = {
     readResource: vi.fn(),
@@ -412,9 +412,9 @@ describe('AgentDocumentsService', () => {
 
   describe('listDocumentsForTopic', () => {
     it('should list only agent documents associated with the topic and preserve topic order', async () => {
-      mockTopicDocumentModel.findByTopicId.mockResolvedValue([
-        { id: 'documents-2', title: 'B' },
-        { id: 'documents-1', title: 'A' },
+      mockTopicDocumentModel.findDocumentIdsByTopicId.mockResolvedValue([
+        'documents-2',
+        'documents-1',
       ]);
       mockModel.listByDocumentIds.mockResolvedValue([
         {
@@ -436,7 +436,7 @@ describe('AgentDocumentsService', () => {
       const service = new AgentDocumentsService(db, userId);
       const result = await service.listDocumentsForTopic('agent-1', 'topic-1');
 
-      expect(mockTopicDocumentModel.findByTopicId).toHaveBeenCalledWith('topic-1');
+      expect(mockTopicDocumentModel.findDocumentIdsByTopicId).toHaveBeenCalledWith('topic-1');
       expect(mockModel.listByDocumentIds).toHaveBeenCalledWith('agent-1', [
         'documents-2',
         'documents-1',
@@ -461,7 +461,7 @@ describe('AgentDocumentsService', () => {
     });
 
     it('should pass sourceType filtering to the topic document summary query', async () => {
-      mockTopicDocumentModel.findByTopicId.mockResolvedValue([{ id: 'documents-1' }]);
+      mockTopicDocumentModel.findDocumentIdsByTopicId.mockResolvedValue(['documents-1']);
       mockModel.listByDocumentIds.mockResolvedValue([]);
 
       const service = new AgentDocumentsService(db, userId);
@@ -476,9 +476,7 @@ describe('AgentDocumentsService', () => {
     it('should hide an archived tool result whose `.tool-results` folder is not topic-associated', async () => {
       // The archive folder is created by mkdir but only the archived file gets
       // associated with the topic, so the folder never appears in the list.
-      mockTopicDocumentModel.findByTopicId.mockResolvedValue([
-        { id: 'archive-child', title: 'dump' },
-      ]);
+      mockTopicDocumentModel.findDocumentIdsByTopicId.mockResolvedValue(['archive-child']);
       mockModel.listByDocumentIds.mockResolvedValue([
         {
           documentId: 'archive-child',
@@ -508,9 +506,7 @@ describe('AgentDocumentsService', () => {
     });
 
     it('should keep the archived tool result when includeArchivedToolResults is set', async () => {
-      mockTopicDocumentModel.findByTopicId.mockResolvedValue([
-        { id: 'archive-child', title: 'dump' },
-      ]);
+      mockTopicDocumentModel.findDocumentIdsByTopicId.mockResolvedValue(['archive-child']);
       mockModel.listByDocumentIds.mockResolvedValue([
         {
           documentId: 'archive-child',
