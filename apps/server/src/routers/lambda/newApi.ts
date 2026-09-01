@@ -25,6 +25,14 @@ const newApiProcedure = authedProcedure.use(serverDatabase).use(async ({ ctx, ne
   });
 });
 
+const assertManualReconciliationSucceeded = (
+  state: Awaited<ReturnType<ReturnType<typeof createAihubReadiness>['ensure']>>,
+) => {
+  if (state.errorCode) {
+    throw new Error(state.errorMessage || `Aihub reconciliation failed (${state.errorCode})`);
+  }
+};
+
 const bindingImportRowSchema = z.object({
   email: z.string().email().optional(),
   lobeUserId: z.string().min(1).optional(),
@@ -72,6 +80,7 @@ export const newApiRouter = router({
       force: true,
       trigger: 'manual_retry',
     });
+    assertManualReconciliationSucceeded(state);
     const oauthBinding = state.oauthBinding ?? state.iamOAuthBinding ?? { status: 'unknown' };
     return {
       ...oauthBinding,
@@ -91,6 +100,7 @@ export const newApiRouter = router({
       force: true,
       trigger: 'manual_model_sync',
     });
+    assertManualReconciliationSucceeded(state);
     if (state.status !== 'active') {
       throw new Error(state.errorMessage || 'Aihub readiness could not be established');
     }

@@ -174,4 +174,33 @@ describe('newApiRouter admin permission guard', () => {
       trigger: 'manual_retry',
     });
   });
+
+  it('reports a failed manual model reconciliation even when last-known-good stays active', async () => {
+    mockReadinessEnsure.mockResolvedValue({
+      errorCode: 'aihub_bridge_unavailable',
+      errorMessage: 'Aihub bridge is temporarily unavailable',
+      isBound: true,
+      status: 'active',
+    });
+    const caller = await createCallerForUser('user-member');
+
+    await expect(caller.syncModels()).rejects.toThrow(
+      'Aihub bridge is temporarily unavailable',
+    );
+  });
+
+  it('reports a failed manual IAM reconciliation instead of claiming it was repaired', async () => {
+    mockReadinessEnsure.mockResolvedValue({
+      errorCode: 'aihub_bridge_unavailable',
+      errorMessage: 'Aihub bridge is temporarily unavailable',
+      isBound: true,
+      oauthBinding: { status: 'active' },
+      status: 'active',
+    });
+    const caller = await createCallerForUser('user-member');
+
+    await expect(caller.rebindCurrentUser()).rejects.toThrow(
+      'Aihub bridge is temporarily unavailable',
+    );
+  });
 });
