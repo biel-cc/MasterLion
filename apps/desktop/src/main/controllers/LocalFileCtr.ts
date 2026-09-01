@@ -728,12 +728,12 @@ export default class LocalFileCtr extends ControllerModule {
   async handleLocalFilesSearch(
     params: ExecutionScoped<LocalSearchFilesParams>,
   ): Promise<FileResult[]> {
-    const scopedDirectory = await this.resolveExecutionPath(
-      params,
-      params.directory ?? params.scope ?? '.',
-      'read',
-    );
-    const effectiveDirectory = expandTilde(scopedDirectory);
+    const requestedDirectory = params.directory ?? params.scope;
+    const scopedDirectory =
+      requestedDirectory === undefined && !params.executionContext
+        ? undefined
+        : await this.resolveExecutionPath(params, requestedDirectory ?? '.', 'read');
+    const effectiveDirectory = scopedDirectory ? expandTilde(scopedDirectory) : undefined;
 
     logger.debug('Received file search request:', {
       directory: params.directory,
@@ -784,18 +784,24 @@ export default class LocalFileCtr extends ControllerModule {
 
   @IpcMethod()
   async handleGrepContent(params: ExecutionScoped<GrepContentParams>): Promise<GrepContentResult> {
+    if (!params.executionContext) return this.contentSearchService.grep(params);
+
     const searchPath = await this.resolveExecutionPath(
       params,
       params.path ?? params.scope ?? '.',
       'read',
     );
-    return this.contentSearchService.grep({ ...params, path: searchPath, scope: searchPath });
+    const { executionContext: _, ...grepParams } = params;
+    return this.contentSearchService.grep({ ...grepParams, path: searchPath, scope: searchPath });
   }
 
   @IpcMethod()
   async handleGlobFiles(params: ExecutionScoped<GlobFilesParams>): Promise<GlobFilesResult> {
+    if (!params.executionContext) return this.searchService.glob(params);
+
     const scope = await this.resolveExecutionPath(params, params.scope ?? '.', 'read');
-    return this.searchService.glob({ ...params, scope });
+    const { executionContext: _, ...globParams } = params;
+    return this.searchService.glob({ ...globParams, scope });
   }
 
   // ==================== File Editing ====================

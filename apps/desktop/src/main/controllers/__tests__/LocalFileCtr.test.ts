@@ -93,6 +93,10 @@ const mockLocalFileProtocolManager = {
   readPreviewFile: vi.fn(),
 };
 
+const mockExecutionContextManager = {
+  resolvePath: vi.fn(),
+};
+
 // Mock makeSureDirExist
 vi.mock('@/utils/file-system', () => ({
   makeSureDirExist: vi.fn(),
@@ -107,6 +111,7 @@ const mockApp = {
     }
     return mockSearchService;
   }),
+  executionContextManager: mockExecutionContextManager,
   localFileProtocolManager: mockLocalFileProtocolManager,
   toolDetectorManager: {
     getBestTool: vi.fn(() => null), // No external tools available, use Node.js fallback
@@ -680,6 +685,25 @@ describe('LocalFileCtr', () => {
 
       await localFileCtr.handleLocalFilesSearch({ keywords: 'src', scope: '/workspace/project' });
 
+      expect(mockSearchService.search).toHaveBeenCalledWith('src', {
+        keywords: 'src',
+        limit: 30,
+        onlyIn: '/workspace/project',
+      });
+    });
+
+    it('should resolve the default directory from the execution context', async () => {
+      mockSearchService.search.mockResolvedValue([]);
+      mockExecutionContextManager.resolvePath.mockResolvedValue('/workspace/project');
+      const executionContext = { contextId: 'ctx-files', version: 1 as const };
+
+      await localFileCtr.handleLocalFilesSearch({ executionContext, keywords: 'src' });
+
+      expect(mockExecutionContextManager.resolvePath).toHaveBeenCalledWith(
+        executionContext,
+        '.',
+        'read',
+      );
       expect(mockSearchService.search).toHaveBeenCalledWith('src', {
         keywords: 'src',
         limit: 30,
@@ -1534,6 +1558,33 @@ describe('LocalFileCtr', () => {
       await localFileCtr.handleGrepContent(params);
 
       expect(mockContentSearchService.grep).toHaveBeenCalledWith(params);
+    });
+
+    it('should resolve context-bound paths without forwarding the context reference', async () => {
+      vi.mocked(mockContentSearchService.grep).mockResolvedValue({
+        matches: [],
+        success: true,
+        total_matches: 0,
+      });
+      mockExecutionContextManager.resolvePath.mockResolvedValue('/workspace/project/src');
+      const executionContext = { contextId: 'ctx-grep', version: 1 as const };
+
+      await localFileCtr.handleGrepContent({
+        executionContext,
+        path: 'src',
+        pattern: 'test',
+      });
+
+      expect(mockExecutionContextManager.resolvePath).toHaveBeenCalledWith(
+        executionContext,
+        'src',
+        'read',
+      );
+      expect(mockContentSearchService.grep).toHaveBeenCalledWith({
+        path: '/workspace/project/src',
+        pattern: 'test',
+        scope: '/workspace/project/src',
+      });
     });
   });
 });
