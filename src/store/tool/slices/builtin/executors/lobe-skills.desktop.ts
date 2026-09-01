@@ -17,15 +17,21 @@ const runtime = new SkillsExecutionRuntime({
   builtinSkills: filterBuiltinSkills(builtinSkills),
   service: {
     execScript: async (command, options) => {
+      // Always materialize skill assets before execution. For context-bound
+      // operations Electron main deliberately overrides this legacy cwd with
+      // the frozen workspace, while retaining the preparation side effect.
       const cwd = await desktopSkillRuntimeService.resolveExecutionDirectory(
         options.activatedSkills,
       );
-      const result = await localFileService.runCommand({
-        command,
-        cwd,
-        description: options.description,
-        timeout: undefined,
-      });
+      const result = await localFileService.runCommand(
+        {
+          command,
+          cwd,
+          description: options.description,
+          timeout: undefined,
+        },
+        options.executionContext?.ref,
+      );
       return {
         exitCode: result.exit_code ?? 1,
         output: result.stdout || result.output || '',
@@ -46,6 +52,15 @@ const runtime = new SkillsExecutionRuntime({
       return {
         ...resource,
         fullPath,
+      };
+    },
+    runCommand: async ({ command, executionContext, timeout }) => {
+      const result = await localFileService.runCommand({ command, timeout }, executionContext?.ref);
+      return {
+        exitCode: result.exit_code ?? 1,
+        output: result.stdout || result.output || '',
+        stderr: result.stderr,
+        success: result.success,
       };
     },
   },

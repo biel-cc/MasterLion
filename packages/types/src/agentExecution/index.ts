@@ -1,3 +1,4 @@
+import type { LocalExecutionContextSnapshot } from '../executionContext';
 import type { TaskDetail, UIChatMessage } from '../message';
 import type { ChatTopic } from '../topic';
 
@@ -73,6 +74,11 @@ export interface ExecAgentAppContext {
    * itself.
    */
   editingAgentId?: string;
+  /**
+   * Safe receipt for an Electron-local context. Environment values remain in
+   * Electron main; the server only forwards the opaque reference to callbacks.
+   */
+  executionContext?: LocalExecutionContextSnapshot;
   /** Group ID for group chat */
   groupId?: string | null;
   /**

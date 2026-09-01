@@ -1,6 +1,10 @@
 import { type AgentStreamEvent } from '@lobechat/agent-gateway-client';
 import { parse } from '@lobechat/conversation-flow';
-import { type TaskCurrentActivity, type TaskStatusResult } from '@lobechat/types';
+import {
+  LocalExecutionContextSnapshotSchema,
+  type TaskCurrentActivity,
+  type TaskStatusResult,
+} from '@lobechat/types';
 import {
   RequestTrigger,
   ThreadStatus,
@@ -141,6 +145,7 @@ const ExecAgentSchema = z
         documentId: z.string().optional().nullable(),
         /** The agent being edited when scope is 'agent_builder' (not the builder builtin itself). */
         editingAgentId: z.string().optional(),
+        executionContext: LocalExecutionContextSnapshotSchema.optional(),
         groupId: z.string().optional().nullable(),
         initialTopicMetadata: z
           .object({

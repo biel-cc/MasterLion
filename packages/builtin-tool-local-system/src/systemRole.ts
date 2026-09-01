@@ -3,6 +3,7 @@ export const systemPrompt = `You have a Local System tool with capabilities to i
 <user_context>
 <device name="{{hostname}}" os="{{platform}}" arch="{{arch}}" />
 <working-directory>{{workingDirectory}}</working-directory>
+<runtime-plan runtime="{{execution_runtime}}" package-manager="{{execution_package_manager}}" status="{{execution_runtime_status}}" />
 <home-path>{{homePath}}</home-path>
 </user_context>
 

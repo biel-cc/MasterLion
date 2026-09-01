@@ -2230,7 +2230,16 @@ export class AiAgentService {
       }
     };
 
-    const deviceSystemInfo = await fetchDeviceSystemInfoForTemplate(activeDeviceId);
+    const detectedDeviceSystemInfo = await fetchDeviceSystemInfoForTemplate(activeDeviceId);
+    const deviceSystemInfo = appContext?.executionContext
+      ? {
+          ...detectedDeviceSystemInfo,
+          execution_package_manager: appContext.executionContext.runtimePlan.packageManager ?? '',
+          execution_runtime: appContext.executionContext.runtimePlan.runtime,
+          execution_runtime_status: appContext.executionContext.runtimePlan.status,
+          workingDirectory: appContext.executionContext.workspace.realPath,
+        }
+      : detectedDeviceSystemInfo;
 
     // 9.5. Build Agent Management context
     // - availableAgents is injected whenever the user is in auto mode (so the supervisor
@@ -2742,6 +2751,7 @@ export class AiAgentService {
           automationMode: appContext?.automationMode,
           defaultTaskAssigneeAgentId: appContext?.defaultTaskAssigneeAgentId,
           documentId: appContext?.documentId,
+          executionContext: appContext?.executionContext,
           groupId: appContext?.groupId,
           isSubAgent: appContext?.isSubAgent,
           scope: appContext?.scope,

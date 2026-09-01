@@ -133,9 +133,41 @@ export class ClientToolExecutionActionImpl {
 
       // ─── Builtin dispatch (via registry) ───
       if (hasExecutor(identifier, apiName)) {
+        const executionContext = operation?.context?.executionContext;
+        // Gateway historically used `local-system` while the current manifest
+        // uses `lobe-local-system`. Both identify the same Electron-local tool.
+        const requiresExecutionContext =
+          identifier === 'local-system' ||
+          identifier === 'lobe-local-system' ||
+          identifier === 'lobe-skills';
+        const contextMismatch =
+          !!executionContext &&
+          !!data.executionContextRef &&
+          (executionContext.ref.contextId !== data.executionContextRef.contextId ||
+            executionContext.ref.version !== data.executionContextRef.version);
+        if (
+          (requiresExecutionContext && (!executionContext || !data.executionContextRef)) ||
+          contextMismatch
+        ) {
+          send({
+            content: null,
+            error: {
+              message: executionContext
+                ? 'Gateway execution context does not match the active operation'
+                : 'Gateway execution context is unavailable on this desktop',
+              type: executionContext
+                ? 'execution_context_mismatch'
+                : 'execution_context_unavailable',
+            },
+            success: false,
+            toolCallId,
+          });
+          return;
+        }
         const ctx: BuiltinToolContext = {
           agentId: operation?.context?.agentId,
           documentId: operation?.context?.documentId,
+          executionContext,
           groupId: operation?.context?.groupId,
           // Gateway-side tool messages are persisted on the server; the client
           // has no local message id, so reuse toolCallId as the context key.
@@ -145,6 +177,7 @@ export class ClientToolExecutionActionImpl {
           signal: operation?.abortController?.signal,
           sourceMessageId: operation?.context?.messageId,
           topicId: operation?.context?.topicId ?? undefined,
+          workingDirectory: executionContext?.workspace.realPath,
         };
 
         log('[ClientToolCall] execute:start', {

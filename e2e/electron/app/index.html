@@ -5,6 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Masterino Electron Tool Lifecycle E2E</title>
     <style>
+      body {
+        background: #f5f7fb;
+        color: #172033;
+        font:
+          14px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        margin: 24px;
+      }
+      button {
+        margin: 4px 4px 4px 0;
+      }
+      section {
+        background: white;
+        border: 1px solid #dce2ec;
+        border-radius: 10px;
+        margin: 16px 0;
+        padding: 16px;
+      }
+      dt {
+        color: #647089;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+      dd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin-left: 0;
+        overflow-wrap: anywhere;
+      }
       [hidden] {
         display: none !important;
       }
@@ -12,36 +42,68 @@
   </head>
   <body>
     <div data-testid="electron-runtime">ready</div>
-    <button data-testid="run-transient" type="button">Run transient prepare scenario</button>
-    <button data-testid="run-exhausted" type="button">Run exhausted prepare scenario</button>
-    <button data-testid="run-sync-exhausted" type="button">
-      Run exhausted result-sync scenario
-    </button>
-    <button data-testid="run-cancelled" type="button">Run cancelled execution scenario</button>
-    <button data-testid="run-aihub-concurrent" type="button">Run concurrent Aihub readiness</button>
-    <button data-testid="run-aihub-relaunch" type="button">Run Aihub relaunch recovery</button>
-    <div data-testid="aihub-spinner" hidden>Opening Aihub…</div>
-    <dl>
-      <dt>Aihub status</dt>
-      <dd data-testid="aihub-status">idle</dd>
-      <dt>Aihub provision count</dt>
-      <dd data-testid="aihub-provision-count">0</dd>
-      <dt>Aihub active results</dt>
-      <dd data-testid="aihub-active-count">0</dd>
-    </dl>
-    <div data-testid="tool-spinner" hidden>Calling tool…</div>
-    <dl>
-      <dt>Status</dt>
-      <dd data-testid="tool-status">idle</dd>
-      <dt>Prepare attempts</dt>
-      <dd data-testid="prepare-attempts">0</dd>
-      <dt>Local executions</dt>
-      <dd data-testid="local-execution-count">0</dd>
-      <dt>Result sync attempts</dt>
-      <dd data-testid="result-sync-attempts">0</dd>
-      <dt>Running operations</dt>
-      <dd data-testid="running-operation-count">0</dd>
-    </dl>
+    <section>
+      <h1>Local Execution Context</h1>
+      <p>Simulates a Topic with a selected folder and a Topic without one.</p>
+      <button data-testid="run-execution-context" type="button">
+        Run local workspace scenarios
+      </button>
+      <span data-testid="execution-context-spinner" hidden>Preparing and executing…</span>
+      <dl>
+        <dt>Status</dt>
+        <dd data-testid="execution-context-status">idle</dd>
+        <dt>Selected Topic workspace</dt>
+        <dd data-testid="selected-workspace">not prepared</dd>
+        <dt>Actual command cwd</dt>
+        <dd data-testid="selected-execution-cwd">not executed</dd>
+        <dt>Runtime plan</dt>
+        <dd data-testid="selected-runtime">not planned</dd>
+        <dt>Frozen shell environment</dt>
+        <dd data-testid="selected-environment">not resolved</dd>
+        <dt>Unselected Topic managed workspace</dt>
+        <dd data-testid="managed-workspace">not prepared</dd>
+        <dt>Managed workspace stable</dt>
+        <dd data-testid="managed-workspace-stable">false</dd>
+        <dt>Missing Node policy</dt>
+        <dd data-testid="missing-runtime">not checked</dd>
+        <dt>Fail-closed checks</dt>
+        <dd data-testid="security-checks">not checked</dd>
+      </dl>
+    </section>
+    <section>
+      <button data-testid="run-transient" type="button">Run transient prepare scenario</button>
+      <button data-testid="run-exhausted" type="button">Run exhausted prepare scenario</button>
+      <button data-testid="run-sync-exhausted" type="button">
+        Run exhausted result-sync scenario
+      </button>
+      <button data-testid="run-cancelled" type="button">Run cancelled execution scenario</button>
+      <button data-testid="run-aihub-concurrent" type="button">
+        Run concurrent Aihub readiness
+      </button>
+      <button data-testid="run-aihub-relaunch" type="button">Run Aihub relaunch recovery</button>
+      <div data-testid="aihub-spinner" hidden>Opening Aihub…</div>
+      <dl>
+        <dt>Aihub status</dt>
+        <dd data-testid="aihub-status">idle</dd>
+        <dt>Aihub provision count</dt>
+        <dd data-testid="aihub-provision-count">0</dd>
+        <dt>Aihub active results</dt>
+        <dd data-testid="aihub-active-count">0</dd>
+      </dl>
+      <div data-testid="tool-spinner" hidden>Calling tool…</div>
+      <dl>
+        <dt>Status</dt>
+        <dd data-testid="tool-status">idle</dd>
+        <dt>Prepare attempts</dt>
+        <dd data-testid="prepare-attempts">0</dd>
+        <dt>Local executions</dt>
+        <dd data-testid="local-execution-count">0</dd>
+        <dt>Result sync attempts</dt>
+        <dd data-testid="result-sync-attempts">0</dd>
+        <dt>Running operations</dt>
+        <dd data-testid="running-operation-count">0</dd>
+      </dl>
+    </section>
     <section id="notebook-production-root"></section>
     <script src="./renderer.js"></script>
     <script src="../.artifacts/notebookRenderer.js" type="module"></script>

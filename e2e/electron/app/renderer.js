@@ -8,6 +8,16 @@ const aihubSpinner = document.querySelector('[data-testid="aihub-spinner"]');
 const aihubStatus = document.querySelector('[data-testid="aihub-status"]');
 const aihubProvisionCount = document.querySelector('[data-testid="aihub-provision-count"]');
 const aihubActiveCount = document.querySelector('[data-testid="aihub-active-count"]');
+const executionContextSpinner = document.querySelector('[data-testid="execution-context-spinner"]');
+const executionContextStatus = document.querySelector('[data-testid="execution-context-status"]');
+const selectedWorkspace = document.querySelector('[data-testid="selected-workspace"]');
+const selectedExecutionCwd = document.querySelector('[data-testid="selected-execution-cwd"]');
+const selectedRuntime = document.querySelector('[data-testid="selected-runtime"]');
+const selectedEnvironment = document.querySelector('[data-testid="selected-environment"]');
+const managedWorkspace = document.querySelector('[data-testid="managed-workspace"]');
+const managedWorkspaceStable = document.querySelector('[data-testid="managed-workspace-stable"]');
+const missingRuntime = document.querySelector('[data-testid="missing-runtime"]');
+const securityChecks = document.querySelector('[data-testid="security-checks"]');
 
 const renderSnapshot = (snapshot) => {
   prepareAttempts.textContent = String(snapshot.prepareAttempts);
@@ -55,3 +65,25 @@ document
 document
   .querySelector('[data-testid="run-aihub-relaunch"]')
   .addEventListener('click', () => runAihub('relaunch'));
+
+document
+  .querySelector('[data-testid="run-execution-context"]')
+  .addEventListener('click', async () => {
+    executionContextSpinner.hidden = false;
+    executionContextStatus.textContent = 'running';
+    const result = await window.masterinoElectronE2E.runExecutionContext();
+    selectedWorkspace.textContent = `${result.selected.source}: ${result.selected.realPath}`;
+    selectedExecutionCwd.textContent = result.selected.executedCwd;
+    selectedRuntime.textContent = result.selected.runtime;
+    selectedEnvironment.textContent = `${result.selected.marker}; secret=${result.selected.secret}`;
+    managedWorkspace.textContent = `${result.managed.source}: ${result.managed.realPath}`;
+    managedWorkspaceStable.textContent = String(result.managed.isStable);
+    missingRuntime.textContent = `${result.runtime.runtime}/${result.runtime.packageManager}: ${result.runtime.status}; no-bun-substitution=${result.runtime.noBunSubstitution}`;
+    securityChecks.textContent = [
+      result.security.missingWorkspaceCode,
+      result.security.escapeCode,
+      result.security.staleContextCode,
+    ].join(', ');
+    executionContextStatus.textContent = result.status;
+    executionContextSpinner.hidden = true;
+  });

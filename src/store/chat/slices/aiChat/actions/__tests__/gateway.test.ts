@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
+import { topicService } from '@/services/topic';
 
 import type { GatewayConnection } from '../gateway';
 import { GatewayActionImpl } from '../gateway';
@@ -51,6 +52,7 @@ vi.mock('@/store/user/selectors', () => ({
 // device resolution, no electron IPC).
 const mockEnv = vi.hoisted(() => ({ isDesktop: false }));
 const mockGateway = vi.hoisted(() => ({ getDeviceInfo: vi.fn() }));
+const mockExecutionContext = vi.hoisted(() => ({ close: vi.fn() }));
 // Effective runtime mode === 'local' (what isLocalSystemEnabledById returns)
 // and chat mode (what isChatModeById returns).
 const mockRuntime = vi.hoisted(() => ({ isChatMode: false, isLocal: false }));
@@ -70,6 +72,10 @@ vi.mock('@/const/version', async (importOriginal) => {
 
 vi.mock('@/services/electron/gatewayConnection', () => ({
   gatewayConnectionService: { getDeviceInfo: mockGateway.getDeviceInfo },
+}));
+
+vi.mock('@/services/electron/executionContext', () => ({
+  executionContextService: { close: mockExecutionContext.close },
 }));
 
 vi.mock('@/store/agent', () => ({ getAgentStoreState: () => mockAgentStore.state }));
@@ -139,7 +145,9 @@ function createTestAction() {
 describe('GatewayActionImpl', () => {
   beforeEach(() => {
     mockAgentStore.state = { activeAgentId: undefined, agentMap: {} };
+    mockExecutionContext.close.mockReset();
     mockUserDefaultConfig.disableGatewayMode = undefined;
+    vi.mocked(topicService.updateTopicMetadata).mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -497,6 +505,8 @@ describe('GatewayActionImpl', () => {
   describe('executeGatewayAgent', () => {
     function createExecuteTestAction() {
       const mockClient = createMockClient();
+      const connectToGateway = vi.fn();
+      const onOperationCancel = vi.fn();
       const state: Record<string, any> = { gatewayConnections: {}, topicDataMap: {} };
       const set = vi.fn((updater: any) => {
         if (typeof updater === 'function') {
@@ -509,10 +519,11 @@ describe('GatewayActionImpl', () => {
       const get = vi.fn(() => ({
         ...state,
         associateMessageWithOperation: vi.fn(),
-        connectToGateway: vi.fn(),
+        completeOperation: vi.fn(),
+        connectToGateway,
         internal_dispatchTopic: vi.fn(),
         internal_updateTopicLoading: vi.fn(),
-        onOperationCancel: vi.fn(),
+        onOperationCancel,
         replaceMessages: vi.fn(),
         startOperation: vi.fn(() => ({ operationId: 'gw-op-1' })),
         switchTopic: vi.fn(),
@@ -530,7 +541,7 @@ describe('GatewayActionImpl', () => {
       const action = new GatewayActionImpl(set as any, get, undefined);
       action.createClient = vi.fn(() => mockClient);
 
-      return { action, get, mockClient, set, state };
+      return { action, connectToGateway, get, mockClient, onOperationCancel, set, state };
     }
 
     afterEach(() => {
@@ -568,6 +579,68 @@ describe('GatewayActionImpl', () => {
         }),
         expect.anything(),
       );
+    });
+
+    it('keeps a local context alive until the Gateway child operation completes', async () => {
+      const { action, connectToGateway } = createExecuteTestAction();
+      const executionContext = {
+        createdAt: '2026-09-01T00:00:00.000Z',
+        environment: {
+          inherited: 'all' as const,
+          overriddenKeys: [],
+          pathEntryCount: 1,
+          removedKeys: [],
+        },
+        ref: { contextId: 'ctx-gateway', version: 1 as const },
+        runtimePlan: {
+          runtime: 'shell' as const,
+          runtimeCapability: { available: true },
+          runtimeSource: 'default' as const,
+          status: 'not_required' as const,
+        },
+        workspace: {
+          realPath: '/workspace/topic',
+          source: 'selected' as const,
+          writableRoots: ['/workspace/topic'],
+        },
+      };
+      mockExecutionContext.close.mockResolvedValue({ closed: true });
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-context',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: 'test-token',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+
+      await action.executeGatewayAgent({
+        context: {
+          agentId: 'agent-1',
+          executionContext,
+          scope: 'main',
+          threadId: null,
+          topicId: 'topic-1',
+        },
+        message: 'Run locally',
+      });
+
+      expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appContext: expect.objectContaining({ executionContext }),
+        }),
+        expect.anything(),
+      );
+      expect(mockExecutionContext.close).not.toHaveBeenCalled();
+
+      connectToGateway.mock.calls[0][0].onSessionComplete();
+      expect(mockExecutionContext.close).toHaveBeenCalledWith(executionContext.ref);
     });
 
     it('should not include parentMessageId when not provided (normal send)', async () => {

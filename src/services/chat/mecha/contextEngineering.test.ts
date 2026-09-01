@@ -107,6 +107,49 @@ const getCurrentDateContent = () => {
 };
 
 describe('contextEngineering', () => {
+  it('renders cwd and runtime diagnostics from the immutable execution snapshot', async () => {
+    const output = await contextEngineering({
+      executionContext: {
+        createdAt: '2026-09-01T00:00:00.000Z',
+        environment: {
+          inherited: 'all',
+          overriddenKeys: [],
+          pathEntryCount: 2,
+          removedKeys: [],
+        },
+        ref: { contextId: 'ctx-prompt', version: 1 },
+        runtimePlan: {
+          packageManager: 'pnpm',
+          runtime: 'node',
+          runtimeCapability: { available: false },
+          runtimeSource: 'project',
+          status: 'missing',
+        },
+        workspace: {
+          realPath: '/workspace/frozen',
+          source: 'selected',
+          writableRoots: ['/workspace/frozen'],
+        },
+      },
+      messages: [{ content: 'Hello', role: 'user' }] as UIChatMessage[],
+      model: 'gpt-4',
+      provider: 'openai',
+      systemRole:
+        'cwd={{workingDirectory}} runtime={{execution_runtime}} pm={{execution_package_manager}} status={{execution_runtime_status}}',
+    });
+
+    expect(output).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: expect.stringContaining(
+            'cwd=/workspace/frozen runtime=node pm=pnpm status=missing',
+          ),
+          role: 'system',
+        }),
+      ]),
+    );
+  });
+
   it('injects full plan content from the dedicated latest plan interface', async () => {
     vi.mocked(notebookService.getLatestPlan).mockResolvedValue({
       associatedAt: new Date('2026-08-27T00:00:00.000Z'),

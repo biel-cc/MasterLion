@@ -39,6 +39,13 @@ const mockCliCtr = {
 };
 
 const mockApp = {
+  executionContextManager: {
+    resolveCommand: vi.fn().mockResolvedValue({
+      command: 'lh status --json',
+      cwd: '/workspace/frozen',
+      env: { PATH: '/managed/bin', TURN_ENV: 'yes' },
+    }),
+  },
   getController: vi.fn((c: unknown) => (c === CliCtr ? mockCliCtr : undefined)),
 } as unknown as App;
 
@@ -150,6 +157,23 @@ describe('ShellCommandCtr (thin wrapper)', () => {
     expect(result.success).toBe(true);
     expect(result.stdout).toContain('cli output');
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('routes lh through the same frozen cwd and environment as normal shell commands', async () => {
+    const result = await ctr.handleRunCommand({
+      command: 'lh ignored-by-resolver',
+      executionContext: { contextId: 'ctx-shell', version: 1 },
+    });
+
+    expect((mockApp as any).executionContextManager.resolveCommand).toHaveBeenCalledWith(
+      { contextId: 'ctx-shell', version: 1 },
+      expect.objectContaining({ command: 'lh ignored-by-resolver' }),
+    );
+    expect(mockCliCtr.runCliCommand).toHaveBeenCalledWith('status --json', {
+      cwd: '/workspace/frozen',
+      env: { PATH: '/managed/bin', TURN_ENV: 'yes' },
+    });
+    expect(result.success).toBe(true);
   });
 
   it('should route lobehub commands to CliCtr.runCliCommand', async () => {

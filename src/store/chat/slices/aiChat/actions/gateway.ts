@@ -4,10 +4,16 @@ import {
   type AgentStreamEvent,
   type ConnectionStatus,
 } from '@lobechat/agent-gateway-client';
-import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
+import type {
+  ConversationContext,
+  ExecAgentResult,
+  LocalExecutionContextSnapshot,
+  MessageMetadata,
+} from '@lobechat/types';
 
 import { isDesktop } from '@/const/version';
 import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
+import { executionContextService } from '@/services/electron/executionContext';
 import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
@@ -305,7 +311,7 @@ export class GatewayActionImpl {
    * then starts the agent. This method handles topic switching and WebSocket connection.
    */
   executeGatewayAgent = async (params: {
-    context: ConversationContext;
+    context: ConversationContext & { executionContext?: LocalExecutionContextSnapshot };
     /** File IDs of already-uploaded attachments to attach to the new user message */
     fileIds?: string[];
     message: string;
@@ -363,9 +369,13 @@ export class GatewayActionImpl {
     // it up. We clear only after the server confirms the topic was created.
     const pendingRepos =
       isCreateNewTopic && context.agentId ? getPendingTopicRepos(context.agentId) : [];
+    const initialWorkingDirectory = context.executionContext?.workspace.realPath ?? pendingRepos[0];
     const initialTopicMetadata =
-      pendingRepos.length > 0
-        ? { repos: pendingRepos, workingDirectory: pendingRepos[0] }
+      initialWorkingDirectory || pendingRepos.length > 0
+        ? {
+            ...(pendingRepos.length > 0 ? { repos: pendingRepos } : {}),
+            ...(initialWorkingDirectory ? { workingDirectory: initialWorkingDirectory } : {}),
+          }
         : undefined;
 
     // Honour user-initiated cancel during phase-1 init: while we await the
@@ -388,6 +398,7 @@ export class GatewayActionImpl {
           agentDocumentId: context.agentDocumentId,
           defaultTaskAssigneeAgentId: context.defaultTaskAssigneeAgentId,
           documentId: context.documentId,
+          executionContext: context.executionContext,
           // When AgentBuilder runs, context.agentId is the builtin builder agent.
           // The actual editing target is chatStore.activeAgentId (kept in sync by
           // AgentBuilderProvider). Pass it so the server can route tool calls to
@@ -528,6 +539,9 @@ export class GatewayActionImpl {
       await aiAgentService
         .interruptTask({ operationId: result.operationId, topicId: result.topicId })
         .catch((err) => console.error('[Gateway] interruptTask failed:', err));
+      if (context.executionContext) {
+        await executionContextService.close(context.executionContext.ref).catch(() => undefined);
+      }
     });
 
     const eventHandler = createGatewayEventHandler(this.#get, {
@@ -544,6 +558,9 @@ export class GatewayActionImpl {
       onEvent: eventHandler,
       onSessionComplete: () => {
         this.#get().completeOperation(gatewayOpId);
+        if (context.executionContext) {
+          void executionContextService.close(context.executionContext.ref).catch(() => undefined);
+        }
         if (result.topicId) {
           this.#get().internal_updateTopicLoading(result.topicId, false);
           void this.#get().updateTopicStatus?.({

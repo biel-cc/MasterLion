@@ -271,6 +271,27 @@ describe('ChatPluginAction', () => {
           context: {
             agentId: 'agent-1',
             documentId: 'docs-current',
+            executionContext: {
+              createdAt: '2026-09-01T00:00:00.000Z',
+              environment: {
+                inherited: 'all',
+                overriddenKeys: [],
+                pathEntryCount: 2,
+                removedKeys: [],
+              },
+              ref: { contextId: 'ctx-direct', version: 1 },
+              runtimePlan: {
+                runtime: 'node',
+                runtimeCapability: { available: true },
+                runtimeSource: 'default',
+                status: 'ready',
+              },
+              workspace: {
+                realPath: '/workspace/direct',
+                source: 'selected',
+                writableRoots: ['/workspace/direct'],
+              },
+            },
             scope: 'page',
             topicId: 'topic-1',
           },
@@ -307,9 +328,36 @@ describe('ChatPluginAction', () => {
       expect(capturedContext).toMatchObject({
         agentId: 'agent-1',
         documentId: 'docs-current',
+        executionContext: expect.objectContaining({
+          ref: { contextId: 'ctx-direct', version: 1 },
+        }),
         messageId,
         scope: 'page',
         topicId: 'topic-1',
+        workingDirectory: '/workspace/direct',
+      });
+    });
+
+    it('fails closed when a direct local-system call has no root execution context', async () => {
+      const hasExecutorModule = await import('@/store/tool/slices/builtin/executors');
+      vi.spyOn(hasExecutorModule, 'hasExecutor').mockReturnValue(true);
+      const invoke = vi.spyOn(useToolStore.getState(), 'invokeBuiltinTool');
+      const { result } = renderHook(() => useChatStore());
+
+      let toolResult: Awaited<ReturnType<typeof result.current.invokeBuiltinTool>>;
+      await act(async () => {
+        toolResult = await result.current.invokeBuiltinTool('unbound-local-tool', {
+          apiName: 'runCommand',
+          arguments: JSON.stringify({ command: 'pwd' }),
+          identifier: 'lobe-local-system',
+          type: 'builtin',
+        } as ChatToolPayload);
+      });
+
+      expect(invoke).not.toHaveBeenCalled();
+      expect(toolResult!).toMatchObject({
+        error: { type: 'execution_context_unavailable' },
+        success: false,
       });
     });
 

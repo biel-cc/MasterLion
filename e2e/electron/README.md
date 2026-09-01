@@ -11,6 +11,24 @@ The same real Electron harness also imports the production `AihubReadiness` stat
 OIDC/runtime requests enter provisioning once and that a same-user Electron relaunch reuses persisted readiness instead
 of creating another managed token.
 
+The local execution-context scenario imports the production `ExecutionContextManager` and runs a
+real child process from the Electron main process. It covers a Topic-selected folder, the stable
+managed fallback for a Topic without a folder, frozen shell environment filtering, independent
+runtime/package-manager planning, symlink escape rejection, missing workspace rejection, and stale
+context rejection after a simulated Electron relaunch.
+
+Renderer/runloop integration is intentionally tested separately with focused Vitest suites. Those
+suites cover the Topic/Agent/Device selection precedence, immutable Operation snapshot, Prompt,
+direct and Gateway callbacks, local file and shell tools, Skills resource preparation, the `lh`
+route, and human-intervention continuations. Do not treat this small deterministic Electron app as
+the full production renderer chain.
+
+For this change, a development-build product smoke was also performed in the real Masterino App:
+selecting a Topic folder and approving `pwd` returned that folder's canonical path; clearing the
+selection and repeating the operation returned the App-managed workspace under
+`userData/execution-workspaces`. This manual smoke connects the automated seams to the visible UI,
+but is not a substitute for this repeatable suite.
+
 The Notebook scenarios mount the production `NotebookBody`, `useFetchNotebookDocuments`, Zustand
 Notebook action, SWR configuration, and `NotebookService` inside the Electron renderer. Only the
 TRPC transport is replaced with a deterministic in-process fake. They verify the real 5s/15s

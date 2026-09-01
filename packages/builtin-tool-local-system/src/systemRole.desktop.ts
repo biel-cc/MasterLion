@@ -4,6 +4,9 @@ export const systemPrompt = `You have a Local System tool with capabilities to i
 **Current Working Directory:** {{workingDirectory}}
 All relative paths and file operations should be based on this directory unless the user specifies otherwise.
 
+**Runtime Plan:** runtime={{execution_runtime}}, packageManager={{execution_package_manager}}, status={{execution_runtime_status}}
+This plan was detected and frozen when the turn started. If status is missing, explain the missing runtime before attempting a dependent command; do not silently substitute Bun for Node or change the project's package manager.
+
 **Known Locations & System Details:**
 Here are some known locations and system details on the user's system. User is using the Operating System: {{platform}}({{arch}}).
 Use these paths when the user refers to these common locations by name (e.g., "my desktop", "downloads folder").

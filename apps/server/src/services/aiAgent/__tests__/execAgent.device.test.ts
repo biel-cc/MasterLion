@@ -311,6 +311,51 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     });
   });
 
+  describe('Electron execution context', () => {
+    it('uses the frozen workspace/runtime receipt for the Gateway prompt and operation', async () => {
+      const executionContext = {
+        createdAt: '2026-09-01T00:00:00.000Z',
+        environment: {
+          inherited: 'all' as const,
+          overriddenKeys: [],
+          pathEntryCount: 3,
+          removedKeys: ['MASTERINO_SECRET'],
+        },
+        ref: { contextId: 'context-gateway-prompt', version: 1 as const },
+        runtimePlan: {
+          packageManager: 'pnpm' as const,
+          packageManagerCapability: { available: true, version: '9.0.0' },
+          packageManagerSource: 'project' as const,
+          runtime: 'node' as const,
+          runtimeCapability: { available: true, version: 'v22.18.0' },
+          runtimeSource: 'project' as const,
+          status: 'ready' as const,
+        },
+        workspace: {
+          realPath: '/frozen/topic-workspace',
+          source: 'selected' as const,
+          writableRoots: ['/frozen/topic-workspace'],
+        },
+      };
+
+      await service.execAgent({
+        agentId: 'agent-1',
+        appContext: { executionContext },
+        prompt: 'Run the project checks',
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.deviceSystemInfo).toMatchObject({
+        execution_package_manager: 'pnpm',
+        execution_runtime: 'node',
+        execution_runtime_status: 'ready',
+        workingDirectory: '/frozen/topic-workspace',
+      });
+      expect(createOpArgs.appContext.executionContext).toEqual(executionContext);
+      expect(createOpArgs.deviceSystemInfo).not.toHaveProperty('MASTERINO_SECRET');
+    });
+  });
+
   describe('executionTarget gating (none / sandbox never route to a device)', () => {
     const overrideAgencyConfig = async (agencyConfig: Record<string, unknown>) => {
       const { AgentService } = await import('@/server/services/agent');

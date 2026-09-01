@@ -128,6 +128,26 @@ describe('dispatchClientTool', () => {
     expect(mockDisconnect).toHaveBeenCalled();
   });
 
+  it('forwards only the opaque execution context reference to the desktop', async () => {
+    const sendToolExecute = vi.fn().mockResolvedValue(undefined);
+    const streamManager = makeStreamManager(sendToolExecute);
+    mockBlpop.mockResolvedValue([
+      'tool_result:call-1',
+      JSON.stringify({ content: 'ok', success: true, toolCallId: 'call-1' }),
+    ]);
+
+    await dispatchClientTool(makePayload(), {
+      executionContextRef: { contextId: 'ctx-server', version: 1 },
+      operationId: 'op-1',
+      streamManager,
+    });
+
+    expect(sendToolExecute.mock.calls[0][1]).toMatchObject({
+      executionContextRef: { contextId: 'ctx-server', version: 1 },
+    });
+    expect(sendToolExecute.mock.calls[0][1]).not.toHaveProperty('environment');
+  });
+
   it('forwards pluginState (state field) from the BLPOP payload to the execution result', async () => {
     const sendToolExecute = vi.fn().mockResolvedValue(undefined);
     const streamManager = makeStreamManager(sendToolExecute);

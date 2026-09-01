@@ -12,6 +12,7 @@ import type { IStreamEventManager } from './types';
 const log = debug('lobe-server:agent-runtime:dispatch-client-tool');
 
 interface DispatchContext {
+  executionContextRef?: { contextId: string; version: 1 };
   operationId: string;
   streamManager: IStreamEventManager;
   /**
@@ -101,6 +102,7 @@ export async function dispatchClientTool(
       apiName: chatToolPayload.apiName,
       arguments: chatToolPayload.arguments,
       executionTimeoutMs: timeoutMs,
+      ...(ctx.executionContextRef ? { executionContextRef: ctx.executionContextRef } : {}),
       identifier: chatToolPayload.identifier,
       toolCallId: chatToolPayload.id,
     });

@@ -7,6 +7,7 @@ import {
   type AuditSafePathsResult,
   type EditLocalFileParams,
   type EditLocalFileResult,
+  type ExecutionScoped,
   type GlobFilesParams,
   type GlobFilesResult,
   type GrepContentParams,
@@ -239,6 +240,19 @@ export default class LocalFileCtr extends ControllerModule {
     return this.app.getService(ContentSearchService);
   }
 
+  private resolveExecutionPath = async (
+    params: { executionContext?: { contextId: string; version: 1 } },
+    targetPath: string,
+    accessMode: 'read' | 'write',
+  ): Promise<string> => {
+    if (!params.executionContext) return targetPath;
+    return this.app.executionContextManager.resolvePath(
+      params.executionContext,
+      targetPath,
+      accessMode,
+    );
+  };
+
   // ==================== File Operation ====================
 
   @IpcMethod()
@@ -366,7 +380,10 @@ export default class LocalFileCtr extends ControllerModule {
   }
 
   @IpcMethod()
-  async readFiles({ paths }: LocalReadFilesParams): Promise<LocalReadFileResult[]> {
+  async readFiles(params: ExecutionScoped<LocalReadFilesParams>): Promise<LocalReadFileResult[]> {
+    const paths = await Promise.all(
+      params.paths.map((filePath) => this.resolveExecutionPath(params, filePath, 'read')),
+    );
     logger.debug('Starting batch file reading:', { count: paths.length });
 
     const results: LocalReadFileResult[] = [];
@@ -382,25 +399,35 @@ export default class LocalFileCtr extends ControllerModule {
   }
 
   @IpcMethod()
-  async readFile(params: LocalReadFileParams): Promise<LocalReadFileResult> {
+  async readFile(params: ExecutionScoped<LocalReadFileParams>): Promise<LocalReadFileResult> {
+    const filePath = await this.resolveExecutionPath(params, params.path, 'read');
     logger.debug('Starting to read file:', {
-      filePath: params.path,
+      filePath,
       fullContent: params.fullContent,
       loc: params.loc,
     });
-    return readLocalFile(params);
+    return readLocalFile({ ...params, path: filePath });
   }
 
   @IpcMethod()
   async listLocalFiles(
-    params: ListLocalFileParams,
+    params: ExecutionScoped<ListLocalFileParams>,
   ): Promise<{ files: FileResult[]; totalCount: number }> {
-    logger.debug('Listing directory contents:', params);
-    return listLocalFiles(params) as any;
+    const filePath = await this.resolveExecutionPath(params, params.path || '.', 'read');
+    logger.debug('Listing directory contents:', { ...params, path: filePath });
+    return listLocalFiles({ ...params, path: filePath }) as any;
   }
 
   @IpcMethod()
-  async handleMoveFiles({ items }: MoveLocalFilesParams): Promise<LocalMoveFilesResultItem[]> {
+  async handleMoveFiles(
+    params: ExecutionScoped<MoveLocalFilesParams>,
+  ): Promise<LocalMoveFilesResultItem[]> {
+    const items = await Promise.all(
+      params.items.map(async (item) => ({
+        newPath: await this.resolveExecutionPath(params, item.newPath, 'write'),
+        oldPath: await this.resolveExecutionPath(params, item.oldPath, 'read'),
+      })),
+    );
     logger.debug('Starting batch file move:', { itemsCount: items?.length });
     return moveLocalFiles({ items });
   }
@@ -418,7 +445,9 @@ export default class LocalFileCtr extends ControllerModule {
   }
 
   @IpcMethod()
-  async handleWriteFile({ path: filePath, content }: WriteLocalFileParams) {
+  async handleWriteFile(params: ExecutionScoped<WriteLocalFileParams>) {
+    const filePath = await this.resolveExecutionPath(params, params.path, 'write');
+    const { content } = params;
     logger.debug(`Writing file ${filePath}`, { contentLength: content?.length });
     return writeLocalFile({ content, path: filePath });
   }
@@ -696,8 +725,15 @@ export default class LocalFileCtr extends ControllerModule {
    * Handle IPC event for local file search
    */
   @IpcMethod()
-  async handleLocalFilesSearch(params: LocalSearchFilesParams): Promise<FileResult[]> {
-    const effectiveDirectory = expandTilde(params.directory ?? params.scope);
+  async handleLocalFilesSearch(
+    params: ExecutionScoped<LocalSearchFilesParams>,
+  ): Promise<FileResult[]> {
+    const scopedDirectory = await this.resolveExecutionPath(
+      params,
+      params.directory ?? params.scope ?? '.',
+      'read',
+    );
+    const effectiveDirectory = expandTilde(scopedDirectory);
 
     logger.debug('Received file search request:', {
       directory: params.directory,
@@ -747,21 +783,28 @@ export default class LocalFileCtr extends ControllerModule {
   }
 
   @IpcMethod()
-  async handleGrepContent(params: GrepContentParams): Promise<GrepContentResult> {
-    return this.contentSearchService.grep(params);
+  async handleGrepContent(params: ExecutionScoped<GrepContentParams>): Promise<GrepContentResult> {
+    const searchPath = await this.resolveExecutionPath(
+      params,
+      params.path ?? params.scope ?? '.',
+      'read',
+    );
+    return this.contentSearchService.grep({ ...params, path: searchPath, scope: searchPath });
   }
 
   @IpcMethod()
-  async handleGlobFiles(params: GlobFilesParams): Promise<GlobFilesResult> {
-    return this.searchService.glob(params);
+  async handleGlobFiles(params: ExecutionScoped<GlobFilesParams>): Promise<GlobFilesResult> {
+    const scope = await this.resolveExecutionPath(params, params.scope ?? '.', 'read');
+    return this.searchService.glob({ ...params, scope });
   }
 
   // ==================== File Editing ====================
 
   @IpcMethod()
-  async handleEditFile(params: EditLocalFileParams): Promise<EditLocalFileResult> {
-    logger.debug(`Editing file ${params.file_path}`, { replace_all: params.replace_all });
-    return editLocalFile(params);
+  async handleEditFile(params: ExecutionScoped<EditLocalFileParams>): Promise<EditLocalFileResult> {
+    const filePath = await this.resolveExecutionPath(params, params.file_path, 'write');
+    logger.debug(`Editing file ${filePath}`, { replace_all: params.replace_all });
+    return editLocalFile({ ...params, file_path: filePath });
   }
 
   private async approveProjectRootForPreview(root: string) {

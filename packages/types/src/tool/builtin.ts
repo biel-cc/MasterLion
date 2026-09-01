@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { z } from 'zod';
 
+import { type LocalExecutionContextSnapshot } from '../executionContext';
 import { type RuntimeStepContext } from '../stepContext';
 import { type HumanInterventionConfig, type HumanInterventionPolicy } from './intervention';
 import { HumanInterventionConfigSchema, HumanInterventionPolicySchema } from './intervention';
@@ -456,6 +457,12 @@ export interface BuiltinToolContext {
   documentId?: string | null;
 
   /**
+   * Immutable Electron-local execution context captured at turn start.
+   * Local filesystem, shell, prompt, and Gateway callbacks must share it.
+   */
+  executionContext?: LocalExecutionContextSnapshot;
+
+  /**
    * The current group ID (only available in group chat context)
    * Used by group management tools to access group member information
    */
@@ -551,6 +558,8 @@ export interface BuiltinToolContext {
   /**
    * The working directory configured for file operations
    * When set, file operations should be restricted to this directory
+   * @deprecated Read from executionContext.workspace.realPath. Kept while
+   * existing executors migrate to the context reference.
    */
   workingDirectory?: string;
 }

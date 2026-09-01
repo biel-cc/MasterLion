@@ -1,3 +1,5 @@
+import type { LocalExecutionContextSnapshot } from '@lobechat/types';
+
 export const SkillsIdentifier = 'lobe-skills';
 
 export const SkillsApiName = {
@@ -52,6 +54,7 @@ export interface ExecScriptState {
 
 export interface RunCommandOptions {
   command: string;
+  executionContext?: LocalExecutionContextSnapshot;
   timeout?: number;
 }
 

@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- Electron launches this test harness as CommonJS. */
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { execFile } = require('node:child_process');
+const { mkdtemp, mkdir, realpath, rm, symlink, writeFile } = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { promisify } = require('node:util');
 
 if (process.env.MASTERINO_ELECTRON_E2E !== '1') {
   throw new Error('The Electron lifecycle harness is test-only');
@@ -16,6 +20,139 @@ const retryPolicyModuleUrl = pathToFileURL(
 const aihubReadinessModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
 ).href;
+const executionContextModuleUrl = pathToFileURL(
+  path.join(__dirname, '../.artifacts/ExecutionContextManager.mjs'),
+).href;
+const execFileAsync = promisify(execFile);
+
+const runExecutionContextScenarios = async () => {
+  const { ExecutionContextManager } = await import(executionContextModuleUrl);
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), 'masterino-execution-context-e2e-'));
+  const managedRoot = path.join(testRoot, 'managed');
+  const selectedRoot = path.join(testRoot, 'selected-topic-workspace');
+  const outsideRoot = path.join(testRoot, 'outside-workspace');
+  await Promise.all([
+    mkdir(managedRoot, { recursive: true }),
+    mkdir(selectedRoot, { recursive: true }),
+    mkdir(outsideRoot, { recursive: true }),
+  ]);
+  await writeFile(
+    path.join(selectedRoot, 'package.json'),
+    JSON.stringify({ engines: { node: '>=20' }, packageManager: 'pnpm@9.0.0' }),
+  );
+
+  try {
+    const manager = new ExecutionContextManager({
+      baseEnvironment: () => ({
+        ...process.env,
+        MASTERINO_E2E_MARKER: 'from-frozen-environment',
+        MASTERINO_E2E_SECRET: 'must-not-leak',
+      }),
+      managedWorkspaceRoot: managedRoot,
+    });
+    const selected = await manager.prepare({
+      environmentPolicy: { exclude: ['MASTERINO_E2E_SECRET'], inherit: 'all' },
+      operationId: 'operation-selected',
+      requestedWorkingDirectory: selectedRoot,
+      topicId: 'topic-selected',
+      workload: { kind: 'javascript' },
+    });
+    const resolvedCommand = await manager.resolveCommand(selected.ref, {
+      command: 'print execution environment',
+      cwd: outsideRoot,
+      env: { MASTERINO_E2E_MARKER: 'wrong', MASTERINO_E2E_SECRET: 'leaked' },
+    });
+    const shell = process.env.SHELL || '/bin/sh';
+    const { stdout } = await execFileAsync(
+      shell,
+      [
+        '-lc',
+        'printf \'%s\\n%s\\n%s\' "$PWD" "$MASTERINO_E2E_MARKER" "${MASTERINO_E2E_SECRET:-absent}"',
+      ],
+      { cwd: resolvedCommand.cwd, env: resolvedCommand.env },
+    );
+    const [executedCwd, marker, secret] = stdout.trim().split(/\r?\n/);
+
+    const firstManaged = await manager.prepare({
+      agentId: 'agent-managed',
+      operationId: 'operation-managed-1',
+      topicId: 'topic-managed',
+    });
+    const secondManaged = await manager.prepare({
+      agentId: 'agent-managed',
+      operationId: 'operation-managed-2',
+      topicId: 'topic-managed',
+    });
+
+    let missingWorkspaceCode;
+    try {
+      await manager.prepare({
+        requestedWorkingDirectory: path.join(testRoot, 'missing-workspace'),
+      });
+    } catch (error) {
+      missingWorkspaceCode = error.code;
+    }
+
+    const fakeRuntimeManager = new ExecutionContextManager({
+      baseEnvironment: () => ({ PATH: '/fake/bin' }),
+      detectTool: async (tool) =>
+        tool === 'bun' || tool === 'pnpm'
+          ? { available: true, executablePath: `/fake/bin/${tool}`, version: 'test-version' }
+          : { available: false },
+      managedWorkspaceRoot: managedRoot,
+    });
+    const missingNode = await fakeRuntimeManager.prepare({
+      requestedWorkingDirectory: selectedRoot,
+      workload: { bunCompatible: false, kind: 'javascript' },
+    });
+
+    const escapeLink = path.join(selectedRoot, 'escape');
+    await symlink(outsideRoot, escapeLink);
+    let escapeCode;
+    try {
+      await manager.resolvePath(selected.ref, 'escape/result.txt', 'write');
+    } catch (error) {
+      escapeCode = error.code;
+    }
+
+    const relaunchedManager = new ExecutionContextManager({ managedWorkspaceRoot: managedRoot });
+    let staleContextCode;
+    try {
+      await relaunchedManager.inspect(selected.ref);
+    } catch (error) {
+      staleContextCode = error.code;
+    }
+
+    return {
+      managed: {
+        isStable: firstManaged.workspace.realPath === secondManaged.workspace.realPath,
+        realPath: firstManaged.workspace.realPath,
+        source: firstManaged.workspace.source,
+      },
+      runtime: {
+        noBunSubstitution: missingNode.runtimePlan.runtime !== 'bun',
+        packageManager: missingNode.runtimePlan.packageManager,
+        runtime: missingNode.runtimePlan.runtime,
+        status: missingNode.runtimePlan.status,
+      },
+      security: { escapeCode, missingWorkspaceCode, staleContextCode },
+      selected: {
+        environmentReceipt: selected.environment,
+        executedCwd,
+        marker,
+        realPath: await realpath(selectedRoot),
+        runtime: selected.runtimePlan.runtime,
+        secret,
+        source: selected.workspace.source,
+      },
+      status: 'completed',
+    };
+  } finally {
+    await rm(testRoot, { force: true, recursive: true });
+  }
+};
+
+ipcMain.handle('masterino-e2e:run-execution-context', runExecutionContextScenarios);
 
 const createAihubHarness = async () => {
   const { AihubReadiness } = await import(aihubReadinessModuleUrl);

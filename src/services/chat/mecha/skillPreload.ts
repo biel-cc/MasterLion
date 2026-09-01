@@ -12,7 +12,9 @@ import { getToolStoreState } from '@/store/tool';
 
 interface PreloadedSkill {
   content: string;
+  execution?: RuntimeSelectedSkill['execution'];
   identifier: string;
+  masterinoOwned: boolean;
   name: string;
 }
 
@@ -112,7 +114,9 @@ const loadSkillContent = async (
 
     return {
       content,
+      execution: builtinSkill.execution,
       identifier: builtinSkill.identifier,
+      masterinoOwned: true,
       name: builtinSkill.name,
     };
   }
@@ -135,7 +139,9 @@ const loadSkillContent = async (
 
   return {
     content,
+    execution: detail.manifest.execution,
     identifier: detail.identifier,
+    masterinoOwned: false,
     name: detail.name,
   };
 };
@@ -158,7 +164,7 @@ export const resolveSelectedSkillsWithContent = async ({
   const enriched = await Promise.all(
     resolved.map(async (skill) => {
       const loaded = await loadSkillContent(skill, userCreds);
-      return loaded ? { ...skill, content: loaded.content } : skill;
+      return loaded ? { ...skill, ...loaded } : skill;
     }),
   );
 

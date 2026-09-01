@@ -3,6 +3,7 @@ import { formatCommandResult, resourcesTreePrompt } from '@lobechat/prompts';
 import type {
   BuiltinServerRuntimeOutput,
   BuiltinSkill,
+  LocalExecutionContextSnapshot,
   SkillItem,
   SkillListItem,
   SkillResourceContent,
@@ -43,6 +44,7 @@ export interface SkillRuntimeService {
     options: {
       activatedSkills?: Array<{ description?: string; id: string; name: string }>;
       description: string;
+      executionContext?: LocalExecutionContextSnapshot;
     },
   ) => Promise<CommandResult>;
   exportFile?: (path: string, filename: string) => Promise<ExportFileResult>;
@@ -145,7 +147,10 @@ export class SkillsExecutionRuntime {
     this.deviceFileAccess = options.deviceFileAccess;
   }
 
-  async execScript(args: ExecScriptParams): Promise<BuiltinServerRuntimeOutput> {
+  async execScript(
+    args: ExecScriptParams,
+    executionContext?: LocalExecutionContextSnapshot,
+  ): Promise<BuiltinServerRuntimeOutput> {
     const { activatedSkills, command, description } = args;
 
     // Try new execScript method first (with cloud sandbox support)
@@ -154,6 +159,7 @@ export class SkillsExecutionRuntime {
         const result = await this.service.execScript(command, {
           activatedSkills,
           description,
+          executionContext,
         });
 
         return this.formatCommandOutput(command, result);
@@ -174,7 +180,7 @@ export class SkillsExecutionRuntime {
     }
 
     try {
-      const result = await this.service.runCommand({ command });
+      const result = await this.service.runCommand({ command, executionContext });
       return this.formatCommandOutput(command, result);
     } catch (e) {
       return {
@@ -184,7 +190,10 @@ export class SkillsExecutionRuntime {
     }
   }
 
-  async runCommand(args: RunCommandParams): Promise<BuiltinServerRuntimeOutput> {
+  async runCommand(
+    args: RunCommandParams,
+    executionContext?: LocalExecutionContextSnapshot,
+  ): Promise<BuiltinServerRuntimeOutput> {
     const { command } = args;
 
     if (!this.service.runCommand) {
@@ -195,7 +204,7 @@ export class SkillsExecutionRuntime {
     }
 
     try {
-      const result = await this.service.runCommand({ command });
+      const result = await this.service.runCommand({ command, executionContext });
       return this.formatCommandOutput(command, result);
     } catch (e) {
       return {

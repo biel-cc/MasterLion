@@ -161,6 +161,18 @@ export class PluginTypesActionImpl {
         }
       }
 
+      if (
+        (payload.identifier === 'local-system' ||
+          payload.identifier === 'lobe-local-system' ||
+          payload.identifier === 'lobe-skills') &&
+        !rootRuntimeOperationContext?.executionContext
+      ) {
+        return failedToolResult(
+          'Local execution context is unavailable for this operation',
+          'execution_context_unavailable',
+        );
+      }
+
       // Get agent ID, group ID, topic ID, and page scope from operation context.
       // Prefer the concrete tool operation; fall back to the runtime root for
       // legacy operations created before child context inheritance was complete.
@@ -257,6 +269,7 @@ export class PluginTypesActionImpl {
         .invokeBuiltinTool(payload.identifier, payload.apiName, params, {
           agentId,
           documentId,
+          executionContext: rootRuntimeOperationContext?.executionContext,
           groupId,
           groupOrchestration,
           isSubAgent,
@@ -274,6 +287,7 @@ export class PluginTypesActionImpl {
           taskId,
           toolCallId: payload.id,
           topicId,
+          workingDirectory: rootRuntimeOperationContext?.executionContext?.workspace.realPath,
         });
 
       log('[BuiltinToolCall] invoke:end', {

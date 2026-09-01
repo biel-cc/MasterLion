@@ -36,6 +36,22 @@ describe('LocalSystemExecutor', () => {
       });
     });
 
+    it('attaches the immutable execution context reference to agent IPC calls', async () => {
+      globFilesMock.mockResolvedValue({ files: [], success: true, total_files: 0 });
+
+      await localSystemExecutor.globFiles({ pattern: '**/*.md' }, {
+        executionContext: {
+          ref: { contextId: 'ctx-local-tool', version: 1 },
+        },
+        messageId: 'tool-message',
+      } as any);
+
+      expect(globFilesMock).toHaveBeenCalledWith(
+        { pattern: '**/*.md', scope: undefined },
+        { contextId: 'ctx-local-tool', version: 1 },
+      );
+    });
+
     it('returns formatted "Found N files" content on success', async () => {
       globFilesMock.mockResolvedValue({
         engine: 'fast-glob',

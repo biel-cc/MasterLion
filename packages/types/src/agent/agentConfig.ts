@@ -22,6 +22,11 @@ export type RuntimePlatform = 'desktop' | 'web';
  */
 export interface RuntimeEnvConfig {
   /**
+   * Local-only shell inheritance intent. Electron main resolves concrete
+   * values; environment values are never persisted in agent configuration.
+   */
+  shellEnvironmentProfile?: 'core' | 'inherit' | 'isolated';
+  /**
    * Working directory (desktop only)
    * @deprecated use `agencyConfig.workingDirByDevice` instead
    */

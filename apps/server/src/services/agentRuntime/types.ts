@@ -6,7 +6,11 @@ import type {
   ToolExecutor,
   ToolSource,
 } from '@lobechat/context-engine';
-import type { ChatTopicBotContext, UserInterventionConfig } from '@lobechat/types';
+import type {
+  ChatTopicBotContext,
+  LocalExecutionContextSnapshot,
+  UserInterventionConfig,
+} from '@lobechat/types';
 
 import type { ExecutionPlan } from '@/helpers/executionTarget';
 import { type ServerUserMemoryConfig } from '@/server/modules/Mecha/ContextEngineering/types';
@@ -322,6 +326,7 @@ export interface OperationCreationParams {
     automationMode?: 'heartbeat' | 'schedule' | null;
     defaultTaskAssigneeAgentId?: string;
     documentId?: string | null;
+    executionContext?: LocalExecutionContextSnapshot;
     groupId?: string | null;
     isSubAgent?: boolean;
     scope?: string | null;

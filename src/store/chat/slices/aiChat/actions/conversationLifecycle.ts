@@ -31,6 +31,8 @@ import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
 import { resolveSelectedSkillsWithContent } from '@/services/chat/mecha/skillPreload';
 import { resolveSelectedToolsWithContent } from '@/services/chat/mecha/toolPreload';
+import { executionContextService } from '@/services/electron/executionContext';
+import { resolveExecutionWorkload } from '@/services/electron/executionIntent';
 import { messageService } from '@/services/message';
 import { getAgentStoreState, useAgentStore } from '@/store/agent';
 import {
@@ -65,7 +67,11 @@ import { markdownToTxt } from '@/utils/markdownToTxt';
 import { dbMessageSelectors, displayMessageSelectors, topicSelectors } from '../../../selectors';
 import { messageMapKey } from '../../../utils/messageMapKey';
 import { topicMapKey } from '../../../utils/topicMapKey';
-import { AI_RUNTIME_OPERATION_TYPES, type QueuedFile } from '../../operation/types';
+import {
+  AI_RUNTIME_OPERATION_TYPES,
+  type OperationContext,
+  type QueuedFile,
+} from '../../operation/types';
 import type { CommandSendOverrides, SingleAgentMentionDirectRoute } from './commandBus';
 import {
   hasNonActionContent,
@@ -79,6 +85,7 @@ import {
   processCommands,
 } from './commandBus';
 import { materializeLocalSystemToolSnapshots } from './localSystemToolSnapshots';
+import { prepareLocalExecutionContext } from './prepareLocalExecutionContext';
 /**
  * Extended params for sendMessage with context
  */
@@ -339,7 +346,7 @@ export class ConversationLifecycleActionImpl {
         ? pageAgentRuntime.getCurrentDocId()
         : undefined;
 
-    const operationContext = {
+    let operationContext: ConversationContext & Pick<OperationContext, 'executionContext'> = {
       ...context,
       ...(isCreatingNewThread && { threadId: undefined }),
       // Only set isSupervisor for actual group supervisors — NOT for @agent mentions.
@@ -433,6 +440,21 @@ export class ConversationLifecycleActionImpl {
       return;
     }
 
+    // Resolve the local execution seam exactly once per turn. A selected
+    // topic directory wins, followed by a preselected new-topic repo and an
+    // explicit agent/device directory. No selection is intentional: Electron
+    // main creates a stable managed workspace instead of using process.cwd().
+    const plannedOperationId = `op_${nanoid()}`;
+    if (isDesktop && isLocalSystemEnabled && runtimeType !== 'hetero') {
+      const executionContext = await prepareLocalExecutionContext({
+        agentId,
+        operationId: plannedOperationId,
+        topicId: operationContext.topicId,
+        workload: resolveExecutionWorkload(enrichedSelectedSkills),
+      });
+      operationContext = { ...operationContext, executionContext };
+    }
+
     // Use provided messages or query from store
     // For /newTopic from existing topic, start with empty message list (fresh topic)
     const contextKey = messageMapKey(context);
@@ -460,6 +482,7 @@ export class ConversationLifecycleActionImpl {
     const { operationId, abortController } = this.#get().startOperation({
       type: 'sendMessage',
       context: { ...operationContext, messageId: tempId },
+      operationId: plannedOperationId,
       label: 'Send Message',
       metadata: {
         // Mark this as thread operation if threadId exists
@@ -744,13 +767,25 @@ export class ConversationLifecycleActionImpl {
         // the op to 'cancelled' and `executeGatewayAgent` cleaned up the
         // server task. Don't clobber that with 'failed'.
         const op = this.#get().operations[operationId];
-        if (op?.status === 'cancelled') return;
+        if (op?.status === 'cancelled') {
+          if (operationContext.executionContext) {
+            await executionContextService
+              .close(operationContext.executionContext.ref)
+              .catch(() => undefined);
+          }
+          return;
+        }
 
         console.error('[Gateway] Failed to start server-side agent:', e);
         this.#get().failOperation(operationId, {
           message: e instanceof Error ? e.message : 'Unknown error',
           type: 'GatewayError',
         });
+        if (operationContext.executionContext) {
+          await executionContextService
+            .close(operationContext.executionContext.ref)
+            .catch(() => undefined);
+        }
         return;
       }
     }
@@ -817,6 +852,13 @@ export class ConversationLifecycleActionImpl {
             : undefined,
           newTopic: !topicId
             ? {
+                ...(operationContext.executionContext
+                  ? {
+                      metadata: {
+                        workingDirectory: operationContext.executionContext.workspace.realPath,
+                      },
+                    }
+                  : undefined),
                 topicMessageIds: forceNewTopicFromExisting ? [] : messages.map((m) => m.id),
                 title: newTopicTitle,
               }
@@ -978,7 +1020,14 @@ export class ConversationLifecycleActionImpl {
       markUserValidAction();
     }
 
-    if (!data) return;
+    if (!data) {
+      if (operationContext.executionContext) {
+        await executionContextService
+          .close(operationContext.executionContext.ref)
+          .catch(() => undefined);
+      }
+      return;
+    }
 
     if (data.topicId) this.#get().internal_updateTopicLoading(data.topicId, true);
 
@@ -1146,6 +1195,11 @@ export class ConversationLifecycleActionImpl {
         console.error(e);
       } finally {
         if (data.topicId) this.#get().internal_updateTopicLoading(data.topicId, false);
+        if (operationContext.executionContext) {
+          await executionContextService
+            .close(operationContext.executionContext.ref)
+            .catch(() => undefined);
+        }
       }
     }
 

@@ -29,6 +29,7 @@ function makeData(overrides: Partial<ToolExecuteData> = {}): ToolExecuteData {
     apiName: 'readFile',
     arguments: '{"path":"/tmp/a.txt"}',
     executionTimeoutMs: 60_000,
+    executionContextRef: { contextId: 'ctx-gateway', version: 1 },
     identifier: 'local-system',
     toolCallId: 'call_1',
     ...overrides,
@@ -62,6 +63,27 @@ function setup(options: { hasConnection?: boolean; sendReturns?: boolean } = {})
         context: {
           agentId: 'agent-1',
           documentId: 'documents-row-id',
+          executionContext: {
+            createdAt: '2026-09-01T00:00:00.000Z',
+            environment: {
+              inherited: 'all',
+              overriddenKeys: [],
+              pathEntryCount: 2,
+              removedKeys: [],
+            },
+            ref: { contextId: 'ctx-gateway', version: 1 },
+            runtimePlan: {
+              runtime: 'node',
+              runtimeCapability: { available: true },
+              runtimeSource: 'default',
+              status: 'ready',
+            },
+            workspace: {
+              realPath: '/workspace/gateway',
+              source: 'selected',
+              writableRoots: ['/workspace/gateway'],
+            },
+          },
           scope: 'page',
           topicId: 'topic-1',
         },
@@ -108,10 +130,14 @@ describe('internal_executeClientTool', () => {
         expect.objectContaining({
           agentId: 'agent-1',
           documentId: 'documents-row-id',
+          executionContext: expect.objectContaining({
+            ref: { contextId: 'ctx-gateway', version: 1 },
+          }),
           messageId: 'call_1',
           operationId: 'op-1',
           scope: 'page',
           topicId: 'topic-1',
+          workingDirectory: '/workspace/gateway',
         }),
       );
       expect(sendToolResult).toHaveBeenCalledWith({
@@ -120,6 +146,64 @@ describe('internal_executeClientTool', () => {
         success: true,
         toolCallId: 'call_1',
       });
+    });
+
+    it('fails closed when Gateway sends a different execution context reference', async () => {
+      hasExecutorMock.mockReturnValue(true);
+      const { action, sendToolResult } = setup();
+
+      await action.internal_executeClientTool(
+        makeData({ executionContextRef: { contextId: 'ctx-other', version: 1 } }),
+        { operationId: 'op-1' },
+      );
+
+      expect(invokeExecutorMock).not.toHaveBeenCalled();
+      expect(sendToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ type: 'execution_context_mismatch' }),
+          success: false,
+        }),
+      );
+    });
+
+    it('also enforces the current lobe-local-system manifest identifier', async () => {
+      hasExecutorMock.mockReturnValue(true);
+      const { action, sendToolResult } = setup();
+
+      await action.internal_executeClientTool(
+        makeData({ executionContextRef: undefined, identifier: 'lobe-local-system' }),
+        { operationId: 'op-1' },
+      );
+
+      expect(invokeExecutorMock).not.toHaveBeenCalled();
+      expect(sendToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ type: 'execution_context_mismatch' }),
+          success: false,
+        }),
+      );
+    });
+
+    it('fails closed when Gateway Skills omits the operation context reference', async () => {
+      hasExecutorMock.mockReturnValue(true);
+      const { action, sendToolResult } = setup();
+
+      await action.internal_executeClientTool(
+        makeData({
+          apiName: 'execScript',
+          executionContextRef: undefined,
+          identifier: 'lobe-skills',
+        }),
+        { operationId: 'op-1' },
+      );
+
+      expect(invokeExecutorMock).not.toHaveBeenCalled();
+      expect(sendToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ type: 'execution_context_mismatch' }),
+          success: false,
+        }),
+      );
     });
 
     it('sends a failure tool_result when the executor reports error', async () => {

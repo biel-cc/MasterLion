@@ -1,4 +1,9 @@
-import type { ConversationContext, MessageMetadata, UploadFileItem } from '@lobechat/types';
+import type {
+  ConversationContext,
+  LocalExecutionContextSnapshot,
+  MessageMetadata,
+  UploadFileItem,
+} from '@lobechat/types';
 
 /**
  * Operation Type Definitions
@@ -88,6 +93,7 @@ export type OperationStatus =
  */
 export interface OperationContext extends Partial<ConversationContext> {
   agentId?: string; // Associated agent ID (specific agent in Group Chat)
+  executionContext?: LocalExecutionContextSnapshot; // Immutable local cwd/env/runtime receipt
   groupId?: string; // Associated group ID (Group Chat)
   messageId?: string; // Associated message ID
 }

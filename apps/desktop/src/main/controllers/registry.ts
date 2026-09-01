@@ -4,6 +4,7 @@ import AuthCtr from './AuthCtr';
 import BrowserWindowsCtr from './BrowserWindowsCtr';
 import CliCtr from './CliCtr';
 import DevtoolsCtr from './DevtoolsCtr';
+import ExecutionContextCtr from './ExecutionContextCtr';
 import GatewayConnectionCtr from './GatewayConnectionCtr';
 import GitCtr from './GitCtr';
 import HeterogeneousAgentCtr from './HeterogeneousAgentCtr';
@@ -32,6 +33,7 @@ export const controllerIpcConstructors = [
   BrowserWindowsCtr,
   CliCtr,
   DevtoolsCtr,
+  ExecutionContextCtr,
   GatewayConnectionCtr,
   GitCtr,
   LocalFileCtr,

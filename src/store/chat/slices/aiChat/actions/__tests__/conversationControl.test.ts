@@ -1,8 +1,10 @@
+import type * as LobechatConstModule from '@lobechat/const';
 import { type ConversationContext, RequestTrigger } from '@lobechat/types';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { heterogeneousAgentService } from '@/services/electron/heterogeneousAgent';
+import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
 
 import { useChatStore } from '../../../../store';
 import { messageMapKey } from '../../../../utils/messageMapKey';
@@ -11,6 +13,53 @@ import { resetTestEnvironment } from './helpers';
 
 // Keep zustand mock as it's needed globally
 vi.mock('zustand/traditional');
+
+const mockConstEnv = vi.hoisted(() => ({ isDesktop: false }));
+const mockExecutionContext = vi.hoisted(() => ({
+  close: vi.fn(),
+  prepare: vi.fn(),
+}));
+
+const createExecutionContextSnapshot = (contextId: string) =>
+  ({
+    createdAt: '2026-09-01T00:00:00.000Z',
+    environment: {
+      inherited: 'all',
+      overriddenKeys: [],
+      pathEntryCount: 2,
+      removedKeys: [],
+    },
+    ref: { contextId, version: 1 },
+    runtimePlan: {
+      runtime: 'shell',
+      runtimeCapability: { available: true },
+      runtimeSource: 'default',
+      status: 'not_required',
+    },
+    workspace: {
+      realPath: '/workspace/topic',
+      source: 'selected',
+      writableRoots: ['/workspace/topic'],
+    },
+  }) as const;
+
+vi.mock('@lobechat/const', async (importOriginal) => {
+  const actual = await importOriginal<typeof LobechatConstModule>();
+  return {
+    ...actual,
+    get isDesktop() {
+      return mockConstEnv.isDesktop;
+    },
+  };
+});
+
+vi.mock('@/services/electron/executionContext', () => ({
+  executionContextService: { close: mockExecutionContext.close },
+}));
+
+vi.mock('../prepareLocalExecutionContext', () => ({
+  prepareLocalExecutionContext: mockExecutionContext.prepare,
+}));
 
 // Mock the tRPC client & agentRuntimeService so the import chain doesn't pull
 // server-only code (cloud business packages, redis envs) into the test env.
@@ -44,6 +93,9 @@ vi.mock('@/utils/localStorage', () => {
 
 beforeEach(() => {
   resetTestEnvironment();
+  mockConstEnv.isDesktop = false;
+  mockExecutionContext.close.mockReset();
+  mockExecutionContext.prepare.mockReset();
 });
 
 afterEach(() => {
@@ -453,6 +505,72 @@ describe('ConversationControl actions', () => {
   });
 
   describe('approveToolCalling', () => {
+    it('prepares a new immutable local context for an approved-tool continuation', async () => {
+      mockConstEnv.isDesktop = true;
+      vi.spyOn(chatConfigByIdSelectors, 'isLocalSystemEnabledById').mockReturnValue(() => true);
+      vi.spyOn(agentSelectors, 'getAgentConfigById').mockReturnValue(
+        () =>
+          ({
+            agencyConfig: { executionTarget: 'local' },
+          }) as any,
+      );
+      const snapshot = createExecutionContextSnapshot('ctx-approved');
+      mockExecutionContext.prepare.mockResolvedValue(snapshot);
+      mockExecutionContext.close.mockResolvedValue({ closed: true });
+      const { result } = renderHook(() => useChatStore());
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-local',
+        plugin: {
+          apiName: 'runCommand',
+          arguments: '{"command":"pwd"}',
+          identifier: 'lobe-local-system',
+          type: 'default',
+        },
+        role: 'tool',
+        tool_call_id: 'call-local',
+      });
+      const context = {
+        agentId: 'local-agent',
+        threadId: null,
+        topicId: 'local-topic',
+      };
+      const key = messageMapKey(context);
+
+      act(() => {
+        useChatStore.setState({
+          dbMessagesMap: { [key]: [toolMessage] },
+          messagesMap: { [key]: [toolMessage] },
+        });
+      });
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
+      const executeClientAgentSpy = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.approveToolCalling('tool-msg-local', 'group-1', context);
+      });
+
+      expect(mockExecutionContext.prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'local-agent',
+          topicId: 'local-topic',
+          workload: { kind: 'shell' },
+        }),
+      );
+      expect(executeClientAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({ executionContext: snapshot }),
+        }),
+      );
+      expect(mockExecutionContext.close).toHaveBeenCalledWith(snapshot.ref);
+    });
+
     it('should use provided context instead of global state', async () => {
       const { result } = renderHook(() => useChatStore());
 
@@ -1097,6 +1215,17 @@ describe('ConversationControl actions', () => {
 
   describe('rejectToolCalling server-mode branch', () => {
     it('starts a new Gateway op with resumeApproval.decision=rejected_continue (unified)', async () => {
+      mockConstEnv.isDesktop = true;
+      vi.spyOn(chatConfigByIdSelectors, 'isLocalSystemEnabledById').mockReturnValue(() => true);
+      vi.spyOn(agentSelectors, 'getAgentConfigById').mockReturnValue(
+        () =>
+          ({
+            agencyConfig: { executionTarget: 'local' },
+          }) as any,
+      );
+      const snapshot = createExecutionContextSnapshot('ctx-rejected');
+      mockExecutionContext.prepare.mockResolvedValue(snapshot);
+      mockExecutionContext.close.mockResolvedValue({ closed: true });
       const { result } = renderHook(() => useChatStore());
 
       const agentId = 'server-agent';
@@ -1137,6 +1266,7 @@ describe('ConversationControl actions', () => {
 
       expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
         expect.objectContaining({
+          context: expect.objectContaining({ executionContext: snapshot }),
           message: '',
           parentMessageId: 'tool-msg-1',
           resumeApproval: {
@@ -1147,6 +1277,12 @@ describe('ConversationControl actions', () => {
           },
         }),
       );
+      expect(mockExecutionContext.prepare).toHaveBeenCalledWith(
+        expect.objectContaining({ workload: { kind: 'unknown' } }),
+      );
+      // executeGatewayAgent transfers the snapshot to its child operation;
+      // the Gateway session-complete/cancel hook closes it later.
+      expect(mockExecutionContext.close).not.toHaveBeenCalled();
 
       executeGatewayAgentSpy.mockRestore();
     });
@@ -1221,6 +1357,78 @@ describe('ConversationControl actions', () => {
   });
 
   describe('submitToolInteraction', () => {
+    it('prepares and closes a fresh local context when an interaction resumes the agent', async () => {
+      mockConstEnv.isDesktop = true;
+      vi.spyOn(chatConfigByIdSelectors, 'isLocalSystemEnabledById').mockReturnValue(() => true);
+      vi.spyOn(agentSelectors, 'getAgentConfigById').mockReturnValue(
+        () =>
+          ({
+            agencyConfig: { executionTarget: 'local' },
+          }) as any,
+      );
+      const snapshot = createExecutionContextSnapshot('ctx-interaction');
+      mockExecutionContext.prepare.mockResolvedValue(snapshot);
+      mockExecutionContext.close.mockResolvedValue({ closed: true });
+
+      const { result } = renderHook(() => useChatStore());
+      const context = {
+        agentId: 'local-agent',
+        threadId: null,
+        topicId: 'local-topic',
+      };
+      const chatKey = messageMapKey(context);
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-local-interaction',
+        plugin: {
+          apiName: 'askUserQuestion',
+          arguments: '{}',
+          identifier: 'lobe-user-interaction',
+          type: 'default',
+        },
+        role: 'tool',
+      });
+
+      act(() => {
+        useChatStore.setState({
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
+      const executeClientAgentSpy = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.submitToolInteraction(
+          toolMessage.id,
+          { answer: 'continue' },
+          context,
+          { createUserMessage: false },
+        );
+      });
+
+      expect(mockExecutionContext.prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'local-agent',
+          topicId: 'local-topic',
+          workload: { kind: 'unknown' },
+        }),
+      );
+      expect(executeClientAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({ executionContext: snapshot }),
+        }),
+      );
+      expect(mockExecutionContext.close).toHaveBeenCalledWith(snapshot.ref);
+    });
+
     it('should create a user message and resume runtime from that user message', async () => {
       const { result } = renderHook(() => useChatStore());
 

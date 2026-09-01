@@ -10,6 +10,8 @@
  * 3. Replaces the deprecated pluginState passing pattern
  */
 
+import type { SkillExecutionDeclaration } from './skill';
+
 /** Status of a todo item */
 export type StepContextTodoStatus = 'todo' | 'processing' | 'completed';
 
@@ -105,10 +107,14 @@ export interface RuntimeSelectedSkill {
    * constructing fake activateSkill tool-call preload messages.
    */
   content?: string;
+  /** Runtime declaration copied from the selected skill manifest. */
+  execution?: SkillExecutionDeclaration;
   /**
    * Skill identifier used by runtime/tooling
    */
   identifier: string;
+  /** True only for code-shipped Masterino skills, never user/market manifests. */
+  masterinoOwned?: boolean;
   /**
    * Human-readable skill name shown in the input UI
    */

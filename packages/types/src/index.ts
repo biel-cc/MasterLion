@@ -15,6 +15,7 @@ export * from './device';
 export * from './discover';
 export * from './document';
 export * from './eval';
+export * from './executionContext';
 export * from './export';
 export * from './fetch';
 export * from './files';

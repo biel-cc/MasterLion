@@ -4,6 +4,8 @@ import {
   type AuditSafePathsResult,
   type EditLocalFileParams,
   type EditLocalFileResult,
+  type ExecutionContextRef,
+  type ExecutionScoped,
   type GetCommandOutputParams,
   type GetCommandOutputResult,
   type GlobFilesParams,
@@ -118,21 +120,37 @@ const fetchLocalFilePreview = async (
 };
 
 class LocalFileService {
+  private scoped<T extends object>(params: T, ref?: ExecutionContextRef): ExecutionScoped<T> {
+    return ref ? { ...params, executionContext: ref } : params;
+  }
+
   // File Operations
-  async listLocalFiles(params: ListLocalFileParams): Promise<ListLocalFilesResult> {
-    return ensureElectronIpc().localSystem.listLocalFiles(params);
+  async listLocalFiles(
+    params: ListLocalFileParams,
+    ref?: ExecutionContextRef,
+  ): Promise<ListLocalFilesResult> {
+    return ensureElectronIpc().localSystem.listLocalFiles(this.scoped(params, ref));
   }
 
-  async readLocalFile(params: LocalReadFileParams): Promise<LocalReadFileResult> {
-    return ensureElectronIpc().localSystem.readFile(params);
+  async readLocalFile(
+    params: LocalReadFileParams,
+    ref?: ExecutionContextRef,
+  ): Promise<LocalReadFileResult> {
+    return ensureElectronIpc().localSystem.readFile(this.scoped(params, ref));
   }
 
-  async readLocalFiles(params: LocalReadFilesParams): Promise<LocalReadFileResult[]> {
-    return ensureElectronIpc().localSystem.readFiles(params);
+  async readLocalFiles(
+    params: LocalReadFilesParams,
+    ref?: ExecutionContextRef,
+  ): Promise<LocalReadFileResult[]> {
+    return ensureElectronIpc().localSystem.readFiles(this.scoped(params, ref));
   }
 
-  async searchLocalFiles(params: LocalSearchFilesParams): Promise<LocalFileItem[]> {
-    return ensureElectronIpc().localSystem.handleLocalFilesSearch(params);
+  async searchLocalFiles(
+    params: LocalSearchFilesParams,
+    ref?: ExecutionContextRef,
+  ): Promise<LocalFileItem[]> {
+    return ensureElectronIpc().localSystem.handleLocalFilesSearch(this.scoped(params, ref));
   }
 
   async getProjectFileIndex(params: ProjectFileIndexParams): Promise<ProjectFileIndexResult> {
@@ -154,16 +172,19 @@ class LocalFileService {
     return ensureElectronIpc().localSystem.handleOpenLocalFolder(params);
   }
 
-  async moveLocalFiles(params: MoveLocalFilesParams): Promise<LocalMoveFilesResultItem[]> {
-    return ensureElectronIpc().localSystem.handleMoveFiles(params);
+  async moveLocalFiles(
+    params: MoveLocalFilesParams,
+    ref?: ExecutionContextRef,
+  ): Promise<LocalMoveFilesResultItem[]> {
+    return ensureElectronIpc().localSystem.handleMoveFiles(this.scoped(params, ref));
   }
 
   async renameLocalFile(params: RenameLocalFileParams) {
     return ensureElectronIpc().localSystem.handleRenameFile(params);
   }
 
-  async writeFile(params: WriteLocalFileParams) {
-    return ensureElectronIpc().localSystem.handleWriteFile(params);
+  async writeFile(params: WriteLocalFileParams, ref?: ExecutionContextRef) {
+    return ensureElectronIpc().localSystem.handleWriteFile(this.scoped(params, ref));
   }
 
   async auditSafePaths(params: AuditSafePathsParams): Promise<AuditSafePathsResult> {
@@ -198,13 +219,16 @@ class LocalFileService {
     return ensureElectronIpc().localSystem.handleResolveSkillResourcePath(params);
   }
 
-  async editLocalFile(params: EditLocalFileParams): Promise<EditLocalFileResult> {
-    return ensureElectronIpc().localSystem.handleEditFile(params);
+  async editLocalFile(
+    params: EditLocalFileParams,
+    ref?: ExecutionContextRef,
+  ): Promise<EditLocalFileResult> {
+    return ensureElectronIpc().localSystem.handleEditFile(this.scoped(params, ref));
   }
 
   // Shell Commands
-  async runCommand(params: RunCommandParams): Promise<RunCommandResult> {
-    return ensureElectronIpc().shellCommand.handleRunCommand(params);
+  async runCommand(params: RunCommandParams, ref?: ExecutionContextRef): Promise<RunCommandResult> {
+    return ensureElectronIpc().shellCommand.handleRunCommand(this.scoped(params, ref));
   }
 
   async getCommandOutput(params: GetCommandOutputParams): Promise<GetCommandOutputResult> {
@@ -216,12 +240,15 @@ class LocalFileService {
   }
 
   // Search & Find
-  async grepContent(params: GrepContentParams): Promise<GrepContentResult> {
-    return ensureElectronIpc().localSystem.handleGrepContent(params);
+  async grepContent(
+    params: GrepContentParams,
+    ref?: ExecutionContextRef,
+  ): Promise<GrepContentResult> {
+    return ensureElectronIpc().localSystem.handleGrepContent(this.scoped(params, ref));
   }
 
-  async globFiles(params: GlobFilesParams): Promise<GlobFilesResult> {
-    return ensureElectronIpc().localSystem.handleGlobFiles(params);
+  async globFiles(params: GlobFilesParams, ref?: ExecutionContextRef): Promise<GlobFilesResult> {
+    return ensureElectronIpc().localSystem.handleGlobFiles(this.scoped(params, ref));
   }
 
   // Dialog

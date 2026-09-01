@@ -149,6 +149,25 @@ const getAgentWorkingDirectoryById =
   };
 
 /**
+ * Returns only a directory explicitly selected for this agent/device.
+ * ExecutionContext uses this selector so an unconfigured turn can create its
+ * managed workspace instead of silently inheriting Desktop/Home.
+ */
+const getAgentSelectedWorkingDirectoryById =
+  (agentId: string, currentDeviceId?: string) =>
+  (s: AgentStoreState): string | undefined => {
+    if (!isDesktop) return;
+
+    const agencyConfig = agentSelectors.getAgentConfigById(agentId)(s)?.agencyConfig;
+    const targetDeviceId = resolveTargetDeviceId(agencyConfig, currentDeviceId);
+    const deviceChoice = targetDeviceId
+      ? agencyConfig?.workingDirByDevice?.[targetDeviceId]
+      : undefined;
+
+    return deviceChoice ?? s.localAgentWorkingDirectoryMap[agentId];
+  };
+
+/**
  * Get agent builder context by agentId
  * Used for injecting current agent config/meta into Agent Builder context
  */
@@ -206,6 +225,7 @@ export const agentByIdSelectors = {
   getAgentFilesById,
   getAgentKnowledgeBasesById,
   getAgentRuntimeEnvConfigById,
+  getAgentSelectedWorkingDirectoryById,
   getAgentModeById,
   getAgentModelById,
   getAgentModelProviderById,

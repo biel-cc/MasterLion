@@ -32,6 +32,7 @@ import type {
 import { MessagesEngine, resolveTopicReferences } from '@lobechat/context-engine';
 import { historySummaryPrompt } from '@lobechat/prompts';
 import type {
+  LocalExecutionContextSnapshot,
   OpenAIChatMessage,
   RuntimeInitialContext,
   RuntimeStepContext,
@@ -78,6 +79,7 @@ interface ContextEngineeringContext {
   agentId?: string;
   enableHistoryCount?: boolean;
   enableUserMemories?: boolean;
+  executionContext?: LocalExecutionContextSnapshot;
   /** Group ID for multi-agent scenarios */
   groupId?: string;
   historyCount?: number;
@@ -120,6 +122,7 @@ export const contextEngineering = async ({
   inputTemplate,
   enableUserMemories,
   enableHistoryCount,
+  executionContext,
   historyCount,
   historySummary,
   agentBuilderContext,
@@ -728,6 +731,14 @@ export const contextEngineering = async ({
     // Variable generators
     variableGenerators: {
       ...VARIABLE_GENERATORS,
+      ...(executionContext
+        ? {
+            execution_package_manager: () => executionContext.runtimePlan.packageManager ?? '',
+            execution_runtime: () => executionContext.runtimePlan.runtime,
+            execution_runtime_status: () => executionContext.runtimePlan.status,
+            workingDirectory: () => executionContext.workspace.realPath,
+          }
+        : {}),
       // NOTICE: required by builtin-tool-creds/src/systemRole.ts
       CREDS_LIST: () => (credsList ? generateCredsList(credsList) : ''),
       // NOTICE: required by builtin-tool-creds/src/systemRole.ts (Composio integrations)

@@ -143,6 +143,8 @@ export interface ToolExecuteData {
   apiName: string;
   /** JSON-encoded argument string as returned by the LLM. */
   arguments: string;
+  /** Opaque Electron-main context selected at turn start; contains no env values. */
+  executionContextRef?: { contextId: string; version: 1 };
   /** Per-invocation deadline. Server caps against its own function budget. */
   executionTimeoutMs: number;
   /** Tool plugin identifier (e.g. "local-system"). */

@@ -15,6 +15,7 @@ import { type ToolsEngine } from '@lobechat/context-engine';
 import { buildTaskDetailPrompt, buildTaskListPrompt } from '@lobechat/prompts';
 import {
   type ConversationContext,
+  type LocalExecutionContextSnapshot,
   type MessageMetadata,
   type RunSubAgentResult,
   type RuntimeInitialContext,
@@ -272,11 +273,13 @@ export class StreamingExecutorActionImpl {
       provider: agentConfigData.provider!,
     };
 
+    const executionContext = operation?.context.executionContext;
     const topicWorkingDirectory = topicSelectors.currentTopicWorkingDirectory(this.#get());
     const currentDeviceId = getElectronStoreState().gatewayDeviceInfo?.deviceId;
     const agentWorkingDirectory =
       agentSelectors.currentAgentWorkingDirectory(currentDeviceId)(getAgentStoreState());
-    const workingDirectory = topicWorkingDirectory ?? agentWorkingDirectory;
+    const workingDirectory =
+      executionContext?.workspace.realPath ?? topicWorkingDirectory ?? agentWorkingDirectory;
 
     // Create initial state or use provided state
     const state =
@@ -285,6 +288,7 @@ export class StreamingExecutorActionImpl {
         maxSteps: 400,
         messages,
         metadata: {
+          executionContext,
           sessionId: agentId,
           threadId,
           topicId,
@@ -413,7 +417,7 @@ export class StreamingExecutorActionImpl {
   };
 
   executeClientAgent = async (params: {
-    context: ConversationContext;
+    context: ConversationContext & { executionContext?: LocalExecutionContextSnapshot };
     disableTools?: boolean;
     initialContext?: AgentRuntimeContext;
     initialState?: AgentState;

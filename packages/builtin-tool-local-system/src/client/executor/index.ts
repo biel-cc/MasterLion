@@ -12,8 +12,8 @@ import type {
   RunCommandParams,
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
-import { LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
-import type { BuiltinToolResult } from '@lobechat/types';
+import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
+import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 
 import { localFileService } from '@/services/electron/localFileService';
@@ -47,6 +47,21 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   protected readonly apiEnum = LocalSystemApiEnum;
 
   private runtime = new LocalSystemExecutionRuntime(localFileService);
+
+  private runtimeFor(ctx?: BuiltinToolContext): LocalSystemExecutionRuntime {
+    const ref = ctx?.executionContext?.ref;
+    if (!ref) return this.runtime;
+
+    const scopedService = new Proxy(localFileService, {
+      get(target, property, receiver) {
+        const member = Reflect.get(target, property, receiver);
+        if (typeof member !== 'function') return member;
+        return (params: unknown) => member.call(target, params, ref);
+      },
+    }) as ILocalSystemService;
+
+    return new LocalSystemExecutionRuntime(scopedService);
+  }
 
   /**
    * Convert BuiltinServerRuntimeOutput to BuiltinToolResult.
@@ -84,9 +99,12 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== File Operations ====================
 
-  listFiles = async (params: ListLocalFileParams): Promise<BuiltinToolResult> => {
+  listFiles = async (
+    params: ListLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.listFiles({
+      const result = await this.runtimeFor(ctx).listFiles({
         directoryPath: params.path,
         limit: params.limit,
         sortBy: params.sortBy,
@@ -98,9 +116,12 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFile = async (params: LocalReadFileParams): Promise<BuiltinToolResult> => {
+  readFile = async (
+    params: LocalReadFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.readFile({
+      const result = await this.runtimeFor(ctx).readFile({
         endLine: params.loc?.[1],
         path: params.path,
         startLine: params.loc?.[0],
@@ -111,19 +132,25 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFiles = async (params: LocalReadFilesParams): Promise<BuiltinToolResult> => {
+  readFiles = async (
+    params: LocalReadFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.readFiles(params);
+      const result = await this.runtimeFor(ctx).readFiles(params);
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  searchFiles = async (params: LocalSearchFilesParams): Promise<BuiltinToolResult> => {
+  searchFiles = async (
+    params: LocalSearchFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
       const resolvedParams = resolveArgsWithScope(params, 'directory');
-      const result = await this.runtime.searchFiles({
+      const result = await this.runtimeFor(ctx).searchFiles({
         ...resolvedParams,
         directory: resolvedParams.directory || '',
       });
@@ -133,9 +160,12 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  moveFiles = async (params: MoveLocalFilesParams): Promise<BuiltinToolResult> => {
+  moveFiles = async (
+    params: MoveLocalFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.moveFiles({
+      const result = await this.runtimeFor(ctx).moveFiles({
         operations: params.items.map((item) => ({
           destination: item.newPath,
           source: item.oldPath,
@@ -147,18 +177,24 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  writeFile = async (params: WriteLocalFileParams): Promise<BuiltinToolResult> => {
+  writeFile = async (
+    params: WriteLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.writeFile(params);
+      const result = await this.runtimeFor(ctx).writeFile(params);
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  editFile = async (params: EditLocalFileParams): Promise<BuiltinToolResult> => {
+  editFile = async (
+    params: EditLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.editFile({
+      const result = await this.runtimeFor(ctx).editFile({
         all: params.replace_all,
         path: params.file_path,
         replace: params.new_string,
@@ -172,13 +208,16 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Shell Commands ====================
 
-  runCommand = async (params: RunCommandParams): Promise<BuiltinToolResult> => {
+  runCommand = async (
+    params: RunCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
       // The manifest exposes `run_in_background`, but ComputerRuntime's RunCommandState
       // reads `args.background` for the `isBackground` field — without this normalize
       // the UI/state would always say foreground even for background commands.
       // The IPC handler reads `run_in_background` itself, so we keep that field too.
-      const result = await this.runtime.runCommand({
+      const result = await this.runtimeFor(ctx).runCommand({
         ...params,
         background: params.run_in_background,
       } as any);
@@ -213,7 +252,10 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Search & Find ====================
 
-  grepContent = async (params: GrepContentParams): Promise<BuiltinToolResult> => {
+  grepContent = async (
+    params: GrepContentParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
       const resolvedParams = resolveArgsWithScope(params, 'path');
       // Forward the full IPC params (glob / output_mode / -i / -A / -B / -C / -n /
@@ -221,16 +263,19 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
       // ComputerRuntime.callService passes args through unchanged, so the runtime type
       // narrowing was the only blocker — the underlying rg/grep needs these flags to
       // honor the agent's filter and stop scanning dist/* and tsbuildinfo.
-      const result = await this.runtime.grepContent(resolvedParams as any);
+      const result = await this.runtimeFor(ctx).grepContent(resolvedParams as any);
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  globFiles = async (params: GlobFilesParams): Promise<BuiltinToolResult> => {
+  globFiles = async (
+    params: GlobFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
-      const result = await this.runtime.globFiles({
+      const result = await this.runtimeFor(ctx).globFiles({
         directory: params.scope,
         pattern: params.pattern,
       });

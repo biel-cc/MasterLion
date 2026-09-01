@@ -96,4 +96,25 @@ export const buildProductionLifecycle = async () => {
       tsconfigPaths: true,
     },
   });
+
+  await viteBuild({
+    build: {
+      emptyOutDir: false,
+      lib: {
+        entry: path.resolve(
+          repositoryRoot,
+          'apps/desktop/src/main/core/executionContext/ExecutionContextManager.ts',
+        ),
+        fileName: () => 'ExecutionContextManager.mjs',
+        formats: ['es'],
+      },
+      minify: false,
+      outDir: artifactDirectory,
+      rollupOptions: { external: [/^node:/] },
+      sourcemap: false,
+    },
+    configFile: false,
+    logLevel: 'warn',
+    resolve: { tsconfigPaths: true },
+  });
 };

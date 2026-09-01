@@ -1,5 +1,6 @@
 import type { FetchSSEOptions } from '@lobechat/fetch-sse';
 import type {
+  LocalExecutionContextSnapshot,
   RequestTrigger,
   RuntimeInitialContext,
   RuntimeStepContext,
@@ -12,6 +13,8 @@ interface ChatRequestMetadata extends Record<string, unknown> {
 
 export interface FetchOptions extends FetchSSEOptions {
   agentId?: string;
+  /** Immutable receipt captured by the owning Electron operation. */
+  executionContext?: LocalExecutionContextSnapshot;
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;

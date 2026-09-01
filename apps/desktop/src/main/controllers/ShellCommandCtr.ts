@@ -1,4 +1,5 @@
 import type {
+  ExecutionScoped,
   GetCommandOutputParams,
   GetCommandOutputResult,
   KillCommandParams,
@@ -24,14 +25,22 @@ export default class ShellCommandCtr extends ControllerModule {
   static override readonly groupName = 'shellCommand';
 
   @IpcMethod()
-  async handleRunCommand(params: RunCommandParams): Promise<RunCommandResult> {
-    const prefixMatch = SIMPLE_LH_PREFIX.exec(params.command);
+  async handleRunCommand(params: ExecutionScoped<RunCommandParams>): Promise<RunCommandResult> {
+    const resolvedParams = params.executionContext
+      ? await this.app.executionContextManager.resolveCommand(params.executionContext, params)
+      : params;
+    const prefixMatch = SIMPLE_LH_PREFIX.exec(resolvedParams.command);
     if (prefixMatch) {
       const cliCtr = this.app.getController(CliCtr);
       if (cliCtr) {
-        const args = params.command.slice(prefixMatch[0].length).trim();
+        const args = resolvedParams.command.slice(prefixMatch[0].length).trim();
         logger.debug('Routing lh command to CliCtr.runCliCommand:', args);
-        const result = await cliCtr.runCliCommand(args);
+        const result = params.executionContext
+          ? await cliCtr.runCliCommand(args, {
+              cwd: resolvedParams.cwd,
+              env: resolvedParams.env,
+            })
+          : await cliCtr.runCliCommand(args);
         return {
           exit_code: result.exitCode,
           output: result.stdout + result.stderr,
@@ -42,7 +51,7 @@ export default class ShellCommandCtr extends ControllerModule {
       }
     }
 
-    return runCommand(params, { logger, processManager });
+    return runCommand(resolvedParams, { logger, processManager });
   }
 
   @IpcMethod()

@@ -103,6 +103,7 @@ interface FetchAITaskResultParams extends FetchSSEOptions {
 
 interface CreateAssistantMessageStream extends FetchSSEOptions {
   abortController?: AbortController;
+  executionContext?: FetchOptions['executionContext'];
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;
@@ -289,6 +290,7 @@ class ChatService {
       // Use raw chatConfig values, not selectors with business logic that may force false
       enableHistoryCount: chatConfig.enableHistoryCount,
       enableUserMemories,
+      executionContext: options?.executionContext,
       groupId,
       // historyCount is number of history messages; add 1 for current user message
       historyCount: (chatConfig.historyCount ?? 20) + 1,
@@ -342,11 +344,13 @@ class ChatService {
     metadata,
     trace,
     historySummary,
+    executionContext,
     initialContext,
     stepContext,
   }: CreateAssistantMessageStream) => {
     await this.createAssistantMessage(params, {
       historySummary,
+      executionContext,
       initialContext,
       onAbort,
       onErrorHandle,

@@ -28,6 +28,7 @@ import type { IServiceModule } from '@/services';
 import { createLogger } from '@/utils/logger';
 
 import { BrowserManager } from './browser/BrowserManager';
+import { ExecutionContextManager } from './executionContext/ExecutionContextManager';
 import { backendProxyProtocolManager } from './infrastructure/BackendProxyProtocolManager';
 import { I18nManager } from './infrastructure/I18nManager';
 import { IoCContainer } from './infrastructure/IoCContainer';
@@ -54,6 +55,7 @@ const importAll = (r: any) => Object.values(r).map((v: any) => v.default);
 
 export class App {
   browserManager: BrowserManager;
+  executionContextManager: ExecutionContextManager;
   menuManager: MenuManager;
   i18n: I18nManager;
   storeManager: StoreManager;
@@ -102,6 +104,9 @@ export class App {
     logger.debug('Initializing App');
     // Initialize store manager
     this.storeManager = new StoreManager(this);
+    this.executionContextManager = new ExecutionContextManager({
+      managedWorkspaceRoot: path.join(app.getPath('userData'), 'execution-workspaces'),
+    });
 
     this.rendererUrlManager = new RendererUrlManager();
     // Wire the backend reverse-proxy as an `app://` interceptor: keeps

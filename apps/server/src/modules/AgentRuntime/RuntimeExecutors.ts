@@ -2939,6 +2939,7 @@ export const createRuntimeExecutors = (
             }),
           );
           const dispatchResult = await dispatchClientTool(chatToolPayload, {
+            executionContextRef: state.metadata?.executionContext?.ref,
             operationId,
             streamManager,
             timeoutMs,
@@ -3557,6 +3558,7 @@ export const createRuntimeExecutors = (
                 }),
               );
               const dispatchResult = await dispatchClientTool(chatToolPayload, {
+                executionContextRef: state.metadata?.executionContext?.ref,
                 operationId,
                 streamManager,
                 timeoutMs,

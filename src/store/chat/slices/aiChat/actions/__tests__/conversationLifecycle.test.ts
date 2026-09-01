@@ -27,6 +27,10 @@ const mockLocalFileService = vi.hoisted(() => ({
   listLocalFiles: vi.fn(),
   readLocalFile: vi.fn(),
 }));
+const mockExecutionContextService = vi.hoisted(() => ({
+  close: vi.fn(),
+  prepare: vi.fn(),
+}));
 
 vi.mock('@lobechat/const', async (importOriginal) => {
   const actual = await importOriginal<typeof LobechatConstModule>();
@@ -44,6 +48,10 @@ vi.mock('../heterogeneousAgentExecutor', () => ({
 
 vi.mock('@/services/electron/localFileService', () => ({
   localFileService: mockLocalFileService,
+}));
+
+vi.mock('@/services/electron/executionContext', () => ({
+  executionContextService: mockExecutionContextService,
 }));
 
 // Mock lambdaClient to prevent network requests
@@ -78,6 +86,8 @@ beforeEach(() => {
 afterEach(() => {
   executeHeterogeneousAgentMock.mockReset();
   mockConstEnv.isDesktop = false;
+  mockExecutionContextService.close.mockReset();
+  mockExecutionContextService.prepare.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -759,6 +769,251 @@ describe('ConversationLifecycle actions', () => {
         expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
           expect.objectContaining({
             context: expect.not.objectContaining({ documentId: expect.anything() }),
+          }),
+        );
+      });
+    });
+
+    describe('local execution context', () => {
+      it('prepares one snapshot and passes it unchanged to a Gateway run', async () => {
+        mockConstEnv.isDesktop = true;
+        const { result } = renderHook(() => useChatStore());
+        const snapshot = {
+          createdAt: '2026-09-01T00:00:00.000Z',
+          environment: {
+            inherited: 'all',
+            overriddenKeys: [],
+            pathEntryCount: 3,
+            removedKeys: [],
+          },
+          ref: { contextId: 'ctx-turn', version: 1 },
+          runtimePlan: {
+            runtime: 'node',
+            runtimeCapability: { available: true },
+            runtimeSource: 'default',
+            status: 'ready',
+          },
+          workspace: {
+            realPath: '/workspace/topic',
+            source: 'selected',
+            writableRoots: ['/workspace/topic'],
+          },
+        } as const;
+        mockExecutionContextService.prepare.mockResolvedValue(snapshot);
+
+        const executeGatewayAgentSpy = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'op-gateway',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+
+        act(() => {
+          useChatStore.setState({
+            executeGatewayAgent: executeGatewayAgentSpy,
+            isGatewayModeEnabled: () => true,
+            topicDataMap: {
+              [topicMapKey({ agentId: TEST_IDS.SESSION_ID })]: {
+                items: [
+                  {
+                    id: TEST_IDS.TOPIC_ID,
+                    metadata: { workingDirectory: '/workspace/topic' },
+                    title: 'Topic',
+                  },
+                ],
+                total: 1,
+              },
+            } as any,
+          });
+        });
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
+            },
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(mockExecutionContextService.prepare).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentId: TEST_IDS.SESSION_ID,
+            environmentPolicy: { inherit: 'all' },
+            requestedWorkingDirectory: '/workspace/topic',
+            topicId: TEST_IDS.TOPIC_ID,
+            workload: { kind: 'unknown' },
+          }),
+        );
+        expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ executionContext: snapshot }),
+          }),
+        );
+      });
+
+      it('keeps direct local runtime enabled and requests a managed workspace when none is selected', async () => {
+        mockConstEnv.isDesktop = true;
+        const { result } = renderHook(() => useChatStore());
+        const snapshot = {
+          createdAt: '2026-09-01T00:00:00.000Z',
+          environment: {
+            inherited: 'all',
+            overriddenKeys: [],
+            pathEntryCount: 3,
+            removedKeys: [],
+          },
+          ref: { contextId: 'ctx-managed', version: 1 },
+          runtimePlan: {
+            runtime: 'node',
+            runtimeCapability: { available: true },
+            runtimeSource: 'default',
+            status: 'ready',
+          },
+          workspace: {
+            realPath: '/managed/new-topic-workspace',
+            source: 'managed',
+            writableRoots: ['/managed/new-topic-workspace'],
+          },
+        } as const;
+        mockExecutionContextService.prepare.mockResolvedValue(snapshot);
+        mockExecutionContextService.close.mockResolvedValue({ closed: true });
+        const sendMessageInServerSpy = vi
+          .spyOn(aiChatService, 'sendMessageInServer')
+          .mockResolvedValue({
+            assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+            isCreateNewTopic: true,
+            messages: [
+              createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
+              createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
+            ],
+            topicId: 'managed-topic',
+            topics: [],
+            userMessageId: TEST_IDS.USER_MESSAGE_ID,
+          } as any);
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(mockExecutionContextService.prepare).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agentId: TEST_IDS.SESSION_ID,
+            requestedWorkingDirectory: null,
+            topicId: null,
+          }),
+        );
+        expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            newTopic: expect.objectContaining({
+              metadata: { workingDirectory: '/managed/new-topic-workspace' },
+            }),
+          }),
+          expect.any(AbortController),
+        );
+        expect(result.current.executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ executionContext: snapshot }),
+          }),
+        );
+        expect(mockExecutionContextService.close).toHaveBeenCalledWith(snapshot.ref);
+      });
+
+      it('resolves the configured environment profile and selected Skill workload once', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            chatConfig: { runtimeEnv: { shellEnvironmentProfile: 'core' } },
+          },
+        });
+        const { result } = renderHook(() => useChatStore());
+        vi.spyOn(toolStoreModule, 'getToolStoreState').mockReturnValue({
+          agentSkillDetailMap: {},
+          agentSkills: [],
+          builtinSkills: [
+            {
+              content: 'Generate charts with the bundled runtime.',
+              description: 'Charting',
+              execution: { bunCompatible: true, packageManager: 'bun', runtime: 'bun' },
+              identifier: 'masterino-charting',
+              name: 'Charting',
+              source: 'builtin',
+            },
+          ],
+        } as any);
+        mockExecutionContextService.close.mockResolvedValue({ closed: true });
+        mockExecutionContextService.prepare.mockResolvedValue({
+          createdAt: '2026-09-01T00:00:00.000Z',
+          environment: {
+            inherited: 'core',
+            overriddenKeys: [],
+            pathEntryCount: 3,
+            removedKeys: [],
+          },
+          ref: { contextId: 'ctx-skill', version: 1 },
+          runtimePlan: {
+            packageManager: 'bun',
+            runtime: 'bun',
+            runtimeCapability: { available: true },
+            runtimeSource: 'workload',
+            status: 'ready',
+          },
+          workspace: {
+            realPath: '/managed/skill-workspace',
+            source: 'managed',
+            writableRoots: ['/managed/skill-workspace'],
+          },
+        });
+        act(() => {
+          useChatStore.setState({
+            executeGatewayAgent: vi.fn().mockResolvedValue({
+              assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+              operationId: 'op-skill',
+              userMessageId: TEST_IDS.USER_MESSAGE_ID,
+            }),
+            isGatewayModeEnabled: () => true,
+          });
+        });
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            editorData: {
+              root: {
+                children: [
+                  {
+                    children: [
+                      {
+                        actionCategory: 'skill',
+                        actionLabel: 'Charting',
+                        actionType: 'masterino-charting',
+                        type: 'action-tag',
+                      },
+                    ],
+                    type: 'paragraph',
+                  },
+                ],
+                type: 'root',
+              },
+            } as any,
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(mockExecutionContextService.prepare).toHaveBeenCalledWith(
+          expect.objectContaining({
+            environmentPolicy: { inherit: 'core' },
+            workload: {
+              bunCompatible: true,
+              kind: 'skill',
+              masterinoOwned: true,
+              packageManager: 'bun',
+              runtime: 'bun',
+            },
           }),
         );
       });

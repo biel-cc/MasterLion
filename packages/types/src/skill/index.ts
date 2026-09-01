@@ -7,6 +7,13 @@ export const skillAuthorSchema = z.object({
   url: z.string().url().optional(),
 });
 
+export const skillExecutionDeclarationSchema = z.object({
+  /** Explicit opt-in; Bun is never inferred as a Node substitute. */
+  bunCompatible: z.boolean().optional(),
+  packageManager: z.enum(['bun', 'npm', 'pip', 'pnpm', 'uv', 'yarn']).optional(),
+  runtime: z.enum(['bun', 'node', 'python', 'shell']).optional(),
+});
+
 export const skillManifestSchema = z
   .object({
     // Author can be either a string or an object (for compatibility with market skills)
@@ -14,6 +21,8 @@ export const skillManifestSchema = z
 
     // Required: skill description
     description: z.string().min(1, 'Skill description is required'),
+
+    execution: skillExecutionDeclarationSchema.optional(),
 
     license: z.string().optional(),
 
@@ -38,12 +47,16 @@ export const skillManifestSchema = z
 export type SkillManifest = z.infer<typeof skillManifestSchema>;
 export type SkillAuthor = z.infer<typeof skillAuthorSchema>;
 
+export type SkillExecutionDeclaration = z.infer<typeof skillExecutionDeclarationSchema>;
+
 // ===== Builtin Skill =====
 
 export interface BuiltinSkill {
   avatar?: string;
   content: string;
   description: string;
+  /** Runtime intent for skills whose command path has been compatibility-tested. */
+  execution?: SkillExecutionDeclaration;
   identifier: string;
   name: string;
   /**

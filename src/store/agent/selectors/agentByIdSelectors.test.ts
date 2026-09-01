@@ -154,6 +154,18 @@ describe('agentByIdSelectors', () => {
         '/home/me/Desktop',
       );
     });
+
+    it('keeps the explicit execution selection empty instead of returning Home/Desktop', () => {
+      vi.spyOn(globalAgentContextManager, 'getContext').mockReturnValue({
+        desktopPath: '/home/me/Desktop',
+        homePath: '/home/me',
+      });
+      const state = stateWith({ agencyConfig: {} });
+
+      expect(
+        agentByIdSelectors.getAgentSelectedWorkingDirectoryById('agent-1', 'device-A')(state),
+      ).toBeUndefined();
+    });
   });
 
   describe('getAgentConfigErrorById', () => {

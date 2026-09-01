@@ -19,13 +19,16 @@ export default class CliCtr extends ControllerModule {
   static override readonly groupName = 'cli';
 
   @IpcMethod()
-  async runCliCommand(args: string): Promise<{ exitCode: number; stderr: string; stdout: string }> {
+  async runCliCommand(
+    args: string,
+    execution?: { cwd?: string; env?: Record<string, string> },
+  ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
     const execAsync = promisify(exec);
     const wrapperDir = getCliWrapperDir();
     const cmd = process.platform === 'win32' ? 'lobehub.cmd' : 'lobehub';
     const wrapperPath = path.join(wrapperDir, cmd);
 
-    const env = { ...process.env };
+    const env = { ...(execution?.env ?? process.env) };
 
     const remoteCtr = this.app.getController(RemoteServerConfigCtr);
     if (remoteCtr) {
@@ -43,6 +46,7 @@ export default class CliCtr extends ControllerModule {
 
     try {
       const { stdout, stderr } = await execAsync(`"${wrapperPath}" ${args}`, {
+        cwd: execution?.cwd,
         env,
         timeout: 15_000,
       });

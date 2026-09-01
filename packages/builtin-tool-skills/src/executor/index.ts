@@ -35,14 +35,17 @@ class SkillsExecutor extends BaseExecutor<typeof SkillsApiName> {
       // Server will resolve zipUrls for all activated skills
       const activatedSkills = ctx.stepContext?.activatedSkills;
 
-      const result = await this.runtime.execScript({
-        ...params,
-        activatedSkills: activatedSkills?.map((s) => ({
-          description: s.description,
-          id: s.id,
-          name: s.name,
-        })),
-      });
+      const result = await this.runtime.execScript(
+        {
+          ...params,
+          activatedSkills: activatedSkills?.map((s) => ({
+            description: s.description,
+            id: s.id,
+            name: s.name,
+          })),
+        },
+        ctx.executionContext,
+      );
 
       if (result.success) {
         return { content: result.content, state: result.state, success: true };
@@ -129,7 +132,7 @@ class SkillsExecutor extends BaseExecutor<typeof SkillsApiName> {
         return { stop: true, success: false };
       }
 
-      const result = await this.runtime.runCommand(params);
+      const result = await this.runtime.runCommand(params, ctx.executionContext);
 
       if (result.success) {
         return { content: result.content, state: result.state, success: true };
