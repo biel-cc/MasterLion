@@ -63,6 +63,7 @@ const createBridgeClient = (overrides: Record<string, unknown> = {}) => ({
   linkOAuthBinding: vi.fn().mockResolvedValue({ status: 'existing' }),
   listManagedTokens: vi.fn().mockResolvedValue([]),
   reassignToken: vi.fn().mockResolvedValue(true),
+  supportsUnavailableTokenInspection: vi.fn().mockResolvedValue(true),
   ...overrides,
 });
 
@@ -300,6 +301,39 @@ describe('NewApiProvisioningAdapter', () => {
       }),
     ).rejects.toThrow('token bridge timeout');
 
+    expect(client.listTokens).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('does not reconcile a recorded token through an older Bridge contract', async () => {
+    const client = createClient();
+    const bridgeClient = createBridgeClient({
+      findUserById: vi.fn().mockResolvedValue({
+        id: 9001,
+        status: 1,
+        username: 'E-1001',
+      }),
+      supportsUnavailableTokenInspection: vi.fn().mockResolvedValue(false),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        preferredManagedTokenId: 8001,
+        preferredNewApiUserId: 9001,
+      }),
+    ).rejects.toMatchObject({
+      code: 'aihub_bridge_token_inspection_unsupported',
+      kind: 'configuration',
+    });
+
+    expect(bridgeClient.findManagedTokenById).not.toHaveBeenCalled();
+    expect(bridgeClient.findManagedToken).not.toHaveBeenCalled();
     expect(client.listTokens).not.toHaveBeenCalled();
     expect(client.createToken).not.toHaveBeenCalled();
   });

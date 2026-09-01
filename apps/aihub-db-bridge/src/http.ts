@@ -118,6 +118,10 @@ export const createBridgeHandler = ({
         return success({ ok: true });
       }
 
+      if (url.pathname === '/v1/capabilities') {
+        return success({ inspectUnavailableManagedToken: true });
+      }
+
       if (url.pathname === '/v1/users/resolve') {
         const email = url.searchParams.get('email') || undefined;
         const username = url.searchParams.get('username') || undefined;

@@ -15,6 +15,40 @@ describe('NewApiBridgeClient', () => {
     expect(new NewApiBridgeClient().isEnabled()).toBe(false);
   });
 
+  it('detects whether the Bridge can inspect unavailable managed tokens', async () => {
+    const supportedFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { inspectUnavailableManagedToken: true }, success: true }),
+        { status: 200 },
+      ),
+    );
+    const legacyFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { code: 'not_found', message: 'Endpoint was not found' } }),
+        { status: 404 },
+      ),
+    );
+
+    await expect(
+      new NewApiBridgeClient({
+        baseUrl: 'http://bridge:3218',
+        fetchImpl: supportedFetch as any,
+        token: 'bridge-secret',
+      }).supportsUnavailableTokenInspection(),
+    ).resolves.toBe(true);
+    await expect(
+      new NewApiBridgeClient({
+        baseUrl: 'http://legacy-bridge:3218',
+        fetchImpl: legacyFetch as any,
+        token: 'bridge-secret',
+      }).supportsUnavailableTokenInspection(),
+    ).resolves.toBe(false);
+    expect(supportedFetch).toHaveBeenCalledWith(
+      'http://bridge:3218/v1/capabilities',
+      expect.any(Object),
+    );
+  });
+
   it('sends the service token when resolving users', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ data: { id: 7, username: 'ada' }, success: true }), {

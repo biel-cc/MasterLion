@@ -228,6 +228,41 @@ describe('AihubReadiness', () => {
     );
   });
 
+  it('keeps a locally usable historical row active while the Bridge contract is upgraded', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    workflow.provision.mockRejectedValue(
+      new AihubReadinessError(
+        'Aihub Bridge must be upgraded before reconciling a recorded managed token',
+        'configuration',
+        'aihub_bridge_token_inspection_unsupported',
+      ),
+    );
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({
+      errorCode: 'aihub_bridge_token_inspection_unsupported',
+      isBound: true,
+      readinessVersion: 1,
+      retryable: false,
+      status: 'active',
+    });
+
+    expect(bindingStore.markPending).not.toHaveBeenCalled();
+    expect(bindingStore.markError).not.toHaveBeenCalled();
+    expect(bindingStore.markReconcileError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ errorCode: 'aihub_bridge_token_inspection_unsupported' }),
+    );
+  });
+
   it('still blocks a historical active row when revalidation proves entitlement is invalid', async () => {
     const { bindingStore, readiness, workflow } = createHarness();
     bindingStore.get.mockResolvedValue({

@@ -489,6 +489,18 @@ export class NewApiProvisioningAdapter {
     if (this.bridgeClient?.isEnabled()) {
       try {
         if (preferredManagedTokenId) {
+          const supportsInspection = this.bridgeClient.supportsUnavailableTokenInspection;
+          if (
+            typeof supportsInspection === 'function' &&
+            !(await supportsInspection.call(this.bridgeClient))
+          ) {
+            throw new NewApiProvisioningError(
+              'Aihub Bridge must be upgraded before reconciling a recorded managed token',
+              'configuration',
+              'aihub_bridge_token_inspection_unsupported',
+            );
+          }
+
           const recorded = assertManagedTokenEnabled(
             await this.bridgeClient.findManagedTokenById(
               newApiUserId,

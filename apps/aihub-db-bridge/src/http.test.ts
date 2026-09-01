@@ -66,6 +66,24 @@ describe('createBridgeHandler', () => {
     expect(repo.findUserById).not.toHaveBeenCalled();
   });
 
+  it('advertises raw managed-token inspection support', async () => {
+    const repo = createRepo();
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      managedTokenName: 'managed',
+      iamProviderId: 1,
+      repository: repo as any,
+    });
+
+    const response = await readResponse(await handler(makeRequest('/v1/capabilities')));
+
+    expect(response).toEqual({
+      body: { data: { inspectUnavailableManagedToken: true }, success: true },
+      status: 200,
+    });
+    expect(repo.findUserById).not.toHaveBeenCalled();
+  });
+
   it('resolves users by identity', async () => {
     const repo = createRepo();
     const handler = createBridgeHandler({
