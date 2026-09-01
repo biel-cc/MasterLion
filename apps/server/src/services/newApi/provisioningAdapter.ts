@@ -5,7 +5,6 @@ import {
   NewApiError,
   type NewApiManagementAuth,
   type NewApiToken,
-  type NewApiUpdateUserInput,
   type NewApiUser,
 } from './client';
 import type { AihubReadinessErrorKind } from './readiness';
@@ -36,6 +35,7 @@ export type ProvisionEnterpriseUserInput = {
   name?: string;
   policy: ProvisioningPolicy;
   preferredManagedTokenId?: number;
+  preferredNewApiUserId?: number;
   userId: string;
 };
 
@@ -65,7 +65,7 @@ export class NewApiProvisioningError extends Error {
 
 type ProvisioningClient = Pick<
   NewApiClient,
-  'createToken' | 'createUser' | 'listTokens' | 'searchUsers' | 'updateUser'
+  'createToken' | 'createUser' | 'listTokens' | 'searchUsers'
 >;
 
 type NewApiProvisioningAdapterOptions = {
@@ -222,12 +222,6 @@ const isDuplicateUserError = (error: unknown): boolean => {
   );
 };
 
-const getUserQuota = (user: NewApiUser | undefined): number | undefined => {
-  if (!user) return undefined;
-  const quota = user.quota;
-  return typeof quota === 'number' && Number.isFinite(quota) ? quota : undefined;
-};
-
 const getLegacyManagedTokenName = (policy: AihubProvisioningPolicy) =>
   asTrimmedString(policy.managedTokenName);
 
@@ -249,7 +243,7 @@ const getCreateUsername = (input: ProvisionEnterpriseUserInput) => {
 };
 
 export class NewApiProvisioningAdapter {
-  private adminAuth: NewApiManagementAuth;
+  private adminAuth: NewApiManagementAuth | undefined;
   private bridgeClient: NewApiBridgeClient | undefined;
   private client: ProvisioningClient;
 
@@ -259,8 +253,13 @@ export class NewApiProvisioningAdapter {
       new NewApiClient({
         baseUrl: process.env.AIHUB_PROXY_URL ?? '',
       });
-    this.adminAuth = options.adminAuth ?? getAdminAuthFromEnv();
+    this.adminAuth = options.adminAuth;
     this.bridgeClient = options.bridgeClient ?? new NewApiBridgeClient();
+  }
+
+  private getAdminAuth() {
+    this.adminAuth ??= getAdminAuthFromEnv();
+    return this.adminAuth;
   }
 
   async provisionEnterpriseUser(
@@ -281,7 +280,20 @@ export class NewApiProvisioningAdapter {
     }
     const managedTokenName = `Masterino_${expectedUsername}`;
 
-    let targetUser = await this.findUser(keyword);
+    let targetUser: NewApiUser | undefined;
+    if (isValidId(input.preferredNewApiUserId)) {
+      if (!this.bridgeClient?.isEnabled()) {
+        throw new NewApiProvisioningError(
+          'Aihub bridge is required to verify the existing user binding',
+          'configuration',
+          'aihub_bridge_required',
+        );
+      }
+      targetUser = await this.bridgeClient.findUserById(input.preferredNewApiUserId);
+      if (targetUser) targetUser = assertSameUserIdentity(targetUser, input);
+    }
+
+    targetUser ??= await this.findUser(keyword);
     let identityMismatch = false;
     if (targetUser && !isSameUserIdentity(targetUser, input)) {
       identityMismatch = true;
@@ -310,7 +322,7 @@ export class NewApiProvisioningAdapter {
     }
 
     if (!targetUser) {
-      if (!policy.autoCreateUser) {
+      if (policy.enabled === false || !policy.autoCreateUser) {
         throw new NewApiProvisioningError(
           `Aihub user matching "${keyword}"${lookupField !== 'email' ? ` or "${input.email}"` : ''} was not found and autoCreateUser is disabled`,
           'entitlement',
@@ -321,10 +333,13 @@ export class NewApiProvisioningAdapter {
       targetUser = await this.createUser(input, policy);
     }
 
-    // Bug 2: an existing Aihub user created without the default initial quota
-    // (e.g. pre-provisioned manually or via a prior partial failure) would have
-    // no balance. Top up the configured initial quota when the user has none.
-    targetUser = await this.ensureInitialQuota(targetUser, policy);
+    if (targetUser.status !== undefined && Number(targetUser.status) !== 1) {
+      throw new NewApiProvisioningError(
+        `Aihub user ${targetUser.id} is disabled`,
+        'entitlement',
+        'aihub_user_inactive',
+      );
+    }
 
     const token = await this.ensureManagedToken(
       targetUser.id,
@@ -349,12 +364,17 @@ export class NewApiProvisioningAdapter {
   }
 
   private async findUser(keyword: string) {
-    const page = await this.client.searchUsers(this.adminAuth, {
-      keyword,
-      pageSize: 20,
-    });
-
-    const exact = findExactUser(page.items ?? [], keyword);
+    let adminError: unknown;
+    let exact: NewApiUser | undefined;
+    try {
+      const page = await this.client.searchUsers(this.getAdminAuth(), {
+        keyword,
+        pageSize: 20,
+      });
+      exact = findExactUser(page.items ?? [], keyword);
+    } catch (error) {
+      adminError = error;
+    }
     if (exact) return exact;
 
     // Bug 1c: the admin API search can miss existing users (pagination cap of
@@ -362,15 +382,13 @@ export class NewApiProvisioningAdapter {
     // authoritative DB read so a user that exists in Aihub is not treated as
     // "not found" — which would otherwise trigger a duplicate create attempt.
     if (this.bridgeClient?.isEnabled()) {
-      try {
-        const bridged = await this.bridgeClient.findUserByIdentity({
-          email: keyword,
-          username: keyword,
-        });
-        if (bridged && isValidId(bridged.id)) return bridged;
-      } catch {
-        // bridge lookup failed — treat as not found and let the caller decide
-      }
+      const bridged = await this.bridgeClient.findUserByIdentity({
+        email: keyword,
+        username: keyword,
+      });
+      if (bridged && isValidId(bridged.id)) return bridged;
+    } else if (adminError) {
+      throw adminError;
     }
 
     return undefined;
@@ -410,7 +428,7 @@ export class NewApiProvisioningAdapter {
     let createdUser: NewApiUser | undefined;
 
     try {
-      createdUser = await this.client.createUser(this.adminAuth, createInput);
+      createdUser = await this.client.createUser(this.getAdminAuth(), createInput);
     } catch (error) {
       // Bug 1b: a prior partial provisioning failure may have already created
       // the Aihub user. On a duplicate-username conflict, reuse the existing
@@ -455,32 +473,6 @@ export class NewApiProvisioningAdapter {
     );
   }
 
-  private async ensureInitialQuota(
-    user: NewApiUser,
-    policy: AihubProvisioningPolicy,
-  ): Promise<NewApiUser> {
-    const initialQuota = typeof policy.initialQuota === 'number' ? policy.initialQuota : 0;
-    if (initialQuota <= 0) return user;
-    // Only top up when the user has no balance; never reduce an existing quota.
-    const currentQuota = getUserQuota(user);
-    if (currentQuota === undefined || currentQuota > 0) return user;
-
-    const updateInput: NewApiUpdateUserInput = {
-      id: user.id,
-      quota: initialQuota,
-    };
-    const updated = await this.client.updateUser(this.adminAuth, updateInput);
-    if (!updated || !isValidId(updated.id)) {
-      throw new NewApiProvisioningError(
-        `Aihub quota top-up did not return a valid user for ${user.id}`,
-        'transient',
-        'aihub_quota_top_up_incomplete',
-      );
-    }
-
-    return { ...user, quota: initialQuota };
-  }
-
   private async ensureManagedToken(
     newApiUserId: number,
     managedTokenName: string,
@@ -508,13 +500,22 @@ export class NewApiProvisioningAdapter {
           const bridgedToken = await this.bridgeClient.findManagedToken(newApiUserId, name);
           if (isUsableManagedToken(bridgedToken)) return bridgedToken;
         }
-      } catch {
+      } catch (error) {
+        if (preferredManagedTokenId) throw error;
         // Bridge lookup failed — fall through to admin API approach
       }
     }
 
+    if (policy.enabled === false) {
+      throw new NewApiProvisioningError(
+        'Aihub provisioning is disabled by enterprise policy',
+        'entitlement',
+        'aihub_provisioning_disabled',
+      );
+    }
+
     const findAdminVisibleToken = async (name: string) => {
-      const page = await this.client.listTokens(this.adminAuth, {
+      const page = await this.client.listTokens(this.getAdminAuth(), {
         keyword: name,
         pageSize: 100,
       });
@@ -529,7 +530,10 @@ export class NewApiProvisioningAdapter {
     let token = await findAdminVisibleToken(managedTokenName);
     if (isUsableManagedToken(token)) {
       if (Number(token.user_id) === newApiUserId) return token;
-      if (token.user_id !== undefined && Number(token.user_id) !== this.adminAuth.newApiUserId) {
+      if (
+        token.user_id !== undefined &&
+        Number(token.user_id) !== this.getAdminAuth().newApiUserId
+      ) {
         throw new NewApiProvisioningError(
           `Aihub managed token identity conflict: token ${token.id} belongs to user ${token.user_id}`,
           'identity_conflict',
@@ -552,7 +556,7 @@ export class NewApiProvisioningAdapter {
 
     // 4. Create the canonical name from the start. Do not trust createToken's
     //    response id: some Aihub versions omit it. Re-list by the stable name.
-    await this.client.createToken(this.adminAuth, {
+    await this.client.createToken(this.getAdminAuth(), {
       expired_time: -1,
       name: managedTokenName,
       remain_quota: policy.managedTokenQuota,
@@ -562,7 +566,10 @@ export class NewApiProvisioningAdapter {
     token = await findAdminVisibleToken(managedTokenName);
     if (isUsableManagedToken(token)) {
       if (Number(token.user_id) === newApiUserId) return token;
-      if (token.user_id !== undefined && Number(token.user_id) !== this.adminAuth.newApiUserId) {
+      if (
+        token.user_id !== undefined &&
+        Number(token.user_id) !== this.getAdminAuth().newApiUserId
+      ) {
         throw new NewApiProvisioningError(
           `Aihub managed token identity conflict: token ${token.id} belongs to user ${token.user_id}`,
           'identity_conflict',

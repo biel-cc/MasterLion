@@ -68,7 +68,6 @@ export class NewApiBindingModel {
         set: {
           managedTokenId: params.managedTokenId,
           newApiUserId: params.newApiUserId,
-          status: 'pending',
           updatedAt: now,
         },
         target: newApiBindings.userId,

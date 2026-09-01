@@ -944,13 +944,12 @@ export class NewApiService {
 
     const defaultModel = getDefaultModel(models);
 
-    const aiModelModel = new AiModelModel(this.db, this.userId);
-    await aiModelModel.clearRemoteModels(ModelProvider.NewAPI);
-    await aiModelModel.batchUpdateAiModels(ModelProvider.NewAPI, models);
-
-    // The credential is part of core Aihub readiness even when the user's
-    // current model set has no chat default (for example embedding-only).
+    // Persist the refreshed credential before touching the last-known-good model
+    // set. A credential failure must not leave an existing user with no models.
     await this.saveManagedProviderToken(key, defaultModel);
+
+    const aiModelModel = new AiModelModel(this.db, this.userId);
+    await aiModelModel.replaceRemoteModels(ModelProvider.NewAPI, models);
 
     return {
       defaultModel,
@@ -979,7 +978,7 @@ export class NewApiService {
     return { ...toAccountSummary(account), quotaPolicy };
   }
 
-  async ensureManagedToken() {
+  async ensureManagedToken(options: { preserveExistingActive?: boolean } = {}) {
     const binding = await this.getBindingOrThrow();
     const bindingModel = new NewApiBindingModel(this.db, this.userId);
 
@@ -1064,16 +1063,17 @@ export class NewApiService {
         errorMessage: error instanceof Error ? error.message : String(error),
         lastSyncedAt: new Date(),
         managedTokenId: binding.managedTokenId,
-        status: 'error',
+        status:
+          options.preserveExistingActive && binding.status === 'active' ? 'active' : 'error',
       });
 
       throw error;
     }
   }
 
-  async syncModels() {
+  async syncModels(options: { preserveExistingActive?: boolean } = {}) {
     const binding = await this.getBindingOrThrow();
-    const { key } = await this.ensureManagedToken();
+    const { key } = await this.ensureManagedToken(options);
     return this.syncModelsForBinding(binding, key);
   }
 

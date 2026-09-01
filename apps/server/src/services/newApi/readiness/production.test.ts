@@ -24,15 +24,16 @@ const createHarness = () => {
   const saveRemoteIdentifiers = vi.fn().mockResolvedValue(undefined);
   const syncModels = vi.fn().mockResolvedValue({ models: [{ id: 'gpt-5' }] });
   const inspectRuntime = vi.fn().mockResolvedValue({ hasApiKey: true, modelCount: 1 });
+  const getPolicy = vi.fn().mockResolvedValue({
+    aihubProvisioning: {
+      autoCreateUser: true,
+      enabled: true,
+      managedTokenName: 'masterlion-managed',
+    },
+  });
   const workflow = new ProductionAihubReadinessWorkflow({
     db: {} as any,
-    getPolicy: vi.fn().mockResolvedValue({
-      aihubProvisioning: {
-        autoCreateUser: true,
-        enabled: true,
-        managedTokenName: 'masterlion-managed',
-      },
-    }),
+    getPolicy,
     inspectRuntime,
     provisionerFactory: () => ({ provisionEnterpriseUser }),
     saveRemoteIdentifiers,
@@ -40,6 +41,7 @@ const createHarness = () => {
   });
 
   return {
+    getPolicy,
     inspectRuntime,
     provisionEnterpriseUser,
     saveRemoteIdentifiers,
@@ -65,6 +67,7 @@ describe('ProductionAihubReadinessWorkflow', () => {
         employeeNumber: '10184591',
         masterinoUsername: '10184591',
         preferredManagedTokenId: 7001,
+        preferredNewApiUserId: 9001,
       }),
     );
     expect(saveRemoteIdentifiers).toHaveBeenCalledWith('user-1', {
@@ -96,6 +99,33 @@ describe('ProductionAihubReadinessWorkflow', () => {
       code: 'aihub_models_unavailable',
       kind: 'entitlement',
     });
+  });
+
+  it('allows an existing stable binding to reconcile when new provisioning is disabled', async () => {
+    const { getPolicy, provisionEnterpriseUser, workflow } = createHarness();
+    getPolicy.mockResolvedValue({
+      aihubProvisioning: {
+        autoCreateUser: false,
+        enabled: false,
+        managedTokenName: 'masterlion-managed',
+      },
+    });
+
+    await expect(
+      workflow.provision({
+        binding: {
+          managedTokenId: 7001,
+          newApiUserId: 9001,
+          readinessVersion: 1,
+          status: 'active',
+        },
+        identity,
+        trigger: 'model_runtime',
+        userId: 'user-1',
+      }),
+    ).resolves.toMatchObject({ managedTokenId: 8001, newApiUserId: 9001 });
+
+    expect(provisionEnterpriseUser).toHaveBeenCalledOnce();
   });
 
   it('classifies a missing administrator credential as configuration, not transient', async () => {

@@ -80,7 +80,7 @@ describe('NewApiBindingModel', () => {
     });
   });
 
-  it('updates remote readiness ids without clearing a historical encrypted access token', async () => {
+  it('updates remote readiness ids without downgrading a historical active binding', async () => {
     const model = new NewApiBindingModel(serverDB, userId);
     await model.upsert({
       encryptedAccessToken: 'historical-encrypted-token',
@@ -95,7 +95,7 @@ describe('NewApiBindingModel', () => {
       encryptedAccessToken: 'historical-encrypted-token',
       managedTokenId: 21,
       newApiUserId: 43,
-      status: 'pending',
+      status: 'active',
     });
   });
 

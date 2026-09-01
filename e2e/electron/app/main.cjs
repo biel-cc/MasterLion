@@ -17,12 +17,20 @@ const aihubReadinessModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
 ).href;
 
-const createAihubHarness = async () => {
-  const { AihubReadiness } = await import(aihubReadinessModuleUrl);
-  let binding;
+const createAihubHarness = async ({ legacyTransient = false } = {}) => {
+  const { AihubReadiness, AihubReadinessError } = await import(aihubReadinessModuleUrl);
+  let binding = legacyTransient
+    ? {
+        managedTokenId: 8001,
+        newApiUserId: 9001,
+        readinessVersion: 1,
+        status: 'active',
+      }
+    : undefined;
   let leaseOwner;
-  let localRuntimeReady = false;
+  let localRuntimeReady = legacyTransient;
   let provisionCount = 0;
+  let reconcileErrorCount = 0;
   const bindingStore = {
     get: async () => binding,
     markActive: async (_userId, input) => {
@@ -38,6 +46,10 @@ const createAihubHarness = async () => {
         attemptCount: (binding?.attemptCount ?? 0) + 1,
         status: 'pending',
       };
+    },
+    markReconcileError: async (_userId, input) => {
+      reconcileErrorCount += 1;
+      binding = { ...binding, ...input, status: 'active' };
     },
     updateIamBinding: async (_userId, input) => {
       binding = {
@@ -64,6 +76,13 @@ const createAihubHarness = async () => {
     provision: async () => {
       provisionCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 75));
+      if (legacyTransient) {
+        throw new AihubReadinessError(
+          'Aihub bridge is temporarily unavailable',
+          'transient',
+          'aihub_bridge_unavailable',
+        );
+      }
       return {
         iamOAuthBinding: { status: 'active' },
         managedTokenId: 8001,
@@ -88,11 +107,12 @@ const createAihubHarness = async () => {
   return {
     createRuntime: () => new AihubReadiness(options),
     getProvisionCount: () => provisionCount,
+    getReconcileErrorCount: () => reconcileErrorCount,
   };
 };
 
 ipcMain.handle('masterino-e2e:run-aihub-readiness', async (_event, scenario) => {
-  const harness = await createAihubHarness();
+  const harness = await createAihubHarness({ legacyTransient: scenario === 'legacy-transient' });
   if (scenario === 'concurrent') {
     const runtime = harness.createRuntime();
     const states = await Promise.all(
@@ -117,8 +137,26 @@ ipcMain.handle('masterino-e2e:run-aihub-readiness', async (_event, scenario) => 
       status: relaunchedState.status,
     };
   }
+  if (scenario === 'legacy-transient') {
+    const state = await harness
+      .createRuntime()
+      .ensure('user-1', { trigger: 'model_runtime' });
+    return {
+      activeCount: state.status === 'active' ? 1 : 0,
+      pendingCount: 0,
+      provisionCount: harness.getProvisionCount(),
+      reconcileErrorCount: harness.getReconcileErrorCount(),
+      status: state.status,
+    };
+  }
 
-  return { activeCount: 0, pendingCount: 0, provisionCount: 0, status: 'failed' };
+  return {
+    activeCount: 0,
+    pendingCount: 0,
+    provisionCount: 0,
+    reconcileErrorCount: 0,
+    status: 'failed',
+  };
 });
 
 const toSnapshot = (state) => ({

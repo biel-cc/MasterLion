@@ -31,3 +31,19 @@ test('same-user Electron relaunch reuses readiness without creating another toke
     await electronApp.close();
   }
 });
+
+test('historical active Electron user stays available when Aihub reconciliation is transiently unavailable', async () => {
+  const electronApp = await launchElectronTestApp();
+  try {
+    const page = await electronApp.firstWindow();
+    await page.getByTestId('run-aihub-legacy-transient').click();
+
+    await expect(page.getByTestId('aihub-status')).toHaveText('active');
+    await expect(page.getByTestId('aihub-spinner')).toBeHidden();
+    await expect(page.getByTestId('aihub-provision-count')).toHaveText('1');
+    await expect(page.getByTestId('aihub-active-count')).toHaveText('1');
+    await expect(page.getByTestId('aihub-reconcile-error-count')).toHaveText('1');
+  } finally {
+    await electronApp.close();
+  }
+});

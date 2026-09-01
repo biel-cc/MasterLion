@@ -76,4 +76,27 @@ describe('DatabaseAihubReadinessBindingStore', () => {
       }),
     );
   });
+
+  it('records a reconciliation failure without downgrading the active binding', async () => {
+    const where = vi.fn().mockResolvedValue(undefined);
+    const set = vi.fn(() => ({ where }));
+    const db = { update: vi.fn(() => ({ set })) };
+    const store = new DatabaseAihubReadinessBindingStore(db as any);
+
+    await store.markReconcileError('user-1', {
+      errorCode: 'aihub_bridge_unavailable',
+      errorKind: 'transient',
+      errorMessage: 'bridge timeout',
+      nextRetryAt: new Date('2026-09-01T08:00:00.000Z'),
+    });
+
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: 'aihub_bridge_unavailable',
+        errorKind: 'transient',
+        status: 'active',
+      }),
+    );
+    expect(where).toHaveBeenCalledOnce();
+  });
 });

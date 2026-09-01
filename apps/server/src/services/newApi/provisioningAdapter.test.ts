@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 
-import { NewApiError } from './client';
 import { NewApiProvisioningAdapter } from './provisioningAdapter';
 
 const adminAuth = {
@@ -191,6 +190,145 @@ describe('NewApiProvisioningAdapter', () => {
         unlimited_quota: true,
       }),
     );
+  });
+
+  it('reuses stable user and token ids without admin access or wallet quota writes', async () => {
+    vi.stubEnv('AIHUB_ADMIN_ACCESS_TOKEN', '');
+    vi.stubEnv('AIHUB_ADMIN_USER_ID', '');
+    const client = createClient();
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 8001,
+        key: 'stable-token-key',
+        remain_quota: 0,
+        status: 1,
+        unlimited_quota: true,
+        user_id: 9001,
+      }),
+      findUserById: vi.fn().mockResolvedValue({
+        id: 9001,
+        quota: 0,
+        status: 1,
+        username: 'E-1001',
+      }),
+    });
+
+    try {
+      const adapter = new NewApiProvisioningAdapter({
+        bridgeClient: bridgeClient as any,
+        client: client as any,
+      });
+
+      await expect(
+        adapter.provisionEnterpriseUser({
+          ...enterpriseUserInput,
+          preferredManagedTokenId: 8001,
+          preferredNewApiUserId: 9001,
+        }),
+      ).resolves.toMatchObject({ managedTokenId: 8001, newApiUserId: 9001, status: 'active' });
+
+      expect(bridgeClient.findUserById).toHaveBeenCalledWith(9001);
+      expect(bridgeClient.findManagedTokenById).toHaveBeenCalledWith(9001, 8001);
+      expect(client.searchUsers).not.toHaveBeenCalled();
+      expect(client.updateUser).not.toHaveBeenCalled();
+      expect(client.createUser).not.toHaveBeenCalled();
+      expect(client.createToken).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps stable historical resources usable when new provisioning is disabled', async () => {
+    const client = createClient();
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 8001,
+        remain_quota: 0,
+        status: 1,
+        unlimited_quota: true,
+        user_id: 9001,
+      }),
+      findUserById: vi.fn().mockResolvedValue({
+        id: 9001,
+        quota: 0,
+        status: 1,
+        username: 'E-1001',
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        policy: createPolicy({ autoCreateUser: false, enabled: false }),
+        preferredManagedTokenId: 8001,
+        preferredNewApiUserId: 9001,
+      }),
+    ).resolves.toMatchObject({ managedTokenId: 8001, newApiUserId: 9001, status: 'active' });
+
+    expect(client.searchUsers).not.toHaveBeenCalled();
+    expect(client.createUser).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('does not rotate a recorded token when its bridge verification is unavailable', async () => {
+    const client = createClient();
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockRejectedValue(new Error('token bridge timeout')),
+      findUserById: vi.fn().mockResolvedValue({
+        id: 9001,
+        status: 1,
+        username: 'E-1001',
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        preferredManagedTokenId: 8001,
+        preferredNewApiUserId: 9001,
+      }),
+    ).rejects.toThrow('token bridge timeout');
+
+    expect(client.listTokens).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a recorded Aihub user that the bridge confirms is disabled', async () => {
+    const client = createClient();
+    const bridgeClient = createBridgeClient({
+      findUserById: vi.fn().mockResolvedValue({
+        id: 9001,
+        status: 2,
+        username: 'E-1001',
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        preferredManagedTokenId: 8001,
+        preferredNewApiUserId: 9001,
+      }),
+    ).rejects.toMatchObject({ code: 'aihub_user_inactive', kind: 'entitlement' });
+
+    expect(bridgeClient.findManagedTokenById).not.toHaveBeenCalled();
+    expect(client.createUser).not.toHaveBeenCalled();
   });
 
   it('creates the canonical token when the optional legacy token name is not configured', async () => {
@@ -873,14 +1011,61 @@ describe('NewApiProvisioningAdapter', () => {
     expect(client.createUser).not.toHaveBeenCalled();
   });
 
-  it('tops up the initial quota when an existing Aihub user has no balance', async () => {
-    // Bug 2: an existing Aihub user created without the default initial quota
-    // (e.g. pre-provisioned manually) has no balance. Provisioning must grant
-    // the configured initialQuota and never reduce an existing higher balance.
+  it('does not create a user when the authoritative bridge lookup is unavailable', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({ items: [], total: 0 });
+    const bridgeClient = createBridgeClient({
+      findUserByIdentity: vi.fn().mockRejectedValue(new Error('bridge timeout')),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toThrow(
+      'bridge timeout',
+    );
+    expect(client.createUser).not.toHaveBeenCalled();
+  });
+
+  it('reuses an existing bridge user when the admin search endpoint is unavailable', async () => {
+    const client = createClient();
+    client.searchUsers.mockRejectedValue(new Error('admin search unavailable'));
+    const bridgeClient = createBridgeClient({
+      findManagedToken: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 8001,
+        key: 'stable-token-key',
+        status: 1,
+        unlimited_quota: true,
+        user_id: 9001,
+      }),
+      findUserByIdentity: vi.fn().mockResolvedValue({
+        id: 9001,
+        status: 1,
+        username: 'E-1001',
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toMatchObject({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      status: 'active',
+    });
+    expect(client.createUser).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('does not use an existing Aihub wallet balance as a readiness gate', async () => {
     const client = createClient();
     const zeroQuotaUser = { email: 'ada@example.com', id: 9001, quota: 0, username: 'E-1001' };
     client.searchUsers.mockResolvedValue({ items: [zeroQuotaUser], total: 0 });
-    client.updateUser.mockResolvedValue({ id: 9001, quota: 1000 });
     client.listTokens.mockResolvedValue({
       items: [{ id: 8001, name: 'masterlion-managed', user_id: 9001 }],
       total: 1,
@@ -894,29 +1079,28 @@ describe('NewApiProvisioningAdapter', () => {
       newApiUserId: 9001,
       status: 'active',
     });
-    expect(client.updateUser).toHaveBeenCalledWith(
-      adminAuth,
-      expect.objectContaining({ id: 9001, quota: 1000 }),
-    );
+    expect(client.updateUser).not.toHaveBeenCalled();
   });
 
-  it('does not report provisioning active when the required initial quota top-up fails', async () => {
+  it('never calls the Aihub user update endpoint to repair wallet quota during readiness', async () => {
     const client = createClient();
     client.searchUsers.mockResolvedValue({
       items: [{ email: 'ada@example.com', id: 9001, quota: 0, username: 'E-1001' }],
       total: 1,
     });
-    client.updateUser.mockRejectedValue(new NewApiError('充值服务暂时不可用', 503));
+    client.updateUser.mockRejectedValue(new Error('the readiness path must not call this endpoint'));
     client.listTokens.mockResolvedValue({
       items: [{ id: 8001, name: 'Masterino_E-1001', user_id: 9001 }],
       total: 1,
     });
     const adapter = createAdapter(client);
 
-    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toMatchObject({
-      message: '充值服务暂时不可用',
-      status: 503,
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).resolves.toMatchObject({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      status: 'active',
     });
+    expect(client.updateUser).not.toHaveBeenCalled();
     expect(client.createToken).not.toHaveBeenCalled();
   });
 

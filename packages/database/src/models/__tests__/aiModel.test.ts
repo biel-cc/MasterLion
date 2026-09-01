@@ -392,6 +392,46 @@ describe('AiModelModel', () => {
     });
   });
 
+  describe('replaceRemoteModels', () => {
+    it('atomically replaces only the remote models for a provider', async () => {
+      await serverDB.insert(aiModels).values([
+        { id: 'remote-old', providerId: 'openai', source: 'remote', userId },
+        { id: 'custom-kept', providerId: 'openai', source: 'custom', userId },
+      ]);
+
+      await aiProviderModel.replaceRemoteModels('openai', [
+        {
+          displayName: 'Remote New',
+          enabled: true,
+          id: 'remote-new',
+          source: 'remote',
+        },
+      ] as AiProviderModelListItem[]);
+
+      const models = await aiProviderModel.query();
+      expect(models.map(({ id }) => id).sort()).toEqual(['custom-kept', 'remote-new']);
+    });
+
+    it('rolls back the deletion when the replacement rows cannot be persisted', async () => {
+      await serverDB.insert(aiModels).values({
+        id: 'remote-last-known-good',
+        providerId: 'openai',
+        source: 'remote',
+        userId,
+      });
+
+      await expect(
+        aiProviderModel.replaceRemoteModels('openai', [
+          { enabled: true, id: undefined, source: 'remote' },
+        ] as unknown as AiProviderModelListItem[]),
+      ).rejects.toThrow();
+
+      await expect(aiProviderModel.query()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'remote-last-known-good' })]),
+      );
+    });
+  });
+
   describe('clearModelsByProvider', () => {
     it('should delete ALL models for a given provider regardless of source', async () => {
       await serverDB.insert(aiModels).values([
