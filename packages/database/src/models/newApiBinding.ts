@@ -139,7 +139,7 @@ export class NewApiBindingModel {
       .update(newApiBindings)
       .set({
         errorMessage: params.errorMessage ?? null,
-        lastSyncedAt: params.lastSyncedAt ?? new Date(),
+        lastSyncedAt: params.lastSyncedAt === undefined ? new Date() : params.lastSyncedAt,
         managedTokenId: params.managedTokenId ?? null,
         status: params.status,
         updatedAt: new Date(),

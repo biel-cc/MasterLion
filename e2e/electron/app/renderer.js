@@ -62,3 +62,6 @@ document
 document
   .querySelector('[data-testid="run-aihub-legacy-transient"]')
   .addEventListener('click', () => runAihub('legacy-transient'));
+document
+  .querySelector('[data-testid="run-aihub-legacy-error"]')
+  .addEventListener('click', () => runAihub('legacy-error'));

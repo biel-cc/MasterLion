@@ -290,6 +290,7 @@ export class AihubReadiness {
       !options.force &&
       binding?.status === 'active' &&
       (binding.readinessVersion ?? 1) >= 2 &&
+      !binding.errorCode &&
       current.status === 'active'
     ) {
       return current;
@@ -298,7 +299,20 @@ export class AihubReadiness {
     const requestedOwnerId = this.randomId();
     const acquired = await this.lease.acquire(userId, requestedOwnerId);
     if (!acquired) {
-      if (hasLastKnownGoodRuntime) return current;
+      if (hasLastKnownGoodRuntime) {
+        if (options.force) {
+          return {
+            ...current,
+            errorCode: 'aihub_readiness_in_progress',
+            errorKind: 'transient',
+            errorMessage: 'Aihub reconciliation is already in progress. Please retry shortly.',
+            retryAfterMs: 2000,
+            retryable: true,
+          };
+        }
+
+        return current;
+      }
       if (options.trigger !== 'model_runtime') {
         return { ...current, isBound: false, status: 'pending' };
       }

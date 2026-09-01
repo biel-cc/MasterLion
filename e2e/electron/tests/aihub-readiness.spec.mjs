@@ -47,3 +47,19 @@ test('historical active Electron user stays available when Aihub reconciliation 
     await electronApp.close();
   }
 });
+
+test('historical Electron user already marked error by the quota incident recovers to v2', async () => {
+  const electronApp = await launchElectronTestApp();
+  try {
+    const page = await electronApp.firstWindow();
+    await page.getByTestId('run-aihub-legacy-error').click();
+
+    await expect(page.getByTestId('aihub-status')).toHaveText('active');
+    await expect(page.getByTestId('aihub-spinner')).toBeHidden();
+    await expect(page.getByTestId('aihub-provision-count')).toHaveText('1');
+    await expect(page.getByTestId('aihub-active-count')).toHaveText('1');
+    await expect(page.getByTestId('aihub-reconcile-error-count')).toHaveText('0');
+  } finally {
+    await electronApp.close();
+  }
+});

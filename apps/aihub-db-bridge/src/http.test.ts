@@ -149,6 +149,83 @@ describe('createBridgeHandler', () => {
     expect(repo.findManagedTokenById).toHaveBeenCalledWith(7, 12);
   });
 
+  it('keeps disabled token records hidden from older clients by default', async () => {
+    const repo = createRepo();
+    repo.findManagedTokenById.mockResolvedValue({
+      expired_time: -1,
+      id: 12,
+      key: 'sk-disabled',
+      name: 'managed',
+      status: 2,
+      user_id: 7,
+    });
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+
+    const response = await readResponse(
+      await handler(makeRequest('/v1/users/7/managed-tokens/12')),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('preserves the old zero-quota filtering contract for older clients', async () => {
+    const repo = createRepo();
+    repo.findManagedTokenById.mockResolvedValue({
+      expired_time: -1,
+      id: 12,
+      key: 'sk-zero-quota',
+      name: 'managed',
+      remain_quota: 0,
+      status: 1,
+      unlimited_quota: false,
+      user_id: 7,
+    });
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+
+    const response = await readResponse(
+      await handler(makeRequest('/v1/users/7/managed-tokens/12')),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('lets readiness inspect a disabled token without treating it as usable', async () => {
+    const repo = createRepo();
+    repo.findManagedTokenById.mockResolvedValue({
+      expired_time: -1,
+      id: 12,
+      key: 'sk-disabled',
+      name: 'managed',
+      status: 2,
+      user_id: 7,
+    });
+    const handler = createBridgeHandler({
+      bridgeToken: 'secret',
+      iamProviderId: 1,
+      managedTokenName: 'managed',
+      repository: repo as any,
+    });
+
+    const response = await readResponse(
+      await handler(
+        makeRequest('/v1/users/7/managed-tokens/12?includeUnavailable=true'),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ id: 12, status: 2, user_id: 7 });
+  });
+
   it('returns models using token and account context', async () => {
     const repo = createRepo();
     const handler = createBridgeHandler({

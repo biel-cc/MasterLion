@@ -136,7 +136,9 @@ export class NewApiBridgeClient implements NewApiReadSource {
   }
 
   findManagedTokenById(userId: number, tokenId: number) {
-    return this.request<NewApiToken>(`/v1/users/${userId}/managed-tokens/${tokenId}`);
+    return this.request<NewApiToken>(`/v1/users/${userId}/managed-tokens/${tokenId}`, {
+      includeUnavailable: 'true',
+    });
   }
 
   async listManagedTokens(userId: number, tokenName: string) {

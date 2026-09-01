@@ -827,7 +827,136 @@ describe('NewApiProvisioningAdapter', () => {
     expect(client.createToken).not.toHaveBeenCalled();
   });
 
-  it('rotates an unusable historical token instead of selecting it again by name', async () => {
+  it('reuses an enabled bound token when its remaining quota is zero', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 8200,
+        name: 'older-custom-name',
+        remain_quota: 0,
+        status: 1,
+        unlimited_quota: false,
+        user_id: 9001,
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        preferredManagedTokenId: 8200,
+      }),
+    ).resolves.toMatchObject({ managedTokenId: 8200, status: 'active' });
+
+    expect(client.listTokens).not.toHaveBeenCalled();
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a bound token that an Aihub administrator explicitly disabled', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    const disabledToken = {
+      expired_time: -1,
+      id: 8200,
+      name: 'older-custom-name',
+      remain_quota: 200,
+      status: 2,
+      user_id: 9001,
+    };
+    const bridgeClient = createBridgeClient({
+      findManagedTokenById: vi.fn().mockResolvedValue(disabledToken),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(
+      adapter.provisionEnterpriseUser({
+        ...enterpriseUserInput,
+        preferredManagedTokenId: 8200,
+      }),
+    ).rejects.toMatchObject({
+      code: 'aihub_token_inactive',
+      kind: 'entitlement',
+    });
+
+    expect(client.createToken).not.toHaveBeenCalled();
+    expect(bridgeClient.reassignToken).not.toHaveBeenCalled();
+  });
+
+  it('does not replace an explicitly disabled token found by its managed name', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    const bridgeClient = createBridgeClient({
+      findManagedToken: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 8200,
+        name: 'Masterino_E-1001',
+        status: 2,
+        user_id: 9001,
+      }),
+    });
+    const adapter = new NewApiProvisioningAdapter({
+      adminAuth,
+      bridgeClient: bridgeClient as any,
+      client: client as any,
+    });
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toMatchObject({
+      code: 'aihub_token_inactive',
+      kind: 'entitlement',
+    });
+
+    expect(client.createToken).not.toHaveBeenCalled();
+    expect(bridgeClient.reassignToken).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a disabled target-user token returned by the admin API', async () => {
+    const client = createClient();
+    client.searchUsers.mockResolvedValue({
+      items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
+      total: 1,
+    });
+    client.listTokens.mockResolvedValue({
+      items: [
+        {
+          expired_time: -1,
+          id: 8200,
+          name: 'Masterino_E-1001',
+          status: 2,
+          user_id: 9001,
+        },
+      ],
+      total: 1,
+    });
+    const adapter = createAdapter(client);
+
+    await expect(adapter.provisionEnterpriseUser(enterpriseUserInput)).rejects.toMatchObject({
+      code: 'aihub_token_inactive',
+      kind: 'entitlement',
+    });
+
+    expect(client.createToken).not.toHaveBeenCalled();
+  });
+
+  it('rotates an expired historical token instead of selecting it again by name', async () => {
     const client = createClient();
     client.searchUsers.mockResolvedValue({
       items: [{ email: 'ada@example.com', id: 9001, username: 'E-1001' }],
@@ -859,7 +988,7 @@ describe('NewApiProvisioningAdapter', () => {
       id: 8200,
       name: 'Masterino_E-1001',
       remain_quota: 0,
-      status: 2,
+      status: 1,
       user_id: 9001,
     };
     const bridgeClient = createBridgeClient({

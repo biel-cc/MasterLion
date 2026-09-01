@@ -17,24 +17,45 @@ const aihubReadinessModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
 ).href;
 
-const createAihubHarness = async ({ legacyTransient = false } = {}) => {
+const createAihubHarness = async ({ legacyError = false, legacyTransient = false } = {}) => {
   const { AihubReadiness, AihubReadinessError } = await import(aihubReadinessModuleUrl);
-  let binding = legacyTransient
+  let binding = legacyError
     ? {
+        attemptCount: 5,
+        errorCode: 'aihub_upstream_unavailable',
+        errorKind: 'transient',
+        errorMessage: 'Aihub quota update failed',
         managedTokenId: 8001,
         newApiUserId: 9001,
+        nextRetryAt: new Date(Date.now() - 1000),
         readinessVersion: 1,
-        status: 'active',
+        status: 'error',
       }
-    : undefined;
+    : legacyTransient
+      ? {
+          managedTokenId: 8001,
+          newApiUserId: 9001,
+          readinessVersion: 1,
+          status: 'active',
+        }
+      : undefined;
   let leaseOwner;
-  let localRuntimeReady = legacyTransient;
+  let localRuntimeReady = legacyError || legacyTransient;
   let provisionCount = 0;
   let reconcileErrorCount = 0;
   const bindingStore = {
     get: async () => binding,
     markActive: async (_userId, input) => {
-      binding = { ...binding, ...input, status: 'active' };
+      binding = {
+        ...binding,
+        ...input,
+        attemptCount: 0,
+        errorCode: undefined,
+        errorKind: undefined,
+        errorMessage: undefined,
+        nextRetryAt: undefined,
+        status: 'active',
+      };
       localRuntimeReady = true;
     },
     markError: async (_userId, input) => {
@@ -44,6 +65,10 @@ const createAihubHarness = async ({ legacyTransient = false } = {}) => {
       binding = {
         ...binding,
         attemptCount: (binding?.attemptCount ?? 0) + 1,
+        errorCode: undefined,
+        errorKind: undefined,
+        errorMessage: undefined,
+        nextRetryAt: undefined,
         status: 'pending',
       };
     },
@@ -112,7 +137,10 @@ const createAihubHarness = async ({ legacyTransient = false } = {}) => {
 };
 
 ipcMain.handle('masterino-e2e:run-aihub-readiness', async (_event, scenario) => {
-  const harness = await createAihubHarness({ legacyTransient: scenario === 'legacy-transient' });
+  const harness = await createAihubHarness({
+    legacyError: scenario === 'legacy-error',
+    legacyTransient: scenario === 'legacy-transient',
+  });
   if (scenario === 'concurrent') {
     const runtime = harness.createRuntime();
     const states = await Promise.all(
@@ -138,6 +166,18 @@ ipcMain.handle('masterino-e2e:run-aihub-readiness', async (_event, scenario) => 
     };
   }
   if (scenario === 'legacy-transient') {
+    const state = await harness
+      .createRuntime()
+      .ensure('user-1', { trigger: 'model_runtime' });
+    return {
+      activeCount: state.status === 'active' ? 1 : 0,
+      pendingCount: 0,
+      provisionCount: harness.getProvisionCount(),
+      reconcileErrorCount: harness.getReconcileErrorCount(),
+      status: state.status,
+    };
+  }
+  if (scenario === 'legacy-error') {
     const state = await harness
       .createRuntime()
       .ensure('user-1', { trigger: 'model_runtime' });

@@ -97,15 +97,19 @@ const isUsableManagedToken = (
   ) {
     return false;
   }
-  if (
-    token.unlimited_quota !== true &&
-    token.remain_quota !== undefined &&
-    token.remain_quota <= 0
-  ) {
-    return false;
+  return true;
+};
+
+const assertManagedTokenEnabled = (token: NewApiToken | undefined) => {
+  if (token && isValidId(token.id) && token.status !== undefined && token.status !== 1) {
+    throw new NewApiProvisioningError(
+      `Aihub managed token ${token.id} is disabled`,
+      'entitlement',
+      'aihub_token_inactive',
+    );
   }
 
-  return true;
+  return token;
 };
 
 // Bug 4: NewAPI requires a password on user creation (max 20 chars). SSO
@@ -485,9 +489,11 @@ export class NewApiProvisioningAdapter {
     if (this.bridgeClient?.isEnabled()) {
       try {
         if (preferredManagedTokenId) {
-          const recorded = await this.bridgeClient.findManagedTokenById(
-            newApiUserId,
-            preferredManagedTokenId,
+          const recorded = assertManagedTokenEnabled(
+            await this.bridgeClient.findManagedTokenById(
+              newApiUserId,
+              preferredManagedTokenId,
+            ),
           );
           if (isUsableManagedToken(recorded)) return recorded;
         }
@@ -497,11 +503,13 @@ export class NewApiProvisioningAdapter {
           ? [managedTokenName, legacyManagedTokenName]
           : [managedTokenName];
         for (const name of new Set(compatibleNames)) {
-          const bridgedToken = await this.bridgeClient.findManagedToken(newApiUserId, name);
+          const bridgedToken = assertManagedTokenEnabled(
+            await this.bridgeClient.findManagedToken(newApiUserId, name),
+          );
           if (isUsableManagedToken(bridgedToken)) return bridgedToken;
         }
       } catch (error) {
-        if (preferredManagedTokenId) throw error;
+        if (error instanceof NewApiProvisioningError || preferredManagedTokenId) throw error;
         // Bridge lookup failed — fall through to admin API approach
       }
     }
@@ -528,6 +536,7 @@ export class NewApiProvisioningAdapter {
     //    admin-owned token with this name can be identified as this user's
     //    interrupted create-and-reassign attempt and safely recovered.
     let token = await findAdminVisibleToken(managedTokenName);
+    if (Number(token?.user_id) === newApiUserId) assertManagedTokenEnabled(token);
     if (isUsableManagedToken(token)) {
       if (Number(token.user_id) === newApiUserId) return token;
       if (
@@ -549,6 +558,7 @@ export class NewApiProvisioningAdapter {
     // evidence linking that token to the current account.
     if (legacyManagedTokenName && legacyManagedTokenName !== managedTokenName) {
       const legacyToken = await findAdminVisibleToken(legacyManagedTokenName);
+      if (Number(legacyToken?.user_id) === newApiUserId) assertManagedTokenEnabled(legacyToken);
       if (isUsableManagedToken(legacyToken) && Number(legacyToken.user_id) === newApiUserId) {
         return legacyToken;
       }

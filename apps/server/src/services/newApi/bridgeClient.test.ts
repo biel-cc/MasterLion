@@ -79,7 +79,7 @@ describe('NewApiBridgeClient', () => {
 
     await expect(client.findManagedTokenById(7, 12)).resolves.toMatchObject({ id: 12, user_id: 7 });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://bridge:3218/v1/users/7/managed-tokens/12',
+      'http://bridge:3218/v1/users/7/managed-tokens/12?includeUnavailable=true',
       expect.any(Object),
     );
   });
