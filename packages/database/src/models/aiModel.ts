@@ -278,6 +278,14 @@ export class AiModelModel {
       );
   }
 
+  replaceRemoteModels(providerId: string, models: AiProviderModelListItem[]) {
+    return this.db.transaction(async (tx) => {
+      const transactionalModel = new AiModelModel(tx, this.userId);
+      await transactionalModel.clearRemoteModels(providerId);
+      return transactionalModel.batchUpdateAiModels(providerId, models);
+    });
+  }
+
   clearModelsByProvider(providerId: string) {
     return this.db
       .delete(aiModels)

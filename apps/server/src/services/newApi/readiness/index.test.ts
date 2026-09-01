@@ -16,6 +16,7 @@ const createHarness = (overrides: Record<string, unknown> = {}) => {
     markActive: vi.fn().mockResolvedValue(undefined),
     markError: vi.fn().mockResolvedValue(undefined),
     markPending: vi.fn().mockResolvedValue(undefined),
+    markReconcileError: vi.fn().mockResolvedValue(undefined),
     updateIamBinding: vi.fn().mockResolvedValue(undefined),
   };
   const lease = {
@@ -92,6 +93,33 @@ describe('AihubReadiness', () => {
     expect(workflow.provision).not.toHaveBeenCalled();
   });
 
+  it('retries an active v2 reconciliation after its transient cooldown expires', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      attemptCount: 1,
+      errorCode: 'aihub_bridge_unavailable',
+      errorKind: 'transient',
+      errorMessage: 'Aihub bridge is temporarily unavailable',
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      nextRetryAt: new Date('2026-08-31T00:59:59.000Z'),
+      readinessVersion: 2,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state.status).toBe('active');
+    expect(state.errorCode).toBeUndefined();
+
+    expect(workflow.provision).toHaveBeenCalledOnce();
+    expect(bindingStore.markActive).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ readinessVersion: 2 }),
+    );
+  });
+
   it('allows an explicit manual sync to revalidate an already-active binding', async () => {
     const { bindingStore, readiness, workflow } = createHarness();
     bindingStore.get.mockResolvedValue({
@@ -130,6 +158,170 @@ describe('AihubReadiness', () => {
       'user-1',
       expect.objectContaining({ readinessVersion: 2 }),
     );
+  });
+
+  it('recovers a historical v1 binding already marked error by the quota incident', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      attemptCount: 5,
+      errorCode: 'aihub_upstream_unavailable',
+      errorKind: 'transient',
+      errorMessage: 'Aihub quota update failed',
+      managedTokenId: 3234,
+      newApiUserId: 163,
+      nextRetryAt: new Date('2026-08-31T00:59:59.000Z'),
+      readinessVersion: 1,
+      status: 'error',
+    });
+
+    const state = await readiness.ensure('user-1', { trigger: 'model_runtime' });
+
+    expect(state).toMatchObject({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 2,
+      status: 'active',
+    });
+    expect(workflow.provision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ managedTokenId: 3234, newApiUserId: 163 }),
+      }),
+    );
+    expect(bindingStore.markActive).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ readinessVersion: 2 }),
+    );
+  });
+
+  it('keeps a locally usable historical active row available when revalidation is transiently unavailable', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    workflow.provision.mockRejectedValue(
+      new AihubReadinessError(
+        'Aihub bridge is temporarily unavailable',
+        'transient',
+        'aihub_bridge_unavailable',
+      ),
+    );
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({
+      errorCode: 'aihub_bridge_unavailable',
+      isBound: true,
+      readinessVersion: 1,
+      retryable: true,
+      status: 'active',
+    });
+
+    expect(bindingStore.markPending).not.toHaveBeenCalled();
+    expect(bindingStore.markError).not.toHaveBeenCalled();
+    expect(bindingStore.markReconcileError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ errorCode: 'aihub_bridge_unavailable' }),
+    );
+  });
+
+  it('keeps a locally usable historical row active while the Bridge contract is upgraded', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    workflow.provision.mockRejectedValue(
+      new AihubReadinessError(
+        'Aihub Bridge must be upgraded before reconciling a recorded managed token',
+        'configuration',
+        'aihub_bridge_token_inspection_unsupported',
+      ),
+    );
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({
+      errorCode: 'aihub_bridge_token_inspection_unsupported',
+      isBound: true,
+      readinessVersion: 1,
+      retryable: false,
+      status: 'active',
+    });
+
+    expect(bindingStore.markPending).not.toHaveBeenCalled();
+    expect(bindingStore.markError).not.toHaveBeenCalled();
+    expect(bindingStore.markReconcileError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ errorCode: 'aihub_bridge_token_inspection_unsupported' }),
+    );
+  });
+
+  it('still blocks a historical active row when revalidation proves entitlement is invalid', async () => {
+    const { bindingStore, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    workflow.provision.mockRejectedValue(
+      new AihubReadinessError(
+        'The recorded Aihub user is disabled',
+        'entitlement',
+        'aihub_user_inactive',
+      ),
+    );
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({
+      errorCode: 'aihub_user_inactive',
+      isBound: false,
+      retryable: false,
+      status: 'error',
+    });
+
+    expect(bindingStore.markReconcileError).not.toHaveBeenCalled();
+    expect(bindingStore.markError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ errorCode: 'aihub_user_inactive' }),
+    );
+  });
+
+  it('keeps last-known-good active when enterprise identity is temporarily incomplete', async () => {
+    const { bindingStore, identitySource, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    identitySource.getEnterpriseIdentity.mockResolvedValue(undefined);
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({
+      errorCode: 'enterprise_identity_not_ready',
+      isBound: true,
+      readinessVersion: 1,
+      status: 'active',
+    });
+
+    expect(bindingStore.markError).not.toHaveBeenCalled();
+    expect(bindingStore.markReconcileError).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ errorCode: 'enterprise_identity_not_ready' }),
+    );
+    expect(workflow.provision).not.toHaveBeenCalled();
   });
 
   it('converges a previously missing enterprise user to strong active readiness', async () => {
@@ -171,6 +363,52 @@ describe('AihubReadiness', () => {
     expect(state).toMatchObject({ status: 'pending' });
     expect(workflow.provision).not.toHaveBeenCalled();
     expect(lease.release).not.toHaveBeenCalled();
+  });
+
+  it('does not block a last-known-good historical user while another process reconciles it', async () => {
+    const { bindingStore, lease, readiness, workflow } = createHarness({
+      sleep: vi.fn(async () => {
+        throw new Error('last-known-good requests must not wait for reconciliation');
+      }),
+    });
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 1,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    lease.acquire.mockResolvedValue(undefined);
+
+    await expect(
+      readiness.ensure('user-1', { trigger: 'model_runtime' }),
+    ).resolves.toMatchObject({ isBound: true, readinessVersion: 1, status: 'active' });
+
+    expect(workflow.provision).not.toHaveBeenCalled();
+  });
+
+  it('reports an in-flight reconciliation instead of claiming a manual model sync succeeded', async () => {
+    const { bindingStore, lease, readiness, workflow } = createHarness();
+    bindingStore.get.mockResolvedValue({
+      managedTokenId: 8001,
+      newApiUserId: 9001,
+      readinessVersion: 2,
+      status: 'active',
+    });
+    workflow.inspectLocalRuntime.mockResolvedValue({ hasApiKey: true, modelCount: 3 });
+    lease.acquire.mockResolvedValue(undefined);
+
+    await expect(
+      readiness.ensure('user-1', { force: true, trigger: 'manual_model_sync' }),
+    ).resolves.toMatchObject({
+      errorCode: 'aihub_readiness_in_progress',
+      errorKind: 'transient',
+      isBound: true,
+      retryable: true,
+      status: 'active',
+    });
+
+    expect(workflow.provision).not.toHaveBeenCalled();
   });
 
   it('waits for an in-flight owner to activate readiness for the model runtime', async () => {

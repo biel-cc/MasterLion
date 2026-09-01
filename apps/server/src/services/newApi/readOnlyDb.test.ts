@@ -102,8 +102,17 @@ describe('NewApiReadOnlyDb', () => {
     expect(client.query).toHaveBeenCalledOnce();
   });
 
-  it('finds a usable managed token by bound id and owner', async () => {
-    const client = createQueryClient([{ id: 25, key: 'sk-existing', user_id: 7 }]);
+  it('inspects a bound token by id without interpreting status, expiry, or quota', async () => {
+    const client = createQueryClient([
+      {
+        expired_time: 1,
+        id: 25,
+        key: 'sk-existing',
+        remain_quota: 0,
+        status: 2,
+        user_id: 7,
+      },
+    ]);
     const db = new NewApiReadOnlyDb({ client });
 
     await expect(db.findManagedTokenById(7, 25)).resolves.toMatchObject({
@@ -111,11 +120,10 @@ describe('NewApiReadOnlyDb', () => {
       key: 'sk-existing',
       user_id: 7,
     });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [
-      25,
-      7,
-      expect.any(Number),
-    ]);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [25, 7]);
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('status =');
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('remain_quota > 0');
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('expired_time >');
   });
 
   it('intersects token model limits with group-level enabled abilities', async () => {

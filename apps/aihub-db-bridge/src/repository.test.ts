@@ -71,8 +71,18 @@ describe('AihubBridgeRepository', () => {
     expect(client.query).toHaveBeenCalledOnce();
   });
 
-  it('finds a usable managed token by bound id and owner', async () => {
-    const client = createClient([{ id: 31, key: 'sk-bound', name: 'manual', user_id: 7 }]);
+  it('inspects a bound token by id without interpreting status, expiry, or quota', async () => {
+    const client = createClient([
+      {
+        expired_time: 1,
+        id: 31,
+        key: 'sk-bound',
+        name: 'manual',
+        remain_quota: 0,
+        status: 2,
+        user_id: 7,
+      },
+    ]);
     const repo = new AihubBridgeRepository({ client, dialect: 'mysql' });
 
     await expect(repo.findManagedTokenById(7, 31)).resolves.toMatchObject({
@@ -80,11 +90,10 @@ describe('AihubBridgeRepository', () => {
       key: 'sk-bound',
       user_id: 7,
     });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [
-      31,
-      7,
-      expect.any(Number),
-    ]);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('and user_id = ?'), [31, 7]);
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('status =');
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('remain_quota > 0');
+    expect(client.query.mock.calls[0]?.[0]).not.toContain('expired_time >');
   });
 
   it('lists managed token metadata without selecting token keys', async () => {

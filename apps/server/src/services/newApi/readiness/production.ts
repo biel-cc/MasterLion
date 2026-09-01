@@ -108,7 +108,9 @@ export class ProductionAihubReadinessWorkflow implements AihubReadinessWorkflow 
       await new NewApiBindingModel(db, userId).upsertRemoteIdentifiers(identifiers);
     },
     syncModels = (userId) =>
-      new NewApiService({ db, gateKeeper, userId }).syncModels() as Promise<{ models: unknown[] }>,
+      new NewApiService({ db, gateKeeper, userId }).syncModels({
+        preserveExistingActive: true,
+      }) as Promise<{ models: unknown[] }>,
   }: ProductionWorkflowOptions) {
     this.getPolicy =
       getPolicy ??
@@ -127,7 +129,9 @@ export class ProductionAihubReadinessWorkflow implements AihubReadinessWorkflow 
   provision: AihubReadinessWorkflow['provision'] = async ({ binding, identity, userId }) => {
     try {
       const policy = await this.getPolicy();
-      if (!policy.aihubProvisioning?.enabled) {
+      const hasStableBinding =
+        isPositiveInteger(binding?.newApiUserId) && isPositiveInteger(binding?.managedTokenId);
+      if (!policy.aihubProvisioning?.enabled && !hasStableBinding) {
         throw new AihubReadinessError(
           'Aihub provisioning is disabled by enterprise policy',
           'entitlement',
@@ -142,6 +146,7 @@ export class ProductionAihubReadinessWorkflow implements AihubReadinessWorkflow 
         name: identity.name,
         policy,
         preferredManagedTokenId: binding?.managedTokenId ?? undefined,
+        preferredNewApiUserId: binding?.newApiUserId ?? undefined,
         userId,
       });
       if (

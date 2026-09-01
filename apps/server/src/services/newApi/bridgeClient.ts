@@ -70,6 +70,14 @@ export class NewApiBridgeClient implements NewApiReadSource {
     return Boolean(this.baseUrl && this.token);
   }
 
+  async supportsUnavailableTokenInspection() {
+    const capabilities = await this.request<{ inspectUnavailableManagedToken?: boolean }>(
+      '/v1/capabilities',
+    );
+
+    return capabilities?.inspectUnavailableManagedToken === true;
+  }
+
   private buildUrl(path: string, query?: Record<string, number | string | undefined>) {
     if (!this.baseUrl) throw new NewApiBridgeError('AIHUB_BRIDGE_URL is required', 500);
 
@@ -136,7 +144,9 @@ export class NewApiBridgeClient implements NewApiReadSource {
   }
 
   findManagedTokenById(userId: number, tokenId: number) {
-    return this.request<NewApiToken>(`/v1/users/${userId}/managed-tokens/${tokenId}`);
+    return this.request<NewApiToken>(`/v1/users/${userId}/managed-tokens/${tokenId}`, {
+      includeUnavailable: 'true',
+    });
   }
 
   async listManagedTokens(userId: number, tokenName: string) {

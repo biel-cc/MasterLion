@@ -53,6 +53,7 @@ const DEFAULT_QUOTA_DISPLAY_TYPE: NewApiQuotaPolicy['quotaDisplayType'] = 'CNY';
 const DEFAULT_QUOTA_PER_UNIT = 500_000;
 const DEFAULT_USD_EXCHANGE_RATE = 7.12;
 const LOG_TYPE_CONSUME = 2;
+const TOKEN_STATUS_ENABLED = 1;
 const ENTERPRISE_PROVISIONING_MESSAGE =
   'Aihub provisioning is managed by enterprise provisioning policy';
 
@@ -70,6 +71,27 @@ type UsableNewApiBindingItem = NewApiBindingItem & {
 
 const isValidNewApiUserId = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+const assertManagedTokenUsable = (token: NewApiToken) => {
+  if (token.status !== undefined && token.status !== TOKEN_STATUS_ENABLED) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `Aihub managed token ${token.id} is disabled`,
+    });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (
+    token.expired_time !== undefined &&
+    token.expired_time !== -1 &&
+    token.expired_time <= now
+  ) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `Aihub managed token ${token.id} is expired`,
+    });
+  }
+};
 
 const getNewApiBaseUrl = () => {
   const baseUrl = process.env.AIHUB_PROXY_URL;
@@ -532,10 +554,14 @@ export class NewApiService {
         });
       }
 
+      assertManagedTokenUsable(token);
       return token;
     }
 
-    return this.readOnlyDb.findManagedToken(newApiUserId, getManagedTokenName());
+    const token = await this.readOnlyDb.findManagedToken(newApiUserId, getManagedTokenName());
+    if (token) assertManagedTokenUsable(token);
+
+    return token;
   }
 
   private async getManagedTokenOptionsForBinding(binding: NewApiBindingItem) {
@@ -944,13 +970,12 @@ export class NewApiService {
 
     const defaultModel = getDefaultModel(models);
 
-    const aiModelModel = new AiModelModel(this.db, this.userId);
-    await aiModelModel.clearRemoteModels(ModelProvider.NewAPI);
-    await aiModelModel.batchUpdateAiModels(ModelProvider.NewAPI, models);
-
-    // The credential is part of core Aihub readiness even when the user's
-    // current model set has no chat default (for example embedding-only).
+    // Persist the refreshed credential before touching the last-known-good model
+    // set. A credential failure must not leave an existing user with no models.
     await this.saveManagedProviderToken(key, defaultModel);
+
+    const aiModelModel = new AiModelModel(this.db, this.userId);
+    await aiModelModel.replaceRemoteModels(ModelProvider.NewAPI, models);
 
     return {
       defaultModel,
@@ -979,7 +1004,7 @@ export class NewApiService {
     return { ...toAccountSummary(account), quotaPolicy };
   }
 
-  async ensureManagedToken() {
+  async ensureManagedToken(options: { preserveExistingActive?: boolean } = {}) {
     const binding = await this.getBindingOrThrow();
     const bindingModel = new NewApiBindingModel(this.db, this.userId);
 
@@ -1062,18 +1087,19 @@ export class NewApiService {
     } catch (error) {
       await bindingModel.updateSyncState({
         errorMessage: error instanceof Error ? error.message : String(error),
-        lastSyncedAt: new Date(),
+        lastSyncedAt: binding.lastSyncedAt ?? null,
         managedTokenId: binding.managedTokenId,
-        status: 'error',
+        status:
+          options.preserveExistingActive && binding.status === 'active' ? 'active' : 'error',
       });
 
       throw error;
     }
   }
 
-  async syncModels() {
+  async syncModels(options: { preserveExistingActive?: boolean } = {}) {
     const binding = await this.getBindingOrThrow();
-    const { key } = await this.ensureManagedToken();
+    const { key } = await this.ensureManagedToken(options);
     return this.syncModelsForBinding(binding, key);
   }
 
@@ -1175,7 +1201,7 @@ export class NewApiService {
     }
 
     const { auth } = await this.getManagementAuth();
-    const { key } = await this.ensureManagedToken();
+    const { key } = await this.ensureManagedToken({ preserveExistingActive: true });
     const [account, tokenUsage] = await Promise.all([
       this.client.getSelf(auth),
       this.client.getTokenUsage(key),

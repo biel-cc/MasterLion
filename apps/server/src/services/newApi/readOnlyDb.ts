@@ -29,7 +29,6 @@ export interface NewApiUsageLogQuery {
 
 const DEFAULT_PAGE_SIZE = 100;
 const LOG_TYPE_CONSUME = 2;
-const TOKEN_STATUS_ENABLED = 1;
 
 const inferDialect = (connectionString?: string): AihubReadOnlyDialect => {
   if (!connectionString) return 'mysql';
@@ -216,7 +215,6 @@ limit 1
   async findManagedTokenById(userId: number, tokenId: number): Promise<NewApiToken | undefined> {
     const groupColumn = this.groupColumn();
     const keyColumn = this.dialect === 'postgres' ? '"key"' : '`key`';
-    const now = Math.floor(Date.now() / 1000);
     const rows = await this.query<NewApiToken>(
       `
 select id, user_id, name, ${keyColumn}, status, expired_time, remain_quota, unlimited_quota,
@@ -225,12 +223,9 @@ from tokens
 where id = ?
   and user_id = ?
   and deleted_at is null
-  and status = ${TOKEN_STATUS_ENABLED}
-  and (unlimited_quota = true or remain_quota > 0)
-  and (expired_time = -1 or expired_time > ?)
 limit 1
       `.trim(),
-      [tokenId, userId, now],
+      [tokenId, userId],
     );
 
     return this.normalizeToken(rows[0]);

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   findUserByEmail: vi.fn(),
   findUserById: vi.fn(),
   findUserByUsername: vi.fn(),
+  replaceRemoteModels: vi.fn(),
   toggleProviderEnabled: vi.fn(),
   updateConfig: vi.fn(),
   updateSyncState: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('@/database/models/aiModel', () => ({
   AiModelModel: vi.fn().mockImplementation(() => ({
     batchUpdateAiModels: mocks.batchUpdateAiModels,
     clearRemoteModels: mocks.clearRemoteModels,
+    replaceRemoteModels: mocks.replaceRemoteModels,
   })),
 }));
 
@@ -529,6 +531,79 @@ describe('NewApiService', () => {
     expect(readOnlyDb.findManagedToken).not.toHaveBeenCalled();
   });
 
+  it('does not use a disabled bound token even when the Bridge can inspect its record', async () => {
+    const lastSuccessfulSync = new Date('2026-08-30T08:00:00.000Z');
+    mocks.bindingStore.set('current-user', {
+      lastSyncedAt: lastSuccessfulSync,
+      managedTokenId: 820,
+      newApiUserId: 831,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedToken: vi.fn(),
+      findManagedTokenById: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 820,
+        key: 'sk-disabled',
+        name: 'MasterLion_10488240',
+        status: 2,
+        user_id: 831,
+      }),
+      isEnabled: vi.fn(() => true),
+    };
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(
+      service.ensureManagedToken({ preserveExistingActive: true }),
+    ).rejects.toThrow('Aihub managed token 820 is disabled');
+    expect(mocks.updateConfig).not.toHaveBeenCalled();
+    expect(mocks.updateSyncState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastSyncedAt: lastSuccessfulSync,
+        status: 'active',
+      }),
+    );
+  });
+
+  it('does not use an expired named token returned by the read source', async () => {
+    mocks.bindingStore.set('current-user', {
+      managedTokenId: null,
+      newApiUserId: 831,
+      status: 'pending',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedToken: vi.fn().mockResolvedValue({
+        expired_time: 1,
+        id: 821,
+        key: 'sk-expired',
+        name: 'masterlion-managed',
+        status: 1,
+        user_id: 831,
+      }),
+      isEnabled: vi.fn(() => true),
+    };
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(service.ensureManagedToken()).rejects.toThrow(
+      'Aihub managed token 821 is expired',
+    );
+    expect(mocks.updateConfig).not.toHaveBeenCalled();
+  });
+
   it('rejects a persisted token id that is not usable for the bound user', async () => {
     mocks.bindingStore.set('current-user', {
       encryptedAccessToken: null,
@@ -591,6 +666,71 @@ describe('NewApiService', () => {
     );
     expect(readOnlyDb.findManagedToken).not.toHaveBeenCalled();
     expect(client.listTokens).not.toHaveBeenCalled();
+  });
+
+  it('keeps active status and the last successful sync time when token verification fails', async () => {
+    process.env.AIHUB_DATA_SOURCE = 'bridge';
+    const lastSuccessfulSync = new Date('2026-08-30T08:00:00.000Z');
+    mocks.bindingStore.set('current-user', {
+      lastSyncedAt: lastSuccessfulSync,
+      managedTokenId: 44,
+      newApiUserId: 17,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedTokenById: vi.fn().mockRejectedValue(new Error('bridge timeout')),
+      isEnabled: vi.fn(() => true),
+    };
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(
+      service.syncModels({ preserveExistingActive: true }),
+    ).rejects.toThrow('bridge timeout');
+
+    expect(mocks.updateSyncState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastSyncedAt: lastSuccessfulSync,
+        status: 'active',
+      }),
+    );
+  });
+
+  it('does not downgrade an active binding when an API-backed usage lookup fails', async () => {
+    process.env.AIHUB_DATA_SOURCE = 'api';
+    const lastSuccessfulSync = new Date('2026-08-30T08:00:00.000Z');
+    mocks.bindingStore.set('current-user', {
+      lastSyncedAt: lastSuccessfulSync,
+      managedTokenId: 44,
+      newApiUserId: 17,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const client = {
+      getTokenKey: vi.fn().mockRejectedValue(new Error('Aihub API timeout')),
+    };
+    const service = new NewApiService({
+      client: client as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: { isEnabled: vi.fn(() => false) } as any,
+      userId: 'current-user',
+    });
+
+    await expect(service.getUsageSummary()).rejects.toThrow('Aihub API timeout');
+
+    expect(mocks.updateSyncState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastSyncedAt: lastSuccessfulSync,
+        status: 'active',
+      }),
+    );
   });
 
   it('auto-binds the current Masterino user from Aihub read-only DB and syncs accessible models', async () => {
@@ -703,7 +843,7 @@ describe('NewApiService', () => {
         }),
       ]),
     );
-    expect(mocks.batchUpdateAiModels).toHaveBeenCalledWith(
+    expect(mocks.replaceRemoteModels).toHaveBeenCalledWith(
       'newapi',
       expect.arrayContaining([
         expect.objectContaining({
@@ -717,6 +857,44 @@ describe('NewApiService', () => {
       ]),
     );
     expect(client.listModels).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous model set when saving the refreshed provider credential fails', async () => {
+    mocks.bindingStore.set('current-user', {
+      managedTokenId: 44,
+      newApiUserId: 17,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const readOnlyDb = {
+      findManagedToken: vi.fn().mockResolvedValue({
+        expired_time: -1,
+        id: 44,
+        key: 'sk-db-token',
+        status: 1,
+        unlimited_quota: true,
+        user_id: 17,
+      }),
+      findUserById: vi.fn().mockResolvedValue({ group: 'default', id: 17 }),
+      isEnabled: vi.fn(() => true),
+      listAccessibleModels: vi.fn().mockResolvedValue(['gpt-4o-mini']),
+    };
+    mocks.updateConfig
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('provider persistence failed'));
+    const service = new NewApiService({
+      client: {} as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    await expect(service.syncModels()).rejects.toThrow('provider persistence failed');
+
+    expect(mocks.clearRemoteModels).not.toHaveBeenCalled();
+    expect(mocks.batchUpdateAiModels).not.toHaveBeenCalled();
+    expect(mocks.replaceRemoteModels).not.toHaveBeenCalled();
   });
 
   it('falls back to a random chat model when the Aihub default model is not accessible', async () => {
@@ -1237,18 +1415,18 @@ describe('NewApiService', () => {
 
     expect(synced.models.map((model: any) => model.id)).toEqual(['glm-5.2', 'deepseek-chat']);
     expect(synced.defaultModel).toBe('glm-5.2');
-    expect(mocks.batchUpdateAiModels).toHaveBeenCalledWith(
+    expect(mocks.replaceRemoteModels).toHaveBeenCalledWith(
       'newapi',
       expect.arrayContaining([
         expect.objectContaining({ id: 'glm-5.2' }),
         expect.objectContaining({ id: 'deepseek-chat' }),
       ]),
     );
-    expect(mocks.batchUpdateAiModels).not.toHaveBeenCalledWith(
+    expect(mocks.replaceRemoteModels).not.toHaveBeenCalledWith(
       'newapi',
       expect.arrayContaining([expect.objectContaining({ id: 'glm-5.1' })]),
     );
-    expect(mocks.batchUpdateAiModels).not.toHaveBeenCalledWith(
+    expect(mocks.replaceRemoteModels).not.toHaveBeenCalledWith(
       'newapi',
       expect.arrayContaining([expect.objectContaining({ id: 'gpt-3.5-turbo' })]),
     );

@@ -8,6 +8,9 @@ const aihubSpinner = document.querySelector('[data-testid="aihub-spinner"]');
 const aihubStatus = document.querySelector('[data-testid="aihub-status"]');
 const aihubProvisionCount = document.querySelector('[data-testid="aihub-provision-count"]');
 const aihubActiveCount = document.querySelector('[data-testid="aihub-active-count"]');
+const aihubReconcileErrorCount = document.querySelector(
+  '[data-testid="aihub-reconcile-error-count"]',
+);
 
 const renderSnapshot = (snapshot) => {
   prepareAttempts.textContent = String(snapshot.prepareAttempts);
@@ -45,6 +48,7 @@ const runAihub = async (scenario) => {
   const result = await window.masterinoElectronE2E.runAihubReadiness(scenario);
   aihubProvisionCount.textContent = String(result.provisionCount);
   aihubActiveCount.textContent = String(result.activeCount);
+  aihubReconcileErrorCount.textContent = String(result.reconcileErrorCount ?? 0);
   aihubStatus.textContent = result.status;
   aihubSpinner.hidden = true;
 };
@@ -55,3 +59,9 @@ document
 document
   .querySelector('[data-testid="run-aihub-relaunch"]')
   .addEventListener('click', () => runAihub('relaunch'));
+document
+  .querySelector('[data-testid="run-aihub-legacy-transient"]')
+  .addEventListener('click', () => runAihub('legacy-transient'));
+document
+  .querySelector('[data-testid="run-aihub-legacy-error"]')
+  .addEventListener('click', () => runAihub('legacy-error'));

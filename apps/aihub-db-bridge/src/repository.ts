@@ -37,7 +37,6 @@ export interface UsageLogQuery {
 
 const DEFAULT_PAGE_SIZE = 100;
 const LOG_TYPE_CONSUME = 2;
-const TOKEN_STATUS_ENABLED = 1;
 
 const inferDialect = (connectionString?: string): AihubBridgeDialect =>
   /^postgres(?:ql)?:\/\//i.test(connectionString || '') ? 'postgres' : 'mysql';
@@ -258,7 +257,6 @@ limit 1
 
   async findManagedTokenById(userId: number, tokenId: number) {
     const groupColumn = this.groupColumn();
-    const now = Math.floor(Date.now() / 1000);
     const rows = await this.query<AihubBridgeToken>(
       `
 select id, user_id, name, ${this.keyColumn()} as ${this.keyColumn()}, status, expired_time,
@@ -268,12 +266,9 @@ from tokens
 where id = ?
   and user_id = ?
   and deleted_at is null
-  and status = ${TOKEN_STATUS_ENABLED}
-  and (unlimited_quota = true or remain_quota > 0)
-  and (expired_time = -1 or expired_time > ?)
 limit 1
       `.trim(),
-      [tokenId, userId, now],
+      [tokenId, userId],
     );
 
     return this.normalizeToken(rows[0]);

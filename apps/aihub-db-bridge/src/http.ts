@@ -55,6 +55,28 @@ const parseTokenId = (pathname: string) => {
   return Number(match[1]);
 };
 
+const isManagedTokenUnavailable = (token: {
+  expired_time?: number;
+  remain_quota?: number;
+  status?: number;
+  unlimited_quota?: boolean;
+}) => {
+  if (token.status !== undefined && token.status !== 1) return true;
+  if (
+    token.unlimited_quota !== true &&
+    token.remain_quota !== undefined &&
+    token.remain_quota <= 0
+  ) {
+    return true;
+  }
+
+  return (
+    token.expired_time !== undefined &&
+    token.expired_time !== -1 &&
+    token.expired_time <= Math.floor(Date.now() / 1000)
+  );
+};
+
 const isAuthorized = (request: Request, bridgeToken: string) => {
   const header = request.headers.get('authorization') || '';
 
@@ -94,6 +116,10 @@ export const createBridgeHandler = ({
         }
 
         return success({ ok: true });
+      }
+
+      if (url.pathname === '/v1/capabilities') {
+        return success({ inspectUnavailableManagedToken: true });
       }
 
       if (url.pathname === '/v1/users/resolve') {
@@ -217,7 +243,8 @@ export const createBridgeHandler = ({
       if (managedTokenByIdMatch) {
         const managedTokenId = Number(managedTokenByIdMatch[1]);
         const token = await repository.findManagedTokenById(userId, managedTokenId);
-        if (!token) {
+        const includeUnavailable = url.searchParams.get('includeUnavailable') === 'true';
+        if (!token || (!includeUnavailable && isManagedTokenUnavailable(token))) {
           return failure(
             404,
             'not_found',

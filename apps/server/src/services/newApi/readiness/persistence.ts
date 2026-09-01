@@ -121,6 +121,23 @@ export class DatabaseAihubReadinessBindingStore implements AihubReadinessBinding
       });
   };
 
+  markReconcileError: AihubReadinessBindingStore['markReconcileError'] = async (userId, input) => {
+    const now = new Date();
+    await this.db
+      .update(newApiBindings)
+      .set({
+        attemptCount: sql`${newApiBindings.attemptCount} + 1`,
+        errorCode: input.errorCode,
+        errorKind: input.errorKind,
+        errorMessage: input.errorMessage,
+        lastAttemptAt: now,
+        nextRetryAt: input.nextRetryAt ?? null,
+        status: 'active',
+        updatedAt: now,
+      })
+      .where(eq(newApiBindings.userId, userId));
+  };
+
   updateIamBinding = async (userId: string, state: AihubIamBindingState) => {
     const now = new Date();
     await this.db

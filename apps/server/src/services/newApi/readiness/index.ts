@@ -119,6 +119,15 @@ export type AihubReadinessBindingStore = {
     },
   ) => Promise<void>;
   markPending: (userId: string, input: { trigger: AihubReadinessTrigger }) => Promise<void>;
+  markReconcileError: (
+    userId: string,
+    input: {
+      errorCode: string;
+      errorKind: AihubReadinessErrorKind;
+      errorMessage: string;
+      nextRetryAt?: Date | null;
+    },
+  ) => Promise<void>;
   updateIamBinding: (userId: string, state: AihubIamBindingState) => Promise<void>;
 };
 
@@ -257,6 +266,10 @@ export class AihubReadiness {
   async ensure(userId: string, options: EnsureAihubReadinessOptions): Promise<AihubReadinessState> {
     const binding = await this.bindingStore.get(userId);
     let current = toState(binding);
+    if (binding?.status === 'active') {
+      current = toState(binding, await this.workflow.inspectLocalRuntime(userId));
+    }
+    const hasLastKnownGoodRuntime = current.status === 'active';
     if (
       !options.force &&
       options.trigger === 'model_runtime' &&
@@ -273,14 +286,33 @@ export class AihubReadiness {
       };
     }
 
-    if (!options.force && binding?.status === 'active' && (binding.readinessVersion ?? 1) >= 2) {
-      current = toState(binding, await this.workflow.inspectLocalRuntime(userId));
-      if (current.status === 'active') return current;
+    if (
+      !options.force &&
+      binding?.status === 'active' &&
+      (binding.readinessVersion ?? 1) >= 2 &&
+      !binding.errorCode &&
+      current.status === 'active'
+    ) {
+      return current;
     }
 
     const requestedOwnerId = this.randomId();
     const acquired = await this.lease.acquire(userId, requestedOwnerId);
     if (!acquired) {
+      if (hasLastKnownGoodRuntime) {
+        if (options.force) {
+          return {
+            ...current,
+            errorCode: 'aihub_readiness_in_progress',
+            errorKind: 'transient',
+            errorMessage: 'Aihub reconciliation is already in progress. Please retry shortly.',
+            retryAfterMs: 2000,
+            retryable: true,
+          };
+        }
+
+        return current;
+      }
       if (options.trigger !== 'model_runtime') {
         return { ...current, isBound: false, status: 'pending' };
       }
@@ -289,10 +321,22 @@ export class AihubReadiness {
     }
 
     try {
-      await this.bindingStore.markPending(userId, { trigger: options.trigger });
+      if (!hasLastKnownGoodRuntime) {
+        await this.bindingStore.markPending(userId, { trigger: options.trigger });
+      }
       const identity = await this.identitySource.getEnterpriseIdentity(userId);
       const identityError = this.validateIdentity(identity);
       if (identityError) {
+        if (hasLastKnownGoodRuntime && identityError.errorKind === 'transient') {
+          await this.bindingStore.markReconcileError(userId, identityError);
+          return {
+            ...current,
+            ...identityError,
+            isBound: true,
+            retryable: true,
+            status: 'active',
+          };
+        }
         await this.bindingStore.markError(userId, identityError);
         return {
           ...identityError,
@@ -355,6 +399,20 @@ export class AihubReadiness {
         errorMessage,
         nextRetryAt: retryDelay ? new Date(this.now().getTime() + retryDelay) : null,
       };
+      if (
+        hasLastKnownGoodRuntime &&
+        (classified.kind === 'transient' || classified.kind === 'configuration')
+      ) {
+        await this.bindingStore.markReconcileError(userId, failure);
+        return {
+          ...current,
+          ...failure,
+          isBound: true,
+          retryAfterMs: retryDelay,
+          retryable: classified.kind === 'transient',
+          status: 'active',
+        };
+      }
       await this.bindingStore.markError(userId, failure);
 
       return {
