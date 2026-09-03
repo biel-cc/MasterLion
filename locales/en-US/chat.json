@@ -109,6 +109,8 @@
   "compression.cancel": "Uncompress",
   "compression.cancelConfirm": "Are you sure you want to uncompress? This will restore the original messages.",
   "compression.history": "History",
+  "compression.inProgress": "Compressing context…",
+  "compression.inProgressHint": "Earlier messages are being summarized so the conversation can continue.",
   "compression.summary": "Summary",
   "confirmClearCurrentMessages": "You are about to clear the current conversation messages. Once cleared, they cannot be retrieved. Please confirm your action.",
   "confirmRemoveChatGroupItemAlert": "This Group will be deleted. Group-specific assistants will also be deleted, while external assistants will not be affected.",
