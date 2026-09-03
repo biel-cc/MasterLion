@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LobeAgentAgencyConfig } from '../../packages/types/src/agent/agencyConfig';
+import type { LobeAgentAgencyConfig } from '@lobechat/types/src/agent/agencyConfig';
 import type {
   ExecutionTargetByPlatform,
   TopicExecutionSnapshot,
-} from '../../packages/types/src/projectWorkspace';
+} from '@lobechat/types/src/projectWorkspace';
 
 import {
   executionTargetToRuntimeMode,
@@ -89,9 +89,26 @@ describe('resolveExecutionTarget', () => {
     ).toBe('none');
   });
 
-  it('retains existing heterogeneous defaults only for topics without a snapshot', () => {
+  it('defaults uncaptured heterogeneous topics to desktop local but web none', () => {
     expect(resolveExecutionTarget(undefined, { isDesktop: true, isHetero: true })).toBe('local');
-    expect(resolveExecutionTarget(undefined, { isDesktop: false, isHetero: true })).toBe('sandbox');
+    expect(resolveExecutionTarget(undefined, { isDesktop: false, isHetero: true })).toBe('none');
+  });
+
+  it('keeps explicit web heterogeneous sandbox and device selections compatible', () => {
+    expect(
+      resolveExecutionTarget(undefined, {
+        executionTargetByPlatform: { web: 'sandbox' },
+        isDesktop: false,
+        isHetero: true,
+      }),
+    ).toBe('sandbox');
+    expect(
+      resolveExecutionTarget(undefined, {
+        executionTargetByPlatform: { web: 'device' },
+        isDesktop: false,
+        isHetero: true,
+      }),
+    ).toBe('device');
   });
 });
 
@@ -249,6 +266,17 @@ describe('resolveExecutionPlan', () => {
     ).toEqual({ kind: 'none', target: 'none' });
   });
 
+  it('keeps an uncaptured web heterogeneous topic at none until target selection', () => {
+    expect(
+      resolveExecutionPlan({
+        agencyConfig: undefined,
+        isDesktop: false,
+        isHetero: true,
+        onlineDeviceIds: onlineA,
+      }),
+    ).toEqual({ kind: 'none', target: 'none' });
+  });
+
   it('keeps the desktop default local when the web slot is sandbox', () => {
     const executionTargetByPlatform: ExecutionTargetByPlatform = { web: 'sandbox' };
     expect(
@@ -325,6 +353,7 @@ describe('resolveExecutionPlan', () => {
       resolveExecutionPlan({
         agencyConfig: undefined,
         chatConfig: { toolMode: 'chat' },
+        executionTargetByPlatform: { web: 'sandbox' },
         isDesktop: false,
         isHetero: true,
       }),

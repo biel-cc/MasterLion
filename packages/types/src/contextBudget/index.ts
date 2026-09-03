@@ -134,6 +134,20 @@ const fail = (
  * context-budget lane; this function only enforces bounded attempts and identical-payload rules.
  */
 export const decideContextBudget = (input: DecideContextBudgetInput): ContextBudgetDecision => {
+  if (input.tailTokens > input.budgetTokens) return fail('TAIL_TOO_LARGE', input.offending);
+
+  if (input.trigger === 'provider-error') {
+    if (input.compressionAttempt >= 1) return fail('RETRY_EXHAUSTED', input.offending);
+    if (input.candidateIds.length === 0) return fail('NO_CANDIDATES', input.offending);
+    return {
+      attempt: 1,
+      candidateIds: [...input.candidateIds],
+      kind: 'compress',
+      preservedIds: [...input.preservedIds],
+      trigger: input.trigger,
+    };
+  }
+
   if (input.trigger !== 'manual' && input.promptTokens <= input.budgetTokens) {
     if (input.sentPayloadFingerprints?.includes(input.payloadFingerprint)) {
       return fail('RETRY_EXHAUSTED', input.offending);
@@ -146,7 +160,6 @@ export const decideContextBudget = (input: DecideContextBudgetInput): ContextBud
     };
   }
 
-  if (input.tailTokens > input.windowTokens) return fail('TAIL_TOO_LARGE', input.offending);
   if (input.compressionAttempt >= 1) return fail('RETRY_EXHAUSTED', input.offending);
   if (input.candidateIds.length === 0) return fail('NO_CANDIDATES', input.offending);
 

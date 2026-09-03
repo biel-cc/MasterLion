@@ -61,6 +61,18 @@ describe('decideContextBudget', () => {
     });
   });
 
+  it('compares a non-compressible tail with effective budget, not the raw window', () => {
+    expect(
+      decideContextBudget(
+        input({
+          offending: [{ estimatedTokens: 30_000, messageId: 'tail-1', source: 'text' }],
+          promptTokens: 31_000,
+          tailTokens: 30_000,
+        }),
+      ),
+    ).toMatchObject({ code: 'TAIL_TOO_LARGE', kind: 'fail' });
+  });
+
   it('returns NO_CANDIDATES with actionable alternatives', () => {
     const decision = decideContextBudget(input({ candidateIds: [], promptTokens: 30_000 }));
     expect(decision).toMatchObject({ code: 'NO_CANDIDATES', kind: 'fail' });
@@ -85,12 +97,20 @@ describe('decideContextBudget', () => {
     expect(
       decideContextBudget(
         input({
-          promptTokens: 40_000,
+          promptTokens: 20_000,
           sentPayloadFingerprints: ['payload-a'],
           trigger: 'provider-error',
         }),
       ),
     ).toMatchObject({ kind: 'compress', trigger: 'provider-error' });
+  });
+
+  it('terminates a second provider-error recovery even when the old estimate fits', () => {
+    expect(
+      decideContextBudget(
+        input({ compressionAttempt: 1, promptTokens: 20_000, trigger: 'provider-error' }),
+      ),
+    ).toMatchObject({ code: 'RETRY_EXHAUSTED', kind: 'fail' });
   });
 });
 

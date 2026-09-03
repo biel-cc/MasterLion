@@ -49,9 +49,23 @@ export interface InputModalityEvidence {
 }
 
 export type ChatInputModalityConclusion =
-  | { kind: 'supported'; modality: 'image'; source?: string; verifiedAt?: string }
-  | { kind: 'text-only'; modality: 'image'; source?: string; verifiedAt?: string }
-  | { kind: 'unknown'; modality: 'image'; source?: string; verifiedAt?: string };
+  | {
+      evidence: NonTextInputModalityEvidence;
+      kind: 'supported';
+      modalities: NonTextInputModality[];
+    }
+  | {
+      evidence: NonTextInputModalityEvidence;
+      kind: 'text-only';
+    }
+  | {
+      evidence: NonTextInputModalityEvidence;
+      kind: 'unknown';
+      modalities: NonTextInputModality[];
+    };
+
+export type NonTextInputModality = Exclude<InputModality, 'text'>;
+export type NonTextInputModalityEvidence = Record<NonTextInputModality, InputModalityEvidence>;
 
 /** Chat selection is strict: unknown/non-chat kinds never enter the chat list or default. */
 export const isChatEligible = (entry: Pick<ModelCatalogEntry, 'kind'>): boolean =>
@@ -75,22 +89,24 @@ export const getInputModalityEvidence = (
 export const getChatInputModalityConclusion = (
   entry: ModelCatalogEntry,
 ): ChatInputModalityConclusion => {
-  const evidence = getInputModalityEvidence(entry, 'image');
-  const common = {
-    modality: 'image' as const,
-    source: evidence.source,
-    verifiedAt: evidence.verifiedAt,
+  const evidence: NonTextInputModalityEvidence = {
+    audio: getInputModalityEvidence(entry, 'audio'),
+    file: getInputModalityEvidence(entry, 'file'),
+    image: getInputModalityEvidence(entry, 'image'),
+    video: getInputModalityEvidence(entry, 'video'),
   };
+  const modalities = (Object.keys(evidence) as NonTextInputModality[]).filter(
+    (modality) => evidence[modality].state === 'supported',
+  );
 
-  switch (evidence.state) {
-    case 'supported': {
-      return { ...common, kind: 'supported' };
-    }
-    case 'unsupported': {
-      return { ...common, kind: 'text-only' };
-    }
-    default: {
-      return { ...common, kind: 'unknown' };
-    }
+  if (modalities.length > 0) return { evidence, kind: 'supported', modalities };
+
+  const unknownModalities = (Object.keys(evidence) as NonTextInputModality[]).filter(
+    (modality) => evidence[modality].state === 'unknown',
+  );
+  if (unknownModalities.length > 0) {
+    return { evidence, kind: 'unknown', modalities: unknownModalities };
   }
+
+  return { evidence, kind: 'text-only' };
 };

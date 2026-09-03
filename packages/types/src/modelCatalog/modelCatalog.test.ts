@@ -57,15 +57,52 @@ describe('model catalog contracts', () => {
     expect(getChatInputModalityConclusion(model).kind).toBe('supported');
   });
 
-  it('projects explicit unsupported image evidence as text-only', () => {
+  it('projects only four explicit non-text rejections as text-only', () => {
     expect(
       getChatInputModalityConclusion(
-        entry({ inputModalities: { ...entry().inputModalities, image: 'unsupported' } }),
+        entry({
+          inputModalities: {
+            ...entry().inputModalities,
+            audio: 'unsupported',
+            file: 'unsupported',
+            image: 'unsupported',
+            video: 'unsupported',
+          },
+        }),
       ).kind,
     ).toBe('text-only');
   });
 
-  it('never disguises unknown image evidence as unsupported', () => {
+  it('never disguises any unknown non-text field as text-only', () => {
     expect(getChatInputModalityConclusion(entry()).kind).toBe('unknown');
+  });
+
+  it('reports multimodal when audio is supported even if image is unsupported', () => {
+    const conclusion = getChatInputModalityConclusion(
+      entry({
+        abilitySources: {
+          audio: 'observed:request',
+          file: 'catalog',
+          image: 'manual:deny',
+          video: 'catalog',
+        },
+        inputModalities: {
+          ...entry().inputModalities,
+          audio: 'supported',
+          file: 'unsupported',
+          image: 'unsupported',
+          video: 'unsupported',
+        },
+      }),
+    );
+
+    expect(conclusion).toMatchObject({
+      evidence: {
+        audio: { source: 'observed:request', state: 'supported' },
+        image: { source: 'manual:deny', state: 'unsupported' },
+      },
+      kind: 'supported',
+      modalities: ['audio'],
+    });
   });
 });

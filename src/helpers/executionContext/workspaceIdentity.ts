@@ -1,9 +1,10 @@
 import type {
   NormalizedWorkspaceIdentity,
   WorkspaceBindDecision,
+  WorkspaceBindingEvidence,
   WorkspaceIdentity,
   WorkspaceRef,
-} from '../../../packages/types/src/projectWorkspace';
+} from '@lobechat/types/src/projectWorkspace';
 
 /** Lexical filesystem-path check only; device-side realpath remains the security boundary. */
 export const isAbsoluteFilesystemPath = (value: string): boolean => {
@@ -41,21 +42,41 @@ export const normalizeWorkspaceIdentity = (
 
   return {
     ...identity,
-    key: workspace.id ? `id:${workspace.id}` : buildWorkspaceScopeKey(identity),
+    key: workspace.id
+      ? `id:${workspace.id}:${buildWorkspaceScopeKey(identity)}`
+      : buildWorkspaceScopeKey(identity),
     workspaceId: workspace.id,
   };
 };
 
 export const isSameWorkspace = (left: WorkspaceRef, right: WorkspaceRef): boolean => {
-  if (left.id && right.id) return left.id === right.id;
+  if (left.id && right.id && left.id !== right.id) return false;
   return buildWorkspaceScopeKey(left) === buildWorkspaceScopeKey(right);
 };
 
 export const decideWorkspaceBind = (
-  current: WorkspaceRef | undefined,
+  current: WorkspaceBindingEvidence,
   next: WorkspaceRef,
 ): WorkspaceBindDecision => {
-  if (!current) return { allowed: true, reason: 'first-bind' };
-  if (isSameWorkspace(current, next)) return { allowed: true, reason: 'same-workspace' };
+  const boundWorkspaceId = current.snapshot?.workspaceId;
+
+  if (!boundWorkspaceId && !current.workspace) {
+    return { allowed: true, reason: 'first-bind' };
+  }
+
+  if (boundWorkspaceId) {
+    if (
+      !current.workspace ||
+      current.workspace.id !== boundWorkspaceId ||
+      next.id !== boundWorkspaceId ||
+      (current.snapshot?.workspaceKind && current.workspace.kind !== current.snapshot.workspaceKind)
+    ) {
+      return { allowed: false, reason: 'already-bound' };
+    }
+  }
+
+  if (current.workspace && isSameWorkspace(current.workspace, next)) {
+    return { allowed: true, reason: 'same-workspace' };
+  }
   return { allowed: false, reason: 'already-bound' };
 };

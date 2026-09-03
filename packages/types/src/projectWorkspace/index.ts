@@ -21,7 +21,7 @@ export interface WorkspaceRef extends WorkspaceIdentity {
 
 /** Canonical comparison form used by bind-once and heterogeneous resume checks. */
 export interface NormalizedWorkspaceIdentity extends WorkspaceIdentity {
-  /** `id:<id>` when persisted, otherwise a normalized kind/device/path tuple. */
+  /** Persisted id plus normalized kind/device/path tuple, or only the tuple for legacy evidence. */
   key: string;
   workspaceId?: string;
 }
@@ -35,6 +35,12 @@ export interface TopicExecutionSnapshot {
   workspaceBoundAt?: string;
   workspaceId?: string;
   workspaceKind?: WorkspaceKind;
+}
+
+/** Server-authored binding plus its resolved row, consumed together by bind-once decisions. */
+export interface WorkspaceBindingEvidence {
+  snapshot?: Pick<TopicExecutionSnapshot, 'workspaceId' | 'workspaceKind'>;
+  workspace?: WorkspaceRef;
 }
 
 /** Defaults for future topics. These values are deliberately platform-isolated. */

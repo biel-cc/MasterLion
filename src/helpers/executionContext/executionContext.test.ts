@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type {
-  ExecutionAccessRoot,
-  ExecutionEnv,
-} from '../../../packages/types/src/executionContext';
-import type {
-  TopicExecutionSnapshot,
-  WorkspaceRef,
-} from '../../../packages/types/src/projectWorkspace';
+import type { ExecutionAccessRoot, ExecutionEnv } from '@lobechat/types/src/executionContext';
+import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 
 import { buildExecutionAccessRoots } from './accessRoots';
 import {
@@ -56,13 +50,13 @@ describe('workspace identity', () => {
     expect(isAbsoluteFilesystemPath('~/repo')).toBe(false);
   });
 
-  it('uses persisted ids as the stable identity', () => {
+  it('includes the normalized tuple in persisted identity and detects tuple drift', () => {
     expect(normalizeWorkspaceIdentity(workspace({ rootPath: '/old' }))).toMatchObject({
-      key: 'id:workspace-a',
+      key: 'id:workspace-a:device:device-a:/old',
       workspaceId: 'workspace-a',
     });
     expect(isSameWorkspace(workspace({ rootPath: '/old' }), workspace({ rootPath: '/new' }))).toBe(
-      true,
+      false,
     );
   });
 
@@ -77,15 +71,53 @@ describe('workspace identity', () => {
 
   it('allows first/idempotent binding and rejects every rebind including scratch upgrades', () => {
     const scratch = workspace({ id: 'scratch-a', kind: 'scratch' });
-    expect(decideWorkspaceBind(undefined, scratch)).toEqual({
+    expect(decideWorkspaceBind({}, scratch)).toEqual({
       allowed: true,
       reason: 'first-bind',
     });
-    expect(decideWorkspaceBind(scratch, { ...scratch, rootPath: '/different-mirror' })).toEqual({
+    expect(
+      decideWorkspaceBind(
+        {
+          snapshot: { workspaceId: 'scratch-a', workspaceKind: 'scratch' },
+          workspace: scratch,
+        },
+        { ...scratch, rootPath: '/code/masterino/' },
+      ),
+    ).toEqual({
       allowed: true,
       reason: 'same-workspace',
     });
-    expect(decideWorkspaceBind(scratch, workspace())).toEqual({
+    expect(decideWorkspaceBind({ workspace: scratch }, workspace())).toEqual({
+      allowed: false,
+      reason: 'already-bound',
+    });
+  });
+
+  it('treats a snapshot workspace id as bound even when its row is missing', () => {
+    expect(
+      decideWorkspaceBind(
+        { snapshot: { workspaceId: 'missing', workspaceKind: 'device' } },
+        workspace({ id: 'missing' }),
+      ),
+    ).toEqual({ allowed: false, reason: 'already-bound' });
+  });
+
+  it('rejects same-id root, device, and scratch-kind changes', () => {
+    const scratch = workspace({ id: 'workspace-a', kind: 'scratch' });
+    const current = {
+      snapshot: { workspaceId: 'workspace-a', workspaceKind: 'scratch' as const },
+      workspace: scratch,
+    };
+
+    expect(decideWorkspaceBind(current, { ...scratch, rootPath: '/different' })).toEqual({
+      allowed: false,
+      reason: 'already-bound',
+    });
+    expect(decideWorkspaceBind(current, { ...scratch, deviceId: 'device-b' })).toEqual({
+      allowed: false,
+      reason: 'already-bound',
+    });
+    expect(decideWorkspaceBind(current, { ...scratch, kind: 'device' })).toEqual({
       allowed: false,
       reason: 'already-bound',
     });
@@ -192,6 +224,44 @@ describe('resolveExecutionContext', () => {
     expect(result.unresolvedReason).toBe('no-workspace');
   });
 
+  it('does not fall through to stale workingDirectory when a legacy topic workspace row is missing', () => {
+    const result = resolveExecutionContext({
+      agencyConfig: { boundDeviceId: 'device-a' },
+      executionTargetByPlatform: { web: 'device' },
+      isDesktop: false,
+      onlineDeviceIds: ['device-a'],
+      topic: {
+        boundDeviceId: 'device-a',
+        workingDirectory: '/stale/path',
+        workspaceId: 'missing',
+      },
+      workspaces: {},
+    });
+
+    expect(result.cwd).toBeUndefined();
+    expect(result.unresolvedReason).toBe('no-workspace');
+  });
+
+  it('does not fall through when the bound workspace belongs to another device', () => {
+    const result = resolveExecutionContext({
+      agencyConfig: { boundDeviceId: 'device-a' },
+      executionTargetByPlatform: { web: 'device' },
+      isDesktop: false,
+      onlineDeviceIds: ['device-a'],
+      topic: {
+        boundDeviceId: 'device-a',
+        workingDirectory: '/stale/path',
+        workspaceId: 'workspace-b',
+      },
+      workspaces: {
+        'workspace-b': workspace({ deviceId: 'device-b', id: 'workspace-b' }),
+      },
+    });
+
+    expect(result.cwd).toBeUndefined();
+    expect(result.unresolvedReason).toBe('no-workspace');
+  });
+
   it('accepts a compatible legacy topic path but rejects URL-shaped mirrors', () => {
     expect(
       resolveExecutionContext({
@@ -255,10 +325,38 @@ describe('resolveExecutionContext', () => {
     });
   });
 
+  it('does not fabricate a sandbox workspace when a bound sandbox row is missing', () => {
+    const result = resolveExecutionContext({
+      isDesktop: false,
+      snapshot: snapshot({
+        boundDeviceId: undefined,
+        target: 'sandbox',
+        workspaceId: 'missing-sandbox',
+        workspaceKind: 'sandbox',
+      }),
+      workspaces: {},
+    });
+    expect(result.cwd).toBeUndefined();
+    expect(result.unresolvedReason).toBe('no-workspace');
+  });
+
   it('keeps a new web-native topic target-none', () => {
     expect(resolveExecutionContext({ isDesktop: false })).toMatchObject({
       plan: { kind: 'none', target: 'none' },
       unresolvedReason: 'target-none',
+    });
+  });
+
+  it('keeps an unconfigured web heterogeneous topic unroutable and workspace-free', () => {
+    const result = resolveExecutionContext({ isDesktop: false, isHetero: true });
+    expect(result).toMatchObject({
+      plan: { kind: 'none', target: 'none' },
+      unresolvedReason: 'target-none',
+    });
+    expect(result.cwd).toBeUndefined();
+    expect(result.workspace).toBeUndefined();
+    expect(assertExecutionContextReady(result, { requireWorkspace: true })).toMatchObject({
+      code: 'TARGET_NONE',
     });
   });
 

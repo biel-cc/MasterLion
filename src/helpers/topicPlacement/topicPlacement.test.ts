@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TopicExecutionSnapshot } from '../../../packages/types/src/projectWorkspace';
+import type { TopicExecutionSnapshot } from '@lobechat/types/src/projectWorkspace';
 
 import { classifyTopicPlacement } from './index';
 

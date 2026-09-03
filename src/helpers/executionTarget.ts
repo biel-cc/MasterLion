@@ -1,20 +1,20 @@
 import type {
   DeviceExecutionTarget,
   LobeAgentAgencyConfig,
-} from '../../packages/types/src/agent/agencyConfig';
-import type { RuntimeEnvMode } from '../../packages/types/src/agent/agentConfig';
-import type { LobeAgentChatConfig } from '../../packages/types/src/agent/chatConfig';
+} from '@lobechat/types/src/agent/agencyConfig';
+import type { RuntimeEnvMode } from '@lobechat/types/src/agent/agentConfig';
+import type { LobeAgentChatConfig } from '@lobechat/types/src/agent/chatConfig';
 
-import type { ExecutionPlan } from '../../packages/types/src/executionContext';
+import type { ExecutionPlan } from '@lobechat/types/src/executionContext';
 import type {
   ExecutionTargetByPlatform,
   TopicExecutionSnapshot,
-} from '../../packages/types/src/projectWorkspace';
+} from '@lobechat/types/src/projectWorkspace';
 
 export type {
   ExecutionPlan,
   ExecutionPlanUnroutedReason,
-} from '../../packages/types/src/executionContext';
+} from '@lobechat/types/src/executionContext';
 
 /**
  * The agent's tool mode — explicit `chatConfig.toolMode` wins; otherwise derive
@@ -40,8 +40,8 @@ export interface ResolveExecutionTargetOptions {
   isDesktop: boolean;
   /**
    * Heterogeneous agents (Claude Code / Codex) bring their own toolchain and
-   * must execute somewhere, so `'none'` is not a valid target for them: it
-   * coerces to `'local'` on desktop and `'sandbox'` on web.
+   * must bind a workspace before execution. Desktop drafts default local;
+   * web drafts remain none until sandbox/device is selected explicitly.
    */
   isHetero?: boolean;
   /** Server-authored topic state. When present it wins over every agent/platform default. */
@@ -81,7 +81,7 @@ export const resolveExecutionTarget = (
     : executionTargetByPlatform?.web;
   const legacyWebTarget = isDesktop ? undefined : agencyConfig?.executionTarget;
   let effective = platformStored ?? legacyWebTarget ?? (isDesktop ? 'local' : 'none');
-  if (isHetero && effective === 'none') effective = isDesktop ? 'local' : 'sandbox';
+  if (isHetero && isDesktop && effective === 'none') effective = 'local';
   return effective;
 };
 

@@ -2,7 +2,7 @@ import type {
   TopicExecutionSnapshot,
   TopicPlacement,
   TopicPlacementWorkspaceEvidence,
-} from '../../../packages/types/src/projectWorkspace';
+} from '@lobechat/types/src/projectWorkspace';
 
 /**
  * The only Topic navigation classifier. It has no Task branch by design: recent is a derived

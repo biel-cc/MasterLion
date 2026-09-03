@@ -1,17 +1,17 @@
-import type { LobeAgentAgencyConfig } from '../../../packages/types/src/agent/agencyConfig';
-import type { LobeAgentChatConfig } from '../../../packages/types/src/agent/chatConfig';
+import type { LobeAgentAgencyConfig } from '@lobechat/types/src/agent/agencyConfig';
+import type { LobeAgentChatConfig } from '@lobechat/types/src/agent/chatConfig';
 import type {
   ExecutionAccessRoot,
   ExecutionContext,
   ExecutionContextError,
   ExecutionEnv,
   ToolCallExecutionContext,
-} from '../../../packages/types/src/executionContext';
+} from '@lobechat/types/src/executionContext';
 import type {
   ExecutionTargetByPlatform,
   TopicExecutionSnapshot,
   WorkspaceRef,
-} from '../../../packages/types/src/projectWorkspace';
+} from '@lobechat/types/src/projectWorkspace';
 
 import { resolveExecutionPlan } from '../executionTarget';
 import { buildExecutionAccessRoots } from './accessRoots';
@@ -67,16 +67,12 @@ const resolveDeviceWorkspace = (
   input: ResolveExecutionContextInput,
   deviceId: string,
 ): WorkspaceRef | undefined => {
-  const snapshotWorkspace = getWorkspaceById(input.snapshot?.workspaceId, input.workspaces);
-  if (input.snapshot?.workspaceId) {
-    return isDeviceWorkspaceFor(snapshotWorkspace, deviceId)
-      ? normalizeResolvedWorkspace(snapshotWorkspace!)
+  const boundWorkspaceId = input.snapshot?.workspaceId ?? input.topic?.workspaceId;
+  const boundWorkspace = getWorkspaceById(boundWorkspaceId, input.workspaces);
+  if (boundWorkspaceId) {
+    return isDeviceWorkspaceFor(boundWorkspace, deviceId)
+      ? normalizeResolvedWorkspace(boundWorkspace!)
       : undefined;
-  }
-
-  const topicWorkspace = getWorkspaceById(input.topic?.workspaceId, input.workspaces);
-  if (isDeviceWorkspaceFor(topicWorkspace, deviceId)) {
-    return normalizeResolvedWorkspace(topicWorkspace!);
   }
 
   const topicPath = input.topic?.workingDirectory;
@@ -104,9 +100,11 @@ const resolveDeviceWorkspace = (
   return undefined;
 };
 
-const resolveSandboxWorkspace = (input: ResolveExecutionContextInput): WorkspaceRef => {
+const resolveSandboxWorkspace = (input: ResolveExecutionContextInput): WorkspaceRef | undefined => {
   const workspaceId = input.snapshot?.workspaceId ?? input.topic?.workspaceId;
   const persisted = getWorkspaceById(workspaceId, input.workspaces);
+
+  if (workspaceId && persisted?.kind !== 'sandbox') return undefined;
 
   return {
     ...(persisted?.kind === 'sandbox' ? persisted : undefined),

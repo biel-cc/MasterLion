@@ -1,4 +1,4 @@
-import type { ExecutionAccessRoot } from '../../../packages/types/src/executionContext';
+import type { ExecutionAccessRoot } from '@lobechat/types/src/executionContext';
 
 import { normalizeRootPath } from './workspaceIdentity';
 
