@@ -53,4 +53,3 @@ export const useWorkspaceBindingIntentConfirmation = (
     [bind.canSelect, bind.select, effective.state, t],
   );
 };
-

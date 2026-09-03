@@ -31,4 +31,3 @@ describe('detectWorkspaceBindingIntent', () => {
     ).toBeUndefined();
   });
 });
-

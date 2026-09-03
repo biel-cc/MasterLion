@@ -94,4 +94,3 @@ describe('useWorkspaceBindingIntentConfirmation', () => {
     expect(confirmModal).not.toHaveBeenCalled();
   });
 });
-

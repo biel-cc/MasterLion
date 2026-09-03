@@ -57,4 +57,3 @@ export const extractDirectUserAbsolutePathCandidates = (text: string): string[] 
   }
   return [...unique];
 };
-
