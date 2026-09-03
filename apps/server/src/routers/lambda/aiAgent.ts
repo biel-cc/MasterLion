@@ -177,6 +177,17 @@ const ExecAgentSchema = z
     resumeApproval: z
       .object({
         decision: z.enum(['approved', 'rejected', 'rejected_continue']),
+        pathConsent: z
+          .object({
+            deviceId: z.string().min(1),
+            modes: z.array(z.enum(['exec', 'read', 'write'])).min(1),
+            rootPath: z.string().min(1),
+            scope: z.literal('operation'),
+            sourceOperationId: z.string().min(1),
+            topicId: z.string().min(1),
+            version: z.literal(1),
+          })
+          .optional(),
         /** ID of the pending `role='tool'` message this decision targets. */
         parentMessageId: z.string(),
         /** Optional user-supplied rejection reason (only meaningful for rejected variants). */

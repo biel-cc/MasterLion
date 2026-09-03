@@ -141,7 +141,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     expect(handleRunCommand).not.toHaveBeenCalled();
   });
 
-  it('does not call the file service when a symlink escapes the primary root', async () => {
+  it('requires intervention before a symlink may read outside the primary root', async () => {
     const outside = path.join(tempRoot, 'outside');
     await mkdir(outside);
     await writeFile(path.join(outside, 'secret.txt'), 'secret');
@@ -154,7 +154,41 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       context(),
     );
 
-    expect(result).toMatchObject({ content: 'SCOPE_DENIED', success: false });
+    expect(result).toMatchObject({ content: 'INTERVENTION_REQUIRED', success: false });
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('returns runtime-authored structured consent metadata for an out-of-scope read', async () => {
+    const outside = path.join(tempRoot, 'shared');
+    await mkdir(outside);
+    const file = path.join(outside, 'note.txt');
+    await writeFile(file, 'shared');
+    const canonicalFile = await realpath(file);
+    const controller = makeController();
+
+    const result = await (controller as any).executeToolCall(
+      'readFile',
+      { path: file },
+      context(),
+      { deviceId: 'device-1', operationId: 'op-1', toolCallId: 'call-1', topicId: 'topic-1' },
+    );
+
+    expect(result).toMatchObject({
+      content: 'INTERVENTION_REQUIRED',
+      state: {
+        workspacePathConsent: {
+          actualCwd: workspace,
+          deviceId: 'device-1',
+          modes: ['read'],
+          operationId: 'op-1',
+          primaryCwd: workspace,
+          requestedPath: canonicalFile,
+          topicId: 'topic-1',
+          version: 1,
+        },
+      },
+      success: false,
+    });
     expect(readFile).not.toHaveBeenCalled();
   });
 });

@@ -26,7 +26,9 @@ export interface StructuredPathConsentRequest {
 }
 
 export type PathConsentSelection = Omit<PathConsentDecision, 'at'>;
-export type PathConsentDecisionCallback = (decision: PathConsentSelection) => Promise<void> | void;
+export type PathConsentDecisionCallback = (
+  decision: PathConsentSelection,
+) => Promise<PathConsentSelection | void> | PathConsentSelection | void;
 
 const PATH_ACCESS_MODES = new Set<PathAccessMode>(['exec', 'read', 'write']);
 
@@ -43,13 +45,11 @@ export const parseStructuredPathConsentRequest = (
   if (
     request.version !== 1 ||
     typeof request.actualCwd !== 'string' ||
-    !request.actualCwd ||
     typeof request.deviceId !== 'string' ||
     !request.deviceId ||
     typeof request.operationId !== 'string' ||
     !request.operationId ||
     typeof request.primaryCwd !== 'string' ||
-    !request.primaryCwd ||
     typeof request.requestedPath !== 'string' ||
     !request.requestedPath ||
     typeof request.topicId !== 'string' ||
@@ -124,10 +124,9 @@ interface PathConsentProps {
 }
 
 /**
- * Presentation and callback seam only. Integrate must realpath on the target
- * device, rebuild operation accessRoots, persist a topic grant when selected,
- * and resume/reject the operation. Until that happens this panel says the
- * choice is recorded, never that access was granted or execution resumed.
+ * The callback owns the trusted realpath/grant/resume transaction. A callback
+ * may return a canonicalized decision; only that canonical result is recorded.
+ * Standalone/test consumers without a callback still record the local choice.
  */
 const PathConsent = memo<PathConsentProps>(
   ({ actionsPortalTarget, messageId, onDecision, request }) => {
@@ -139,6 +138,7 @@ const PathConsent = memo<PathConsentProps>(
     );
     const [loadingScope, setLoadingScope] = useState<PathConsentDecision['scope']>();
     const [callbackError, setCallbackError] = useState(false);
+    const [coordinationComplete, setCoordinationComplete] = useState(false);
 
     const decide = useCallback(
       async (scope: PathConsentDecision['scope']) => {
@@ -155,10 +155,12 @@ const PathConsent = memo<PathConsentProps>(
           topicId: request.topicId,
         };
         setCallbackError(false);
+        setCoordinationComplete(false);
         setLoadingScope(scope);
-        setOperationPathConsent(messageId, decision);
         try {
-          await onDecision?.(decision);
+          const finalized = await onDecision?.(decision);
+          setOperationPathConsent(messageId, finalized ?? decision);
+          setCoordinationComplete(!!finalized);
         } catch {
           setCallbackError(true);
         } finally {
@@ -195,9 +197,9 @@ const PathConsent = memo<PathConsentProps>(
         <Text weight={600}>{tw('workspacePathConsent.title')}</Text>
         <dl className={styles.details}>
           <dt className={styles.label}>{tw('workspacePathConsent.primaryCwd')}</dt>
-          <dd className={styles.value}>{request.primaryCwd}</dd>
+          <dd className={styles.value}>{request.primaryCwd || '—'}</dd>
           <dt className={styles.label}>{tw('workspacePathConsent.actualCwd')}</dt>
-          <dd className={styles.value}>{request.actualCwd}</dd>
+          <dd className={styles.value}>{request.actualCwd || '—'}</dd>
           <dt className={styles.label}>{tw('workspacePathConsent.requestedPath')}</dt>
           <dd className={styles.value}>{request.requestedPath}</dd>
           <dt className={styles.label}>{tw('workspacePathConsent.modes')}</dt>
@@ -230,8 +232,16 @@ const PathConsent = memo<PathConsentProps>(
             type="info"
             title={
               recorded.scope === 'reject'
-                ? tw('workspacePathConsent.rejectRecorded')
-                : tw('workspacePathConsent.recordedNotResumed')
+                ? tw(
+                    coordinationComplete
+                      ? 'workspacePathConsent.rejectedAndResumed'
+                      : 'workspacePathConsent.rejectRecorded',
+                  )
+                : tw(
+                    coordinationComplete
+                      ? 'workspacePathConsent.approvedAndResumed'
+                      : 'workspacePathConsent.recordedNotResumed',
+                  )
             }
           />
         )}

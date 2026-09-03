@@ -64,6 +64,7 @@ import { notificationRouter } from './notification';
 import { oauthDeviceFlowRouter } from './oauthDeviceFlow';
 import { pluginRouter } from './plugin';
 import { pushTokenRouter } from './pushToken';
+import { projectWorkspaceRouter } from './projectWorkspace';
 import { ragEvalRouter } from './ragEval';
 import { recentRouter } from './recent';
 import { resourcePermissionRouter } from './resourcePermission';
@@ -134,6 +135,7 @@ export const lambdaRouter = router({
   oauthDeviceFlow: oauthDeviceFlowRouter,
   plugin: pluginRouter,
   pushToken: pushTokenRouter,
+  projectWorkspace: projectWorkspaceRouter,
   ragEval: ragEvalRouter,
   recent: recentRouter,
   resourcePermission: resourcePermissionRouter,

@@ -107,11 +107,14 @@ export class WorkspaceAccessGrantService {
     topicId: string;
   }): Promise<ExecutionAccessRoot[]> =>
     (await this.listActive(params)).map((grant) => ({
+      deviceId: grant.deviceId,
+      expiresAt: grant.expiresAt,
       grantId: grant.id,
       modes: grant.modes,
       rootPath: grant.rootPath,
       scope: 'topic',
       source: 'user-approval',
+      topicId: grant.topicId,
     }));
 
   revoke = async (params: {

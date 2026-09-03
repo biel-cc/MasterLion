@@ -77,6 +77,23 @@ export interface TopicGrantRefInput {
   topicId: string;
 }
 
+export interface WorkspaceEnvEntrySummary {
+  key: string;
+  secret: boolean;
+}
+
+export interface SaveWorkspaceEnvEntryInput {
+  key: string;
+  secret: boolean;
+  value: string;
+}
+
+export interface UpdateProjectWorkspaceInput {
+  displayName?: string | null;
+  repoType?: 'git' | 'github' | null;
+  skillPolicy?: ProjectWorkspaceSkillPolicy | null;
+}
+
 /**
  * Narrow client seam over the A1 `projectWorkspaceRouter`. Stores and hooks
  * consume this interface only; tests inject a fake implementation.
@@ -88,8 +105,12 @@ export interface ProjectWorkspaceClient {
   getTopicState: (input: { topicId: string }) => Promise<TopicWorkspaceState | undefined>;
   grant: (input: GrantTopicAccessInput) => Promise<WorkspaceAccessGrant>;
   list: (input?: { deviceId?: string; kind?: WorkspaceKind }) => Promise<ProjectWorkspaceItem[]>;
+  listEnv: (input: { workspaceId: string }) => Promise<WorkspaceEnvEntrySummary[]>;
   listGrants: (input: { deviceId: string; topicId: string }) => Promise<WorkspaceAccessGrant[]>;
   revoke: (input: TopicGrantRefInput) => Promise<WorkspaceAccessGrant>;
+  revokeEnv: (input: { key: string; workspaceId: string }) => Promise<void>;
+  saveEnv: (input: SaveWorkspaceEnvEntryInput & { workspaceId: string }) => Promise<void>;
+  update: (input: UpdateProjectWorkspaceInput & { id: string }) => Promise<ProjectWorkspaceItem>;
 }
 
 export const PROJECT_WORKSPACE_SEAM_UNAVAILABLE = 'PROJECT_WORKSPACE_SEAM_UNAVAILABLE' as const;
@@ -151,8 +172,12 @@ interface RawProjectWorkspaceRouter {
     { deviceId?: string; kind?: WorkspaceKind } | undefined,
     ProjectWorkspaceItem[]
   >;
+  listEnv: RawProcedure<{ workspaceId: string }, WorkspaceEnvEntrySummary[]>;
   listGrants: RawProcedure<{ deviceId: string; topicId: string }, WorkspaceAccessGrant[]>;
   revoke: RawProcedure<TopicGrantRefInput, WorkspaceAccessGrant>;
+  revokeEnv: RawProcedure<{ key: string; workspaceId: string }, void>;
+  saveEnv: RawProcedure<SaveWorkspaceEnvEntryInput & { workspaceId: string }, void>;
+  update: RawProcedure<UpdateProjectWorkspaceInput & { id: string }, ProjectWorkspaceItem>;
 }
 
 const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
@@ -169,8 +194,12 @@ const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
     getTopicState: (input) => router.getTopicState.query(input),
     grant: (input) => router.grant.mutate(input),
     list: (input) => router.list.query(input),
+    listEnv: (input) => router.listEnv.query(input),
     listGrants: (input) => router.listGrants.query(input),
     revoke: (input) => router.revoke.mutate(input),
+    revokeEnv: (input) => router.revokeEnv.mutate(input),
+    saveEnv: (input) => router.saveEnv.mutate(input),
+    update: (input) => router.update.mutate(input),
   };
 };
 
@@ -204,6 +233,11 @@ export class ProjectWorkspaceService {
     return this.client().list(input);
   }
 
+  /** Value-free browser projection: names and secret flags only. */
+  listEnv(workspaceId: string) {
+    return this.client().listEnv({ workspaceId });
+  }
+
   getTopicState(topicId: string) {
     return this.client().getTopicState({ topicId });
   }
@@ -235,6 +269,18 @@ export class ProjectWorkspaceService {
 
   revoke(input: TopicGrantRefInput) {
     return this.client().revoke(input);
+  }
+
+  saveEnv(workspaceId: string, entry: SaveWorkspaceEnvEntryInput) {
+    return this.client().saveEnv({ ...entry, workspaceId });
+  }
+
+  revokeEnv(workspaceId: string, key: string) {
+    return this.client().revokeEnv({ key, workspaceId });
+  }
+
+  updateWorkspace(id: string, value: UpdateProjectWorkspaceInput) {
+    return this.client().update({ id, ...value });
   }
 }
 

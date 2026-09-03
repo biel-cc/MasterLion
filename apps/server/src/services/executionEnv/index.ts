@@ -6,3 +6,4 @@ export * from './operation';
 export * from './redaction';
 export * from './types';
 export * from './validation';
+export * from './workspaceEnv';

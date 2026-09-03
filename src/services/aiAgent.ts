@@ -1,4 +1,5 @@
 import type { ExecAgentAppContext, ExecAgentResult } from '@lobechat/types';
+import type { OperationPathConsentApproval } from '@lobechat/types/src/executionContext';
 
 import { lambdaClient } from '@/libs/trpc/client';
 
@@ -18,6 +19,8 @@ export interface ResumeApprovalParam {
   decision: 'approved' | 'rejected' | 'rejected_continue';
   /** ID of the pending `role='tool'` message this decision targets. */
   parentMessageId: string;
+  /** Canonical operation-only read root produced by the trusted path-consent flow. */
+  pathConsent?: OperationPathConsentApproval;
   /** Optional user-supplied rejection reason (only meaningful for rejected variants). */
   rejectionReason?: string;
   /** tool_call_id of the pending tool call being approved/rejected. */

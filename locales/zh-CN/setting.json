@@ -2027,5 +2027,20 @@
   "workspaceSetting.tab.members": "成员",
   "workspaceSetting.tab.plans": "计划",
   "workspaceSetting.tab.skill": "技能",
-  "workspaceSetting.tab.usage": "使用情况"
+  "workspaceSetting.tab.usage": "使用情况",
+  "workspaceSkills.description": "选择 Agent 在此工作空间运行时可使用哪些技能来源。",
+  "workspaceSkills.discovered": "此目录中发现的项目技能",
+  "workspaceSkills.empty": "未发现项目技能",
+  "workspaceSkills.includeAgent": "包含 Agent 技能",
+  "workspaceSkills.includeProject": "包含项目与工作空间技能",
+  "workspaceSkills.includeUser": "包含个人技能",
+  "workspaceSkills.materialize.description": "对于受支持的异构 Agent，将解析后的技能集复制到项目或个人技能目录。",
+  "workspaceSkills.materialize.label": "为 CLI Agent 实体化技能",
+  "workspaceSkills.materialize.off": "不实体化",
+  "workspaceSkills.materialize.project": "项目技能目录",
+  "workspaceSkills.materialize.user": "个人技能目录",
+  "workspaceSkills.save": "保存技能策略",
+  "workspaceSkills.saveError": "无法保存技能策略。",
+  "workspaceSkills.saveSuccess": "技能策略已保存。",
+  "workspaceSkills.title": "工作空间技能"
 }

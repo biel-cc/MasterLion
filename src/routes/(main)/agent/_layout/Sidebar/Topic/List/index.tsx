@@ -1,5 +1,6 @@
 'use client';
 
+import { isDesktop } from '@lobechat/const';
 import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import urlJoin from 'url-join';
@@ -17,6 +18,7 @@ import { useAgentTopicGroupMode } from '../hooks/useAgentTopicGroupMode';
 import ByProjectMode from '../TopicListContent/ByProjectMode';
 import ByTimeMode from '../TopicListContent/ByTimeMode';
 import FlatMode from '../TopicListContent/FlatMode';
+import WorkspaceMode from '../TopicListContent/WorkspaceMode';
 
 const TopicList = memo(() => {
   const { t } = useTranslation('topic');
@@ -50,7 +52,9 @@ const TopicList = memo(() => {
           }}
         />
       )}
-      {topicGroupMode === 'flat' ? (
+      {isDesktop ? (
+        <WorkspaceMode />
+      ) : topicGroupMode === 'flat' ? (
         <FlatMode />
       ) : topicGroupMode === 'byProject' ? (
         <ByProjectMode />

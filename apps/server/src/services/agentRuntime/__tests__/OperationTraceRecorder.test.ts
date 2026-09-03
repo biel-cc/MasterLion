@@ -77,6 +77,13 @@ describe('OperationTraceRecorder', () => {
           finalState: {
             activatedStepTools: [{ id: 'kept' }],
             messages: ['heavy'],
+            metadata: {
+              executionContext: {
+                cwd: '/approved/project',
+                env: { values: { TOKEN: 'must-not-leak' } },
+                version: 1,
+              },
+            },
             operationToolSet: { manifestMap: {} },
             otherStateField: 'kept',
             toolManifestMap: {},
@@ -108,6 +115,10 @@ describe('OperationTraceRecorder', () => {
       const doneEvent = step.events.find((e: any) => e.type === 'done');
       expect(doneEvent.finalState.activatedStepTools).toEqual([{ id: 'kept' }]);
       expect(doneEvent.finalState.otherStateField).toBe('kept');
+      expect(doneEvent.finalState.metadata.executionContext).toEqual({
+        cwd: '/approved/project',
+        version: 1,
+      });
       expect(doneEvent.finalState.messages).toBeUndefined();
       expect(doneEvent.finalState.operationToolSet).toBeUndefined();
       expect(doneEvent.finalState.toolManifestMap).toBeUndefined();

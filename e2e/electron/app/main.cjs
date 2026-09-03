@@ -16,6 +16,18 @@ const retryPolicyModuleUrl = pathToFileURL(
 const aihubReadinessModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
 ).href;
+const workspaceRuntimeModuleUrl = pathToFileURL(
+  path.join(__dirname, '../.artifacts/workspaceRuntimeHarness.mjs'),
+).href;
+
+if (process.env.MASTERINO_ELECTRON_E2E_STATE_ROOT) {
+  app.setPath('userData', process.env.MASTERINO_ELECTRON_E2E_STATE_ROOT);
+}
+
+ipcMain.handle('masterino-e2e:observe-workspace-runtime', async (_event, id) => {
+  const { observeWorkspaceRuntime } = await import(workspaceRuntimeModuleUrl);
+  return observeWorkspaceRuntime(id);
+});
 
 const createAihubHarness = async () => {
   const { AihubReadiness } = await import(aihubReadinessModuleUrl);

@@ -255,11 +255,11 @@ describe('AgentRuntimeService', () => {
           status: 'idle',
           stepCount: 0,
           messages: [],
-          metadata: {
+          metadata: expect.objectContaining({
             agentConfig: mockParams.agentConfig,
             modelRuntimeConfig: mockParams.modelRuntimeConfig,
             userId: mockParams.userId,
-          },
+          }),
           toolManifestMap: {},
         }),
       );
@@ -325,6 +325,88 @@ describe('AgentRuntimeService', () => {
         expect.objectContaining({
           metadata: expect.objectContaining({
             evalContext,
+          }),
+        }),
+      );
+    });
+
+    it('should freeze execution, model catalog, and skill registry snapshots in operation state', async () => {
+      const executionContext: NonNullable<OperationCreationParams['executionContext']> = {
+        accessRoots: [
+          {
+            modes: ['read'],
+            rootPath: '/approved/project',
+            scope: 'primary',
+            source: 'workspace',
+          },
+        ],
+        cwd: '/approved/project',
+        env: {
+          secretKeys: ['TOKEN'],
+          sources: { TOKEN: 'workspace' },
+          values: { TOKEN: 'resolved-secret' },
+        },
+        operationId: 'test-operation-1',
+        plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+        version: 1,
+        workspace: {
+          deviceId: 'device-1',
+          id: 'workspace-1',
+          kind: 'device',
+          rootPath: '/approved/project',
+        },
+      };
+      const modelCatalogSnapshot: NonNullable<OperationCreationParams['modelCatalogSnapshot']> = {
+        capturedAt: '2026-09-03T00:00:00.000Z',
+        entry: {
+          abilitySources: {},
+          contextWindowSource: 'unknown',
+          contextWindowTokens: 32_000,
+          inputModalities: {
+            audio: 'unknown',
+            file: 'unknown',
+            image: 'unknown',
+            text: 'supported',
+            video: 'unknown',
+          },
+          kind: 'chat',
+          kindSource: 'default',
+          modelId: 'gpt-4',
+          providerId: 'openai',
+        },
+        operationId: 'test-operation-1',
+        version: 1,
+      };
+      const skillRegistryResult: NonNullable<OperationCreationParams['skillRegistryResult']> = {
+        entries: [],
+        errors: [],
+        policy: {
+          includeAgentSkills: true,
+          includeProjectSkills: true,
+          includeUserSkills: true,
+          materializeForHeteroCli: 'off',
+          pinned: [],
+        },
+        precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+        skills: [],
+      };
+
+      await service.createOperation({
+        ...mockParams,
+        autoStart: false,
+        executionContext,
+        modelCatalogSnapshot,
+        skillRegistryResult,
+      });
+
+      expect(mockCoordinator.saveAgentState).toHaveBeenCalledWith(
+        'test-operation-1',
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            contextBudget: { catalogSnapshot: modelCatalogSnapshot },
+            executionContext,
+            modelCatalogSnapshot,
+            skillRegistryResult,
           }),
         }),
       );

@@ -1,5 +1,6 @@
 import type { TaskDetail, UIChatMessage } from '../message';
 import type { ChatTopic } from '../topic';
+import type { OperationPathConsentApproval } from '../executionContext';
 
 export type AgentSignalOperationKind =
   | 'memory'
@@ -151,6 +152,15 @@ export interface ExecAgentParams {
   prompt: string;
   /** Override the agent's default provider */
   provider?: string;
+  /** Resume a pending human-approved tool call. */
+  resumeApproval?: {
+    decision: 'approved' | 'rejected' | 'rejected_continue';
+    parentMessageId: string;
+    /** Operation-only path access is accepted only with matching runtime-authored evidence. */
+    pathConsent?: OperationPathConsentApproval;
+    rejectionReason?: string;
+    toolCallId: string;
+  };
   /** The agent slug to run (either agentId or slug is required) */
   slug?: string;
 }

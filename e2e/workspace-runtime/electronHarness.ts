@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import type { AcceptanceResultMap } from '../../test/workspace-runtime/contracts';
 
 export type ElectronAcceptanceId =
@@ -19,14 +23,33 @@ export interface ElectronWorkspaceRuntimeSession {
   observe: <Id extends ElectronAcceptanceId>(id: Id) => Promise<AcceptanceResultMap[Id]>;
 }
 
-/**
- * Integration wiring point. Bind this to the production Electron app, test database, and an
- * isolated temporary workspace root. The accepted ref has no Workspace Runtime renderer/IPC seam,
- * so invocation intentionally fails with a behavioral wiring error instead of an import error.
- */
+/** Launches the real Electron process with isolated app state and observes through preload IPC. */
 export const launchElectronWorkspaceRuntimeSession =
   async (): Promise<ElectronWorkspaceRuntimeSession> => {
-    throw new Error(
-      'MISSING_ELECTRON_ACCEPTANCE_SEAM: bind the production renderer/IPC, isolated DB, and temp filesystem fixture',
-    );
+    const stateRoot = await mkdtemp(path.join(tmpdir(), 'masterino-workspace-runtime-e2e-'));
+    const { launchElectronTestApp } = await import('../electron/support/electronTestApp.mjs');
+    const electronApp = await launchElectronTestApp({
+      env: { MASTERINO_ELECTRON_E2E_STATE_ROOT: stateRoot },
+    });
+    const page = await electronApp.firstWindow();
+    await page.waitForSelector('[data-testid="electron-runtime"]');
+
+    return {
+      close: async () => {
+        await electronApp.close();
+        await rm(stateRoot, { force: true, recursive: true });
+      },
+      observe: async <Id extends ElectronAcceptanceId>(id: Id) =>
+        page.evaluate(
+          (acceptanceId) =>
+            (
+              window as unknown as {
+                masterinoElectronE2E: {
+                  observeWorkspaceRuntime: (value: ElectronAcceptanceId) => Promise<unknown>;
+                };
+              }
+            ).masterinoElectronE2E.observeWorkspaceRuntime(acceptanceId),
+          id,
+        ) as Promise<AcceptanceResultMap[Id]>,
+    };
   };

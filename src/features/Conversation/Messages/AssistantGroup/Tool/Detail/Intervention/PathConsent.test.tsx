@@ -105,6 +105,12 @@ describe('structured workspace path consent', () => {
     expect(parseStructuredPathConsentRequest({ ...request, version: 2 })).toBeUndefined();
   });
 
+  it('keeps an unbound topic consent request valid without inventing a cwd', () => {
+    expect(
+      parseStructuredPathConsentRequest({ ...request, actualCwd: '', primaryCwd: '' }),
+    ).toMatchObject({ actualCwd: '', primaryCwd: '', requestedPath: '/data/reports' });
+  });
+
   it('shows primary/actual cwd, requested path, modes, override, and OS-isolation risk', () => {
     render(<PathConsent messageId="message-1" request={request} />);
 
@@ -160,6 +166,25 @@ describe('structured workspace path consent', () => {
       );
     },
   );
+
+  it('stores the canonical decision and confirms resume only after coordination completes', async () => {
+    const onDecision = vi.fn<PathConsentDecisionCallback>(async (decision) => ({
+      ...decision,
+      rootPath: '/canonical/reports',
+    }));
+    render(<PathConsent messageId="message-1" request={request} onDecision={onDecision} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'workspacePathConsent.once' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-path-consent-recorded')).toHaveTextContent(
+        'workspacePathConsent.approvedAndResumed',
+      ),
+    );
+    expect(
+      useProjectWorkspaceStore.getState().operationConsentByMessage['message-1'],
+    ).toMatchObject({ rootPath: '/canonical/reports', scope: 'operation' });
+  });
 
   it('keeps every choice keyboard-addressable and exposes a labelled group', () => {
     render(<PathConsent messageId="message-1" request={request} />);

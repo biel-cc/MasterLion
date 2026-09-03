@@ -46,7 +46,7 @@ test('AC-W07 lazily creates one scratch while direct structured read stays scrat
   await withObservation('AC-W07', (observed) => {
     expect(observed.directReadScratchCount).toBe(0);
     expect(observed.scratchCreateCalls).toBe(1);
-    expect(new Set(observed.scratchIds)).toHaveLength(1);
+    expect(new Set(observed.scratchIds).size).toBe(1);
     expect(new Set(observed.snapshotWorkspaceIds)).toEqual(new Set(observed.scratchIds));
     expect(observed.temporaryMarkerVisible).toBe(true);
   });

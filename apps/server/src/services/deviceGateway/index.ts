@@ -7,6 +7,7 @@ import {
   type DeviceSystemInfo,
   type DeviceToolCallResult,
   GatewayHttpClient,
+  type GatewayToolCallExecutionContext,
   type GatewayMcpStdioParams,
 } from '@lobechat/device-gateway-client';
 import type { HeterogeneousAgentType } from '@lobechat/heterogeneous-agents';
@@ -890,7 +891,14 @@ export class DeviceGateway {
   }
 
   async executeToolCall(
-    params: { deviceId: string; operationId?: string; userId: string },
+    params: {
+      deviceId: string;
+      executionContext?: GatewayToolCallExecutionContext;
+      operationId?: string;
+      toolCallId?: string;
+      topicId?: string;
+      userId: string;
+    },
     toolCall: { apiName: string; arguments: string; identifier: string },
     timeout = 30_000,
   ): Promise<DeviceToolCallResult> {
@@ -916,8 +924,11 @@ export class DeviceGateway {
       return await client.executeToolCall(
         {
           deviceId: params.deviceId,
+          executionContext: params.executionContext,
           operationId: params.operationId,
           timeout,
+          toolCallId: params.toolCallId,
+          topicId: params.topicId,
           userId: params.userId,
         },
         toolCall,
@@ -939,8 +950,12 @@ export class DeviceGateway {
       apiName: string;
       arguments: string;
       deviceId: string;
+      executionContext?: GatewayToolCallExecutionContext;
       identifier: string;
+      operationId?: string;
       params: GatewayMcpStdioParams;
+      toolCallId?: string;
+      topicId?: string;
       userId: string;
     },
     timeout = 30_000,

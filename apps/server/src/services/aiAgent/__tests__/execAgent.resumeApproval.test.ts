@@ -22,6 +22,14 @@ const {
   mockUpdateToolMessage: vi.fn(),
 }));
 
+const { mockDeviceProxy } = vi.hoisted(() => ({
+  mockDeviceProxy: {
+    isConfigured: false,
+    queryDeviceList: vi.fn().mockResolvedValue([]),
+    queryDeviceSystemInfo: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 vi.mock('@/libs/trusted-client', () => ({
   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
   getTrustedClientTokenForSession: vi.fn().mockResolvedValue(undefined),
@@ -119,7 +127,13 @@ vi.mock('@/server/modules/Mecha', () => ({
 }));
 
 vi.mock('@/server/services/deviceGateway', () => ({
-  deviceGateway: { isConfigured: false, queryDeviceList: vi.fn().mockResolvedValue([]) },
+  deviceGateway: mockDeviceProxy,
+}));
+
+vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
+  DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    getState: vi.fn().mockResolvedValue(undefined),
+  })),
 }));
 
 vi.mock('@/server/modules/ModelRuntime', () => ({
@@ -175,6 +189,9 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     mockMessageCreate.mockResolvedValue({ id: 'assistant-msg-new' });
     mockUpdateMessagePlugin.mockResolvedValue(undefined);
     mockUpdateToolMessage.mockResolvedValue(undefined);
+    mockDeviceProxy.isConfigured = false;
+    mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
+    mockDeviceProxy.queryDeviceSystemInfo.mockResolvedValue(undefined);
     // `MessageModel` is fully mocked above, so the service never touches the
     // raw `db` arg — cast an empty stub through `unknown` to satisfy the
     // `LobeChatDatabase` parameter type without dragging the real schema.
@@ -223,6 +240,66 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
           }),
         }),
       );
+    });
+
+    it('injects a matching allow-once decision into only the new operation', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([
+        {
+          deviceId: 'device-a',
+          hostname: 'local',
+          online: true,
+          platform: 'darwin',
+        },
+      ]);
+      mockFindMessagePlugin.mockResolvedValue({
+        ...pendingToolPlugin,
+        state: {
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-old',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-1',
+            version: 1,
+          },
+        },
+      });
+
+      await service.execAgent({
+        ...baseParams,
+        resumeApproval: {
+          decision: 'approved',
+          parentMessageId: 'tool-msg-1',
+          pathConsent: {
+            deviceId: 'device-a',
+            modes: ['read'],
+            rootPath: '/outside/docs',
+            scope: 'operation',
+            sourceOperationId: 'op-old',
+            topicId: 'topic-1',
+            version: 1,
+          },
+          toolCallId: 'call_xyz',
+        },
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.executionContext.accessRoots).toContainEqual({
+        deviceId: 'device-a',
+        modes: ['read'],
+        operationId: createOpArgs.operationId,
+        rootPath: '/outside/docs',
+        scope: 'operation',
+        source: 'user-approval',
+        topicId: 'topic-1',
+      });
+      expect(createOpArgs.operationId).not.toBe('op-old');
+      expect(mockUpdateMessagePlugin).toHaveBeenCalledWith('tool-msg-1', {
+        intervention: { status: 'approved' },
+      });
     });
   });
 
@@ -283,6 +360,46 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
   });
 
   describe('validation guards', () => {
+    it('rejects an allow-once decision replayed from another operation', async () => {
+      mockFindMessagePlugin.mockResolvedValue({
+        ...pendingToolPlugin,
+        state: {
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-old',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-1',
+            version: 1,
+          },
+        },
+      });
+
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeApproval: {
+            decision: 'approved',
+            parentMessageId: 'tool-msg-1',
+            pathConsent: {
+              deviceId: 'device-a',
+              modes: ['read'],
+              rootPath: '/outside/docs',
+              scope: 'operation',
+              sourceOperationId: 'op-replayed',
+              topicId: 'topic-1',
+              version: 1,
+            },
+            toolCallId: 'call_xyz',
+          },
+        }),
+      ).rejects.toThrow(/does not match/);
+      expect(mockUpdateMessagePlugin).not.toHaveBeenCalled();
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
     it('throws when the parent message is not role=tool', async () => {
       mockFindById.mockResolvedValue({ ...pendingToolMessage, role: 'user' });
 

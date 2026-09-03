@@ -712,7 +712,12 @@ export const topicRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.updateMetadata(input.id, input.metadata);
+      // Keep accepting authority-shaped fields for rolling-upgrade compatibility, but never let
+      // renderer payloads author the execution binding. Only ProjectWorkspaceService may persist
+      // these mirrors together with the server-authored executionSnapshot.
+      const { boundDeviceId: _boundDeviceId, workingDirectory: _workingDirectory, ...metadata } =
+        input.metadata;
+      return ctx.topicModel.updateMetadata(input.id, metadata);
     }),
 });
 

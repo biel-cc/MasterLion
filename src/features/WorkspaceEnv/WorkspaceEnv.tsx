@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { WorkspaceEnvClient, WorkspaceEnvEntrySummary } from './types';
 
-const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_KEY_PATTERN = /^[a-z_]\w*$/i;
 const MASKED_VALUE = '••••••••';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -131,12 +131,7 @@ const sortEntries = (entries: WorkspaceEnvEntrySummary[]) =>
 
 const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
   const { t: translate } = useTranslation('setting');
-  // This lane owns the locale fragment and translated JSON, while the active default-locale
-  // barrel lives outside its write contract. Keep the component usable until integration wires it.
-  const t = translate as unknown as (
-    key: string,
-    options?: Record<string, string>,
-  ) => string;
+  const t = translate as unknown as (key: string, options?: Record<string, string>) => string;
   const inputId = useId();
   const validationId = useId();
   const loadSequence = useRef(0);
@@ -169,9 +164,6 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
 
   useEffect(() => {
     void load();
-    return () => {
-      loadSequence.current++;
-    };
   }, [load]);
 
   const normalizedKey = key.trim();
@@ -259,18 +251,18 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
                 <li className={styles.row} key={entry.key}>
                   <span className={styles.key}>{entry.key}</span>
                   <span
+                    className={styles.value}
                     aria-label={
                       entry.secret
                         ? t('workspaceEnv.maskedValueLabel', { key: entry.key })
                         : t('workspaceEnv.configuredValueLabel', { key: entry.key })
                     }
-                    className={styles.value}
                   >
                     {entry.secret ? MASKED_VALUE : t('workspaceEnv.configured')}
                   </span>
                   <Button
-                    aria-label={t('workspaceEnv.revokeLabel', { key: entry.key })}
                     danger
+                    aria-label={t('workspaceEnv.revokeLabel', { key: entry.key })}
                     disabled={!!revokingKey}
                     loading={revokingKey === entry.key}
                     size="small"
@@ -336,7 +328,7 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
                 />
                 <span>{t('workspaceEnv.secret')}</span>
               </label>
-              <Button htmlType="submit" loading={isSaving} type="primary" disabled={!canSave}>
+              <Button disabled={!canSave} htmlType="submit" loading={isSaving} type="primary">
                 {t('workspaceEnv.save')}
               </Button>
             </div>

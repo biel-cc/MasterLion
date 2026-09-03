@@ -1,9 +1,9 @@
 /**
  * @vitest-environment happy-dom
  */
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import enChat from '../../../locales/en-US/chat.json';
 import zhChat from '../../../locales/zh-CN/chat.json';
@@ -13,6 +13,24 @@ import {
   registerWorkspaceExtension,
   resetWorkspaceExtensions,
 } from './workspaceExtensions';
+
+vi.mock('@/features/WorkspaceEnv', async () => {
+  const { createElement } = await import('react');
+
+  return {
+    WorkspaceEnv: ({ workspaceId }: { workspaceId: string }) =>
+      createElement('span', { 'data-testid': 'workspace-env-panel' }, workspaceId),
+  };
+});
+
+vi.mock('@/features/WorkspaceSkillsSettings', async () => {
+  const { createElement } = await import('react');
+
+  return {
+    WorkspaceSkillsSettings: ({ workspace }: { workspace: { id: string } }) =>
+      createElement('span', { 'data-testid': 'workspace-skills-panel' }, workspace.id),
+  };
+});
 
 describe('workspace extension registry', () => {
   afterEach(() => resetWorkspaceExtensions());
@@ -48,7 +66,7 @@ describe('workspace extension registry', () => {
     ).toBe('second');
   });
 
-  it('mounts registered extension renderers without importing their owning features', () => {
+  it('mounts registered extension renderers', () => {
     registerWorkspaceExtension({
       key: 'environment',
       render: ({ workspace }) => createElement('span', null, `env:${workspace.id}`),
@@ -62,6 +80,29 @@ describe('workspace extension registry', () => {
     );
 
     expect(screen.getByTestId('workspace-extensions')).toHaveTextContent('env:workspace-1');
+  });
+
+  it('lazy-mounts the built-in environment and skill settings', async () => {
+    const { container } = render(
+      createElement(WorkspaceExtensions, {
+        deviceId: 'device-1',
+        workspace: { deviceId: 'device-1', id: 'workspace-1', kind: 'device', rootPath: '/app' },
+      }),
+    );
+    const [environment, skills] = Array.from(container.querySelectorAll('details'));
+
+    expect(screen.queryByTestId('workspace-env-panel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-skills-panel')).not.toBeInTheDocument();
+
+    environment.open = true;
+    fireEvent(environment, new Event('toggle'));
+    skills.open = true;
+    fireEvent(skills, new Event('toggle'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-env-panel')).toHaveTextContent('workspace-1');
+      expect(screen.getByTestId('workspace-skills-panel')).toHaveTextContent('workspace-1');
+    });
   });
 
   it('ships paired default-cwd recommendation copy without changing canonical defaults', () => {

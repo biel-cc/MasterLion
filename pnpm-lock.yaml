@@ -1963,6 +1963,12 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/builtin-tool-skill-authoring:
+    devDependencies:
+      '@lobechat/types':
+        specifier: workspace:*
+        version: link:../types
+
   packages/builtin-tool-skill-maintainer:
     devDependencies:
       '@lobechat/types':

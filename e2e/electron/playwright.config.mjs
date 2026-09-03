@@ -10,7 +10,8 @@ export default defineConfig({
   fullyParallel: false,
   outputDir: path.resolve(configDirectory, '.artifacts/test-results'),
   reporter: [['list']],
-  testDir: './tests',
-  timeout: 20_000,
+  testDir: '..',
+  testMatch: ['electron/tests/**/*.spec.mjs', 'electron/workspace-runtime.spec.ts'],
+  timeout: 60_000,
   workers: 1,
 });

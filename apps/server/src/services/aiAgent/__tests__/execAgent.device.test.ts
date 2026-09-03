@@ -21,6 +21,12 @@ const { mockDeviceProxy } = vi.hoisted(() => ({
   },
 }));
 
+const { mockBindingGetState, mockDecryptWorkspaceEnv, mockFindWorkspaceById } = vi.hoisted(() => ({
+  mockBindingGetState: vi.fn(),
+  mockDecryptWorkspaceEnv: vi.fn(),
+  mockFindWorkspaceById: vi.fn(),
+}));
+
 vi.mock('@/libs/trusted-client', () => ({
   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
   getTrustedClientTokenForSession: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +75,24 @@ vi.mock('@/server/services/agent', () => ({
 vi.mock('@/database/models/plugin', () => ({
   PluginModel: vi.fn().mockImplementation(() => ({
     query: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
+    findById: mockFindWorkspaceById,
+  })),
+}));
+
+vi.mock('@/server/modules/KeyVaultsEncrypt', () => ({
+  KeyVaultsGateKeeper: {
+    initWithEnvKey: vi.fn().mockResolvedValue({ decrypt: mockDecryptWorkspaceEnv }),
+  },
+}));
+
+vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
+  DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    getState: mockBindingGetState,
   })),
 }));
 
@@ -156,6 +180,12 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     // Reset device proxy state
     mockDeviceProxy.isConfigured = false;
     mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
+    mockBindingGetState.mockResolvedValue(undefined);
+    mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
+      plaintext: value.replace(/^enc:/, ''),
+      wasAuthentic: true,
+    }));
 
     service = new AiAgentService(mockDb, userId);
   });
@@ -179,6 +209,113 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     online: true,
     platform: 'darwin' as const,
   };
+
+  describe('operation-frozen workspace authority', () => {
+    const bindWorkspace = () => {
+      mockBindingGetState.mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-001',
+          target: 'local',
+          targetCapturedAt: '2026-09-03T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-03T00:00:00.000Z',
+          workspaceId: 'workspace-1',
+          workspaceKind: 'device',
+        },
+        workspace: {
+          deviceId: 'device-001',
+          id: 'workspace-1',
+          kind: 'device',
+          rootPath: '/approved/project',
+        },
+      });
+      mockFindWorkspaceById.mockResolvedValue({
+        env: {
+          PUBLIC_FLAG: { secret: false, value: 'enc:enabled' },
+          TOKEN: { secret: true, value: 'enc:resolved-secret' },
+        },
+        id: 'workspace-1',
+        skillPolicy: {
+          includeAgentSkills: false,
+          includeProjectSkills: true,
+          includeUserSkills: false,
+          pinned: ['project-skill'],
+        },
+      });
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
+    };
+
+    it('fails closed when canonical topic binding storage is unavailable', async () => {
+      mockBindingGetState.mockRejectedValue(new Error('binding store unavailable'));
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'continue in the current workspace' }),
+      ).rejects.toThrow('binding store unavailable');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('decrypts persisted workspace env and freezes its persisted skill policy', async () => {
+      bindWorkspace();
+
+      await service.execAgent({ agentId: 'agent-1', prompt: 'Use the project environment' });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.executionContext).toMatchObject({
+        cwd: '/approved/project',
+        env: {
+          secretKeys: ['TOKEN'],
+          sources: { PUBLIC_FLAG: 'workspace', TOKEN: 'workspace' },
+          values: { PUBLIC_FLAG: 'enabled', TOKEN: 'resolved-secret' },
+        },
+        workspace: { id: 'workspace-1', rootPath: '/approved/project' },
+      });
+      expect(createOpArgs.skillRegistryResult.policy).toEqual({
+        includeAgentSkills: false,
+        includeProjectSkills: true,
+        includeUserSkills: false,
+        materializeForHeteroCli: 'off',
+        pinned: ['project-skill'],
+      });
+      expect(mockFindWorkspaceById).toHaveBeenCalledWith('workspace-1');
+      expect(mockDecryptWorkspaceEnv).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails operation creation when a configured env value cannot be authenticated', async () => {
+      bindWorkspace();
+      mockDecryptWorkspaceEnv.mockResolvedValue({ plaintext: '', wasAuthentic: false });
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'Use the project environment' }),
+      ).rejects.toThrow(/Unable to load the execution environment/);
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('freezes direct first-party absolute paths as read-only operation candidates', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
+
+      await service.execAgent({
+        agentId: 'agent-1',
+        prompt: '请读取 "/outside/docs" 里的说明',
+        userInterventionConfig: { approvalMode: 'manual' },
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      const operationRoot = createOpArgs.executionContext.accessRoots.find(
+        (root: { source?: string }) => root.source === 'direct-user-message',
+      );
+      expect(operationRoot).toEqual({
+        deviceId: 'device-001',
+        modes: ['read'],
+        operationId: createOpArgs.operationId,
+        rootPath: '/outside/docs',
+        scope: 'operation',
+        source: 'direct-user-message',
+        topicId: 'topic-1',
+      });
+    });
+  });
 
   describe('IM/Bot scenario with botContext', () => {
     it('should auto-activate when exactly one device is online', async () => {
@@ -311,7 +448,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     });
   });
 
-  describe('executionTarget gating (none / sandbox never route to a device)', () => {
+  describe('legacy executionTarget isolation from the desktop platform default', () => {
     const overrideAgencyConfig = async (agencyConfig: Record<string, unknown>) => {
       const { AgentService } = await import('@/server/services/agent');
       vi.mocked(AgentService).mockImplementation(
@@ -333,8 +470,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       service = new AiAgentService(mockDb, userId);
     };
 
-    it('should NOT auto-activate the single online device when executionTarget is none', async () => {
-      // regression: 无设备 used to be bypassed by single-device auto-activation
+    it('should default desktop to local when legacy web executionTarget is none', async () => {
       mockDeviceProxy.isConfigured = true;
       mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
       await overrideAgencyConfig({ executionTarget: 'none' });
@@ -342,10 +478,11 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       await service.execAgent({ agentId: 'agent-1', prompt: 'List my files' });
 
       const createOpArgs = mockCreateOperation.mock.calls[0][0];
-      expect(createOpArgs.activeDeviceId).toBeUndefined();
+      expect(createOpArgs.activeDeviceId).toBe('device-001');
+      expect(createOpArgs.executionContext.plan).toMatchObject({ kind: 'device', target: 'local' });
     });
 
-    it('should NOT activate a bound online device when executionTarget is none', async () => {
+    it('should keep the desktop local default when legacy web executionTarget has a binding', async () => {
       mockDeviceProxy.isConfigured = true;
       mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
       await overrideAgencyConfig({ boundDeviceId: 'device-001', executionTarget: 'none' });
@@ -353,10 +490,11 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       await service.execAgent({ agentId: 'agent-1', prompt: 'List my files' });
 
       const createOpArgs = mockCreateOperation.mock.calls[0][0];
-      expect(createOpArgs.activeDeviceId).toBeUndefined();
+      expect(createOpArgs.activeDeviceId).toBe('device-001');
+      expect(createOpArgs.executionContext.plan).toMatchObject({ kind: 'device', target: 'local' });
     });
 
-    it('should NOT activate any device when executionTarget is sandbox', async () => {
+    it('should not let a legacy web sandbox target contaminate the desktop default', async () => {
       mockDeviceProxy.isConfigured = true;
       mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
       await overrideAgencyConfig({ boundDeviceId: 'device-001', executionTarget: 'sandbox' });
@@ -364,7 +502,8 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       await service.execAgent({ agentId: 'agent-1', prompt: 'List my files' });
 
       const createOpArgs = mockCreateOperation.mock.calls[0][0];
-      expect(createOpArgs.activeDeviceId).toBeUndefined();
+      expect(createOpArgs.activeDeviceId).toBe('device-001');
+      expect(createOpArgs.executionContext.plan).toMatchObject({ kind: 'device', target: 'local' });
     });
   });
 

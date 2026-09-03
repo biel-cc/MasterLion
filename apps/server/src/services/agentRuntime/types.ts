@@ -3,10 +3,13 @@ import type {
   BotPlatformContext,
   LobeToolManifest,
   OperationSkillSet,
+  SkillRegistryResult,
   ToolExecutor,
   ToolSource,
 } from '@lobechat/context-engine';
 import type { ChatTopicBotContext, UserInterventionConfig } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 
 import type { ExecutionPlan } from '@/helpers/executionTarget';
 import { type ServerUserMemoryConfig } from '@/server/modules/Mecha/ContextEngineering/types';
@@ -366,6 +369,8 @@ export interface OperationCreationParams {
    * device capability from raw config.
    */
   executionPlan?: ExecutionPlan;
+  /** Immutable operation-scoped workspace/cwd/access/env authority. */
+  executionContext?: ExecutionContext;
   /**
    * External lifecycle hooks
    * Registered once, auto-adapt to local (in-memory) or production (webhook) mode
@@ -377,9 +382,13 @@ export interface OperationCreationParams {
   initialStepCount?: number;
   maxSteps?: number;
   modelRuntimeConfig?: any;
+  /** Model evidence frozen together with this operation. */
+  modelCatalogSnapshot?: ModelCatalogSnapshot;
   operationId: string;
   /** Operation-level skill set for SkillResolver */
   operationSkillSet?: OperationSkillSet;
+  /** Full registry decision/trace frozen at operation creation. */
+  skillRegistryResult?: SkillRegistryResult;
   /**
    * Operation ID of the parent run when this operation is a sub-agent
    * invocation (e.g. spawned via `execSubAgent`). Persisted to

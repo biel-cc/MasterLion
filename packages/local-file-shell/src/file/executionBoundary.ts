@@ -167,8 +167,11 @@ const verdictForRoot = (
   if (root.scope === 'primary') return root.source === 'workspace' ? 'primary' : undefined;
 
   if (root.scope === 'operation') {
-    if (!trace.operationId) return undefined;
-    if (root.operationId && root.operationId !== trace.operationId) return undefined;
+    if (!root.operationId || !trace.operationId || root.operationId !== trace.operationId) {
+      return undefined;
+    }
+    if (root.deviceId && (!trace.deviceId || root.deviceId !== trace.deviceId)) return undefined;
+    if (root.topicId && (!trace.topicId || root.topicId !== trace.topicId)) return undefined;
     return root.source === 'direct-user-message' || root.source === 'user-approval'
       ? `consent:${trace.operationId}`
       : undefined;
@@ -233,10 +236,8 @@ const authorizePath = async ({
     root: DeviceExecutionAccessRoot;
     verdict: ScopeVerdict;
   }> = [];
+  let rejectedScopedRoot = false;
   for (const root of roots) {
-    if (!root.modes.includes(mode)) continue;
-    if (root.scope === 'operation' && mode !== 'read') continue;
-
     const rootPath = toAbsolutePath(root.rootPath, context.cwd!, homeDir);
     let realRoot: string;
     try {
@@ -245,6 +246,13 @@ const authorizePath = async ({
       continue;
     }
     if (isSensitiveRoot(realRoot, homeDir) || !isWithin(target, realRoot)) continue;
+    if (
+      !root.modes.includes(mode) ||
+      (root.scope === 'operation' && root.source === 'direct-user-message' && mode !== 'read')
+    ) {
+      if (root.scope !== 'primary') rejectedScopedRoot = true;
+      continue;
+    }
 
     if (root.scope === 'primary') {
       const realCwd = await realpath(context.cwd!);
@@ -257,6 +265,7 @@ const authorizePath = async ({
 
     const verdict = verdictForRoot(root, trace, now);
     if (verdict) candidates.push({ root, verdict });
+    else if (root.scope !== 'primary') rejectedScopedRoot = true;
   }
 
   if (credentialRead) {
@@ -274,7 +283,18 @@ const authorizePath = async ({
     candidates.find(({ root }) => root.scope === 'operation') ??
     candidates[0];
   if (!preferred) {
-    throw new ExecutionBoundaryError('SCOPE_DENIED', [deniedAudit(trace, mode, target)]);
+    // A root that covers the path but has stale/incomplete tuple evidence is
+    // an authorization failure, not an invitation to mint a fresh consent.
+    if (rejectedScopedRoot) {
+      throw new ExecutionBoundaryError('SCOPE_DENIED', [deniedAudit(trace, mode, target)]);
+    }
+    // Structured reads outside the frozen roots are recoverable through the
+    // explicit path-consent flow. Writes and execution remain hard-denied:
+    // auto-run must never turn an out-of-scope mutation into an implicit
+    // authorization prompt.
+    throw new ExecutionBoundaryError(mode === 'read' ? 'INTERVENTION_REQUIRED' : 'SCOPE_DENIED', [
+      deniedAudit(trace, mode, target),
+    ]);
   }
   return { ...trace, mode, path: target, scopeVerdict: preferred.verdict };
 };
@@ -403,20 +423,23 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
     return { args, legacy: false, scopeAudit: [], warnings: [] };
   }
   const resolvedHomeDir = homeDir ?? os.homedir();
-  if (!context.cwd || !path.isAbsolute(expandHome(context.cwd, resolvedHomeDir))) {
+  const realHomeDir = await realpath(resolvedHomeDir).catch(() => path.resolve(resolvedHomeDir));
+  const declaredCwd = context.cwd?.trim();
+  if (declaredCwd && !path.isAbsolute(expandHome(declaredCwd, resolvedHomeDir))) {
     throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
   }
-
-  const realHomeDir = await realpath(resolvedHomeDir).catch(() => path.resolve(resolvedHomeDir));
-  const realCwd = await realpath(expandHome(context.cwd, realHomeDir)).catch(() => undefined);
-  if (!realCwd || isSensitiveRoot(realCwd, realHomeDir)) {
-    throw new ExecutionBoundaryError('SCOPE_DENIED', [deniedAudit(trace, 'exec', context.cwd)]);
+  const realCwd = declaredCwd
+    ? await realpath(expandHome(declaredCwd, realHomeDir)).catch(() => undefined)
+    : undefined;
+  if (declaredCwd && (!realCwd || isSensitiveRoot(realCwd, realHomeDir))) {
+    throw new ExecutionBoundaryError('SCOPE_DENIED', [deniedAudit(trace, 'exec', declaredCwd)]);
   }
 
   const next = structuredClone(args) as T;
   const warnings: PreparedToolCallExecution['warnings'] = [];
   const modelCwd = typeof args.cwd === 'string' ? args.cwd : undefined;
   if ((apiName === 'runCommand' || apiName === 'runHeteroTask') && modelCwd) {
+    if (!realCwd) throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
     const modelAbsolute = toAbsolutePath(modelCwd, realCwd, realHomeDir);
     if (path.resolve(modelAbsolute) !== path.resolve(realCwd)) {
       warnings.push({ code: 'MODEL_CWD_OVERRIDDEN', overridden: true });
@@ -438,17 +461,28 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
       pathPattern.replaceAll('\\', '/').split('/').includes('..'))
   ) {
     throw new ExecutionBoundaryError('SCOPE_DENIED', [
-      deniedAudit(trace, 'read', toAbsolutePath(pathPattern, realCwd, realHomeDir)),
+      deniedAudit(trace, 'read', toAbsolutePath(pathPattern, realCwd ?? realHomeDir, realHomeDir)),
     ]);
   }
 
-  const requests = collectPathRequests(apiName, next, realCwd);
+  const requests = collectPathRequests(apiName, next, realCwd ?? '');
+  if (!realCwd) {
+    const isExplicitAbsoluteRead =
+      requests.length > 0 &&
+      requests.every(
+        (request) =>
+          request.mode === 'read' &&
+          typeof request.value === 'string' &&
+          path.isAbsolute(expandHome(request.value, realHomeDir)),
+      );
+    if (!isExplicitAbsoluteRead) throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
+  }
   const scopeAudit: ScopeAuditEntry[] = [];
   for (const request of requests) {
     if (typeof request.value !== 'string' || !request.value.trim()) {
       throw new ExecutionBoundaryError('SCOPE_DENIED', scopeAudit);
     }
-    const absolute = toAbsolutePath(request.value, realCwd, realHomeDir);
+    const absolute = toAbsolutePath(request.value, realCwd ?? realHomeDir, realHomeDir);
     const realTarget = await realpathForAccess(absolute);
     const audit = await authorizePath({
       context: { ...context, cwd: realCwd },

@@ -25,13 +25,13 @@ import type {
   RunCommandParams,
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
-import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 import {
   ExecutionBoundaryError,
   type ExecutionBoundaryTrace,
-  prepareToolCallExecution,
   type PreparedToolCallExecution,
+  prepareToolCallExecution,
 } from '@lobechat/local-file-shell';
+import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
 import ImessageBridgeService from '@/services/imessageBridgeSrv';
@@ -414,10 +414,32 @@ export default class GatewayConnectionCtr extends ControllerModule {
       });
     } catch (error) {
       if (error instanceof ExecutionBoundaryError) {
+        const pathConsent =
+          error.code === 'INTERVENTION_REQUIRED' &&
+          executionContext &&
+          trace?.deviceId &&
+          trace.operationId &&
+          trace.topicId &&
+          error.scopeAudit.length > 0
+            ? {
+                actualCwd: executionContext.cwd ?? '',
+                deviceId: trace.deviceId,
+                modes: [...new Set(error.scopeAudit.map(({ mode }) => mode))],
+                operationId: trace.operationId,
+                primaryCwd: executionContext.workspaceRootPath ?? executionContext.cwd ?? '',
+                requestedPath: error.scopeAudit[0]!.path,
+                topicId: trace.topicId,
+                version: 1 as const,
+              }
+            : undefined;
         return {
           content: error.code,
           error,
-          state: { code: error.code, scopeAudit: error.scopeAudit },
+          state: {
+            code: error.code,
+            scopeAudit: error.scopeAudit,
+            ...(pathConsent && { workspacePathConsent: pathConsent }),
+          },
           success: false,
         };
       }

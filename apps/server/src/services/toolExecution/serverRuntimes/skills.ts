@@ -23,6 +23,7 @@ import type { LobeChatDatabase } from '@/database/type';
 import { filterBuiltinSkills } from '@/helpers/skillFilters';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { deviceGateway } from '@/server/services/deviceGateway';
+import { toGatewayExecutionContext } from '@/server/services/toolExecution/executionContext';
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
 import {
@@ -355,7 +356,13 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       deviceFileAccess = {
         listFiles: async (dir: string) => {
           const result = await deviceGateway.executeToolCall(
-            { deviceId: activeDeviceId, userId },
+            {
+              deviceId: activeDeviceId,
+              executionContext: toGatewayExecutionContext(context),
+              operationId: context.operationId,
+              topicId: context.topicId,
+              userId,
+            },
             {
               apiName: LocalSystemApiName.globFiles,
               // `**/*` matches every regular file recursively under `dir`.
@@ -384,7 +391,13 @@ export const skillsRuntime: ServerRuntimeRegistration = {
         },
         readFile: async (filePath: string) => {
           const result = await deviceGateway.executeToolCall(
-            { deviceId: activeDeviceId, userId },
+            {
+              deviceId: activeDeviceId,
+              executionContext: toGatewayExecutionContext(context),
+              operationId: context.operationId,
+              topicId: context.topicId,
+              userId,
+            },
             {
               apiName: LocalSystemApiName.readFile,
               // Read the whole file; SKILL.md and references are small.

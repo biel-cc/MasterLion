@@ -17,6 +17,7 @@ import {
   projectWorkspaceService,
   type TopicGrantRefInput,
   type TopicWorkspaceState,
+  type UpdateProjectWorkspaceInput,
 } from '@/services/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 
@@ -125,6 +126,22 @@ export class ProjectWorkspaceActionImpl {
   ): Promise<ProjectWorkspaceOutcome<ProjectWorkspaceItem>> => {
     try {
       const item = await this.#service.getOrCreateDeviceWorkspace(input);
+      this.upsertWorkspaces([item]);
+      return { ok: true, value: item };
+    } catch (error) {
+      const outcome = toErrorOutcome(error);
+      this.#recordError(outcome);
+      return outcome;
+    }
+  };
+
+  /** Persist workspace display/runtime settings and immediately refresh the local projection. */
+  updateWorkspace = async (
+    id: string,
+    value: UpdateProjectWorkspaceInput,
+  ): Promise<ProjectWorkspaceOutcome<ProjectWorkspaceItem>> => {
+    try {
+      const item = await this.#service.updateWorkspace(id, value);
       this.upsertWorkspaces([item]);
       return { ok: true, value: item };
     } catch (error) {

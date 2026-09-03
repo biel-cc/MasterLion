@@ -3,6 +3,8 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { heterogeneousAgentService } from '@/services/electron/heterogeneousAgent';
+import { initialState as projectWorkspaceInitialState } from '@/store/projectWorkspace/initialState';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace/store';
 
 import { useChatStore } from '../../../../store';
 import { messageMapKey } from '../../../../utils/messageMapKey';
@@ -44,6 +46,7 @@ vi.mock('@/utils/localStorage', () => {
 
 beforeEach(() => {
   resetTestEnvironment();
+  useProjectWorkspaceStore.setState(projectWorkspaceInitialState);
 });
 
 afterEach(() => {
@@ -819,6 +822,20 @@ describe('ConversationControl actions', () => {
           .spyOn(result.current, 'executeClientAgent')
           .mockResolvedValue(undefined);
 
+        act(() => {
+          useProjectWorkspaceStore.getState().setOperationPathConsent('tool-msg-1', {
+            actualCwd: '/workspace/project',
+            deviceId: 'device-1',
+            modes: ['read'],
+            operationId: 'source-op-1',
+            primaryCwd: '/workspace/project',
+            requestedPath: '/workspace/shared',
+            rootPath: '/workspace/shared',
+            scope: 'operation',
+            topicId,
+          });
+        });
+
         await act(async () => {
           await result.current.approveToolCalling('tool-msg-1', 'group-1');
         });
@@ -829,6 +846,15 @@ describe('ConversationControl actions', () => {
             parentMessageId: 'tool-msg-1',
             resumeApproval: {
               decision: 'approved',
+              pathConsent: {
+                deviceId: 'device-1',
+                modes: ['read'],
+                rootPath: '/workspace/shared',
+                scope: 'operation',
+                sourceOperationId: 'source-op-1',
+                topicId,
+                version: 1,
+              },
               parentMessageId: 'tool-msg-1',
               toolCallId: 'call_xyz',
             },
@@ -836,6 +862,9 @@ describe('ConversationControl actions', () => {
           }),
         );
         expect(executeClientAgentSpy).not.toHaveBeenCalled();
+        expect(
+          useProjectWorkspaceStore.getState().operationConsentByMessage['tool-msg-1'],
+        ).toBeUndefined();
 
         // Fallback guard: the paused `execServerAgentRuntime` op in this
         // context must be completed so the loading state doesn't bleed

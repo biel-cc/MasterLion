@@ -1,6 +1,8 @@
-import { type LobeToolManifest } from '@lobechat/context-engine';
+import { type LobeToolManifest, type SkillRegistryResult } from '@lobechat/context-engine';
 import { type LobeChatDatabase } from '@lobechat/database';
 import { type ChatToolPayload, type ExecSubAgentParams } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 
 export interface ServerSubAgentRunParams {
   /** Target agent id; defaults to the parent agent when omitted. */
@@ -122,6 +124,8 @@ export interface ToolExecutionContext {
   execSubAgent?: (params: ExecSubAgentParams) => Promise<unknown>;
   /** Per-call execution timeout resolved by the agent runtime. */
   executionTimeoutMs?: number;
+  /** Immutable operation authority projected into every server/device tool call. */
+  executionContext?: ExecutionContext;
   /** Current group ID for group chat context */
   groupId?: string | null;
   /** Whether this tool call is executing inside an isolated sub-agent run. */
@@ -138,12 +142,16 @@ export interface ToolExecutionContext {
    * the device gateway. Derived from the operation's skill set.
    */
   projectSkills?: { location: string; name: string }[];
+  /** Frozen model evidence for audit/debug parity with call_llm. */
+  modelCatalogSnapshot?: ModelCatalogSnapshot;
   /** Conversation scope captured when the operation was created */
   scope?: string | null;
   /** Server database for LobeHub Skills execution */
   serverDB?: LobeChatDatabase;
   /** Skip low-level result truncation so the AgentRuntime boundary can archive full content first. */
   skipResultTruncation?: boolean;
+  /** Frozen registry result; never re-enumerate mutable skill sources mid-operation. */
+  skillRegistryResult?: SkillRegistryResult;
   /**
    * Server-side sub-agent runner, injected per tool call by the agent runtime
    * (closes over the current tool payload + parent message). The `callSubAgent`

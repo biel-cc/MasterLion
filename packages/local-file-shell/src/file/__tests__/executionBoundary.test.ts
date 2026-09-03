@@ -181,6 +181,115 @@ describe('prepareToolCallExecution', () => {
     ).rejects.toMatchObject({ code: 'SCOPE_DENIED' });
   });
 
+  it('allows an explicit absolute read on an unbound topic when an operation root covers it', async () => {
+    const file = path.join(workspace, 'notes.txt');
+    await writeFile(file, 'notes');
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args: { path: file },
+        context: {
+          accessRoots: [
+            {
+              modes: ['read'],
+              operationId: 'op-unbound',
+              rootPath: workspace,
+              scope: 'operation',
+              source: 'direct-user-message',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-unbound' },
+      }),
+    ).resolves.toMatchObject({
+      args: { path: file },
+      scopeAudit: [expect.objectContaining({ scopeVerdict: 'consent:op-unbound' })],
+    });
+  });
+
+  it('allows an explicit user-approved operation root to cover a declared write', async () => {
+    const outside = path.join(homeDir, 'approved-write');
+    await mkdir(outside);
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'writeFile',
+        args: { content: 'approved', path: path.join(outside, 'new.txt') },
+        context: {
+          ...primaryContext(),
+          accessRoots: [
+            ...primaryContext().accessRoots!,
+            {
+              modes: ['write'],
+              operationId: 'op-write',
+              rootPath: outside,
+              scope: 'operation',
+              source: 'user-approval',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-write' },
+      }),
+    ).resolves.toMatchObject({
+      scopeAudit: [expect.objectContaining({ mode: 'write', scopeVerdict: 'consent:op-write' })],
+    });
+  });
+
+  it('fails closed when an operation root is missing its operation tuple', async () => {
+    const outside = path.join(homeDir, 'stale-operation-root');
+    await mkdir(outside);
+    const file = path.join(outside, 'note.txt');
+    await writeFile(file, 'stale');
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args: { path: file },
+        context: {
+          ...primaryContext(),
+          accessRoots: [
+            ...primaryContext().accessRoots!,
+            {
+              modes: ['read'],
+              rootPath: outside,
+              scope: 'operation',
+              source: 'user-approval',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-current' },
+      }),
+    ).rejects.toMatchObject({ code: 'SCOPE_DENIED' });
+  });
+
+  it('requires explicit intervention for an out-of-scope structured read', async () => {
+    const outside = path.join(homeDir, 'outside.txt');
+    await writeFile(outside, 'outside');
+    const canonicalOutside = await realpath(outside);
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args: { path: outside },
+        context: primaryContext(),
+        homeDir,
+        trace: {
+          deviceId: 'device-1',
+          operationId: 'op-read',
+          topicId: 'topic-1',
+          toolCallId: 'call-1',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'INTERVENTION_REQUIRED',
+      scopeAudit: [expect.objectContaining({ mode: 'read', path: canonicalOutside })],
+    });
+  });
+
   it.each([
     [{ grantId: undefined }, { deviceId: 'device-1', topicId: 'topic-1' }],
     [{ deviceId: undefined }, { deviceId: 'device-1', topicId: 'topic-1' }],

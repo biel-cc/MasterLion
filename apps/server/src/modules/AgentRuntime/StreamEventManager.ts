@@ -71,13 +71,23 @@ const stripStateForStream = <T extends Record<string, any>>(
     tools: _tools,
     ...rest
   } = state;
-  return rest as T;
+  const executionContext = rest.metadata?.executionContext;
+  if (!executionContext?.env) return rest as T;
+
+  const { env: _env, ...safeExecutionContext } = executionContext;
+  return {
+    ...rest,
+    metadata: {
+      ...rest.metadata,
+      executionContext: safeExecutionContext,
+    },
+  } as unknown as T;
 };
 
 /**
  * Chokepoint helper applied inside every stream-event publish site.
- * If the event `data` carries a `finalState`, strip `messages` + the
- * tool-set group off it (see `stripStateForStream` for the rationale).
+ * If the event `data` carries a `finalState`, strip `messages`, the tool-set
+ * group, and resolved execution env values off it (see `stripStateForStream`).
  *
  * Centralizing the strip here means new callers — including direct
  * `publishStreamEvent` users (e.g. `RuntimeExecutors`, the per-step

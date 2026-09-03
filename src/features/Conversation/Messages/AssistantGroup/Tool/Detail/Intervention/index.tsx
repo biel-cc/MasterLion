@@ -1,10 +1,14 @@
 import { getBuiltinIntervention } from '@lobechat/builtin-tools/interventions';
+import { isDesktop } from '@lobechat/const';
 import { safeParseJSON } from '@lobechat/utils';
 import { Flexbox } from '@lobehub/ui';
 import { memo, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { localFileService } from '@/services/electron/localFileService';
 import { useChatStore } from '@/store/chat';
+import { useElectronStore } from '@/store/electron';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { useUserStore } from '@/store/user';
 import { toolInterventionSelectors } from '@/store/user/selectors';
 
@@ -21,6 +25,7 @@ import Fallback from './Fallback';
 import KeyValueEditor from './KeyValueEditor';
 import PathConsent, {
   parseStructuredPathConsentRequest,
+  type PathConsentSelection,
   WORKSPACE_PATH_CONSENT_METADATA_KEY,
 } from './PathConsent';
 import SecurityBlacklistWarning from './SecurityBlacklistWarning';
@@ -113,11 +118,69 @@ const Intervention = memo<InterventionProps>(
     const submitToolInteraction = useConversationStore((s) => s.submitToolInteraction);
     const skipToolInteraction = useConversationStore((s) => s.skipToolInteraction);
     const cancelToolInteraction = useConversationStore((s) => s.cancelToolInteraction);
+    const approveToolCall = useConversationStore((s) => s.approveToolCall);
+    const rejectAndContinueToolCall = useConversationStore((s) => s.rejectAndContinueToolCall);
+    useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
+    const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
+    const grantTopicAccess = useProjectWorkspaceStore((s) => s.grantTopicAccess);
+    const setOperationPathConsent = useProjectWorkspaceStore((s) => s.setOperationPathConsent);
     // Hetero (CC / Codex) interventions ship the answer back through IPC to a
     // running CLI subprocess instead of starting a fresh `executeClientAgent`
     // turn. Pull the chat-store action lazily so non-hetero interactions stay
     // on the existing path with no behavior change.
     const submitHeteroIntervention = useChatStore((s) => s.submitHeteroIntervention);
+
+    const handlePathConsentDecision = useCallback(
+      async (decision: PathConsentSelection): Promise<PathConsentSelection> => {
+        if (decision.scope === 'reject') {
+          setOperationPathConsent(id, decision);
+          await rejectAndContinueToolCall(id, 'Workspace path access was rejected');
+          return decision;
+        }
+
+        // The current production realpath bridge is the trusted Electron main
+        // process. Never canonicalize a remote-device path on this machine.
+        if (!isDesktop || !currentDeviceId || currentDeviceId !== decision.deviceId) {
+          throw new Error('Trusted realpath is unavailable for the selected device');
+        }
+        const resolved = await localFileService.resolveRealPath({ path: decision.rootPath });
+        if (!resolved.success || !resolved.path) {
+          throw new Error(resolved.error || 'Unable to resolve the selected path');
+        }
+
+        const canonicalDecision = { ...decision, rootPath: resolved.path };
+        if (decision.scope === 'topic') {
+          const granted = await grantTopicAccess({
+            deviceId: decision.deviceId,
+            modes: decision.modes,
+            requestedVia: {
+              messageId: id,
+              reason: 'workspace-path-consent',
+              toolCallId,
+            },
+            rootPath: resolved.path,
+            topicId: decision.topicId,
+          });
+          if (!granted.ok) throw new Error(granted.message || granted.code);
+        }
+
+        // Persist the canonical operation decision before resume so the next
+        // execution-context build can consume it synchronously.
+        setOperationPathConsent(id, canonicalDecision);
+        await approveToolCall(id, assistantGroupId ?? '');
+        return canonicalDecision;
+      },
+      [
+        approveToolCall,
+        assistantGroupId,
+        currentDeviceId,
+        grantTopicAccess,
+        id,
+        rejectAndContinueToolCall,
+        setOperationPathConsent,
+        toolCallId,
+      ],
+    );
 
     const handleInteractionAction = useCallback(
       async (
@@ -244,6 +307,7 @@ const Intervention = memo<InterventionProps>(
               actionsPortalTarget={actionsPortalTarget}
               messageId={id}
               request={pathConsentRequest}
+              onDecision={handlePathConsentDecision}
             />
           )}
           {!pathConsentRequest &&
@@ -270,6 +334,7 @@ const Intervention = memo<InterventionProps>(
             actionsPortalTarget={actionsPortalTarget}
             messageId={id}
             request={pathConsentRequest}
+            onDecision={handlePathConsentDecision}
           />
         )}
       </Flexbox>

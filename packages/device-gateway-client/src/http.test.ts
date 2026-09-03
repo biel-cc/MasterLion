@@ -365,7 +365,25 @@ describe('GatewayHttpClient', () => {
         apiName: 'getStock',
         arguments: '{"symbol":"AAPL"}',
         deviceId: 'device-1',
+        executionContext: {
+          accessRoots: [
+            {
+              deviceId: 'device-1',
+              modes: ['read'],
+              operationId: 'op-1',
+              rootPath: '/approved/project',
+              scope: 'primary',
+              source: 'workspace',
+              topicId: 'topic-1',
+            },
+          ],
+          cwd: '/approved/project',
+          env: { TOKEN: 'resolved-secret' },
+          workspaceKind: 'device',
+          workspaceRootPath: '/approved/project',
+        },
         identifier: 'kimi-datasource',
+        operationId: 'op-1',
         params: {
           args: ['stock-mcp'],
           command: 'npx',
@@ -373,6 +391,8 @@ describe('GatewayHttpClient', () => {
           name: 'kimi-datasource',
           type: 'stdio',
         },
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
         userId: 'user-1',
       });
 
@@ -395,6 +415,16 @@ describe('GatewayHttpClient', () => {
       // Routing fields are lifted out of the call descriptor, not tunneled.
       expect(body.toolCall.deviceId).toBeUndefined();
       expect(body.deviceId).toBe('device-1');
+      expect(body).toMatchObject({
+        executionContext: {
+          cwd: '/approved/project',
+          env: { TOKEN: 'resolved-secret' },
+          workspaceRootPath: '/approved/project',
+        },
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
     });
 
     it('should surface non-ok responses as a failed result', async () => {

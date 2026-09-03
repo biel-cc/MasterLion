@@ -3,6 +3,33 @@ import type { TopicExecutionSnapshot, WorkspaceKind, WorkspaceRef } from '../pro
 
 export type PathAccessMode = 'exec' | 'read' | 'write';
 
+/** Runtime-authored evidence attached to an out-of-scope filesystem intervention. */
+export interface WorkspacePathConsentRequest {
+  actualCwd: string;
+  deviceId: string;
+  modes: PathAccessMode[];
+  operationId: string;
+  primaryCwd: string;
+  /** Device-canonical path that triggered the intervention. */
+  requestedPath: string;
+  topicId: string;
+  version: 1;
+  warnings?: Array<{ code: 'MODEL_CWD_OVERRIDDEN'; overridden: true }>;
+}
+
+/** User decision transported when an approved tool is resumed in a new operation. */
+export interface OperationPathConsentApproval {
+  deviceId: string;
+  modes: PathAccessMode[];
+  /** Device-canonical root returned by the consent coordinator. */
+  rootPath: string;
+  scope: 'operation';
+  /** Operation that authored the matching intervention evidence. */
+  sourceOperationId: string;
+  topicId: string;
+  version: 1;
+}
+
 export interface WorkspaceAccessGrant {
   createdAt: string;
   deviceId: string;
@@ -21,12 +48,19 @@ export interface WorkspaceAccessGrant {
 }
 
 export interface ExecutionAccessRoot {
+  /** Required transport evidence for a persisted topic grant. */
+  deviceId?: string;
+  expiresAt?: string;
   grantId?: string;
   modes: PathAccessMode[];
+  /** Required transport evidence for an operation-scoped consent root. */
+  operationId?: string;
   /** Device-realpathed, normalized absolute path. */
   rootPath: string;
   scope: 'operation' | 'primary' | 'topic';
   source: 'direct-user-message' | 'user-approval' | 'workspace';
+  /** Required transport evidence for a persisted topic grant. */
+  topicId?: string;
 }
 
 export type ExecutionEnvLayer = 'agent' | 'call' | 'host' | 'topic' | 'user' | 'workspace';

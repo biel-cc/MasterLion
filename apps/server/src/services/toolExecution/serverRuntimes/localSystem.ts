@@ -1,6 +1,7 @@
 import { LocalSystemIdentifier, LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
 
 import { deviceGateway } from '@/server/services/deviceGateway';
+import { toGatewayExecutionContext } from '@/server/services/toolExecution/executionContext';
 
 import { type ServerRuntimeRegistration } from './types';
 
@@ -20,7 +21,10 @@ export const localSystemRuntime: ServerRuntimeRegistration = {
         return deviceGateway.executeToolCall(
           {
             deviceId: context.activeDeviceId!,
+            executionContext: toGatewayExecutionContext(context),
             operationId: context.operationId,
+            toolCallId: context.toolCallId,
+            topicId: context.topicId,
             userId: context.userId!,
           },
           {

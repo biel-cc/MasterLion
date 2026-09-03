@@ -96,4 +96,47 @@ export const buildProductionLifecycle = async () => {
       tsconfigPaths: true,
     },
   });
+
+  await viteBuild({
+    build: {
+      emptyOutDir: false,
+      outDir: artifactDirectory,
+      rollupOptions: {
+        output: { entryFileNames: 'workspaceRuntimeHarness.mjs' },
+      },
+      sourcemap: false,
+      ssr: path.resolve(electronRoot, 'production-app/workspaceRuntimeHarness.ts'),
+    },
+    configFile: false,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('test'),
+    },
+    logLevel: 'warn',
+    plugins: [
+      {
+        enforce: 'pre',
+        load: async (id) =>
+          id.endsWith('.md')
+            ? `export default ${JSON.stringify(await readFile(id, 'utf8'))};`
+            : null,
+        name: 'workspace-runtime-raw-markdown',
+      },
+    ],
+    resolve: {
+      alias: [
+        {
+          find: '@/libs/trpc/client',
+          replacement: path.resolve(electronRoot, 'production-app/trpcClient.ts'),
+        },
+        {
+          find: '@/database',
+          replacement: path.resolve(repositoryRoot, 'packages/database/src'),
+        },
+        { find: '@/utils', replacement: path.resolve(repositoryRoot, 'packages/utils/src') },
+        { find: '@', replacement: path.resolve(repositoryRoot, 'src') },
+      ],
+      tsconfigPaths: true,
+    },
+    ssr: { noExternal: true },
+  });
 };

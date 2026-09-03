@@ -314,6 +314,13 @@ describe('StreamEventManager', () => {
         finalState: {
           cost: { total: 1 },
           messages: [{ role: 'user' }],
+          metadata: {
+            executionContext: {
+              cwd: '/approved/project',
+              env: { values: { TOKEN: 'must-not-leak' } },
+              version: 1,
+            },
+          },
           operationToolSet: {},
           status: 'done',
           toolManifestMap: {},
@@ -324,7 +331,13 @@ describe('StreamEventManager', () => {
       });
 
       expect(result).toEqual({
-        finalState: { cost: { total: 1 }, status: 'done' },
+        finalState: {
+          cost: { total: 1 },
+          metadata: {
+            executionContext: { cwd: '/approved/project', version: 1 },
+          },
+          status: 'done',
+        },
         reason: 'done',
       });
     });

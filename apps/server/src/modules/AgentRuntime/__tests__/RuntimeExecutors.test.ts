@@ -152,6 +152,7 @@ describe('RuntimeExecutors', () => {
       findById: vi.fn().mockResolvedValue({ id: 'msg-existing' }),
       query: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
+      updateMessagePlugin: vi.fn().mockResolvedValue({ success: true }),
       updateToolMessage: vi.fn().mockResolvedValue({ success: true }),
     };
 
@@ -296,6 +297,56 @@ describe('RuntimeExecutors', () => {
       expect(chat).not.toHaveBeenCalled();
       expect(result.newState.status).toBe('interrupted');
       expect(result.newState.metadata?.executionBudgetCompletionReason).toBe('token_limit');
+    });
+
+    it('fails closed at the final preflight when an unknown model window exceeds the assumed budget', async () => {
+      const chat = vi.fn();
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-03T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'unknown',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'default',
+              modelId: 'unknown-model',
+              providerId: 'unknown-provider',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+      const instruction = {
+        payload: {
+          messages: [{ content: 'x'.repeat(150_000), id: 'tail', role: 'user' }],
+          model: 'unknown-model',
+          provider: 'unknown-provider',
+          tools: [],
+        },
+        type: 'call_llm' as const,
+      };
+
+      await expect(executors.call_llm!(instruction, state)).rejects.toMatchObject({
+        contextBudget: expect.objectContaining({ kind: 'fail' }),
+        error: expect.objectContaining({ ctx: 32_000 }),
+        name: 'FinalContextWindowError',
+      });
+      expect(chat).not.toHaveBeenCalled();
     });
 
     it('passes workspaceId to model runtime initialization', async () => {
@@ -2383,6 +2434,75 @@ describe('RuntimeExecutors', () => {
       );
     });
 
+    it('parks a device-authored path intervention instead of feeding it back to the LLM', async () => {
+      mockToolExecutionService.executeTool.mockResolvedValue({
+        content: 'INTERVENTION_REQUIRED',
+        error: { kind: 'stop', message: 'INTERVENTION_REQUIRED' },
+        executionTime: 10,
+        state: {
+          code: 'INTERVENTION_REQUIRED',
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-123',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-123',
+            version: 1,
+          },
+        },
+        success: false,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        userInterventionConfig: { approvalMode: 'manual' },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs"}',
+              id: 'tool-call-path',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '',
+          pluginIntervention: { status: 'pending' },
+          pluginState: expect.objectContaining({
+            workspacePathConsent: expect.objectContaining({
+              operationId: 'op-123',
+              requestedPath: '/outside/docs',
+            }),
+          }),
+          tool_call_id: 'tool-call-path',
+        }),
+      );
+      expect(result.newState.status).toBe('waiting_for_human');
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toContainEqual(
+        expect.objectContaining({ type: 'human_approve_required' }),
+      );
+      expect(result.events).not.toContainEqual(expect.objectContaining({ type: 'tool_result' }));
+    });
+
     it('interrupts after the same deterministic tool failure occurs twice', async () => {
       mockToolExecutionService.executeTool.mockResolvedValue({
         content: 'invalid arguments',
@@ -2918,6 +3038,63 @@ describe('RuntimeExecutors', () => {
           parentId: 'assistant-msg-1',
           pluginIntervention: { status: 'pending' },
           tool_call_id: 'tool-call-2',
+        }),
+      );
+    });
+
+    it('persists runtime-authored path metadata for a pre-dispatch local path approval', async () => {
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read', 'write', 'exec'],
+                rootPath: '/workspace',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/workspace',
+            operationId: 'op-123',
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+      mockMessageModel.create.mockResolvedValue({ id: 'tool-msg-path' });
+
+      await executors.request_human_approve!(
+        {
+          pendingToolsCalling: [
+            {
+              apiName: 'writeFile',
+              arguments: '{"path":"/outside/note.txt","content":"x"}',
+              id: 'tool-call-path',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          ],
+          type: 'request_human_approve' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pluginIntervention: { status: 'pending' },
+          pluginState: {
+            workspacePathConsent: expect.objectContaining({
+              modes: ['write'],
+              operationId: 'op-123',
+              requestedPath: '/outside',
+            }),
+          },
+          tool_call_id: 'tool-call-path',
         }),
       );
     });

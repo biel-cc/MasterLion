@@ -344,6 +344,49 @@ describe('DeviceGateway', () => {
       expect(mockClient.executeMcpCall).toHaveBeenCalledWith({ ...mcpCall, timeout: 60_000 });
     });
 
+    it('should forward frozen execution authority and trace ids', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.executeMcpCall.mockResolvedValue({ content: 'ok', success: true });
+      const executionContext: NonNullable<
+        Parameters<DeviceGateway['executeMcpCall']>[0]['executionContext']
+      > = {
+        accessRoots: [
+          {
+            deviceId: 'dev-1',
+            modes: ['read'],
+            operationId: 'op-1',
+            rootPath: '/approved/project',
+            scope: 'primary',
+            source: 'workspace',
+            topicId: 'topic-1',
+          },
+        ],
+        cwd: '/approved/project',
+        env: { TOKEN: 'resolved-secret' },
+        workspaceKind: 'device',
+        workspaceRootPath: '/approved/project',
+      };
+
+      const proxy = new DeviceGateway();
+      await proxy.executeMcpCall({
+        ...mcpCall,
+        executionContext,
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+
+      expect(mockClient.executeMcpCall).toHaveBeenCalledWith({
+        ...mcpCall,
+        executionContext,
+        operationId: 'op-1',
+        timeout: 30_000,
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+    });
+
     it('should return error result on exception', async () => {
       mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
       mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';

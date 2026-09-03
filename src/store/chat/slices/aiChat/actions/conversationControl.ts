@@ -14,6 +14,7 @@ import { selectRuntimeType } from '@/store/chat/slices/aiChat/actions/agentDispa
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 
 import { displayMessageSelectors } from '../../../selectors';
@@ -297,6 +298,21 @@ export class ConversationControlActionImpl {
         // the running marker intact and `#shouldUseGatewayResume` still flags
         // Gateway mode on retry.
         const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+        const pathDecision =
+          getProjectWorkspaceStoreState().operationConsentByMessage[toolMessageId];
+        const pathConsent =
+          pathDecision?.scope === 'operation' &&
+          pathDecision.modes.length > 0
+            ? {
+                deviceId: pathDecision.deviceId,
+                modes: [...pathDecision.modes],
+                rootPath: pathDecision.rootPath,
+                scope: 'operation' as const,
+                sourceOperationId: pathDecision.operationId,
+                topicId: pathDecision.topicId,
+                version: 1 as const,
+              }
+            : undefined;
         try {
           await this.#get().executeGatewayAgent({
             context: effectiveContext,
@@ -305,10 +321,14 @@ export class ConversationControlActionImpl {
             parentMessageId: toolMessageId,
             resumeApproval: {
               decision: 'approved',
+              ...(pathConsent && { pathConsent }),
               parentMessageId: toolMessageId,
               toolCallId,
             },
           });
+          if (pathConsent) {
+            getProjectWorkspaceStoreState().clearOperationPathConsent(toolMessageId);
+          }
           this.#completeOpsById(pausedOpIds);
           completeOperation(operationId);
         } catch (error) {

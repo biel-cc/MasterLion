@@ -29,4 +29,21 @@ export default {
   'workspaceEnv.title': 'Workspace environment',
   'workspaceEnv.valueLabel': 'Value',
   'workspaceEnv.valuePlaceholder': 'Enter a value',
+  'workspaceSkills.description':
+    'Choose which skill sources are available when an agent runs in this workspace.',
+  'workspaceSkills.discovered': 'Project skills found in this directory',
+  'workspaceSkills.empty': 'No project skills found',
+  'workspaceSkills.includeAgent': 'Include agent skills',
+  'workspaceSkills.includeProject': 'Include project and workspace skills',
+  'workspaceSkills.includeUser': 'Include personal skills',
+  'workspaceSkills.materialize.description':
+    'For supported heterogeneous agents, copy the resolved skill set to the project or personal skill directory.',
+  'workspaceSkills.materialize.label': 'Materialize for CLI agents',
+  'workspaceSkills.materialize.off': 'Do not materialize',
+  'workspaceSkills.materialize.project': 'Project skill directory',
+  'workspaceSkills.materialize.user': 'Personal skill directory',
+  'workspaceSkills.save': 'Save skill policy',
+  'workspaceSkills.saveError': 'Could not save the skill policy.',
+  'workspaceSkills.saveSuccess': 'Skill policy saved.',
+  'workspaceSkills.title': 'Workspace skills',
 };

@@ -31,8 +31,12 @@ const createClient = (): { [K in keyof ProjectWorkspaceClient]: ReturnType<typeo
   getTopicState: vi.fn(),
   grant: vi.fn(),
   list: vi.fn(),
+  listEnv: vi.fn(),
   listGrants: vi.fn(),
   revoke: vi.fn(),
+  revokeEnv: vi.fn(),
+  saveEnv: vi.fn(),
+  update: vi.fn(),
 });
 
 describe('projectWorkspace store actions', () => {
@@ -116,6 +120,30 @@ describe('projectWorkspace store actions', () => {
       expect(outcome).toMatchObject({ code: 'SEAM_UNAVAILABLE', ok: false });
       expect(unwired.getState().seamAvailable).toBe(false);
       expect(unwired.getState().lastError?.code).toBe('SEAM_UNAVAILABLE');
+    });
+  });
+
+  describe('updateWorkspace', () => {
+    it('persists and replaces the local workspace projection', async () => {
+      const updated = {
+        ...deviceWorkspace,
+        skillPolicy: { includeProjectSkills: false },
+      };
+      client.update.mockResolvedValue(updated);
+      store.getState().upsertWorkspaces([deviceWorkspace]);
+
+      const outcome = await store
+        .getState()
+        .updateWorkspace('ws-project', { skillPolicy: { includeProjectSkills: false } });
+
+      expect(outcome).toEqual({ ok: true, value: updated });
+      expect(client.update).toHaveBeenCalledWith({
+        id: 'ws-project',
+        skillPolicy: { includeProjectSkills: false },
+      });
+      expect(store.getState().workspacesById['ws-project']?.skillPolicy).toEqual({
+        includeProjectSkills: false,
+      });
     });
   });
 

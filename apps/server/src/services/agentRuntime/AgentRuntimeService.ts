@@ -47,6 +47,10 @@ import {
   type RuntimeExecutorContext,
 } from '@/server/modules/AgentRuntime/RuntimeExecutors';
 import { type IStreamEventManager } from '@/server/modules/AgentRuntime/types';
+import {
+  tagWorkspacePathInterventionAudits,
+  workspacePathInterventionAudits,
+} from '@/server/modules/AgentRuntime/workspacePathConsent';
 import { emitAgentSignalSourceEvent } from '@/server/services/agentSignal';
 import { toAgentSignalTraceEvents } from '@/server/services/agentSignal/observability/traceEvents';
 import { FileService } from '@/server/services/file';
@@ -393,11 +397,14 @@ export class AgentRuntimeService {
       discordContext,
       evalContext,
       executionPlan,
+      executionContext,
       executionBudget,
       maxSteps,
       userMemory,
       deviceSystemInfo,
       operationSkillSet,
+      modelCatalogSnapshot,
+      skillRegistryResult,
       parentOperationId,
       signal,
       userTimezone,
@@ -442,7 +449,7 @@ export class AgentRuntimeService {
       trigger: appContext?.trigger,
     });
 
-    const operationToolSet = toolSet;
+    const operationToolSet = tagWorkspacePathInterventionAudits(toolSet);
     let operationCreated = false;
     let hooksRegistered = false;
 
@@ -482,17 +489,24 @@ export class AgentRuntimeService {
           discordContext,
           evalContext,
           executionPlan,
+          executionContext,
           executionBudget,
           // need be removed
           modelRuntimeConfig,
+          modelCatalogSnapshot,
           queueRetries,
           queueRetryDelay,
           stream,
           operationSkillSet,
+          skillRegistryResult,
+          contextBudget: {
+            catalogSnapshot: modelCatalogSnapshot,
+          },
           userId,
           userMemory,
           userTimezone,
-          workingDirectory: agentConfig?.chatConfig?.runtimeEnv?.workingDirectory,
+          workingDirectory:
+            executionContext?.cwd ?? agentConfig?.chatConfig?.runtimeEnv?.workingDirectory,
           workspaceId,
           ...appContext,
         },
@@ -2387,7 +2401,10 @@ export class AgentRuntimeService {
         enabled: metadata?.agentConfig?.chatConfig?.enableContextCompression ?? true,
         maxWindowToken: contextWindowTokens ?? undefined,
       },
-      dynamicInterventionAudits,
+      dynamicInterventionAudits: {
+        ...dynamicInterventionAudits,
+        ...workspacePathInterventionAudits,
+      },
       modelRuntimeConfig: metadata?.modelRuntimeConfig,
       operationId,
       userId: metadata?.userId,

@@ -1,4 +1,5 @@
 import type { BaseDataModel } from '../meta';
+import type { TopicExecutionSnapshot, WorkspaceKind } from '../projectWorkspace';
 
 // Type definitions
 export type ShareVisibility = 'private' | 'link';
@@ -108,6 +109,8 @@ export interface OnboardingSessionSnapshot {
 export interface ChatTopicMetadata {
   bot?: ChatTopicBotContext;
   boundDeviceId?: string;
+  /** Immutable execution authority captured and written by the server. */
+  executionSnapshot?: TopicExecutionSnapshot;
   cronJobId?: string;
   /**
    * Scoped pointer to the currently active assistant message for a running
@@ -172,6 +175,10 @@ export interface ChatTopicMetadata {
   } | null;
   userMemoryExtractRunState?: TopicUserMemoryExtractRunState;
   userMemoryExtractStatus?: 'pending' | 'completed' | 'failed';
+  /** Server-authored workspace identity; clients may only submit workspace intent. */
+  workspaceId?: string;
+  /** Compatibility projection of the persisted workspace row kind. */
+  workspaceKind?: WorkspaceKind;
   /**
    * Topic-level working directory.
    * On desktop: local filesystem path for the CC session cwd.

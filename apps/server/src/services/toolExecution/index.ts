@@ -19,6 +19,7 @@ import { DiscoverService } from '../discover';
 import { type MCPService } from '../mcp';
 import { type BuiltinToolsExecutor } from './builtin';
 import { classifyToolError } from './errorClassification';
+import { toGatewayExecutionContext } from './executionContext';
 import {
   type ToolExecutionContext,
   type ToolExecutionResult,
@@ -285,7 +286,9 @@ export class ToolExecutionService {
         apiName,
         arguments: args,
         deviceId: context.activeDeviceId!,
+        executionContext: toGatewayExecutionContext(context),
         identifier,
+        operationId: context.operationId,
         params: {
           args: mcpParams.args ?? [],
           command: mcpParams.command,
@@ -294,6 +297,8 @@ export class ToolExecutionService {
           type: 'stdio',
         },
         userId: context.userId!,
+        toolCallId: context.toolCallId,
+        topicId: context.topicId,
       },
       context.executionTimeoutMs,
     );

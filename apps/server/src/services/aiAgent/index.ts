@@ -14,15 +14,22 @@ import {
 } from '@lobechat/builtin-tool-self-iteration';
 import { TaskIdentifier } from '@lobechat/builtin-tool-task';
 import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
+import {
+  createModelCatalogSnapshot,
+  getModelCatalogFromSettings,
+  mergeModelCatalogEntry,
+} from '@lobechat/business-model-bank';
 import { LOADING_FLAT } from '@lobechat/const';
-import type {
-  AgentManagementContext,
-  BotPlatformContext,
-  LobeToolManifest,
-  ToolExecutor,
-  ToolSource,
+import {
+  type AgentManagementContext,
+  type BotPlatformContext,
+  DEFAULT_SKILL_POLICY,
+  type LobeToolManifest,
+  SkillEngine,
+  type SkillRegistryResult,
+  type ToolExecutor,
+  type ToolSource,
 } from '@lobechat/context-engine';
-import { SkillEngine } from '@lobechat/context-engine';
 import type { LobeChatDatabase } from '@lobechat/database';
 import { isRemoteHeterogeneousType } from '@lobechat/heterogeneous-agents';
 import { buildTaskManagerDefaultsPrompt } from '@lobechat/prompts';
@@ -42,6 +49,8 @@ import type {
   UserInterventionConfig,
   WorkspaceInitResult,
 } from '@lobechat/types';
+import type { ExecutionContext, ExecutionEnv } from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { RequestTrigger, ThreadStatus, ThreadType } from '@lobechat/types';
 import { nanoid } from '@lobechat/utils';
 import debug from 'debug';
@@ -59,6 +68,8 @@ import { PluginModel } from '@/database/models/plugin';
 import { TaskModel } from '@/database/models/task';
 import { ThreadModel } from '@/database/models/thread';
 import { TopicModel } from '@/database/models/topic';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
+import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGrant';
 import { UserModel } from '@/database/models/user';
 import { UserPersonaModel } from '@/database/models/userMemory/persona';
 import { toolsEnv } from '@/envs/tools';
@@ -68,6 +79,7 @@ import {
   isDeviceCapablePlan,
   resolveExecutionPlan,
 } from '@/helpers/executionTarget';
+import { resolveExecutionContext } from '@/helpers/executionContext';
 import { shouldEnableBuiltinSkill } from '@/helpers/skillFilters';
 import { buildConnectorManifests } from '@/libs/mcp/buildConnectorManifests';
 import { signOperationJwt, signUserJWT } from '@/libs/trpc/utils/internalJwt';
@@ -106,16 +118,28 @@ import { shouldSuppressSignal } from '@/server/services/agentSignal/suppressSign
 import { ComposioService } from '@/server/services/composio';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { DocumentService } from '@/server/services/document';
+import { createExecutionEnvAdapter } from '@/server/services/executionEnv';
 import { FileService } from '@/server/services/file';
 import { resolveAttachmentsByFileIds } from '@/server/services/file/resolveAttachments';
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
 import type { ConversationHistoryEntry } from '@/server/services/heterogeneousAgent/cloudHeteroContext';
 import { MarketService } from '@/server/services/market';
+import { DatabaseTopicWorkspaceBindingStore } from '@/server/services/projectWorkspace/bindingStore';
+import {
+  createAgentSkillProvider,
+  createBuiltinSkillProvider,
+  createProjectSkillProvider,
+  createUserSkillProvider,
+  SkillRegistryService,
+} from '@/server/services/skillRegistry';
+import { WorkspaceAccessGrantService } from '@/server/services/workspaceAccessGrant';
 import { markdownToTxt } from '@/utils/markdownToTxt';
 
 import { resolveDeviceAccessPolicy } from './deviceAccessPolicy';
 import { buildAllowedBuiltinTools, isDeviceToolIdentifier } from './deviceToolRegistry';
+import { buildDirectUserMessageAccessRoots } from './directUserPathConsent';
 import { ingestAttachment } from './ingestAttachment';
+import { getRuntimePathConsentRequest, validateOperationPathConsent } from './pathConsent';
 import { resolveDeviceWorkingDirectory } from './resolveDeviceWorkingDirectory';
 import { isWorkspaceCacheFresh, upsertWorkspaceScan } from './workspaceInitCache';
 
@@ -229,21 +253,6 @@ interface InternalExecAgentParams extends ExecAgentParams {
   queueRetryDelay?: string;
   /** Whether to continue execution from an existing persisted message */
   resume?: boolean;
-  /**
-   * When present, this execAgent call acts as the "continue" step for a
-   * previous op that hit `human_approve_required`. The service writes the
-   * decision to the target tool message and either runs the approved tool
-   * (`approved`), halts with `reason='human_rejected'` (`rejected`), or
-   * surfaces the rejection as user feedback so the LLM can respond
-   * (`rejected_continue`). `parentMessageId` must point at the pending tool
-   * message.
-   */
-  resumeApproval?: {
-    decision: 'approved' | 'rejected' | 'rejected_continue';
-    parentMessageId: string;
-    rejectionReason?: string;
-    toolCallId: string;
-  };
   /** Abort startup before the agent runtime operation is created */
   signal?: AbortSignal;
   /**
@@ -370,9 +379,11 @@ export class AiAgentService {
     activeDeviceId: string | undefined;
     agencyConfig?: LobeAgentAgencyConfig;
     topicId: string;
+    /** Operation-frozen root. When present, mutable topic/agent cwd mirrors are ignored. */
+    workspaceRoot?: string;
   }): Promise<WorkspaceInitResult> {
     const empty: WorkspaceInitResult = { instructions: [], skills: [] };
-    const { activeDeviceId, agencyConfig, topicId } = params;
+    const { activeDeviceId, agencyConfig, topicId, workspaceRoot } = params;
     if (!activeDeviceId) return empty;
 
     try {
@@ -382,13 +393,15 @@ export class AiAgentService {
 
       // The bound project root we scan — resolved via the shared precedence
       // helper so it cannot drift from hetero dispatch / topic backfill.
-      const topic = await this.topicModel.findById(topicId);
-      const boundCwd = resolveDeviceWorkingDirectory({
-        deviceDefaultCwd: device.defaultCwd,
-        deviceId: activeDeviceId,
-        topicWorkingDirectory: topic?.metadata?.workingDirectory,
-        workingDirByDevice: agencyConfig?.workingDirByDevice,
-      });
+      const topic = workspaceRoot ? undefined : await this.topicModel.findById(topicId);
+      const boundCwd =
+        workspaceRoot ??
+        resolveDeviceWorkingDirectory({
+          deviceDefaultCwd: device.defaultCwd,
+          deviceId: activeDeviceId,
+          topicWorkingDirectory: topic?.metadata?.workingDirectory,
+          workingDirByDevice: agencyConfig?.workingDirByDevice,
+        });
       if (!boundCwd) return empty;
 
       const workingDirs = device.workingDirs ?? [];
@@ -425,6 +438,92 @@ export class AiAgentService {
       log('execAgent: resolveWorkspaceInit failed: %O', error);
       return empty;
     }
+  }
+
+  /**
+   * Resolve the workspace environment once, immediately before operation
+   * creation. Every persisted value is encrypted at rest, including non-secret
+   * entries; plaintext remains only in the server/device execution snapshot.
+   */
+  private async resolveWorkspaceRuntimeConfig(params: {
+    agentEnv?: Record<string, string>;
+    agentId: string;
+    operationId: string;
+    topicId: string;
+    workspaceId?: string;
+  }): Promise<{
+    env: ExecutionEnv;
+    skillPolicy: SkillRegistryResult['policy'];
+  }> {
+    const { agentEnv, agentId, operationId, topicId, workspaceId } = params;
+    const defaultSkillPolicy: SkillRegistryResult['policy'] = {
+      ...DEFAULT_SKILL_POLICY,
+      pinned: [...DEFAULT_SKILL_POLICY.pinned],
+    };
+    const row = workspaceId
+      ? await new ProjectWorkspaceModel(this.db, this.userId).findById(workspaceId)
+      : undefined;
+    if (workspaceId && !row) throw new Error('Unable to load the bound workspace environment');
+    const entries = row?.env ?? {};
+    const skillPolicy: SkillRegistryResult['policy'] = {
+      ...defaultSkillPolicy,
+      ...row?.skillPolicy,
+      pinned: [...(row?.skillPolicy?.pinned ?? defaultSkillPolicy.pinned)],
+    };
+    let gateKeeperPromise: ReturnType<typeof KeyVaultsGateKeeper.initWithEnvKey> | undefined;
+    const decryptWorkspaceValue = async (encryptedValue: string): Promise<string> => {
+      gateKeeperPromise ??= KeyVaultsGateKeeper.initWithEnvKey();
+      const decrypted = await (await gateKeeperPromise).decrypt(encryptedValue);
+      if (!decrypted.wasAuthentic) throw new Error('Workspace environment authentication failed');
+      return decrypted.plaintext;
+    };
+
+    const adapter = createExecutionEnvAdapter({
+      decryptSecret: async ({ encryptedValue, layer }) => {
+        // Existing heterogeneous agent env is already stored as plaintext.
+        // Treat every key as secret for browser/trace projection, but do not
+        // pass it through the workspace cipher.
+        if (layer === 'agent') return encryptedValue;
+        if (layer === 'workspace') return decryptWorkspaceValue(encryptedValue);
+        throw new Error('No production decryptor exists for this environment layer');
+      },
+      loadLayer: async (layer) => {
+        if (layer === 'workspace' && workspaceId) {
+          // Workspace values are all encrypted at rest, including entries
+          // whose UI classification is non-secret. Pre-decrypt that class;
+          // secret entries are decrypted by the adapter's winning-entry pass.
+          return Object.fromEntries(
+            await Promise.all(
+              Object.entries(entries).map(async ([key, entry]) => [
+                key,
+                {
+                  ...entry,
+                  value: entry.secret ? entry.value : await decryptWorkspaceValue(entry.value),
+                },
+              ]),
+            ),
+          );
+        }
+        if (layer === 'agent' && agentEnv) {
+          return Object.fromEntries(
+            Object.entries(agentEnv).map(([key, value]) => [key, { secret: true, value }]),
+          );
+        }
+        // There is currently no persisted user/topic/call env schema. Host
+        // process identity remains device-owned and must not be copied from
+        // this server to a remote machine.
+        return;
+      },
+    });
+    const env = await adapter.resolve({
+      agentId,
+      operationId,
+      topicId,
+      userId: this.userId,
+      workspaceId,
+    });
+
+    return { env, skillPolicy };
   }
 
   /**
@@ -927,6 +1026,12 @@ export class AiAgentService {
     // tool_call_id / apiName / identifier / arguments / type fields live on
     // the plugin row and must be fetched separately.
     let resumeApprovalPlugin: MessagePluginItem | undefined;
+    let pendingOperationPathConsent:
+      | {
+          approval: NonNullable<NonNullable<ExecAgentParams['resumeApproval']>['pathConsent']>;
+          request: NonNullable<ReturnType<typeof getRuntimePathConsentRequest>>;
+        }
+      | undefined;
 
     if (resumeApproval) {
       if (!resumeParentMessage) {
@@ -958,10 +1063,28 @@ export class AiAgentService {
 
       const { decision, rejectionReason } = resumeApproval;
       if (decision === 'approved') {
-        await this.messageModel.updateMessagePlugin(resumeApproval.parentMessageId, {
-          intervention: { status: 'approved' },
-        });
+        if (resumeApproval.pathConsent) {
+          const request = getRuntimePathConsentRequest(resumeApprovalPlugin);
+          // Validate the entire old-operation tuple before performing any DB
+          // write. The current device is checked again against the newly
+          // resolved operation below.
+          validateOperationPathConsent({
+            approval: resumeApproval.pathConsent,
+            currentDeviceId: resumeApproval.pathConsent.deviceId,
+            currentOperationId: '__pending_operation__',
+            currentTopicId: appContext!.topicId!,
+            request,
+          });
+          pendingOperationPathConsent = { approval: resumeApproval.pathConsent, request: request! };
+        } else {
+          await this.messageModel.updateMessagePlugin(resumeApproval.parentMessageId, {
+            intervention: { status: 'approved' },
+          });
+        }
       } else {
+        if (resumeApproval.pathConsent) {
+          throw new Error('Path consent is only valid for an approved tool resume');
+        }
         // rejected / rejected_continue both write the same rejection content
         // + intervention state. The difference surfaces later in how the new
         // op's initial state/context are configured (halt vs. continue LLM).
@@ -2455,6 +2578,171 @@ export class AiAgentService {
     const timestamp = Date.now();
     const operationId = `op_${timestamp}_${resolvedAgentId}_${topicId}_${nanoid(8)}`;
 
+    // Freeze the execution authority exactly once. Topic metadata remains a
+    // compatibility projection; only the server-authored binding store is
+    // admitted here. Mutable agent defaults and browser-written cwd mirrors
+    // are intentionally not consulted after this point.
+    // Binding authority must fail closed. Treating a storage outage as an
+    // unbound topic could silently switch an already-bound conversation to a
+    // scratch directory and reintroduce cwd drift.
+    const topicWorkspaceState = await new DatabaseTopicWorkspaceBindingStore(
+      this.db,
+      this.userId,
+      this.workspaceId,
+    ).getState(topicId);
+
+    // A configured workspace env is execution input, not optional decoration.
+    // Loading/authentication failures abort operation creation rather than
+    // running commands with silently missing credentials or configuration.
+    const workspaceRuntimeConfig = await this.resolveWorkspaceRuntimeConfig({
+      agentEnv: agentConfig.agencyConfig?.heterogeneousProvider?.env,
+      agentId: resolvedAgentId,
+      operationId,
+      topicId,
+      workspaceId: topicWorkspaceState?.workspace?.id,
+    });
+    const executionEnv = workspaceRuntimeConfig.env;
+
+    const workspaces = topicWorkspaceState?.workspace?.id
+      ? { [topicWorkspaceState.workspace.id]: topicWorkspaceState.workspace }
+      : undefined;
+
+    // If the earlier server-side plan was already resolved, preserve its
+    // platform target unless a canonical topic snapshot supersedes it. This
+    // prevents a second resolution from drifting after config/default changes
+    // during a long operation setup.
+    const preservedPlanTarget = topicWorkspaceState?.snapshot ? undefined : executionPlan?.target;
+    const preservedDeviceId =
+      topicWorkspaceState?.snapshot || executionPlan?.kind !== 'device'
+        ? requestedDeviceId
+        : executionPlan.deviceId;
+    const executionContextInput = {
+      agencyConfig: agentConfig.agencyConfig,
+      canUseDevice,
+      chatConfig: agentConfig.chatConfig ?? undefined,
+      env: executionEnv,
+      executionTargetByPlatform: preservedPlanTarget
+        ? { desktop: preservedPlanTarget, web: preservedPlanTarget }
+        : undefined,
+      isDesktop: deviceGateway.isConfigured,
+      onlineDeviceIds: onlineDevices.map((device) => device.deviceId),
+      operationId,
+      requestedDeviceId: preservedDeviceId,
+      snapshot: topicWorkspaceState?.snapshot,
+      workspaces,
+    };
+    const preliminaryExecutionContext = resolveExecutionContext(executionContextInput);
+    const planDeviceId =
+      preliminaryExecutionContext.plan.kind === 'device'
+        ? preliminaryExecutionContext.plan.deviceId
+        : undefined;
+    let accessRoots: NonNullable<ExecutionContext['accessRoots']> = [];
+    if (planDeviceId) {
+      try {
+        accessRoots = await new WorkspaceAccessGrantService({
+          grantModel: new WorkspaceAccessGrantModel(this.db, this.userId),
+          topicModel: this.topicModel,
+        }).buildAccessRoots({ deviceId: planDeviceId, topicId });
+      } catch (error) {
+        log('execAgent: failed to resolve topic access grants: %O', error);
+      }
+    }
+
+    const directUserRoots = planDeviceId
+      ? buildDirectUserMessageAccessRoots({
+          appScope: appContext?.scope,
+          automationMode: appContext?.automationMode,
+          botConversation: isBotConversation,
+          cronJobId,
+          ephemeralUserMessage,
+          evalRun: !!evalContext,
+          hasAttachments:
+            (runAttachments.fileIds?.length ?? 0) > 0 ||
+            (runAttachments.imageList?.length ?? 0) > 0 ||
+            (runAttachments.videoList?.length ?? 0) > 0 ||
+            (runAttachments.fileList?.length ?? 0) > 0,
+          headless: userInterventionConfig.approvalMode === 'headless',
+          operationId,
+          prompt,
+          suppressUserMessage: runFromHistory,
+          taskId: operationTaskId,
+          topicId,
+          trigger,
+        }).map((root) => ({ ...root, deviceId: planDeviceId }))
+      : [];
+    accessRoots.push(...directUserRoots);
+
+    if (pendingOperationPathConsent) {
+      const operationRoot = validateOperationPathConsent({
+        ...pendingOperationPathConsent,
+        currentDeviceId: planDeviceId,
+        currentOperationId: operationId,
+        currentTopicId: topicId,
+      });
+      accessRoots.push(operationRoot);
+      await this.messageModel.updateMessagePlugin(resumeApproval!.parentMessageId, {
+        intervention: { status: 'approved' },
+      });
+    }
+
+    const executionContext: ExecutionContext = resolveExecutionContext({
+      ...executionContextInput,
+      accessRoots,
+    });
+    executionContext.envSummary = {
+      keys: Object.keys(executionEnv.values).sort(),
+      secretKeys: [...executionEnv.secretKeys].sort(),
+    };
+    executionPlan = executionContext.plan;
+    activeDeviceId =
+      executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
+
+    let modelCatalogSnapshot: ModelCatalogSnapshot;
+    try {
+      const persistedModel = await new AiModelModel(this.db, this.userId).findByIdAndProvider(
+        model,
+        provider,
+      );
+      const persistedCatalog = getModelCatalogFromSettings(persistedModel?.settings);
+      const exactPersistedEntry =
+        persistedCatalog?.entry.modelId === model && persistedCatalog.entry.providerId === provider
+          ? persistedCatalog.entry
+          : undefined;
+      const modelCard =
+        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
+        builtinModels.find((item) => item.id === model);
+      const entry =
+        exactPersistedEntry ??
+        mergeModelCatalogEntry({
+          catalog: {
+            abilities: persistedModel?.abilities ?? modelCard?.abilities,
+            contextWindowTokens:
+              persistedModel?.contextWindowTokens ?? modelCard?.contextWindowTokens,
+            kind: persistedModel?.type ?? 'chat',
+          },
+          modelId: model,
+          providerId: provider,
+        }).entry;
+      modelCatalogSnapshot = createModelCatalogSnapshot(entry, operationId);
+    } catch (error) {
+      log('execAgent: model catalog persistence unavailable, freezing builtin evidence: %O', error);
+      const modelCard =
+        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
+        builtinModels.find((item) => item.id === model);
+      modelCatalogSnapshot = createModelCatalogSnapshot(
+        mergeModelCatalogEntry({
+          catalog: {
+            abilities: modelCard?.abilities,
+            contextWindowTokens: modelCard?.contextWindowTokens,
+            kind: 'chat',
+          },
+          modelId: model,
+          providerId: provider,
+        }).entry,
+        operationId,
+      );
+    }
+
     // 16. Create initial context
     let initialContext: AgentRuntimeContext = {
       payload: {
@@ -2599,20 +2887,16 @@ export class AiAgentService {
     // filters by platform via enableChecker, and pairs with agent's enabled
     // plugin IDs for downstream SkillResolver consumption.
     let operationSkillSet;
+    let skillRegistryResult: SkillRegistryResult = {
+      entries: [],
+      errors: [],
+      policy: workspaceRuntimeConfig.skillPolicy,
+      precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+      skills: [],
+    };
     try {
-      const builtinMetas = builtinSkills.map((s) => ({
-        content: s.content,
-        description: s.description,
-        identifier: s.identifier,
-        name: s.name,
-      }));
       const skillModel = new AgentSkillModel(this.db, this.userId, this.workspaceId);
       const { data: dbSkills } = await skillModel.findAll();
-      const dbMetas = dbSkills.map((s) => ({
-        description: s.description ?? '',
-        identifier: s.identifier,
-        name: s.name,
-      }));
 
       // Agent-document skill bundles surfaced as runtime skills via the shared
       // `getAgentSkills` source of truth (prefix + index-child resolution lives
@@ -2622,11 +2906,6 @@ export class AiAgentService {
       // `<skill name="...">` line and the model's `activateSkill(name)` call
       // carry the same value.
       const agentSkills = await this.agentDocumentsService.getAgentSkills(resolvedAgentId);
-      const agentSkillMetas = agentSkills.map((skill) => ({
-        description: skill.description,
-        identifier: skill.identifier,
-        name: skill.name,
-      }));
 
       // Project skills + the root AGENTS.md are discovered server-side by
       // scanning the device's bound project directory ("workspace init"), cached
@@ -2640,20 +2919,13 @@ export class AiAgentService {
         activeDeviceId,
         agencyConfig: agentConfig.agencyConfig ?? undefined,
         topicId,
+        workspaceRoot: executionContext.cwd,
       });
 
-      const projectMetas = workspaceInit.skills.map((s) => ({
-        description: s.description ?? '',
-        identifier: `project:${s.name}`,
-        location: s.path,
-        name: s.name,
-        source: 'project' as const,
-      }));
-
-      if (projectMetas.length) {
+      if (workspaceInit.skills.length) {
         log(
           'execAgent: workspace skills merged: %d (activeDeviceId=%s)',
-          projectMetas.length,
+          workspaceInit.skills.length,
           activeDeviceId ?? 'none',
         );
       }
@@ -2679,26 +2951,38 @@ export class AiAgentService {
         );
       }
 
-      // Precedence on name collision: project > db > agent-skills > builtin.
-      // Agent-skills carry the `agent-skills:` prefix in their `name`, so they
-      // can only collide with each other — but we still dedupe by name to keep
-      // a single shape for the SkillEngine input.
-      const seenNames = new Set<string>();
-      const skills = [...projectMetas, ...dbMetas, ...agentSkillMetas, ...builtinMetas].filter(
-        (skill) => {
-          if (seenNames.has(skill.name)) return false;
-          seenNames.add(skill.name);
-          return true;
+      const registry = new SkillRegistryService({
+        providers: [
+          createBuiltinSkillProvider(
+            builtinSkills.filter((skill) => shouldEnableBuiltinSkill(skill.identifier)),
+          ),
+          createAgentSkillProvider(async () => agentSkills),
+          createUserSkillProvider(async () => dbSkills),
+          createProjectSkillProvider(),
+        ],
+      });
+      skillRegistryResult = await registry.resolve(
+        {
+          agentId: resolvedAgentId,
+          skillPolicy: workspaceRuntimeConfig.skillPolicy,
+          userId: this.userId,
+          workspace: executionContext.workspace,
+          workspaceInit,
         },
+        { userId: this.userId, workspaceId: this.workspaceId },
       );
 
       const skillEngine = new SkillEngine({
-        enableChecker: (skill) => shouldEnableBuiltinSkill(skill.identifier),
-        skills,
+        registry: skillRegistryResult,
+        skills: skillRegistryResult.skills,
       });
       operationSkillSet = skillEngine.generate(agentPlugins ?? []);
     } catch (error) {
       log('execAgent: failed to build operationSkillSet: %O', error);
+      skillRegistryResult.errors.push({
+        message: 'Skill registry resolution failed during operation creation.',
+        source: 'visibility',
+      });
     }
 
     // 19. Create operation using AgentRuntimeService
@@ -2718,6 +3002,7 @@ export class AiAgentService {
         activeDeviceId,
         agentConfig,
         deviceSystemInfo: Object.keys(deviceSystemInfo).length > 0 ? deviceSystemInfo : undefined,
+        executionContext,
         executionPlan,
         userTimezone,
         appContext: {
@@ -2763,6 +3048,7 @@ export class AiAgentService {
         initialStepCount,
         maxSteps,
         modelRuntimeConfig: { model, provider },
+        modelCatalogSnapshot,
         hooks,
         operationId,
         parentOperationId,
@@ -2778,6 +3064,7 @@ export class AiAgentService {
           tools,
         },
         operationSkillSet,
+        skillRegistryResult,
         userId: this.userId,
         userInterventionConfig,
         userMemory,

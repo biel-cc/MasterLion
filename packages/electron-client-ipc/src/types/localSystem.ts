@@ -111,6 +111,16 @@ export interface AuditSafePathsResult {
   allSafe: boolean;
 }
 
+export interface ResolveRealPathParams {
+  path: string;
+}
+
+export interface ResolveRealPathResult {
+  error?: string;
+  path?: string;
+  success: boolean;
+}
+
 export type LocalFilePreviewAccept = 'image';
 
 export interface LocalFilePreviewUrlParams {

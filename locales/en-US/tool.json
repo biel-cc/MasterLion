@@ -211,6 +211,7 @@
   "updateArgs.stringifyError": "Unable to serialize parameters, please check the parameter format",
   "workspacePathConsent.actions": "Path access choices",
   "workspacePathConsent.actualCwd": "Actual command directory",
+  "workspacePathConsent.approvedAndResumed": "Access approved with the verified path. Execution is resuming.",
   "workspacePathConsent.callbackFailed": "The execution coordinator did not accept this choice. You can try again.",
   "workspacePathConsent.cwdOverridden": "MODEL_CWD_OVERRIDDEN: the requested command directory was replaced with the topic's primary directory.",
   "workspacePathConsent.mode.exec": "Execute",
@@ -224,6 +225,7 @@
   "workspacePathConsent.recordedNotResumed": "Choice recorded. Access is not granted and execution has not resumed until the runtime verifies the real path.",
   "workspacePathConsent.reject": "Reject",
   "workspacePathConsent.rejectRecorded": "Rejection recorded. The runtime still needs to stop or resume the operation.",
+  "workspacePathConsent.rejectedAndResumed": "Path access rejected. Execution is resuming without the additional path.",
   "workspacePathConsent.requestedPath": "Requested path",
   "workspacePathConsent.title": "Additional path access requested",
   "workspacePathConsent.topic": "Remember for this topic"

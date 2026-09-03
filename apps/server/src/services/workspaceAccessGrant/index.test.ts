@@ -85,11 +85,14 @@ describe('WorkspaceAccessGrantService', () => {
     expect(listActive).toHaveBeenCalledWith({ deviceId: 'device-a', topicId: 'topic-a' }, now);
     expect(roots).toEqual([
       {
+        deviceId: 'device-a',
+        expiresAt: undefined,
         grantId: 'grant-a',
         modes: ['read', 'write'],
         rootPath: '/code/shared',
         scope: 'topic',
         source: 'user-approval',
+        topicId: 'topic-a',
       },
     ]);
   });

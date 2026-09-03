@@ -31,6 +31,8 @@ import {
   type ProjectFileIndexParams,
   type ProjectFileIndexResult,
   type RenameLocalFileResult,
+  type ResolveRealPathParams,
+  type ResolveRealPathResult,
   type ResolveSkillResourcePathParams,
   type ResolveSkillResourcePathResult,
   type ShowOpenDialogParams,
@@ -433,6 +435,21 @@ export default class LocalFileCtr extends ControllerModule {
     return {
       allSafe: await areAllPathsSafeOnDisk(paths, resolveAgainstScope),
     };
+  }
+
+  /** Canonicalize a user-approved root in the trusted main process before consent is persisted. */
+  @IpcMethod()
+  async resolveRealPath({ path: requestedPath }: ResolveRealPathParams): Promise<ResolveRealPathResult> {
+    const expanded = expandTilde(requestedPath) ?? requestedPath;
+    if (!path.isAbsolute(expanded)) {
+      return { error: 'Path must be absolute', success: false };
+    }
+
+    try {
+      return { path: normalizeAbsolutePath(await realpath(expanded)), success: true };
+    } catch {
+      return { error: 'Unable to resolve path', success: false };
+    }
   }
 
   @IpcMethod()

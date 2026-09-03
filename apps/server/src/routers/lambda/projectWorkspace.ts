@@ -10,6 +10,8 @@ import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGran
 import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
+import { WorkspaceEnvService } from '@/server/services/executionEnv';
 import {
   DatabaseTopicWorkspaceBindingStore,
   ProjectWorkspaceService,
@@ -49,6 +51,15 @@ const projectWorkspaceProcedure = wsCompatProcedure.use(serverDatabase).use(asyn
 const projectWorkspaceWriteProcedure = projectWorkspaceProcedure.use(
   withScopedPermission('topic:update'),
 );
+
+const getWorkspaceEnvService = async (ctx: {
+  serverDB: ConstructorParameters<typeof ProjectWorkspaceModel>[0];
+  userId: string;
+}) =>
+  new WorkspaceEnvService(
+    new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
+    await KeyVaultsGateKeeper.initWithEnvKey(),
+  );
 
 const requireAbsolutePath = (rootPath: string) => {
   if (!isAbsoluteFilesystemPath(rootPath)) {
@@ -117,6 +128,10 @@ export const projectWorkspaceRouter = router({
     .input(z.object({ topicId: z.string().min(1) }))
     .query(({ ctx, input }) => ctx.workspaceService.resolveTopic(input.topicId)),
 
+  listEnv: projectWorkspaceProcedure
+    .input(z.object({ workspaceId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => (await getWorkspaceEnvService(ctx)).list(input.workspaceId)),
+
   grant: projectWorkspaceWriteProcedure
     .input(
       z.object({
@@ -165,6 +180,23 @@ export const projectWorkspaceRouter = router({
       if (!grant) throw new TRPCError({ code: 'NOT_FOUND', message: 'Grant not found' });
       return grant;
     }),
+
+  revokeEnv: projectWorkspaceWriteProcedure
+    .input(z.object({ key: z.string().min(1), workspaceId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) =>
+      (await getWorkspaceEnvService(ctx)).revoke(input.workspaceId, input.key),
+    ),
+
+  saveEnv: projectWorkspaceWriteProcedure
+    .input(
+      z.object({
+        key: z.string().min(1),
+        secret: z.boolean(),
+        value: z.string().min(1),
+        workspaceId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => (await getWorkspaceEnvService(ctx)).save(input)),
 
   update: projectWorkspaceWriteProcedure
     .input(

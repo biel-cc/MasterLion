@@ -94,13 +94,29 @@ export class GatewayHttpClient {
     apiName: string;
     arguments: string;
     deviceId?: string;
+    executionContext?: GatewayToolCallExecutionContext;
     identifier: string;
+    operationId?: string;
     params: GatewayMcpStdioParams;
     timeout?: number;
+    toolCallId?: string;
+    topicId?: string;
     userId: string;
   }): Promise<DeviceToolCallResult> {
-    const { deviceId, timeout, userId, ...toolCall } = mcpCall;
-    return this.postToolCall({ deviceId, timeout, userId }, { ...toolCall, type: 'mcp' });
+    const {
+      deviceId,
+      executionContext,
+      operationId,
+      timeout,
+      toolCallId,
+      topicId,
+      userId,
+      ...toolCall
+    } = mcpCall;
+    return this.postToolCall(
+      { deviceId, executionContext, operationId, timeout, toolCallId, topicId, userId },
+      { ...toolCall, type: 'mcp' },
+    );
   }
 
   private async postToolCall(
