@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { mergeModelCatalogEntry } from '@lobechat/business-model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NewApiService } from './index';
@@ -7,10 +8,13 @@ const mocks = vi.hoisted(() => ({
   bindingStore: new Map<string, any>(),
   batchUpdateAiModels: vi.fn(),
   clearRemoteModels: vi.fn(),
+  deleteAiModel: vi.fn(),
   findUserByEmail: vi.fn(),
   findUserById: vi.fn(),
   findUserByUsername: vi.fn(),
+  getModelListByProviderId: vi.fn().mockResolvedValue([]),
   toggleProviderEnabled: vi.fn(),
+  updateAiModel: vi.fn(),
   updateConfig: vi.fn(),
   updateSyncState: vi.fn(),
   upsertBinding: vi.fn(),
@@ -20,6 +24,9 @@ vi.mock('@/database/models/aiModel', () => ({
   AiModelModel: vi.fn().mockImplementation(() => ({
     batchUpdateAiModels: mocks.batchUpdateAiModels,
     clearRemoteModels: mocks.clearRemoteModels,
+    delete: mocks.deleteAiModel,
+    getModelListByProviderId: mocks.getModelListByProviderId,
+    update: mocks.updateAiModel,
   })),
 }));
 
@@ -716,7 +723,7 @@ describe('NewApiService', () => {
         expect.objectContaining({ id: 'text-embedding-v4', type: 'embedding' }),
       ]),
     );
-    expect(client.listModels).not.toHaveBeenCalled();
+    expect(client.listModels).toHaveBeenCalledTimes(2);
   });
 
   it('falls back to a random chat model when the Aihub default model is not accessible', async () => {
@@ -1184,7 +1191,7 @@ describe('NewApiService', () => {
       expect.any(Function),
       expect.any(Function),
     );
-    expect(client.listModels).not.toHaveBeenCalled();
+    expect(client.listModels).toHaveBeenCalledTimes(2);
   });
 
   it('filters out models listed in AIHUB_HIDDEN_MODELS during sync', async () => {
@@ -1252,5 +1259,145 @@ describe('NewApiService', () => {
       'newapi',
       expect.arrayContaining([expect.objectContaining({ id: 'gpt-3.5-turbo' })]),
     );
+  });
+
+  it('uses one classifier for bridge ids and HTTP metadata without widening permissions', async () => {
+    mocks.bindingStore.set('current-user', {
+      encryptedAccessToken: null,
+      errorMessage: null,
+      lastSyncedAt: null,
+      managedTokenId: 44,
+      newApiUserId: 17,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const accessibleIds = [
+      'qwen3-vl-rerank',
+      'bge-reranker-v2',
+      'text-embedding-3-small',
+      'company-chat',
+    ];
+    const client = {
+      listModels: vi.fn().mockResolvedValue([
+        { id: 'qwen3-vl-rerank', supported_endpoint_types: ['rerank'] },
+        { id: 'bge-reranker-v2', supported_endpoint_types: ['rerank'] },
+        { id: 'text-embedding-3-small', supported_endpoint_types: ['embeddings'] },
+        { id: 'company-chat', supported_endpoint_types: ['chat/completions'] },
+        { id: 'not-permitted-chat', supported_endpoint_types: ['chat/completions'] },
+      ]),
+    };
+    const readOnlyDb = {
+      findManagedToken: vi.fn().mockResolvedValue({
+        id: 44,
+        key: 'test-managed-token',
+        model_limits: accessibleIds.join(','),
+        model_limits_enabled: true,
+        name: 'managed-token',
+      }),
+      findUserById: vi.fn().mockResolvedValue({ group: 'limited', id: 17 }),
+      isEnabled: vi.fn(() => true),
+      listAccessibleModels: vi.fn().mockResolvedValue(accessibleIds),
+    };
+    const service = new NewApiService({
+      client: client as any,
+      db: {} as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    const synced = await service.syncModels();
+
+    expect(synced.models.map(({ id }) => id)).toEqual(accessibleIds);
+    expect(synced.models.map(({ type }) => type)).toEqual([
+      'embedding',
+      'embedding',
+      'embedding',
+      'chat',
+    ]);
+    expect(synced.defaultModel).toBe('company-chat');
+    expect(synced.models).not.toContainEqual(expect.objectContaining({ id: 'not-permitted-chat' }));
+    expect(synced.models[0].settings?.modelCatalog).toMatchObject({
+      denied: false,
+      entry: { kind: 'rerank', kindSource: 'provider-meta' },
+      version: 1,
+    });
+  });
+
+  it('transactionally reconciles remote models while preserving manual and observed evidence', async () => {
+    mocks.bindingStore.set('current-user', {
+      encryptedAccessToken: null,
+      errorMessage: null,
+      lastSyncedAt: null,
+      managedTokenId: 44,
+      newApiUserId: 17,
+      status: 'active',
+      userId: 'current-user',
+    });
+    const manual = {
+      createdAt: '2026-09-01T00:00:00.000Z',
+      denyChat: true,
+      inputModalities: { image: 'unsupported' as const },
+      owner: 'model-ops',
+      reason: 'provider incident',
+    };
+    const observed = {
+      contextWindowRejectionTokens: 32_000,
+      verifiedAt: '2026-09-02T00:00:00.000Z',
+    };
+    const previousCatalog = mergeModelCatalogEntry({
+      catalog: { contextWindowTokens: 128_000, kind: 'chat' },
+      manual,
+      modelId: 'manual-chat',
+      now: '2026-09-03T00:00:00.000Z',
+      observed,
+      providerId: 'newapi',
+    });
+    mocks.getModelListByProviderId.mockResolvedValueOnce([
+      {
+        enabled: true,
+        id: 'manual-chat',
+        settings: { modelCatalog: previousCatalog },
+        source: 'remote',
+        type: 'chat',
+      },
+      { enabled: true, id: 'stale-chat', source: 'remote', type: 'chat' },
+    ]);
+    const readOnlyDb = {
+      findManagedToken: vi.fn().mockResolvedValue({
+        id: 44,
+        key: 'test-managed-token',
+        model_limits: 'manual-chat',
+        model_limits_enabled: true,
+        name: 'managed-token',
+      }),
+      findUserById: vi.fn().mockResolvedValue({ group: 'limited', id: 17 }),
+      isEnabled: vi.fn(() => true),
+      listAccessibleModels: vi.fn().mockResolvedValue(['manual-chat']),
+    };
+    const transaction = vi.fn(async (callback) => callback({}));
+    const service = new NewApiService({
+      client: {} as any,
+      db: { transaction } as any,
+      gateKeeper: createGateKeeper(),
+      readOnlyDb: readOnlyDb as any,
+      userId: 'current-user',
+    });
+
+    const synced = await service.syncModels();
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.clearRemoteModels).not.toHaveBeenCalled();
+    expect(mocks.updateAiModel).toHaveBeenCalledWith(
+      'manual-chat',
+      'newapi',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          modelCatalog: expect.objectContaining({ denied: true, manual, observed }),
+        }),
+      }),
+    );
+    expect(mocks.deleteAiModel).toHaveBeenCalledWith('stale-chat', 'newapi');
+    expect(synced.defaultModel).toBeUndefined();
   });
 });

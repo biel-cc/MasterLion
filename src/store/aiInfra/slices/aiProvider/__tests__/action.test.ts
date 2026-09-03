@@ -1,3 +1,4 @@
+import { mergeModelCatalogEntry } from '@lobechat/business-model-bank';
 import * as runtimeModule from '@lobechat/model-runtime';
 import type { AIImageModelCard, EnabledAiModel, ModelParamsSchema, Pricing } from 'model-bank';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -232,6 +233,36 @@ describe('aiProvider action helpers', () => {
         abilities: { functionCall: false, reasoning: false, search: false },
         displayName: 'glm5-5.1',
       });
+    });
+
+    it('excludes every non-chat kind and an audited manual deny through the shared selector', async () => {
+      const denied = mergeModelCatalogEntry({
+        manual: {
+          createdAt: '2026-09-01T00:00:00.000Z',
+          denyChat: true,
+          owner: 'model-ops',
+          reason: 'incident response',
+        },
+        modelId: 'temporarily-denied-chat',
+        now: '2026-09-03T00:00:00.000Z',
+        providerId: 'newapi',
+      });
+      const result = await getChatModelList(
+        [
+          createChatModel({ id: 'qwen3-vl-rerank', providerId: 'newapi' }),
+          createChatModel({ id: 'bge-reranker-v2', providerId: 'newapi' }),
+          createChatModel({ id: 'text-embedding-3-small', providerId: 'newapi' }),
+          createChatModel({
+            id: 'temporarily-denied-chat',
+            providerId: 'newapi',
+            settings: { modelCatalog: denied },
+          }),
+          createChatModel({ id: 'company-chat', providerId: 'newapi' }),
+        ],
+        'newapi',
+      );
+
+      expect(result.map(({ id }) => id)).toEqual(['company-chat']);
     });
   });
 

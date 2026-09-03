@@ -1,3 +1,4 @@
+import { mergeModelCatalogEntry } from '@lobechat/business-model-bank';
 import type { ChatModelCard } from '@lobechat/types';
 import type {
   AIBaseModelCard,
@@ -545,20 +546,26 @@ const processModelCard = (
 
   const isExcludedModel = isKeywordListMatch(model.id.toLowerCase(), excludeKeywords);
   const normalizedModelType = normalizeModelType(model.type);
-  const modelType =
-    normalizedModelType ||
-    knownModel?.type ||
-    (isKeywordListMatch(
-      model.id.toLowerCase(),
-      IMAGE_MODEL_KEYWORDS.map((k) => k.toLowerCase()),
-    )
-      ? 'image'
-      : isKeywordListMatch(
-            model.id.toLowerCase(),
-            EMBEDDING_MODEL_KEYWORDS.map((k) => k.toLowerCase()),
-          )
+  const catalogKind = mergeModelCatalogEntry({
+    catalog: { kind: knownModel?.type },
+    modelId: model.id,
+    providerId: 'model-runtime',
+    providerMetadata: {
+      declaredKind: normalizedModelType,
+      endpointTypes: Array.isArray(model.supported_endpoint_types)
+        ? model.supported_endpoint_types
+        : undefined,
+    },
+  }).entry.kind;
+  const specialModelType = normalizedModelType ?? knownModel?.type;
+  const modelType: AiModelType =
+    catalogKind === 'unknown' &&
+    typeof specialModelType === 'string' &&
+    ['realtime', 'text2music', 'video'].includes(specialModelType)
+      ? (specialModelType as AiModelType)
+      : catalogKind === 'moderation' || catalogKind === 'rerank' || catalogKind === 'unknown'
         ? 'embedding'
-        : 'chat');
+        : catalogKind;
 
   // image model can't find parameters
   if (modelType === 'image' && !model.parameters && !knownModel?.parameters) {
@@ -676,7 +683,7 @@ const processModelCard = (
  * @returns Processed model card list
  */
 export const processModelList = async (
-  modelList: Array<{ id: string }>,
+  modelList: Array<{ [key: string]: any; id: string }>,
   config: ModelProcessorConfig,
   provider?: keyof typeof MODEL_LIST_CONFIGS,
 ): Promise<ChatModelCard[]> => {
@@ -734,7 +741,7 @@ export const processModelList = async (
  * @returns Processed model card list
  */
 export const processMultiProviderModelList = async (
-  modelList: Array<{ id: string }>,
+  modelList: Array<{ [key: string]: any; id: string }>,
   providerid?: ModelProviderKey,
 ): Promise<ChatModelCard[]> => {
   const { loadModels } =

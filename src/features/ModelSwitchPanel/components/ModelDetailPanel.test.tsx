@@ -19,6 +19,9 @@ vi.mock('antd-style', () => ({
     row: 'row',
     titleText: 'titleText',
   }),
+  cssVar: new Proxy({}, { get: (_, key) => `var(--${String(key)})` }),
+  cx: (...classNames: unknown[]) => classNames.filter(Boolean).join(' '),
+  useResponsive: () => ({ mobile: false }),
 }));
 
 vi.mock('@lobehub/ui', () => ({
@@ -38,15 +41,38 @@ vi.mock('@lobehub/ui', () => ({
       <div>{children}</div>
     </section>
   ),
+  Avatar: () => <span />,
   Flexbox: ({ children, ...props }: { children?: ReactNode }) => <div {...props}>{children}</div>,
   Icon: () => <span />,
-  Tag: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  Tag: ({ children, ...props }: { children: ReactNode }) => <span {...props}>{children}</span>,
+  Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   Tooltip: ({ children, title }: { children: ReactNode; title?: ReactNode }) => (
     <span>
       {title}
       {children}
     </span>
   ),
+  TooltipGroup: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('@lobehub/ui/base-ui', () => ({
+  Tooltip: ({ children, title }: { children: ReactNode; title?: ReactNode }) => (
+    <span>
+      {title}
+      {children}
+    </span>
+  ),
+}));
+
+vi.mock('@lobehub/icons', () => ({
+  LobeHub: { Morden: () => <span /> },
+  ModelIcon: () => <span />,
+  ProviderIcon: () => <span />,
+}));
+
+vi.mock('@/store/aiInfra', () => ({
+  useAiInfraStore: (selector: (state: { enabledAiModels: never[] }) => unknown) =>
+    selector({ enabledAiModels: [] }),
 }));
 
 vi.mock('@/hooks/useEnabledChatModels', () => ({
@@ -119,11 +145,12 @@ const imagePricing = {
 const createEnabledList = (
   provider: string,
   pricing: Record<string, unknown>,
+  abilities: Record<string, boolean> = {},
 ): EnabledProviderWithModels[] => [
   {
     children: [
       {
-        abilities: {},
+        abilities,
         contextWindowTokens: 1_000_000,
         displayName: 'Test Model',
         id: 'test-model',
@@ -193,5 +220,50 @@ describe('ModelDetailPanel pricing', () => {
 
     expect(videoResult.container).toHaveTextContent('~ 800.0K credits / video');
     expect(videoResult.container).not.toHaveTextContent('$0.80');
+  });
+});
+
+describe('ModelDetailPanel input modality', () => {
+  it('derives image support from abilities as catalog evidence and names the source', () => {
+    globalState.status.modelDetailPanelExpandedKeys = ['abilities'];
+
+    const { container } = render(
+      <ModelDetailPanel
+        enabledList={createEnabledList('openai', textPricing, { vision: true })}
+        model="test-model"
+        provider="openai"
+      />,
+    );
+
+    expect(container).toHaveTextContent('Input modality');
+    expect(container.querySelector('[data-input-modality]')).toHaveAttribute(
+      'data-input-modality',
+      'supported',
+    );
+    expect(container.querySelector('[data-input-modality]')).toHaveTextContent('Image input');
+
+    const evidenceRows = container.querySelectorAll('[data-evidence-state]');
+    expect(evidenceRows).toHaveLength(4);
+    expect(evidenceRows[0]).toHaveTextContent('Supported · Model catalog · Not verified yet');
+    expect(evidenceRows[1]).toHaveTextContent('Unverified · No evidence · Not verified yet');
+  });
+
+  it('shows unverified, never text only, when evidence is incomplete', () => {
+    globalState.status.modelDetailPanelExpandedKeys = ['pricing'];
+
+    const { container } = render(
+      <ModelDetailPanel
+        enabledList={createEnabledList('openai', textPricing)}
+        model="test-model"
+        provider="openai"
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: 'Unverified' })).toHaveAttribute(
+      'data-input-modality',
+      'unknown',
+    );
+    expect(container.querySelector('[data-input-modality="text-only"]')).toBeNull();
+    expect(screen.queryByRole('img', { name: 'Text only' })).toBeNull();
   });
 });
