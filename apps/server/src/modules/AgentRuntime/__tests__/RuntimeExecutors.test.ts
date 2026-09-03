@@ -267,6 +267,35 @@ describe('RuntimeExecutors', () => {
       ).toBe(126_976);
     });
 
+    it('never expands a tiny compression model window beyond its prompt capacity', () => {
+      expect(
+        resolveCompressionSummaryBudgetTokens({
+          compressionModel: { model: 'tiny-summary-model', provider: 'openai' },
+          compressionModelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 1024,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'tiny-summary-model',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+        }),
+      ).toBe(1);
+    });
+
     it('redacts provider media bytes while retaining stable accounting identity', () => {
       expect(
         collectProviderMediaTokenEstimates(
@@ -2849,6 +2878,205 @@ describe('RuntimeExecutors', () => {
         snapshot: { workspaceId: 'scratch-workspace' },
         workspace: { id: 'scratch-workspace', kind: 'scratch' },
       });
+    });
+
+    it('keeps a successful scratch tool result when a concurrent formal bind wins the CAS', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'formal-workspace',
+          kind: 'device',
+          rootPath: '/Users/me/formal-project',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-cas-race',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-cas-race' }),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            result: expect.objectContaining({ content: 'Tool result', success: true }),
+            type: 'tool_result',
+          }),
+        ]),
+      );
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/Users/me/formal-project',
+        plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+        snapshot: { workspaceId: 'formal-workspace', workspaceKind: 'device' },
+        workspace: { id: 'formal-workspace', kind: 'device' },
+      });
+    });
+
+    it('uses the server-to-device transport for frozen local-system env authority', async () => {
+      mockStreamManager.sendToolExecute = vi.fn();
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'stale-device',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                deviceId: 'device-a',
+                modes: ['exec'],
+                rootPath: '/Users/me/project',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/Users/me/project',
+            env: {
+              secretKeys: ['TOKEN'],
+              sources: { TOKEN: 'workspace' },
+              values: { TOKEN: 'server-resolved-secret' },
+            },
+            envFiles: ['.env'],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            version: 1,
+            workspace: {
+              deviceId: 'device-a',
+              id: 'workspace-a',
+              kind: 'device',
+              rootPath: '/Users/me/project',
+            },
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'runCommand',
+              arguments: '{"command":"printenv TOKEN"}',
+              executor: 'client',
+              id: 'tool-call-env',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockStreamManager.sendToolExecute).not.toHaveBeenCalled();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'tool-call-env' }),
+        expect.objectContaining({
+          activeDeviceId: 'device-a',
+          executionContext: expect.objectContaining({
+            env: expect.objectContaining({ values: { TOKEN: 'server-resolved-secret' } }),
+            envFiles: ['.env'],
+          }),
+        }),
+      );
+    });
+
+    it('does not use the renderer tool channel when a local device is unrouted', async () => {
+      mockStreamManager.sendToolExecute = vi.fn();
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read'],
+                operationId: 'op-123',
+                rootPath: '/outside/docs',
+                scope: 'operation',
+                source: 'direct-user-message',
+                topicId: 'topic-123',
+              },
+            ],
+            plan: { kind: 'device-unrouted', target: 'local' },
+            unresolvedReason: 'device-offline',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs/report.md"}',
+              executor: 'client',
+              id: 'tool-call-unrouted',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockStreamManager.sendToolExecute).not.toHaveBeenCalled();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'tool-call-unrouted' }),
+        expect.objectContaining({ activeDeviceId: undefined }),
+      );
     });
 
     it('does not create scratch for an explicit absolute-path operation', async () => {

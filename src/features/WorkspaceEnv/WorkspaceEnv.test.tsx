@@ -46,6 +46,13 @@ vi.mock('antd-style', () => ({
 }));
 
 vi.mock('@lobehub/ui', () => ({
+  Empty: ({ description }: { description: ReactNode }) => <div>{description}</div>,
+  Input: (props: ComponentProps<'input'>) => <input {...props} />,
+  Skeleton: () => <div data-testid="skeleton" />,
+}));
+
+// Buttons must come from the headless base-ui package, so only that mock provides one.
+vi.mock('@lobehub/ui/base-ui', () => ({
   Button: ({ children, htmlType, loading: _loading, ...props }: ComponentProps<'button'> & {
     htmlType?: 'button' | 'reset' | 'submit';
     loading?: boolean;
@@ -54,12 +61,6 @@ vi.mock('@lobehub/ui', () => ({
       {children}
     </button>
   ),
-  Empty: ({ description }: { description: ReactNode }) => <div>{description}</div>,
-  Input: (props: ComponentProps<'input'>) => <input {...props} />,
-  Skeleton: () => <div data-testid="skeleton" />,
-}));
-
-vi.mock('@lobehub/ui/base-ui', () => ({
   confirmModal: ({ onOk }: { onOk?: () => void | Promise<void> }) => void onOk?.(),
   Switch: ({ checked, onChange, ...props }: {
     checked?: boolean;
@@ -88,7 +89,11 @@ describe('WorkspaceEnv', () => {
     });
     render(<WorkspaceEnv client={client} workspaceId="workspace-1" />);
 
-    expect(screen.getByText('Loading variables').closest('[role="status"]')).toBeInTheDocument();
+    const loadingLabel = screen.getByText('Loading variables');
+    expect(loadingLabel.closest('[role="status"]')).toBeInTheDocument();
+    // A class the app actually defines; the old `sr-only` name has no stylesheet behind it.
+    expect(loadingLabel).toHaveClass('screenReaderOnly');
+    expect(loadingLabel).not.toHaveClass('sr-only');
     expect(screen.getByTestId('skeleton')).toBeInTheDocument();
   });
 

@@ -1,3 +1,7 @@
+import {
+  parseExceededContextWindowError,
+  runContextBudgetedCall,
+} from '@lobechat/agent-runtime';
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
 import {
   COMPOSIO_APP_TYPES,
@@ -17,7 +21,7 @@ import type {
   TracePayload,
   UIChatMessage,
 } from '@lobechat/types';
-import { ChatErrorType, TraceTagMap } from '@lobechat/types';
+import { AgentRuntimeErrorType, ChatErrorType, TraceTagMap } from '@lobechat/types';
 import { merge } from 'es-toolkit/compat';
 import { ModelProvider } from 'model-bank';
 
@@ -59,7 +63,33 @@ import {
   initializeWithClientStore,
   resolveModelExtendParams,
 } from './mecha';
-import { type FetchOptions } from './types';
+import { type ClientBudgetedChatPayload, type FetchOptions } from './types';
+
+const PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE = 1000;
+
+/** Redacted media accounting for the exact provider-visible message payload. */
+export const collectClientProviderMediaTokenEstimates = (
+  messages: Readonly<Array<UIChatMessage | OpenAIChatMessage>>,
+) => {
+  const estimates: Array<{ estimatedTokens: number; id: string; messageId?: string }> = [];
+
+  messages.forEach((message, messageIndex) => {
+    if (!Array.isArray(message.content)) return;
+
+    message.content.forEach((part: any, partIndex) => {
+      if (part?.type !== 'image_url' && part?.type !== 'video_url') return;
+
+      const messageId = typeof (message as any).id === 'string' ? (message as any).id : undefined;
+      estimates.push({
+        estimatedTokens: PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE,
+        id: `${messageId ?? `message-${messageIndex}`}:media-${partIndex}`,
+        messageId,
+      });
+    });
+  });
+
+  return estimates;
+};
 
 const providersWithDeploymentName = new Set<string>([
   ModelProvider.Azure,
@@ -105,6 +135,7 @@ interface FetchAITaskResultParams extends FetchSSEOptions {
 
 interface CreateAssistantMessageStream extends FetchSSEOptions {
   abortController?: AbortController;
+  contextBudget?: FetchOptions['contextBudget'];
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;
@@ -322,23 +353,86 @@ class ChatService {
       provider: payload.provider!,
     });
 
-    return this.getChatCompletion(
-      {
-        ...params,
-        ...extendParams,
-        enabledSearch: searchConfig.enabledSearch && searchConfig.useModelSearch ? true : undefined,
-        messages: modelMessages,
-        // Use the chatConfig from the target agent for streaming preference
-        stream: chatConfig.enableStreaming !== false,
-        tools,
+    const finalPayload: ClientBudgetedChatPayload = {
+      ...params,
+      ...extendParams,
+      enabledSearch: searchConfig.enabledSearch && searchConfig.useModelSearch ? true : undefined,
+      messages: modelMessages as unknown as UIChatMessage[],
+      providerMedia: collectClientProviderMediaTokenEstimates(modelMessages),
+      // Use the chatConfig from the target agent for streaming preference
+      stream: chatConfig.enableStreaming !== false,
+      tools,
+    };
+
+    const budget = options?.contextBudget;
+    if (!budget) {
+      const { providerMedia: _, ...providerPayload } = finalPayload;
+      return this.getChatCompletion(providerPayload as Partial<ChatStreamPayload>, {
+        ...options,
+        agentId: targetAgentId,
+        topicId,
+      });
+    }
+
+    const { contextBudget: _, ...providerOptions } = options;
+    const callProvider = async (budgetPayload: ClientBudgetedChatPayload) => {
+      let contextWindowError: Parameters<NonNullable<FetchOptions['onErrorHandle']>>[0] | undefined;
+      const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
+      const response = await this.getChatCompletion(providerPayload as Partial<ChatStreamPayload>, {
+        ...providerOptions,
+        agentId: targetAgentId,
+        onErrorHandle: (error) => {
+          if (parseExceededContextWindowError(error)) {
+            contextWindowError = error;
+            return;
+          }
+          providerOptions.onErrorHandle?.(error);
+        },
+        onFinish: async (...args) => {
+          if (contextWindowError) return;
+          await providerOptions.onFinish?.(...args);
+        },
+        topicId,
+      });
+
+      if (contextWindowError) throw contextWindowError;
+      return response;
+    };
+
+    const result = await runContextBudgetedCall({
+      attemptState: budget.attemptState,
+      callProvider,
+      catalogSnapshot: budget.catalogSnapshot,
+      compress: budget.compress,
+      configuredWindowTokens: budget.configuredWindowTokens,
+      modelId: finalPayload.model ?? payload.model,
+      operationId: budget.operationId,
+      outputReserveTokens: budget.outputReserveTokens ?? 1024,
+      payload: finalPayload,
+      providerId: finalPayload.provider ?? payload.provider!,
+    });
+    budget.onAttemptState?.(result.attemptState);
+
+    if (result.kind === 'success') return result.value;
+
+    const evaluation = result.evaluations.at(-1);
+    const error = {
+      body: {
+        contextBudget: { decision: result.decision, trace: evaluation?.trace },
+        contextBudgetAttemptState: result.attemptState,
       },
-      { ...options, agentId: targetAgentId, topicId },
-    );
+      message: `The final request exceeds the context window for model "${finalPayload.model}".`,
+      type: AgentRuntimeErrorType.ExceededContextWindow,
+    };
+    providerOptions.onErrorHandle?.(error);
+    await providerOptions.onFinish?.('', { type: 'error' });
+    return undefined;
   };
 
   createAssistantMessageStream = async ({
     params,
     abortController,
+    contextBudget,
     onAbort,
     onMessageHandle,
     onErrorHandle,
@@ -350,6 +444,7 @@ class ChatService {
     stepContext,
   }: CreateAssistantMessageStream) => {
     await this.createAssistantMessage(params, {
+      contextBudget,
       historySummary,
       initialContext,
       onAbort,

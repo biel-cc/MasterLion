@@ -113,7 +113,7 @@ const createTestContext = (agentId: string = TEST_IDS.SESSION_ID) => ({
   threadId: null,
 });
 
-const seedFormalHeterogeneousWorkspace = (agentId: string = TEST_IDS.SESSION_ID) => {
+const seedFormalLocalWorkspace = (agentId: string = TEST_IDS.SESSION_ID) => {
   const draftKey = buildDraftConversationKey({ agentId });
   useProjectWorkspaceStore.setState({
     draftByConversationKey: {
@@ -132,6 +132,33 @@ const seedFormalHeterogeneousWorkspace = (agentId: string = TEST_IDS.SESSION_ID)
         rootPath: '/Users/me/project',
       },
     },
+  });
+};
+
+const seedBoundTopicWorkspace = (topicId: string = TEST_IDS.TOPIC_ID) => {
+  const workspace = {
+    deviceId: 'device-local',
+    id: 'workspace-project',
+    kind: 'device' as const,
+    rootPath: '/Users/me/project',
+  };
+  useProjectWorkspaceStore.setState({
+    topicStatesById: {
+      [topicId]: {
+        snapshot: {
+          boundDeviceId: 'device-local',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:00.000Z',
+          workspaceId: workspace.id,
+          workspaceKind: workspace.kind,
+        },
+        workspace,
+      },
+    },
+    workspaceIdsByDevice: { 'device-local': [workspace.id] },
+    workspacesById: { [workspace.id]: workspace },
   });
 };
 
@@ -1030,7 +1057,7 @@ describe('ConversationLifecycle actions', () => {
             model: 'claude-sonnet-4-6',
           },
         });
-        seedFormalHeterogeneousWorkspace();
+        seedFormalLocalWorkspace();
 
         const { result } = renderHook(() => useChatStore());
 
@@ -1173,7 +1200,7 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         });
-        seedFormalHeterogeneousWorkspace();
+        seedFormalLocalWorkspace();
         useProjectWorkspaceStore.setState((state) => ({
           workspacesById: {
             ...state.workspacesById,
@@ -1225,7 +1252,7 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         });
-        seedFormalHeterogeneousWorkspace();
+        seedFormalLocalWorkspace();
         useProjectWorkspaceStore.setState((state) => ({
           workspacesById: {
             ...state.workspacesById,
@@ -1267,6 +1294,47 @@ describe('ConversationLifecycle actions', () => {
         );
         expect(executeClientAgent).not.toHaveBeenCalled();
         expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+      });
+
+      it('routes an unbound desktop local topic through the production gateway lifecycle', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+            },
+          },
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        act(() => {
+          useChatStore.setState({ executeClientAgent, executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: 'read /Users/me/shared/README.md then list cwd',
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID, topicId: null }),
+            message: 'read /Users/me/shared/README.md then list cwd',
+          }),
+        );
+        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+        // Unbound routing is decided before the managed-env probe: no secret
+        // values or cache-dependent decision crosses the renderer boundary.
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
       it('routes user-level managed env through gateway even without a workspace cache entry', async () => {
@@ -1337,7 +1405,7 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         });
-        seedFormalHeterogeneousWorkspace();
+        seedFormalLocalWorkspace();
         mockLocalFileService.readLocalFile.mockResolvedValue({
           charCount: 17,
           content: 'export const x = 1;',
@@ -1408,79 +1476,71 @@ describe('ConversationLifecycle actions', () => {
         ]);
       });
 
-      it('should preserve local file snapshots for runtime when server response omits metadata', async () => {
+      it('routes a formally-bound LocalSystem topic through gateway, never renderer execution', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: {
             plugins: ['lobe-local-system'],
           },
         });
-        mockLocalFileService.readLocalFile.mockResolvedValue({
-          charCount: 17,
-          content: 'export const x = 1;',
-          fileType: 'text',
-          filename: 'foo.ts',
-          loc: [0, 200],
-          totalCharCount: 17,
-          totalLineCount: 1,
-        });
+        seedBoundTopicWorkspace();
 
-        const { result } = renderHook(() => useChatStore());
-        vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
           assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
-          isCreateNewTopic: true,
-          messages: [
-            createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
-            createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
-          ],
+          operationId: 'gateway-op',
           topicId: TEST_IDS.TOPIC_ID,
-          topics: { items: [], total: 0 },
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
-        } as any);
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
 
         await act(async () => {
           await result.current.sendMessage({
-            context: createTestContext(),
-            editorData: {
-              root: {
-                children: [
-                  {
-                    children: [
-                      {
-                        label: 'foo.ts',
-                        metadata: {
-                          name: 'foo.ts',
-                          path: '/Users/me/project/foo.ts',
-                          type: 'localFile',
-                        },
-                        type: 'mention',
-                      },
-                      { text: ' 这个文件是什么', type: 'text' },
-                    ],
-                    type: 'paragraph',
-                  },
-                ],
-                type: 'root',
-              },
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
             },
-            message: '<localFile name="foo.ts" path="/Users/me/project/foo.ts" /> 这个文件是什么',
+            message: '列出当前目录',
           });
         });
 
-        const runtimePayload = vi.mocked(result.current.executeClientAgent).mock.calls[0]?.[0];
-        const runtimeUserMessage = runtimePayload?.messages.find(
-          (message) => message.id === TEST_IDS.USER_MESSAGE_ID,
-        );
+        expect(executeGatewayAgent).toHaveBeenCalledOnce();
+        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+      });
 
-        expect(runtimeUserMessage?.metadata?.localSystemToolSnapshots).toMatchObject([
-          {
-            apiName: 'readFile',
-            arguments: { path: '/Users/me/project/foo.ts' },
-            content: expect.stringContaining('export const x = 1;'),
-            identifier: 'lobe-local-system',
-            success: true,
-          },
-        ]);
+      it('routes a formally-bound desktop chat through gateway even when plugins is empty', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({ agentConfig: { plugins: [] } });
+        seedBoundTopicWorkspace();
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          topicId: TEST_IDS.TOPIC_ID,
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
+            },
+            message: 'plain chat',
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledOnce();
+        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
       });
     });
 

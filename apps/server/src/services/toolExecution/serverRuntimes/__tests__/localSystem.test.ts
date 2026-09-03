@@ -125,6 +125,7 @@ describe('localSystemRuntime', () => {
             sources: { TOKEN: 'workspace' },
             values: { TOKEN: 'resolved-secret' },
           },
+          envFiles: ['.env', '.env.local'],
           operationId: 'op-1',
           plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
           version: 1,
@@ -152,6 +153,7 @@ describe('localSystemRuntime', () => {
           executionContext: expect.objectContaining({
             cwd: '/approved/project',
             env: { TOKEN: 'resolved-secret' },
+            envFiles: ['.env', '.env.local'],
             workspaceRootPath: '/approved/project',
           }),
           operationId: 'op-1',

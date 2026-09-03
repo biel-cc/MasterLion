@@ -8,9 +8,6 @@ import { useTranslation } from 'react-i18next';
 
 import { shinyTextStyles } from '@/styles/loading';
 
-/** Loose `t`: `compression.inProgress*` keys live in `locales/{en-US,zh-CN}/chat.json`. */
-type LooseT = (key: string) => string;
-
 const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
     display: flex;
@@ -44,7 +41,6 @@ export interface CompressionProgressProps {
  */
 const CompressionProgress = memo<CompressionProgressProps>(({ className, showHint = true }) => {
   const { t } = useTranslation('chat');
-  const tr = t as unknown as LooseT;
 
   return (
     <div
@@ -55,9 +51,9 @@ const CompressionProgress = memo<CompressionProgressProps>(({ className, showHin
     >
       <Icon aria-hidden spin icon={LoaderCircle} size={14} />
       <span className={cx(styles.label, shinyTextStyles.shinyText)}>
-        {tr('compression.inProgress')}
+        {t('compression.inProgress')}
       </span>
-      {showHint && <span className={styles.hint}>{tr('compression.inProgressHint')}</span>}
+      {showHint && <span className={styles.hint}>{t('compression.inProgressHint')}</span>}
     </div>
   );
 });

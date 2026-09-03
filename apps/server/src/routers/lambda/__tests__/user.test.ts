@@ -244,6 +244,24 @@ describe('userRouter', () => {
   });
 
   describe('updateSettings', () => {
+    it('rejects executionEnv updates outside the dedicated encrypted user-env API', async () => {
+      const updateSetting = vi.fn();
+      vi.mocked(UserModel).mockImplementation(() => ({ updateSetting }) as any);
+
+      await expect(
+        userRouter.createCaller({ ...mockCtx }).updateSettings({
+          executionEnv: {
+            OPENAI_API_KEY: { secret: false, value: 'plaintext-bypass' },
+          },
+        } as any),
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'USER_ENV_UPDATE_REQUIRES_DEDICATED_API',
+      });
+
+      expect(updateSetting).not.toHaveBeenCalled();
+    });
+
     it('should update settings with encrypted key vaults', async () => {
       const mockSettings = {
         keyVaults: { openai: { key: 'test-key' } },

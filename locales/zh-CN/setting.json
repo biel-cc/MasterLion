@@ -397,6 +397,7 @@
   "heterogeneousStatus.cloud.tokenLabel": "Claude Code Token",
   "heterogeneousStatus.cloud.tokenPlaceholder": "粘贴你的 OAuth Token",
   "heterogeneousStatus.cloud.tokenSave": "保存",
+  "heterogeneousStatus.cloud.tokenSaveError": "无法保存 Claude Code 令牌，请重试。",
   "heterogeneousStatus.command.edit": "编辑指令",
   "heterogeneousStatus.command.label": "启动指令",
   "heterogeneousStatus.command.placeholder": "指令名称或绝对路径",

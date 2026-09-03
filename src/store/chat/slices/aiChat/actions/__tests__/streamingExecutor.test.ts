@@ -389,11 +389,26 @@ describe('StreamingExecutor actions', () => {
         enabled: true,
         maxWindowToken: 200_000,
       });
+      const operationState = stepSpy.mock.calls[0][0] as AgentState;
+      const snapshot = operationState.metadata?.modelCatalogSnapshot as any;
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          entry: expect.objectContaining({
+            contextWindowTokens: 200_000,
+            modelId: 'gpt-4o-mini',
+            providerId: 'openai',
+          }),
+          operationId: expect.any(String),
+          version: 1,
+        }),
+      );
+      expect(operationState.metadata?.compressionModelCatalogSnapshot).toBe(snapshot);
+      expect((operationState.metadata?.contextBudget as any).catalogSnapshot).toBe(snapshot);
 
       streamSpy.mockRestore();
     });
 
-    it('should fall back to undefined maxWindowToken for unknown models', async () => {
+    it('should freeze the conservative catalog fallback for unknown models', async () => {
       act(() => {
         useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
       });
@@ -433,9 +448,83 @@ describe('StreamingExecutor actions', () => {
 
       expect(getCreatedAgentCompressionConfig(stepSpy)).toEqual({
         enabled: true,
-        maxWindowToken: undefined,
+        maxWindowToken: 32_000,
       });
 
+      streamSpy.mockRestore();
+    });
+
+    it('freezes a dedicated compression model and its own context window', async () => {
+      act(() => {
+        useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
+      });
+      useAiInfraStore.setState({
+        enabledAiModels: [
+          {
+            contextWindowTokens: 200_000,
+            id: 'main-model',
+            providerId: 'openai',
+            type: 'chat',
+          } as EnabledAiModel,
+          {
+            contextWindowTokens: 8192,
+            id: 'compact-model',
+            providerId: 'openai',
+            type: 'chat',
+          } as EnabledAiModel,
+        ],
+      });
+      const chatConfig = createMockChatConfig({ compressionModelId: 'compact-model' });
+      vi.spyOn(agentConfigResolver, 'resolveAgentConfig').mockReturnValue({
+        agentConfig: createMockAgentConfig({
+          chatConfig,
+          model: 'main-model',
+          provider: 'openai',
+        }),
+        chatConfig,
+        isBuiltinAgent: false,
+        plugins: [],
+      });
+      const stepSpy = vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step');
+      const streamSpy = vi
+        .spyOn(chatService, 'createAssistantMessageStream')
+        .mockImplementation(async ({ onFinish }) => {
+          await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+        });
+      const { result } = renderHook(() => useChatStore());
+      const userMessage = {
+        content: TEST_CONTENT.USER_MESSAGE,
+        id: TEST_IDS.USER_MESSAGE_ID,
+        role: 'user',
+        sessionId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      } as UIChatMessage;
+
+      await act(async () => {
+        await result.current.executeClientAgent({
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+          messages: [userMessage],
+          parentMessageId: userMessage.id,
+          parentMessageType: 'user',
+        });
+      });
+
+      const operationState = stepSpy.mock.calls[0][0] as AgentState;
+      expect(operationState.modelRuntimeConfig).toEqual({
+        compressionModel: { model: 'compact-model', provider: 'openai' },
+        model: 'main-model',
+        provider: 'openai',
+      });
+      expect((operationState.metadata?.modelCatalogSnapshot as any).entry).toEqual(
+        expect.objectContaining({ contextWindowTokens: 200_000, modelId: 'main-model' }),
+      );
+      expect((operationState.metadata?.compressionModelCatalogSnapshot as any).entry).toEqual(
+        expect.objectContaining({ contextWindowTokens: 8192, modelId: 'compact-model' }),
+      );
+      expect(operationState.metadata?.compressionModelCatalogSnapshot).not.toBe(
+        operationState.metadata?.modelCatalogSnapshot,
+      );
+      expect(getCreatedAgentCompressionConfig(stepSpy).maxWindowToken).toBe(200_000);
       streamSpy.mockRestore();
     });
 

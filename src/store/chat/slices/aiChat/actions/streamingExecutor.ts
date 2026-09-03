@@ -10,6 +10,11 @@ import { LobeAgentManifest } from '@lobechat/builtin-tool-lobe-agent';
 import { createPathScopeAudit } from '@lobechat/builtin-tool-local-system';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
+import {
+  createModelCatalogSnapshot,
+  getModelCatalogFromSettings,
+  mergeModelCatalogEntry,
+} from '@lobechat/business-model-bank';
 import { isDesktop } from '@lobechat/const';
 import {
   DEFAULT_SKILL_POLICY,
@@ -24,6 +29,7 @@ import {
   type RuntimeInitialContext,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import type { SkillProviderContext } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 
@@ -87,6 +93,32 @@ const getVisualMediaAvailability = (messages: UIChatMessage[]) => ({
   hasImages: messages.some((message) => message.role === 'user' && !!message.imageList?.length),
   hasVideos: messages.some((message) => message.role === 'user' && !!message.videoList?.length),
 });
+
+const resolveClientModelCatalogSnapshot = (
+  modelId: string,
+  providerId: string,
+  operationId: string,
+): ModelCatalogSnapshot => {
+  const model = aiModelSelectors.getEnabledModelById(
+    modelId,
+    providerId,
+  )(getAiInfraStoreState());
+  const persisted = getModelCatalogFromSettings(model?.settings);
+  const entry =
+    persisted?.entry.modelId === modelId && persisted.entry.providerId === providerId
+      ? persisted.entry
+      : mergeModelCatalogEntry({
+          catalog: {
+            abilities: model?.abilities,
+            contextWindowTokens: model?.contextWindowTokens,
+          },
+          modelId,
+          providerId,
+          providerMetadata: model?.type ? { declaredKind: model.type } : undefined,
+        }).entry;
+
+  return createModelCatalogSnapshot(entry, operationId);
+};
 
 /**
  * Core streaming execution actions for AI chat
@@ -270,9 +302,11 @@ export class StreamingExecutorActionImpl {
     };
 
     // Build modelRuntimeConfig for compression and other runtime features
+    const compressionModelId =
+      agentConfigData.chatConfig?.compressionModelId ?? agentConfigData.model;
     const modelRuntimeConfig = {
       compressionModel: {
-        model: agentConfigData.model,
+        model: compressionModelId,
         provider: agentConfigData.provider!,
       },
       model: agentConfigData.model,
@@ -289,7 +323,7 @@ export class StreamingExecutorActionImpl {
       operationWorkingDirectory ?? topicWorkspace?.rootPath ?? topicWorkingDirectory;
 
     // Create initial state or use provided state
-    const state =
+    const stateBase =
       initialState ||
       AgentRuntime.createInitialState({
         maxSteps: 400,
@@ -311,6 +345,48 @@ export class StreamingExecutorActionImpl {
         toolManifestMap,
         userInterventionConfig,
       });
+    const stateOperationId = operationId ?? agentId;
+    const existingSnapshot = stateBase.metadata?.modelCatalogSnapshot as
+      | ModelCatalogSnapshot
+      | undefined;
+    const modelCatalogSnapshot =
+      existingSnapshot?.operationId === stateOperationId &&
+      existingSnapshot.entry.modelId === modelRuntimeConfig.model &&
+      existingSnapshot.entry.providerId === modelRuntimeConfig.provider
+        ? existingSnapshot
+        : resolveClientModelCatalogSnapshot(
+            modelRuntimeConfig.model,
+            modelRuntimeConfig.provider,
+            stateOperationId,
+          );
+    const existingCompressionSnapshot = stateBase.metadata?.compressionModelCatalogSnapshot as
+      | ModelCatalogSnapshot
+      | undefined;
+    const compressionModelCatalogSnapshot =
+      modelRuntimeConfig.compressionModel.model === modelRuntimeConfig.model
+        ? modelCatalogSnapshot
+        : existingCompressionSnapshot?.operationId === stateOperationId &&
+            existingCompressionSnapshot.entry.modelId === modelRuntimeConfig.compressionModel.model &&
+            existingCompressionSnapshot.entry.providerId ===
+              modelRuntimeConfig.compressionModel.provider
+          ? existingCompressionSnapshot
+          : resolveClientModelCatalogSnapshot(
+              modelRuntimeConfig.compressionModel.model,
+              modelRuntimeConfig.compressionModel.provider,
+              stateOperationId,
+            );
+    const state = {
+      ...stateBase,
+      metadata: {
+        ...stateBase.metadata,
+        compressionModelCatalogSnapshot,
+        contextBudget: {
+          ...stateBase.metadata?.contextBudget,
+          catalogSnapshot: modelCatalogSnapshot,
+        },
+        modelCatalogSnapshot,
+      },
+    };
 
     // Build initialContext for page editor if lobe-page-agent is enabled
     let runtimeInitialContext: RuntimeInitialContext | undefined;
@@ -561,8 +637,10 @@ export class StreamingExecutorActionImpl {
       const modelRuntimeConfig = {
         model,
         provider: provider!,
-        // TODO: Support dedicated compression model from chatConfig.compressionModelId
-        compressionModel: { model, provider: provider! },
+        compressionModel: {
+          model: agentConfigData.chatConfig?.compressionModelId ?? model,
+          provider: provider!,
+        },
       };
       const topicWorkspaceState = topicId
         ? getProjectWorkspaceStoreState().topicStatesById[topicId]
@@ -590,10 +668,10 @@ export class StreamingExecutorActionImpl {
       // ===========================================
       log('[executeClientAgent] Creating agent runtime with config', modelRuntimeConfig);
 
-      const contextWindowTokens = aiModelSelectors.modelContextWindowTokens(
-        model,
-        provider!,
-      )(getAiInfraStoreState());
+      const modelCatalogSnapshot =
+        (initialAgentState.metadata?.modelCatalogSnapshot as ModelCatalogSnapshot | undefined) ??
+        resolveClientModelCatalogSnapshot(model, provider!, operationId);
+      const contextWindowTokens = modelCatalogSnapshot.entry.contextWindowTokens;
 
       const agent = new GeneralChatAgent({
         agentConfig: { maxSteps: 1000 },

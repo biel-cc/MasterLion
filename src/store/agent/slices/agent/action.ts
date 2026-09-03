@@ -2,6 +2,7 @@ import { isDesktop } from '@lobechat/const';
 import { type AgentContextDocument } from '@lobechat/context-engine';
 import { isChatGroupSessionId } from '@lobechat/types';
 import { getSingletonAnalyticsOptional } from '@lobehub/analytics';
+import { get as getAtPath, set as setAtPath } from 'es-toolkit/compat';
 import isEqual from 'fast-deep-equal';
 import { produce } from 'immer';
 import type { SWRResponse } from 'swr';
@@ -39,6 +40,20 @@ type AgentMetaUpdate = Partial<
     'avatar' | 'backgroundColor' | 'description' | 'marketIdentifier' | 'tags' | 'title'
   >
 >;
+
+export interface AgentConfigUpdateOptions {
+  /**
+   * Dot paths whose value replaces the stored one instead of being deep-merged.
+   * Deep merge cannot express a removal, so a caller that deletes a map entry
+   * (e.g. `agencyConfig.env`) must say so or the UI keeps showing the old entry.
+   */
+  replacePaths?: string[];
+  /**
+   * Rethrow persistence failures (and roll the optimistic write back) so the caller
+   * can report the failure instead of rendering a success it never got.
+   */
+  throwOnError?: boolean;
+}
 
 /**
  * Agent Slice Actions
@@ -206,25 +221,41 @@ export class AgentSliceActionImpl {
     await this.#get().updateAgentConfigById(agentId, { chatConfig: config });
   };
 
-  updateAgentConfig = async (config: PartialDeep<LobeAgentConfig>): Promise<void> => {
+  updateAgentConfig = async (
+    config: PartialDeep<LobeAgentConfig>,
+    options?: AgentConfigUpdateOptions,
+  ): Promise<void> => {
     const { activeAgentId } = this.#get();
 
-    if (!activeAgentId) return;
+    if (!activeAgentId) {
+      // A silent no-op would read as a successful save to a caller awaiting this promise.
+      if (options?.throwOnError) throw new Error('No active agent to update');
+      return;
+    }
 
     const controller = this.#get().internal_createAbortController('updateAgentConfigSignal');
 
-    await this.#get().optimisticUpdateAgentConfig(activeAgentId, config, controller.signal);
+    await this.#get().optimisticUpdateAgentConfig(
+      activeAgentId,
+      config,
+      controller.signal,
+      options,
+    );
   };
 
   updateAgentConfigById = async (
     agentId: string,
     config: PartialDeep<LobeAgentConfig>,
+    options?: AgentConfigUpdateOptions,
   ): Promise<void> => {
-    if (!agentId) return;
+    if (!agentId) {
+      if (options?.throwOnError) throw new Error('No agent id to update');
+      return;
+    }
 
     const controller = this.#get().internal_createAbortController('updateAgentConfigSignal');
 
-    await this.#get().optimisticUpdateAgentConfig(agentId, config, controller.signal);
+    await this.#get().optimisticUpdateAgentConfig(agentId, config, controller.signal, options);
   };
 
   updateAgentRuntimeEnvConfigById = async (
@@ -439,12 +470,22 @@ export class AgentSliceActionImpl {
     return request;
   };
 
-  internal_dispatchAgentMap = (id: string, config: PartialDeep<LobeAgentConfig>): void => {
+  internal_dispatchAgentMap = (
+    id: string,
+    config: PartialDeep<LobeAgentConfig>,
+    options?: Pick<AgentConfigUpdateOptions, 'replacePaths'>,
+  ): void => {
     const agentMap = produce(this.#get().agentMap, (draft) => {
       if (!draft[id]) {
         draft[id] = config;
       } else {
         draft[id] = merge(draft[id], config);
+      }
+
+      for (const path of options?.replacePaths ?? []) {
+        const replacement = getAtPath(config, path);
+        if (replacement === undefined) continue;
+        setAtPath(draft[id], path, replacement);
       }
     });
 
@@ -457,30 +498,46 @@ export class AgentSliceActionImpl {
     id: string,
     data: PartialDeep<LobeAgentConfig>,
     signal?: AbortSignal,
+    options?: AgentConfigUpdateOptions,
   ): Promise<void> => {
     const { internal_dispatchAgentMap, updateSaveStatus } = this.#get();
+    const previousAgent = this.#get().agentMap[id];
 
     // 1. Optimistic update (instant UI feedback)
-    internal_dispatchAgentMap(id, data);
+    internal_dispatchAgentMap(id, data, options);
     updateSaveStatus('saving');
 
     try {
       // 2. API call returns updated agent data
       const result = await agentService.updateAgentConfig(id, data, signal);
 
-      // 3. Use returned data directly (no refetch needed!)
-      if (result?.success && result.agent) {
-        internal_dispatchAgentMap(id, result.agent);
-        this.#get().invalidateAvailableAgents();
+      // A response that does not confirm the write is a failure, not a save. Marking it
+      // 'saved' would report success for a change the server never acknowledged.
+      if (!result?.success || !result.agent) {
+        throw new Error('Agent config update was not confirmed by the server');
       }
+
+      // 3. Use returned data directly (no refetch needed!)
+      internal_dispatchAgentMap(id, result.agent, options);
+      this.#get().invalidateAvailableAgents();
       updateSaveStatus('saved');
     } catch (error: any) {
-      if (error?.name === 'AbortError' || error?.message?.includes('aborted')) {
-        updateSaveStatus('idle');
-      } else {
-        console.error('[AgentStore] Failed to save config:', error);
-        updateSaveStatus('idle');
+      const aborted = error?.name === 'AbortError' || error?.message?.includes('aborted');
+      if (!aborted) console.error('[AgentStore] Failed to save config:', error);
+      updateSaveStatus('idle');
+
+      // The write never landed, so the optimistic value must not stay on screen. An abort
+      // means a newer write already owns that state, so leave the map to the newer write.
+      // Restore only this agent so an unrelated update cannot be overwritten by the rollback.
+      if (!aborted) {
+        const agentMap = produce(this.#get().agentMap, (draft) => {
+          if (previousAgent === undefined) delete draft[id];
+          else draft[id] = previousAgent;
+        });
+        this.#set({ agentMap }, false, 'rollbackAgentConfig');
       }
+
+      if (options?.throwOnError) throw error;
     }
   };
 

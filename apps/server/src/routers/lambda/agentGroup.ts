@@ -15,6 +15,7 @@ import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentGroupService } from '@/server/services/agentGroup';
 import { EditLockService } from '@/server/services/editLock';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 import { publishResourceEvent } from '@/server/services/resourceEvents';
 import { TransferErrorCode } from '@/types/transferError';
 
@@ -67,6 +68,18 @@ const agentGroupProcedure = wsCompatProcedure.use(serverDatabase).use(async (opt
 // delete + member adds/removes). Reads keep the bare proc.
 const agentGroupProcedureWrite = agentGroupProcedure.use(withScopedPermission('agent:update'));
 
+const assertSafeAgentConfigs = (configs: readonly unknown[]): void => {
+  try {
+    for (const config of configs) assertConfigurableAgentExecutionEnv(config);
+  } catch (error) {
+    throw new TRPCError({
+      cause: error,
+      code: 'BAD_REQUEST',
+      message: error instanceof Error ? error.message : 'INVALID_AGENT_ENV',
+    });
+  }
+};
+
 export const agentGroupRouter = router({
   addAgentsToGroup: agentGroupProcedureWrite
     .input(
@@ -91,6 +104,7 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      assertSafeAgentConfigs(input.agents);
       // Batch create virtual agents
       const agentConfigs = input.agents.map((agent) => ({
         ...agent,
@@ -171,6 +185,7 @@ export const agentGroupRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      assertSafeAgentConfigs(input.members);
       // 1. Batch create virtual member agents
       const memberConfigs = input.members.map((member) => ({
         ...member,

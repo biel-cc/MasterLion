@@ -22,10 +22,7 @@ import {
   parseSelectedToolsFromEditorData,
 } from '@/store/chat/slices/aiChat/actions/commandBus';
 import { resolveHeteroResume } from '@/store/chat/slices/aiChat/actions/heteroResume';
-import {
-  hasConfiguredAgentEnv,
-  routeManagedEnvRuntime,
-} from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
+import { routeDesktopWorkspaceRuntime } from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { INPUT_LOADING_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import {
@@ -33,6 +30,7 @@ import {
   resolveActiveTopicDocumentInitialContext,
 } from '@/store/chat/utils/activeTopicDocumentContext';
 import { getElectronStoreState } from '@/store/electron';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
 
 import { type Store as ConversationStore } from '../../action';
 
@@ -63,6 +61,22 @@ const buildRetryInitialContext = (editorData: Record<string, any> | null | undef
     },
     phase: 'init' as const,
   };
+};
+
+const getFrozenTopicWorkspaceId = (
+  context: ConversationContext,
+  chatStore: ReturnType<typeof useChatStore.getState>,
+): string | undefined => {
+  const topicId = context.topicId ?? undefined;
+  if (!topicId) return;
+  const authoritativeWorkspaceId =
+    getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot?.workspaceId;
+  if (authoritativeWorkspaceId) return authoritativeWorkspaceId;
+
+  // The full chat store always owns topicDataMap; the guard also keeps this
+  // read tolerant of lifecycle tests and transitional store hydration.
+  if (!chatStore.topicDataMap) return;
+  return topicSelectors.getTopicById(topicId)(chatStore)?.metadata?.executionSnapshot?.workspaceId;
 };
 
 /**
@@ -326,7 +340,7 @@ export const generationSlice: StateCreator<
     }
 
     const agentConfig = agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState());
-    const runtimeType = await routeManagedEnvRuntime(
+    const runtimeType = await routeDesktopWorkspaceRuntime(
       selectRuntimeType({
         boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
         executionTarget: agentConfig?.agencyConfig?.executionTarget,
@@ -334,8 +348,8 @@ export const generationSlice: StateCreator<
         isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
       }),
       {
-        hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
         topicId: context.topicId ?? undefined,
+        workspaceId: getFrozenTopicWorkspaceId(context, chatStore),
       },
     );
 
@@ -511,7 +525,7 @@ export const generationSlice: StateCreator<
 
       const agentConfig = agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState());
       const heterogeneousProvider = agentConfig?.agencyConfig?.heterogeneousProvider;
-      const runtimeType = await routeManagedEnvRuntime(
+      const runtimeType = await routeDesktopWorkspaceRuntime(
         selectRuntimeType({
           boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
           executionTarget: agentConfig?.agencyConfig?.executionTarget,
@@ -519,8 +533,8 @@ export const generationSlice: StateCreator<
           isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
         }),
         {
-          hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
           topicId: context.topicId ?? undefined,
+          workspaceId: getFrozenTopicWorkspaceId(context, chatStore),
         },
       );
 

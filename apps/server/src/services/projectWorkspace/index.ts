@@ -9,11 +9,12 @@ import type {
 } from '@/database/models/projectWorkspace';
 import { toProjectWorkspaceDTO } from '@/database/models/projectWorkspace';
 
-import type {
-  BindTopicWorkspaceResult,
-  CaptureTopicTargetParams,
-  TopicWorkspaceBindingStore,
-  TopicWorkspaceState,
+import {
+  type BindTopicWorkspaceResult,
+  type CaptureTopicTargetParams,
+  type TopicWorkspaceBindingStore,
+  type TopicWorkspaceState,
+  WorkspaceAlreadyBoundError,
 } from './bindingStore';
 
 export type {
@@ -109,11 +110,22 @@ export class ProjectWorkspaceService {
       rootPath: params.rootPath,
       workspaceId: params.workspaceId,
     });
-    return this.deps.bindingStore.bind({
-      target: params.target,
-      topicId: params.topicId,
-      workspaceId: row.id,
-    });
+    try {
+      return await this.deps.bindingStore.bind({
+        target: params.target,
+        topicId: params.topicId,
+        workspaceId: row.id,
+      });
+    } catch (error) {
+      // A user may bind a formal workspace while the first cwd-dependent tool
+      // is running in its prepared scratch directory. The topic CAS must win.
+      // Preserve the candidate row as cleanup evidence; the owning runtime
+      // deletes it only after device cleanup confirms the canonical root.
+      if (error instanceof WorkspaceAlreadyBoundError) {
+        throw new WorkspaceAlreadyBoundError(row.id);
+      }
+      throw error;
+    }
   };
 
   /** Explicit sandbox selection; never used as a fallback from local/device. */

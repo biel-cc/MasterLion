@@ -11,7 +11,7 @@ import {
   type AgentRuntimeType,
   selectRuntimeType,
 } from './agentDispatcher';
-import { routeManagedEnvRuntime } from './managedEnvRuntime';
+import { routeDesktopWorkspaceRuntime } from './managedEnvRuntime';
 
 /**
  * Execution context supplied by the caller at dispatch time.
@@ -23,8 +23,6 @@ export interface NonHeteroSubAgentDispatchContext {
   boundDeviceId?: string;
   /** Conversation context of the *parent* agent (agentId = parent agent). */
   conversationContext: ConversationContext;
-  /** Whether the invoked target agent contributes browser-visible, non-secret env. */
-  hasAgentEnv?: boolean;
   /** Per-agent heterogeneous provider config used for runtime resolution. */
   heterogeneousProvider?: HeterogeneousProviderConfig;
   /**
@@ -51,6 +49,8 @@ export interface NonHeteroSubAgentDispatchContext {
    * the parent's execution environment for the child invocation.
    */
   parentRuntime?: AgentRuntimeType;
+  /** Frozen primary workspace inherited from the parent topic, if already bound. */
+  workspaceId?: string;
 }
 
 /**
@@ -77,7 +77,7 @@ export async function dispatchNonHeteroSubAgent(
   ctx: NonHeteroSubAgentDispatchContext,
   store: Pick<ChatStore, 'executeClientAgent' | 'executeGatewayAgent'>,
 ): Promise<void> {
-  const runtimeType = await routeManagedEnvRuntime(
+  const runtimeType = await routeDesktopWorkspaceRuntime(
     selectRuntimeType({
       boundDeviceId: ctx.boundDeviceId,
       heterogeneousProvider: ctx.heterogeneousProvider,
@@ -85,8 +85,8 @@ export async function dispatchNonHeteroSubAgent(
       parentRuntime: ctx.parentRuntime,
     }),
     {
-      hasAgentEnv: ctx.hasAgentEnv,
       topicId: ctx.conversationContext.topicId ?? undefined,
+      workspaceId: ctx.workspaceId,
     },
   );
 

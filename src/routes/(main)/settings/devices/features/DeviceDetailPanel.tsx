@@ -10,12 +10,12 @@ import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import DirIcon from '@/features/ChatInput/ControlBar/DirIcon';
+import { WorkspacesSection } from '@/features/DeviceWorkspaces';
 import { lambdaQuery } from '@/libs/trpc/client';
 import { electronSystemService } from '@/services/electron/system';
 import { nextWorkingDirs } from '@/store/device';
 
 import { getDeviceIcon } from './getDeviceIcon';
-import WorkspacesSection from './WorkspacesSection';
 
 const styles = createStaticStyles(({ css }) => ({
   container: css`

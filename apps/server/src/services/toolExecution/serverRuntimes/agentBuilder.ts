@@ -14,6 +14,7 @@ import { AgentModel } from '@/database/models/agent';
 import { PluginModel } from '@/database/models/plugin';
 import { AiInfraRepos } from '@/database/repositories/aiInfra';
 import { DiscoverService } from '@/server/services/discover';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 
 import { type ToolExecutionContext, type ToolExecutionResult } from '../types';
 import { type ServerRuntimeRegistration } from './types';
@@ -210,6 +211,9 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
           }
 
           if (Object.keys(finalConfig).length > 0) {
+            if (Object.keys(finalConfig).some((field) => field !== 'plugins')) {
+              assertConfigurableAgentExecutionEnv(finalConfig);
+            }
             await agentModel.updateConfig(agentId, finalConfig);
             const nonPluginFields = Object.keys(finalConfig).filter((f) => f !== 'plugins');
             if (nonPluginFields.length > 0) {

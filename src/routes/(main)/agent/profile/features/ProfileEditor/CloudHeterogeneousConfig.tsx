@@ -9,11 +9,10 @@ import { CheckCircle2, KeyRound, X } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { AgentEnvironmentEditor } from '@/features/AgentEnvironment';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
 import { lambdaClient, lambdaQuery } from '@/libs/trpc/client';
-
-import { AgentEnvironmentEditor } from './AgentEnvironmentEditor';
 
 // Fixed cred key for Claude Code OAuth token — never changes
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -31,6 +30,10 @@ const styles = createStaticStyles(({ css }) => ({
     display: flex;
     gap: 8px;
     align-items: center;
+  `,
+  error: css`
+    font-size: 12px;
+    color: ${cssVar.colorErrorText};
   `,
   manageLink: css`
     cursor: pointer;
@@ -128,6 +131,7 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
   const [editing, setEditing] = useState(!existingCred);
   const [tokenInput, setTokenInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   const handleSave = async () => {
     if (!canEdit) return;
@@ -135,6 +139,7 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
     const token = tokenInput.trim();
     if (!token) return;
     setSaving(true);
+    setSaveFailed(false);
     try {
       await lambdaClient.market.creds.createKV.mutate({
         key: CLAUDE_TOKEN_CRED_KEY,
@@ -146,6 +151,9 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
       setTokenInput('');
       setEditing(false);
       onSaved();
+    } catch {
+      // The draft stays in the field so the token is not lost with the failure.
+      setSaveFailed(true);
     } finally {
       setSaving(false);
     }
@@ -191,9 +199,9 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
             style={{ flex: 1 }}
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
-            onPressEnter={handleSave}
+            onPressEnter={() => void handleSave()}
           />
-          <Button disabled={!canEdit} loading={saving} type="primary" onClick={handleSave}>
+          <Button disabled={!canEdit} loading={saving} type="primary" onClick={() => void handleSave()}>
             {t('heterogeneousStatus.cloud.tokenSave')}
           </Button>
           {existingCred && (
@@ -207,6 +215,12 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
             </Button>
           )}
         </Flexbox>
+      )}
+
+      {saveFailed && (
+        <span className={styles.error} role="alert">
+          {t('heterogeneousStatus.cloud.tokenSaveError')}
+        </span>
       )}
 
       <span className={styles.sectionDesc}>{t('heterogeneousStatus.cloud.tokenDesc')}</span>
@@ -292,6 +306,7 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
     const { t } = useTranslation('setting');
     const navigate = useWorkspaceAwareNavigate();
     const { allowed: canEdit } = usePermission('edit_own_content');
+    const [envSaveFailed, setEnvSaveFailed] = useState(false);
 
     const currentEnv = env;
     const storedGithubCredKey = currentEnv.GITHUB_CRED_KEY ?? '';
@@ -315,14 +330,20 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
       (c) => c.type === 'oauth' && c.oauthProvider?.toLowerCase().includes('github'),
     );
 
-    const saveEnv = (patch: Record<string, string>) => {
+    /** Never fire-and-forget: a rejected save has to reach the user, not the console. */
+    const saveEnv = async (patch: Record<string, string>) => {
       if (!canEdit) return;
 
-      void onEnvChange({ ...currentEnv, ...patch });
+      setEnvSaveFailed(false);
+      try {
+        await onEnvChange({ ...currentEnv, ...patch });
+      } catch {
+        setEnvSaveFailed(true);
+      }
     };
 
     const handleReposChange = (nextRepos: string[]) => {
-      saveEnv({ GITHUB_REPOS: JSON.stringify(nextRepos) });
+      void saveEnv({ GITHUB_REPOS: JSON.stringify(nextRepos) });
     };
 
     if (isLoading) {
@@ -340,10 +361,16 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
             {t('heterogeneousStatus.cloud.envScopeHint')}
           </span>
 
+          {envSaveFailed && (
+            <span className={styles.error} role="alert">
+              {t('heterogeneousStatus.cloud.agentEnv.saveError')}
+            </span>
+          )}
+
           {/* ── Claude Code OAuth Token ── */}
           <TokenSection
             existingCred={claudeTokenCred}
-            onEnvChange={saveEnv}
+            onEnvChange={(patch) => void saveEnv(patch)}
             onSaved={() => refetch()}
           />
 
@@ -374,8 +401,8 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
                   {t('heterogeneousStatus.cloud.githubNoCreds')}
                 </Flexbox>
               }
-              onChange={(key: string) => saveEnv({ GITHUB_CRED_KEY: key })}
-              onClear={() => saveEnv({ GITHUB_CRED_KEY: '' })}
+              onChange={(key: string) => void saveEnv({ GITHUB_CRED_KEY: key })}
+              onClear={() => void saveEnv({ GITHUB_CRED_KEY: '' })}
             >
               {githubCreds.map((cred) => (
                 <Select.Option key={cred.key} value={cred.key}>

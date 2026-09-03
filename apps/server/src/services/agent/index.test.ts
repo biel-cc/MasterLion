@@ -68,6 +68,22 @@ describe('AgentService', () => {
     service = new AgentService(mockDb, mockUserId);
   });
 
+  describe('updateAgentConfig execution environment validation', () => {
+    it('rejects runtime-owned keys for direct service callers before persistence', async () => {
+      const updateConfig = vi.fn();
+      (AgentModel as any).mockImplementation(() => ({ updateConfig }));
+      const directService = new AgentService(mockDb, mockUserId);
+
+      await expect(
+        directService.updateAgentConfig('agent-1', {
+          agencyConfig: { env: { PATH: '/attacker/bin' } },
+        }),
+      ).rejects.toMatchObject({ code: 'RESERVED_ENV_KEY' });
+
+      expect(updateConfig).not.toHaveBeenCalled();
+    });
+  });
+
   describe('createInbox', () => {
     it('should create inbox with default agent config', async () => {
       const mockConfig = { model: 'gpt-4', temperature: 0.7 };

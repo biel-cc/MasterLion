@@ -5,16 +5,18 @@ import { PluginModel } from '@/database/models/plugin';
 
 import { agentManagementRuntime } from '../agentManagement';
 
-const { mockCountAgents, mockGetAssistantList, mockQueryAgents } = vi.hoisted(() => ({
+const { mockCountAgents, mockGetAssistantList, mockQueryAgents, mockUpdateConfig } = vi.hoisted(() => ({
   mockCountAgents: vi.fn(),
   mockGetAssistantList: vi.fn(),
   mockQueryAgents: vi.fn(),
+  mockUpdateConfig: vi.fn(),
 }));
 
 vi.mock('@/database/models/agent', () => ({
   AgentModel: vi.fn(() => ({
     countAgents: mockCountAgents,
     queryAgents: mockQueryAgents,
+    updateConfig: mockUpdateConfig,
   })),
 }));
 
@@ -305,6 +307,21 @@ describe('agentManagementRuntime', () => {
 
       expect(result.success).toBe(false);
       expect(result.content).toContain('Failed to search agents');
+    });
+  });
+
+  describe('updateAgent', () => {
+    it('rejects reserved agent env keys before arbitrary config persistence', async () => {
+      const runtime = createRuntime();
+
+      const result = await runtime.updateAgent({
+        agentId: 'agent-1',
+        config: { agencyConfig: { env: { PATH: '/attacker/bin' } } },
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('managed by the execution runtime: PATH');
+      expect(mockUpdateConfig).not.toHaveBeenCalled();
     });
   });
 });

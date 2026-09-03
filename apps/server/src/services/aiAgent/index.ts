@@ -76,6 +76,7 @@ import { toolsEnv } from '@/envs/tools';
 import {
   assertExecutionContextReady,
   isAbsoluteFilesystemPath,
+  normalizeRootPath,
   resolveExecutionContext,
   type ResolveExecutionContextInput,
   toToolCallExecutionContext,
@@ -130,7 +131,10 @@ import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent'
 import type { ConversationHistoryEntry } from '@/server/services/heterogeneousAgent/cloudHeteroContext';
 import { MarketService } from '@/server/services/market';
 import { ProjectWorkspaceService } from '@/server/services/projectWorkspace';
-import { DatabaseTopicWorkspaceBindingStore } from '@/server/services/projectWorkspace/bindingStore';
+import {
+  DatabaseTopicWorkspaceBindingStore,
+  WorkspaceAlreadyBoundError,
+} from '@/server/services/projectWorkspace/bindingStore';
 import {
   createAgentSkillProvider,
   createBuiltinSkillProvider,
@@ -740,10 +744,62 @@ export class AiAgentService {
       bindingStore: new DatabaseTopicWorkspaceBindingStore(this.db, this.userId, this.workspaceId),
       workspaceModel,
     });
-    return service.bindScratchAfterToolSuccess({
-      ...params,
-      workspaceId: this.workspaceId,
-    });
+    try {
+      return await service.bindScratchAfterToolSuccess({
+        ...params,
+        workspaceId: this.workspaceId,
+      });
+    } catch (error) {
+      if (!(error instanceof WorkspaceAlreadyBoundError)) throw error;
+
+      // The tool itself has already succeeded. A concurrent formal bind is
+      // authoritative and must not turn that success into a failed tool result
+      // or be overwritten by scratch. Resolve the winner, then best-effort
+      // remove the deterministic device scratch root. The scratch catalog row
+      // remains cleanup evidence until the device confirms the canonical root.
+      const authoritative = await service.resolveTopic(params.topicId);
+      if (!authoritative?.snapshot?.workspaceId || !authoritative.workspace) throw error;
+
+      try {
+        const cleaned = await deviceGateway.cleanupScratchWorkspace({
+          deviceId: params.deviceId,
+          topicId: params.topicId,
+          userId: this.userId,
+        });
+        const cleanupConfirmed =
+          !!cleaned && normalizeRootPath(cleaned.root) === normalizeRootPath(params.rootPath);
+        if (!cleanupConfirmed) {
+          log(
+            'bindScratchAfterToolSuccess: scratch cleanup not confirmed; catalog evidence retained topic=%s workspace=%s',
+            params.topicId,
+            error.scratchWorkspaceId ?? 'unknown',
+          );
+        } else if (error.scratchWorkspaceId) {
+          try {
+            await workspaceModel.deleteScratch(error.scratchWorkspaceId);
+          } catch (deleteError) {
+            // Cleanup has succeeded, but a catalog deletion failure must never
+            // rewrite the already-successful tool result. Keep a diagnostic;
+            // the scratch row remains identifiable for a later sweep.
+            log(
+              'bindScratchAfterToolSuccess: cleaned scratch but catalog evidence deletion failed topic=%s workspace=%s error=%O',
+              params.topicId,
+              error.scratchWorkspaceId,
+              deleteError,
+            );
+          }
+        }
+      } catch (cleanupError) {
+        log(
+          'bindScratchAfterToolSuccess: scratch cleanup failed; catalog evidence retained topic=%s workspace=%s error=%O',
+          params.topicId,
+          error.scratchWorkspaceId ?? 'unknown',
+          cleanupError,
+        );
+      }
+
+      return { snapshot: authoritative.snapshot, workspace: authoritative.workspace };
+    }
   };
 
   /**

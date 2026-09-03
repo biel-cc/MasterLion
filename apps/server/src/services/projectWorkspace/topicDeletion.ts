@@ -25,6 +25,11 @@ export interface TopicDeletionResult {
   deleted: number;
 }
 
+export interface TopicDeletionOptions {
+  /** Runs after scratch cleanup succeeds but before the topic FK cascades. */
+  beforeDelete?: (topic: Readonly<TopicDeletionCandidate>) => Promise<void>;
+}
+
 export class ScratchWorkspaceCleanupError extends Error {
   readonly code = 'SCRATCH_CLEANUP_FAILED';
 
@@ -51,9 +56,12 @@ export class TopicDeletionService {
   removeByAgentId = async (agentId: string): Promise<TopicDeletionResult> =>
     this.removeCandidates(await this.deps.topicModel.listForDeletion({ agentId }));
 
-  removeById = async (id: string): Promise<TopicDeletionResult> => {
+  removeById = async (
+    id: string,
+    options: TopicDeletionOptions = {},
+  ): Promise<TopicDeletionResult> => {
     const topic = await this.deps.topicModel.findById(id);
-    return this.removeCandidates(topic ? [topic] : []);
+    return this.removeCandidates(topic ? [topic] : [], options);
   };
 
   removeByIds = async (ids: string[]): Promise<TopicDeletionResult> =>
@@ -66,6 +74,7 @@ export class TopicDeletionService {
 
   private removeCandidates = async (
     topics: readonly TopicDeletionCandidate[],
+    options: TopicDeletionOptions = {},
   ): Promise<TopicDeletionResult> => {
     let deleted = 0;
 
@@ -75,6 +84,7 @@ export class TopicDeletionService {
     // returned to the mutation caller instead of silently leaving an orphan.
     for (const topic of topics) {
       const scratchWorkspaceId = await this.cleanupScratch(topic);
+      await options.beforeDelete?.(topic);
       await this.deps.topicModel.delete(topic.id);
       if (scratchWorkspaceId) {
         await this.deps.projectWorkspaceModel.deleteScratch(scratchWorkspaceId);

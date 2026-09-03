@@ -16,18 +16,38 @@ const { mockCreateOperation, mockCreateServerAgentToolsEngine, mockMessageCreate
 
 const { mockDeviceProxy } = vi.hoisted(() => ({
   mockDeviceProxy: {
+    cleanupScratchWorkspace: vi.fn(),
     isConfigured: false,
     queryDeviceList: vi.fn().mockResolvedValue([]),
   },
 }));
 
-const { mockBindingGetState, mockDecryptWorkspaceEnv, mockFindWorkspaceById, mockGetUserSettings } =
-  vi.hoisted(() => ({
-    mockBindingGetState: vi.fn(),
-    mockDecryptWorkspaceEnv: vi.fn(),
-    mockFindWorkspaceById: vi.fn(),
-    mockGetUserSettings: vi.fn(),
-  }));
+const {
+  MockWorkspaceAlreadyBoundError,
+  mockBindingBind,
+  mockBindingGetState,
+  mockDecryptWorkspaceEnv,
+  mockDeleteScratch,
+  mockFindWorkspaceById,
+  mockGetOrCreateWorkspace,
+  mockGetUserSettings,
+} = vi.hoisted(() => ({
+  MockWorkspaceAlreadyBoundError: class WorkspaceAlreadyBoundError extends Error {
+    readonly scratchWorkspaceId?: string;
+
+    constructor(scratchWorkspaceId?: string) {
+      super('WORKSPACE_ALREADY_BOUND');
+      this.scratchWorkspaceId = scratchWorkspaceId;
+    }
+  },
+  mockBindingBind: vi.fn(),
+  mockBindingGetState: vi.fn(),
+  mockDecryptWorkspaceEnv: vi.fn(),
+  mockDeleteScratch: vi.fn(),
+  mockFindWorkspaceById: vi.fn(),
+  mockGetOrCreateWorkspace: vi.fn(),
+  mockGetUserSettings: vi.fn(),
+}));
 
 vi.mock('@/libs/trusted-client', () => ({
   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
@@ -82,7 +102,9 @@ vi.mock('@/database/models/plugin', () => ({
 
 vi.mock('@/database/models/projectWorkspace', () => ({
   ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
+    deleteScratch: mockDeleteScratch,
     findById: mockFindWorkspaceById,
+    getOrCreate: mockGetOrCreateWorkspace,
   })),
 }));
 
@@ -100,9 +122,11 @@ vi.mock('@/server/modules/KeyVaultsEncrypt', () => ({
 
 vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
   DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    bind: mockBindingBind,
     captureTargetIfAbsent: vi.fn(),
     getState: mockBindingGetState,
   })),
+  WorkspaceAlreadyBoundError: MockWorkspaceAlreadyBoundError,
 }));
 
 vi.mock('@/server/services/workspaceAccessGrant', () => ({
@@ -194,12 +218,16 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     });
     // Reset device proxy state
     mockDeviceProxy.isConfigured = false;
+    mockDeviceProxy.cleanupScratchWorkspace.mockResolvedValue(undefined);
     mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
     // Production binding storage returns an empty state for an existing,
     // intentionally-unbound topic. `undefined` means the topic row itself is
     // missing and must fail closed under the authoritative snapshot contract.
     mockBindingGetState.mockResolvedValue({});
+    mockBindingBind.mockReset();
+    mockDeleteScratch.mockResolvedValue(undefined);
     mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockGetOrCreateWorkspace.mockReset();
     mockGetUserSettings.mockResolvedValue({});
     mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
       plaintext: value.replace(/^enc:/, ''),
@@ -274,6 +302,180 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       expect(mockCreateOperation).not.toHaveBeenCalled();
     });
 
+    it('recovers a concurrent formal bind after a successful scratch tool and cleans scratch', async () => {
+      const now = new Date('2026-09-04T00:00:00.000Z');
+      mockGetOrCreateWorkspace.mockResolvedValue({
+        createdAt: now,
+        deviceId: 'device-001',
+        displayName: 'topic-1',
+        env: null,
+        envFiles: [],
+        id: 'scratch-workspace',
+        kind: 'scratch',
+        lastUsedAt: now,
+        repoType: null,
+        rootPath: '/tmp/masterino/topic-1',
+        scan: null,
+        scannedAt: null,
+        scopeKey: 'scratch:device-001:/tmp/masterino/topic-1',
+        skillPolicy: null,
+        updatedAt: now,
+        userId,
+        workspaceId: null,
+      });
+      mockBindingBind.mockRejectedValue(new MockWorkspaceAlreadyBoundError());
+      const authoritative = {
+        snapshot: {
+          boundDeviceId: 'device-001',
+          target: 'local' as const,
+          targetCapturedAt: now.toISOString(),
+          version: 1 as const,
+          workspaceBoundAt: now.toISOString(),
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device' as const,
+        },
+        workspace: {
+          deviceId: 'device-001',
+          id: 'formal-workspace',
+          kind: 'device' as const,
+          rootPath: '/Users/me/formal-project',
+        },
+      };
+      mockBindingGetState.mockResolvedValue(authoritative);
+      mockDeviceProxy.cleanupScratchWorkspace.mockResolvedValue({
+        removed: true,
+        root: '/tmp/masterino/topic-1',
+      });
+
+      await expect(
+        service.bindScratchAfterToolSuccess({
+          deviceId: 'device-001',
+          rootPath: '/tmp/masterino/topic-1',
+          toolSucceeded: true,
+          topicId: 'topic-1',
+        }),
+      ).resolves.toEqual(authoritative);
+
+      expect(mockDeleteScratch).toHaveBeenCalledWith('scratch-workspace');
+      expect(mockDeviceProxy.cleanupScratchWorkspace).toHaveBeenCalledWith({
+        deviceId: 'device-001',
+        topicId: 'topic-1',
+        userId,
+      });
+    });
+
+    it('keeps the formal bind and scratch evidence when device cleanup fails', async () => {
+      const now = new Date('2026-09-04T00:00:00.000Z');
+      mockGetOrCreateWorkspace.mockResolvedValue({
+        createdAt: now,
+        deviceId: 'device-001',
+        displayName: 'topic-1',
+        env: null,
+        envFiles: [],
+        id: 'scratch-workspace',
+        kind: 'scratch',
+        lastUsedAt: now,
+        repoType: null,
+        rootPath: '/tmp/masterino/topic-1',
+        scan: null,
+        scannedAt: null,
+        scopeKey: 'scratch:device-001:/tmp/masterino/topic-1',
+        skillPolicy: null,
+        updatedAt: now,
+        userId,
+        workspaceId: null,
+      });
+      mockBindingBind.mockRejectedValue(new MockWorkspaceAlreadyBoundError());
+      const authoritative = {
+        snapshot: {
+          boundDeviceId: 'device-001',
+          target: 'local' as const,
+          targetCapturedAt: now.toISOString(),
+          version: 1 as const,
+          workspaceBoundAt: now.toISOString(),
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device' as const,
+        },
+        workspace: {
+          deviceId: 'device-001',
+          id: 'formal-workspace',
+          kind: 'device' as const,
+          rootPath: '/Users/me/formal-project',
+        },
+      };
+      mockBindingGetState.mockResolvedValue(authoritative);
+      mockDeviceProxy.cleanupScratchWorkspace.mockRejectedValue(new Error('device offline'));
+
+      await expect(
+        service.bindScratchAfterToolSuccess({
+          deviceId: 'device-001',
+          rootPath: '/tmp/masterino/topic-1',
+          toolSucceeded: true,
+          topicId: 'topic-1',
+        }),
+      ).resolves.toEqual(authoritative);
+
+      expect(mockDeleteScratch).not.toHaveBeenCalled();
+    });
+
+    it('keeps the formal bind when catalog deletion fails after confirmed device cleanup', async () => {
+      const now = new Date('2026-09-04T00:00:00.000Z');
+      mockGetOrCreateWorkspace.mockResolvedValue({
+        createdAt: now,
+        deviceId: 'device-001',
+        displayName: 'topic-1',
+        env: null,
+        envFiles: [],
+        id: 'scratch-workspace',
+        kind: 'scratch',
+        lastUsedAt: now,
+        repoType: null,
+        rootPath: '/tmp/masterino/topic-1',
+        scan: null,
+        scannedAt: null,
+        scopeKey: 'scratch:device-001:/tmp/masterino/topic-1',
+        skillPolicy: null,
+        updatedAt: now,
+        userId,
+        workspaceId: null,
+      });
+      mockBindingBind.mockRejectedValue(new MockWorkspaceAlreadyBoundError());
+      const authoritative = {
+        snapshot: {
+          boundDeviceId: 'device-001',
+          target: 'local' as const,
+          targetCapturedAt: now.toISOString(),
+          version: 1 as const,
+          workspaceBoundAt: now.toISOString(),
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device' as const,
+        },
+        workspace: {
+          deviceId: 'device-001',
+          id: 'formal-workspace',
+          kind: 'device' as const,
+          rootPath: '/Users/me/formal-project',
+        },
+      };
+      mockBindingGetState.mockResolvedValue(authoritative);
+      mockDeviceProxy.cleanupScratchWorkspace.mockResolvedValue({
+        removed: true,
+        root: '/tmp/masterino/topic-1',
+      });
+      mockDeleteScratch.mockRejectedValue(new Error('database unavailable'));
+
+      await expect(
+        service.bindScratchAfterToolSuccess({
+          deviceId: 'device-001',
+          rootPath: '/tmp/masterino/topic-1',
+          toolSucceeded: true,
+          topicId: 'topic-1',
+        }),
+      ).resolves.toEqual(authoritative);
+
+      expect(mockDeleteScratch).toHaveBeenCalledWith('scratch-workspace');
+    });
+
     it('decrypts persisted workspace env and freezes its persisted skill policy', async () => {
       bindWorkspace();
 
@@ -333,6 +535,43 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
         source: 'direct-user-message',
         topicId: 'topic-1',
       });
+    });
+
+    it('freezes an Electron local intent to the same online gateway device', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
+
+      await service.execAgent({
+        agentId: 'agent-1',
+        appContext: {
+          topicExecutionIntent: {
+            platform: 'desktop',
+            target: 'local',
+            targetDeviceId: 'device-001',
+          },
+        },
+        deviceId: 'device-001',
+        prompt: 'Run on this Mac',
+      });
+
+      expect(mockDeviceProxy.queryDeviceList).toHaveBeenCalledWith(userId);
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.activeDeviceId).toBe('device-001');
+      expect(createOpArgs.executionContext.plan).toEqual({
+        deviceId: 'device-001',
+        kind: 'device',
+        target: 'local',
+      });
+      expect(topicMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            executionSnapshot: expect.objectContaining({
+              boundDeviceId: 'device-001',
+              target: 'local',
+            }),
+          }),
+        }),
+      );
     });
   });
 
@@ -720,6 +959,32 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       expect(mockCreateOperation).toHaveBeenCalled();
       const createOpArgs = mockCreateOperation.mock.calls[0][0];
       expect(createOpArgs.activeDeviceId).toBeUndefined();
+      expect(mockDeviceProxy.queryDeviceList).not.toHaveBeenCalled();
+    });
+
+    it('keeps Electron local intent unrouted instead of falling back to sandbox', async () => {
+      mockDeviceProxy.isConfigured = false;
+
+      await service.execAgent({
+        agentId: 'agent-1',
+        appContext: {
+          topicExecutionIntent: {
+            platform: 'desktop',
+            target: 'local',
+            targetDeviceId: 'device-001',
+          },
+        },
+        deviceId: 'device-001',
+        prompt: 'List my files',
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.activeDeviceId).toBeUndefined();
+      expect(createOpArgs.executionContext.plan).toEqual({
+        kind: 'device-unrouted',
+        reason: 'bound-device-offline',
+        target: 'local',
+      });
       expect(mockDeviceProxy.queryDeviceList).not.toHaveBeenCalled();
     });
   });

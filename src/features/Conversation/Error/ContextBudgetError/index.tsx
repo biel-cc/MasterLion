@@ -4,6 +4,7 @@ import { useConversationStore } from '@/features/Conversation/store';
 import {
   buildContextBudgetErrorViewModel,
   type ContextBudgetFailurePayload,
+  type ContextBudgetTranslationKey,
   type ContextBudgetUIAction,
 } from '@/features/Conversation/utils/contextBudgetView';
 import { usePermission } from '@/hooks/usePermission';
@@ -46,6 +47,7 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
     retryParentMessage,
   } = useRetryParentMessage(id);
   const [pendingAction, setPendingAction] = useState<ContextBudgetUIAction>();
+  const [actionErrorKey, setActionErrorKey] = useState<ContextBudgetTranslationKey>();
   const replaceMessages = useConversationStore((s) => s.replaceMessages);
   const updateMessageContent = useConversationStore((s) => s.updateMessageContent);
   const toolResultIds = useConversationStore((s) =>
@@ -128,14 +130,20 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
     [callbacks?.onRetryCompression, canCompact, canCreate, failure, handlers],
   );
 
+  // A recovery action runs against the network and can fail. Swallowing that rejection would
+  // leave an unhandled promise and a card that looks like the retry worked.
   const handleAction = useCallback(
     async (action: ContextBudgetUIAction) => {
       const handler = handlers[action];
       if (!handler) return;
 
       setPendingAction(action);
+      setActionErrorKey(undefined);
       try {
         await handler();
+      } catch (error) {
+        console.error('[ContextBudgetError] recovery action failed:', action, error);
+        setActionErrorKey('contextBudget.actionFailed');
       } finally {
         setPendingAction(undefined);
       }
@@ -145,6 +153,7 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
 
   return (
     <ContextBudgetErrorCard
+      actionErrorKey={actionErrorKey}
       loadingAction={retryLoading ? 'retry_compression' : pendingAction}
       viewModel={viewModel}
       onAction={handleAction}

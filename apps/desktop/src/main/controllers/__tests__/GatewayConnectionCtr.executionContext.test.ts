@@ -95,7 +95,8 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     ],
     cwd: workspace,
-    env: { WORKSPACE_ENV: 'kept' },
+    env: { SHARED: 'server-wins', WORKSPACE_ENV: 'kept' },
+    envFiles: ['.env'],
     workspaceRootPath: workspace,
   });
 
@@ -105,6 +106,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     workspace = path.join(tempRoot, 'workspace');
     await mkdir(workspace);
     workspace = await realpath(workspace);
+    await writeFile(path.join(workspace, '.env'), 'FILE_ONLY=from-file\nSHARED=from-file\n');
   });
 
   afterEach(async () => {
@@ -187,7 +189,10 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     );
 
     expect(handleRunCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: workspace, env: { WORKSPACE_ENV: 'kept' } }),
+      expect.objectContaining({
+        cwd: workspace,
+        env: { FILE_ONLY: 'from-file', SHARED: 'server-wins', WORKSPACE_ENV: 'kept' },
+      }),
     );
     expect(result.state.scopeAudit).toEqual([
       expect.objectContaining({ cwdOverridden: true, scopeVerdict: 'primary' }),
@@ -215,7 +220,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     expect(spawnLhHeteroExec).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: workspace,
-        env: { WORKSPACE_ENV: 'kept' },
+        env: { FILE_ONLY: 'from-file', SHARED: 'server-wins', WORKSPACE_ENV: 'kept' },
         operationId: 'op-1',
         topicId: 'topic-1',
       }),

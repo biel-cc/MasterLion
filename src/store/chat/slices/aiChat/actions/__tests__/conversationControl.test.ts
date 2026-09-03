@@ -1,3 +1,4 @@
+import type * as LobechatConstModule from '@lobechat/const';
 import { type ConversationContext, RequestTrigger } from '@lobechat/types';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,17 @@ import { resetTestEnvironment } from './helpers';
 
 // Keep zustand mock as it's needed globally
 vi.mock('zustand/traditional');
+
+const mockConstEnv = vi.hoisted(() => ({ isDesktop: false }));
+vi.mock('@lobechat/const', async (importOriginal) => {
+  const actual = await importOriginal<typeof LobechatConstModule>();
+  return {
+    ...actual,
+    get isDesktop() {
+      return mockConstEnv.isDesktop;
+    },
+  };
+});
 
 // Mock the tRPC client & agentRuntimeService so the import chain doesn't pull
 // server-only code (cloud business packages, redis envs) into the test env.
@@ -46,6 +58,7 @@ vi.mock('@/utils/localStorage', () => {
 
 beforeEach(() => {
   resetTestEnvironment();
+  mockConstEnv.isDesktop = false;
   useProjectWorkspaceStore.setState(projectWorkspaceInitialState);
 });
 
@@ -1054,6 +1067,52 @@ describe('ConversationControl actions', () => {
         expect(executeClientAgentSpy).toHaveBeenCalled();
 
         executeGatewayAgentSpy.mockRestore();
+      });
+
+      it('resumes an unbound desktop local topic through gateway even without an old server op', async () => {
+        mockConstEnv.isDesktop = true;
+        const { result } = renderHook(() => useChatStore());
+        const agentId = 'local-agent';
+        const topicId = 'unbound-topic';
+        const chatKey = messageMapKey({ agentId, topicId });
+        const toolMessage = createMockMessage({
+          id: 'tool-msg-unbound',
+          plugin: { apiName: 'listFiles', arguments: '{}', identifier: 'x', type: 'default' },
+          role: 'tool',
+          tool_call_id: 'call_unbound',
+        } as any);
+
+        act(() => {
+          useChatStore.setState({
+            activeAgentId: agentId,
+            activeTopicId: topicId,
+            dbMessagesMap: { [chatKey]: [toolMessage] },
+            messagesMap: { [chatKey]: [toolMessage] },
+          });
+        });
+        vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+        vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+        const executeGatewayAgent = vi
+          .spyOn(result.current, 'executeGatewayAgent')
+          .mockResolvedValue({} as any);
+        const executeClientAgent = vi
+          .spyOn(result.current, 'executeClientAgent')
+          .mockResolvedValue(undefined);
+
+        await act(async () => {
+          await result.current.approveToolCalling('tool-msg-unbound', 'group-1');
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId, topicId }),
+            resumeApproval: expect.objectContaining({
+              decision: 'approved',
+              toolCallId: 'call_unbound',
+            }),
+          }),
+        );
+        expect(executeClientAgent).not.toHaveBeenCalled();
       });
 
       it('resolves the running server op in a group scope context (scope/groupId forwarded to the lookup)', async () => {

@@ -1,7 +1,7 @@
 'use client';
 
-import { Button, Empty, Input, Skeleton } from '@lobehub/ui';
-import { confirmModal, Switch } from '@lobehub/ui/base-ui';
+import { Empty, Input, Skeleton } from '@lobehub/ui';
+import { Button, confirmModal, Switch } from '@lobehub/ui/base-ui';
 import { createStaticStyles } from 'antd-style';
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -98,6 +98,22 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     &:last-child {
       border-block-end: 0;
     }
+  `,
+  /** Announced by screen readers, invisible on screen; the app has no global `.sr-only`. */
+  screenReaderOnly: css`
+    position: absolute;
+
+    overflow: hidden;
+
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    border: 0;
+
+    white-space: nowrap;
+
+    clip-path: inset(50%);
   `,
   secretControl: css`
     display: flex;
@@ -233,7 +249,7 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, description, title, work
 
       {isLoading ? (
         <div aria-live="polite" role="status">
-          <span className="sr-only">{t('workspaceEnv.loading')}</span>
+          <span className={styles.screenReaderOnly}>{t('workspaceEnv.loading')}</span>
           <Skeleton active paragraph={{ rows: 3 }} title={false} />
         </div>
       ) : loadError ? (

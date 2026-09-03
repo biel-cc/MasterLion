@@ -234,4 +234,34 @@ describe('<ContextBudgetError />', () => {
     expect(onRetryCompression).toHaveBeenCalledTimes(1);
     expect(executeCompressionMock).not.toHaveBeenCalled();
   });
+
+  it('shows a visible failure and leaves no unhandled rejection when a recovery action throws', async () => {
+    const unhandled = vi.fn();
+    globalThis.addEventListener('unhandledrejection', unhandled);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    executeCompressionMock.mockRejectedValue(new Error('compaction failed'));
+
+    render(<ContextBudgetError failure={failure('SUMMARY_FAILED')} id={'assistant-1'} />);
+
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.retryCompression'));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('alert').some((node) => node.textContent === 'contextBudget.actionFailed'),
+      ).toBe(true),
+    );
+    // The failed action becomes clickable again rather than staying stuck in a loading state.
+    expect(button('contextBudget.action.retryCompression')).toBeEnabled();
+    expect(regenerateUserMessageMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(unhandled).not.toHaveBeenCalled();
+
+    globalThis.removeEventListener('unhandledrejection', unhandled);
+    consoleError.mockRestore();
+  });
 });

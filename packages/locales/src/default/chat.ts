@@ -63,6 +63,9 @@ export default {
   'compression.cancelConfirm':
     'Are you sure you want to uncompress? This will restore the original messages.',
   'compression.history': 'History',
+  'compression.inProgress': 'Compressing context…',
+  'compression.inProgressHint':
+    'Earlier messages are being summarized so the conversation can continue.',
   'compression.summary': 'Summary',
   'confirmClearCurrentMessages':
     'You are about to clear the current conversation messages. Once cleared, they cannot be retrieved. Please confirm your action.',
@@ -1306,7 +1309,9 @@ export default {
     'Recommended for workspace selection only. It does not automatically bind new topics.',
   'workspaceRuntime.settings.workspaces': 'Workspaces',
   'workspaceRuntime.settings.workspacesEmpty': 'No formal workspace has been used on this device.',
+  'workspaceRuntime.settings.workspacesError': 'Could not load workspaces for this device.',
   'workspaceRuntime.settings.workspacesLoading': 'Loading workspaces…',
+  'workspaceRuntime.settings.workspacesRetry': 'Retry',
   'workspaceRuntime.settings.workspacesUnavailable':
     'Workspace details will appear after the workspace service is connected.',
   'workspaceRuntime.sidebar.addTopicInWorkspace': 'New topic in {{name}}',

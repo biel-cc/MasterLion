@@ -6,6 +6,7 @@
   "contextBudget.action.switchCompressionModel": "更换压缩模型",
   "contextBudget.action.switchModel": "切换模型",
   "contextBudget.action.truncateToolResults": "截断工具结果",
+  "contextBudget.actionFailed": "该恢复操作没有成功，内容未发生变化。请重试或选择其他方式。",
   "contextBudget.actionsLabel": "恢复操作",
   "contextBudget.desc.NO_CANDIDATES": "对话仍超出上下文窗口，且没有可供摘要的历史消息。你的消息未被改动。",
   "contextBudget.desc.RETRY_EXHAUSTED": "上下文已压缩一次，但模型仍拒绝了请求。不会再继续自动重试。",

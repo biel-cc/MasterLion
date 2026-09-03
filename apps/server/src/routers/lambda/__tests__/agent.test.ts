@@ -346,6 +346,44 @@ describe('agentRouter', () => {
     });
   });
 
+  describe('agent execution environment validation', () => {
+    it.each([
+      ['runtime-owned key', { env: { PATH: '/attacker/bin' } }],
+      [
+        'loader key',
+        {
+          heterogeneousProvider: {
+            env: { NODE_OPTIONS: '--require=/tmp/inject.js' },
+            type: 'codex',
+          },
+        },
+      ],
+    ])('rejects a %s before updating the agent', async (_label, agencyConfig) => {
+      agentServiceMock.updateAgentConfig = vi.fn();
+      const caller = agentRouter.createCaller(mockCtx);
+
+      await expect(
+        caller.updateAgentConfig({ agentId: 'agent-1', value: { agencyConfig } }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+      expect(agentServiceMock.updateAgentConfig).not.toHaveBeenCalled();
+    });
+
+    it('allows non-reserved non-secret agent environment configuration', async () => {
+      agentServiceMock.updateAgentConfig = vi.fn().mockResolvedValue({ id: 'agent-1' });
+      const caller = agentRouter.createCaller(mockCtx);
+
+      await caller.updateAgentConfig({
+        agentId: 'agent-1',
+        value: { agencyConfig: { env: { MODE: 'development' } } },
+      });
+
+      expect(agentServiceMock.updateAgentConfig).toHaveBeenCalledWith('agent-1', {
+        agencyConfig: { env: { MODE: 'development' } },
+      });
+    });
+  });
+
   describe('edit lock', () => {
     const wsCtx = () => ({ ...mockCtx, workspaceId: 'ws-1' });
 

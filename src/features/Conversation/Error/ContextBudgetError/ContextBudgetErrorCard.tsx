@@ -7,11 +7,18 @@ import { useTranslation } from 'react-i18next';
 
 import type {
   ContextBudgetErrorViewModel,
+  ContextBudgetTranslationKey,
   ContextBudgetUIAction,
 } from '@/features/Conversation/utils/contextBudgetView';
 import { formatIntergerNumber } from '@/utils/format';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
+  actionError: css`
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: ${cssVar.colorErrorText};
+  `,
   actions: css`
     display: flex;
     flex-wrap: wrap;
@@ -127,9 +134,11 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 export interface ContextBudgetErrorCardProps {
+  /** `error` namespace key describing the last recovery attempt that failed. */
+  actionErrorKey?: ContextBudgetTranslationKey;
   /** Action currently running; its button shows a loading state and the rest stay clickable. */
   loadingAction?: ContextBudgetUIAction;
-  onAction: (action: ContextBudgetUIAction) => void;
+  onAction: (action: ContextBudgetUIAction) => Promise<void> | void;
   viewModel: ContextBudgetErrorViewModel;
 }
 
@@ -141,7 +150,7 @@ const formatShare = (share: number) => `${Math.round(share * 100)}%`;
  * actions through `onAction`; it never touches stores or the shared executor.
  */
 const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
-  ({ loadingAction, onAction, viewModel }) => {
+  ({ actionErrorKey, loadingAction, onAction, viewModel }) => {
     const { t: tr } = useTranslation('error');
     const baseId = useId();
     const titleId = `${baseId}-title`;
@@ -198,13 +207,19 @@ const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
                 type={action.primary ? 'primary' : 'default'}
                 onClick={() => {
                   if (action.disabled) return;
-                  onAction(action.id);
+                  void onAction(action.id);
                 }}
               >
                 {tr(action.labelKey)}
               </Button>
             ))}
           </div>
+        )}
+
+        {actionErrorKey && (
+          <p className={styles.actionError} role={'alert'}>
+            {tr(actionErrorKey)}
+          </p>
         )}
 
         {disabledReason && (

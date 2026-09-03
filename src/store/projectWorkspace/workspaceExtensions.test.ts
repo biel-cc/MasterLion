@@ -5,9 +5,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { WorkspaceExtensions } from '@/features/DeviceWorkspaces';
+
 import enChat from '../../../locales/en-US/chat.json';
 import zhChat from '../../../locales/zh-CN/chat.json';
-import WorkspaceExtensions from '../../routes/(main)/settings/devices/features/WorkspaceExtensions';
 import {
   listWorkspaceExtensions,
   registerWorkspaceExtension,

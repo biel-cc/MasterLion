@@ -58,3 +58,26 @@ export const assertConfigurableExecutionEnvKey = (key: string): void => {
     );
   }
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Validate both current and legacy agent-env locations at every write boundary. */
+export const assertConfigurableAgentExecutionEnv = (config: unknown): void => {
+  if (!isRecord(config) || config.agencyConfig === undefined) return;
+  if (!isRecord(config.agencyConfig)) {
+    throw new ExecutionEnvError('INVALID_ENV_KEY', 'Invalid agent environment.');
+  }
+
+  const provider = isRecord(config.agencyConfig.heterogeneousProvider)
+    ? config.agencyConfig.heterogeneousProvider
+    : undefined;
+
+  for (const env of [config.agencyConfig.env, provider?.env]) {
+    if (env === undefined) continue;
+    if (!isRecord(env) || Object.values(env).some((value) => typeof value !== 'string')) {
+      throw new ExecutionEnvError('INVALID_ENV_KEY', 'Invalid agent environment.');
+    }
+    for (const key of Object.keys(env)) assertConfigurableExecutionEnvKey(key);
+  }
+};

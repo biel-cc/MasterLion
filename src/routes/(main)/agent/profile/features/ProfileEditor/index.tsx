@@ -8,6 +8,7 @@ import isEqual from 'fast-deep-equal';
 import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { sanitizeAgentEnv } from '@/features/AgentEnvironment';
 import ModelSelect from '@/features/ModelSelect';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
@@ -15,7 +16,6 @@ import { agentSelectors } from '@/store/agent/selectors';
 
 import AgentSettings from '../AgentSettings';
 import EditorCanvas from '../EditorCanvas';
-import { sanitizeAgentEnv } from './agentEnvPolicy';
 import AgentHeader from './AgentHeader';
 import AgentTool from './AgentTool';
 import CloudHeterogeneousConfig from './CloudHeterogeneousConfig';
@@ -41,13 +41,18 @@ const ProfileEditor = memo(() => {
   };
 
   const updateHeterogeneousEnv = async (env: Record<string, string>) => {
-    if (!canEdit) return;
-    if (!heterogeneousProvider) return;
-    await updateConfig({
-      agencyConfig: {
-        env: sanitizeAgentEnv(env),
+    // Rejecting here is deliberate: the editor reports the failure instead of a fake success.
+    if (!canEdit) throw new Error('Not allowed to edit this agent');
+    if (!heterogeneousProvider) throw new Error('Agent has no heterogeneous provider');
+    await updateConfig(
+      {
+        agencyConfig: {
+          env: sanitizeAgentEnv(env),
+        },
       },
-    });
+      // A deep merge cannot express a removed key, so the env map replaces the stored one.
+      { replacePaths: ['agencyConfig.env'], throwOnError: true },
+    );
   };
 
   const updateBoundDeviceId = async (boundDeviceId: string) => {

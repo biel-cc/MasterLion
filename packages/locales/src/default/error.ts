@@ -7,6 +7,8 @@ export default {
   'contextBudget.action.switchCompressionModel': 'Change compression model',
   'contextBudget.action.switchModel': 'Switch model',
   'contextBudget.action.truncateToolResults': 'Truncate tool results',
+  'contextBudget.actionFailed':
+    'That recovery action did not go through. Nothing was changed — try again or pick another option.',
   'contextBudget.actionsLabel': 'Recovery actions',
   'contextBudget.desc.NO_CANDIDATES':
     'The conversation still exceeds the context window, and there is no earlier history that can be summarized. Your messages are unchanged.',

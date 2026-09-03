@@ -64,6 +64,62 @@ describe('executeDeviceRpc', () => {
     expect(deps.approveProjectRoot).toHaveBeenCalledWith(root);
   });
 
+  it('does not auto-read workspace instructions through a symlink outside the workspace', async () => {
+    const scanRoot = await mkdtemp(path.join(tmpdir(), 'device-control-instructions-'));
+    const outside = await mkdtemp(path.join(tmpdir(), 'device-control-secret-'));
+
+    try {
+      const secret = path.join(outside, 'secret.md');
+      await writeFile(secret, 'outside workspace secret');
+      await symlink(secret, path.join(scanRoot, 'AGENTS.md'));
+
+      const result = (await executeDeviceRpc(
+        'initWorkspace',
+        { scope: scanRoot },
+        makeDeps(),
+      )) as { instructions: { content: string; source: string }[] };
+
+      expect(result.instructions).toEqual([]);
+    } finally {
+      await rm(scanRoot, { force: true, recursive: true });
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+
+  it('does not auto-read project skills whose directory or SKILL.md escapes the workspace', async () => {
+    const scanRoot = await mkdtemp(path.join(tmpdir(), 'device-control-skills-'));
+    const outside = await mkdtemp(path.join(tmpdir(), 'device-control-outside-skill-'));
+
+    try {
+      const skillSource = path.join(scanRoot, '.agents', 'skills');
+      const insideSkill = path.join(skillSource, 'linked-file');
+      await mkdir(insideSkill, { recursive: true });
+      await writeFile(
+        path.join(outside, 'SKILL.md'),
+        '---\nname: escaped\ndescription: must not load\n---\nsecret',
+      );
+      await symlink(outside, path.join(skillSource, 'linked-directory'));
+      await symlink(path.join(outside, 'SKILL.md'), path.join(insideSkill, 'SKILL.md'));
+
+      const result = (await executeDeviceRpc(
+        'initWorkspace',
+        { scope: scanRoot },
+        makeDeps(),
+      )) as { skills: { name: string }[] };
+      const listed = (await executeDeviceRpc(
+        'listProjectSkills',
+        { scope: scanRoot },
+        makeDeps(),
+      )) as { skills: { name: string }[] };
+
+      expect(result.skills).toEqual([]);
+      expect(listed.skills).toEqual([]);
+    } finally {
+      await rm(scanRoot, { force: true, recursive: true });
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+
   it('creates a stable scratch directory without allowing topic traversal', async () => {
     const first = (await executeDeviceRpc(
       'ensureScratchWorkspace',

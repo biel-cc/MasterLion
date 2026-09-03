@@ -64,8 +64,12 @@ export interface TopicWorkspaceBindingStore {
 }
 
 export class WorkspaceAlreadyBoundError extends TRPCError {
-  constructor() {
+  /** Scratch catalog evidence created before a concurrent formal bind won. */
+  readonly scratchWorkspaceId?: string;
+
+  constructor(scratchWorkspaceId?: string) {
     super({ code: 'FORBIDDEN', message: 'WORKSPACE_ALREADY_BOUND' });
+    this.scratchWorkspaceId = scratchWorkspaceId;
   }
 }
 

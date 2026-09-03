@@ -22,7 +22,7 @@ import {
   generateComposioServicesList,
   generateCredsList,
 } from '@lobechat/builtin-tool-creds';
-import { LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
+import { LocalSystemIdentifier, LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
 import { BRANDING_PROVIDER } from '@lobechat/business-const';
 import { COMPOSIO_APP_TYPES } from '@lobechat/const';
 import {
@@ -531,7 +531,10 @@ export const resolveCompressionSummaryBudgetTokens = (params: {
       snapshot.entry.providerId === compressionModel.provider,
   );
 
-  return Math.max(2048, (matchingSnapshot?.entry.contextWindowTokens ?? 32_000) - 1024);
+  // Keep room for the summary output even on unusually small catalog windows.
+  // A fixed 2k floor could make the request budget larger than the model's
+  // actual prompt capacity and recreate the context error during recovery.
+  return Math.max(1, (matchingSnapshot?.entry.contextWindowTokens ?? 32_000) - 1024);
 };
 
 const renderMessageForCompression = (message: UIChatMessage) => {
@@ -1119,9 +1122,30 @@ const bindPreparedScratchContext = async (
     toolSucceeded: true,
     topicId,
   });
+  const authoritativePlan: ExecutionContext['plan'] =
+    bound.workspace.kind === 'sandbox'
+      ? { kind: 'sandbox', target: 'sandbox' }
+      : {
+          deviceId: bound.workspace.deviceId!,
+          kind: 'device',
+          target: bound.snapshot.target === 'local' ? 'local' : 'device',
+        };
   return {
-    ...withPrimaryScratchRoot(prepared.executionContext, deviceId, bound.workspace.rootPath),
+    ...prepared.executionContext,
+    accessRoots: [
+      ...(prepared.executionContext.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+      {
+        ...(bound.workspace.deviceId ? { deviceId: bound.workspace.deviceId } : {}),
+        modes: ['exec', 'read', 'write'],
+        rootPath: bound.workspace.rootPath,
+        scope: 'primary',
+        source: 'workspace',
+      },
+    ],
+    cwd: bound.workspace.rootPath,
+    plan: authoritativePlan,
     snapshot: bound.snapshot,
+    unresolvedReason: undefined,
     workspace: bound.workspace,
   };
 };
@@ -1147,6 +1171,26 @@ const projectExecutionContextForClient = (
     workspaceKind: frozen.workspace?.kind,
     workspaceRootPath: frozen.workspace?.rootPath,
   };
+};
+
+/**
+ * Local-system calls with a frozen device plan must take the server-to-device
+ * channel. That channel can carry the server-resolved operation env and
+ * envFiles without exposing plaintext secrets to the renderer-facing
+ * `tool_execute` event. Other client executors continue to use that event.
+ */
+const requiresServerDeviceTransport = (state: AgentState, tool: ChatToolPayload): boolean => {
+  const frozen = getFrozenExecutionContext(state);
+  return tool.identifier === LocalSystemIdentifier && !!frozen && isDeviceCapablePlan(frozen.plan);
+};
+
+const getExecutionDeviceId = (
+  state: AgentState,
+  executionContext?: ExecutionContext,
+): string | undefined => {
+  const frozen = executionContext ?? getFrozenExecutionContext(state);
+  if (frozen) return frozen.plan.kind === 'device' ? frozen.plan.deviceId : undefined;
+  return state.metadata?.activeDeviceId;
 };
 
 /**
@@ -3480,7 +3524,8 @@ export const createRuntimeExecutors = (
         // Falls through to the normal server path if either is unavailable.
         const canDispatchToClient =
           chatToolPayload.executor === 'client' &&
-          typeof streamManager.sendToolExecute === 'function';
+          typeof streamManager.sendToolExecute === 'function' &&
+          !requiresServerDeviceTransport(state, chatToolPayload);
 
         let toolCallMocked = false;
         const hookResult = ctx.hookDispatcher
@@ -3593,7 +3638,10 @@ export const createRuntimeExecutors = (
           execution = await executeToolWithRetry(
             () =>
               toolExecutionService.executeTool(chatToolPayload, {
-                activeDeviceId: state.metadata?.activeDeviceId,
+                activeDeviceId: getExecutionDeviceId(
+                  state,
+                  preparedExecutionContext.executionContext,
+                ),
                 agentId: state.metadata?.agentId,
                 agentMember: buildServerAgentMemberRunner(
                   ctx,
@@ -4238,7 +4286,8 @@ export const createRuntimeExecutors = (
 
             const canDispatchToClient =
               chatToolPayload.executor === 'client' &&
-              typeof streamManager.sendToolExecute === 'function';
+              typeof streamManager.sendToolExecute === 'function' &&
+              !requiresServerDeviceTransport(state, chatToolPayload);
 
             let batchToolCallMocked = false;
             const batchHookResult = ctx.hookDispatcher
@@ -4346,7 +4395,10 @@ export const createRuntimeExecutors = (
               execution = await executeToolWithRetry(
                 () =>
                   toolExecutionService.executeTool(chatToolPayload, {
-                    activeDeviceId: state.metadata?.activeDeviceId,
+                    activeDeviceId: getExecutionDeviceId(
+                      state,
+                      preparedExecutionContext.executionContext,
+                    ),
                     agentId: state.metadata?.agentId,
                     agentMember: buildServerAgentMemberRunner(
                       ctx,

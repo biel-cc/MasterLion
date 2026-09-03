@@ -11,17 +11,14 @@ import {
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { selectRuntimeType } from '@/store/chat/slices/aiChat/actions/agentDispatcher';
-import {
-  hasConfiguredAgentEnv,
-  routeManagedEnvRuntime,
-} from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
+import { routeDesktopWorkspaceRuntime } from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
 import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 
-import { displayMessageSelectors } from '../../../selectors';
+import { displayMessageSelectors, topicSelectors } from '../../../selectors';
 import { messageMapKey } from '../../../utils/messageMapKey';
 import { type OptimisticUpdateContext } from '../../message/actions/optimisticUpdate';
 import { dbMessageSelectors } from '../../message/selectors';
@@ -65,8 +62,13 @@ export class ConversationControlActionImpl {
     const agentConfig = context.agentId
       ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())
       : undefined;
+    const topicId = context.topicId ?? undefined;
+    const workspaceId = topicId
+      ? (getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot?.workspaceId ??
+        topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.executionSnapshot?.workspaceId)
+      : undefined;
     return (
-      (await routeManagedEnvRuntime(
+      (await routeDesktopWorkspaceRuntime(
         selectRuntimeType({
           boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
           executionTarget: agentConfig?.agencyConfig?.executionTarget,
@@ -74,8 +76,8 @@ export class ConversationControlActionImpl {
           isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
         }),
         {
-          hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
-          topicId: context.topicId ?? undefined,
+          topicId,
+          workspaceId,
         },
       )) === 'gateway'
     );
@@ -311,8 +313,7 @@ export class ConversationControlActionImpl {
         const pathDecision =
           getProjectWorkspaceStoreState().operationConsentByMessage[toolMessageId];
         const pathConsent =
-          pathDecision?.scope === 'operation' &&
-          pathDecision.modes.length > 0
+          pathDecision?.scope === 'operation' && pathDecision.modes.length > 0
             ? {
                 deviceId: pathDecision.deviceId,
                 modes: [...pathDecision.modes],

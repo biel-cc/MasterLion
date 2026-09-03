@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ProfileEditor from './index';
 
-const { state, updateAgentConfig } = vi.hoisted(() => ({
+const { envChangeRejection, state, updateAgentConfig } = vi.hoisted(() => ({
+  envChangeRejection: vi.fn(),
   state: {
     config: {
       agencyConfig: {
@@ -57,23 +58,25 @@ vi.mock('./CloudHeterogeneousConfig', () => ({
     onEnvChange,
   }: {
     env: Record<string, string>;
-    onEnvChange: (env: Record<string, string>) => void;
+    onEnvChange: (env: Record<string, string>) => Promise<void> | void;
   }) => (
     <div>
       <output aria-label="agent environment">{JSON.stringify(env)}</output>
       <button
         type="button"
         onClick={() =>
-          onEnvChange({
-            ...env,
-            HOME: '/unsafe',
-            LOBEHUB_JWT: 'unsafe',
-            LOBEHUB_SERVER: 'unsafe',
-            NEXT: 'value',
-            PATH: '/unsafe',
-            SERVICE_API_KEY: 'unsafe',
-            lowercase: 'invalid',
-          })
+          void Promise.resolve(
+            onEnvChange({
+              ...env,
+              HOME: '/unsafe',
+              LOBEHUB_JWT: 'unsafe',
+              LOBEHUB_SERVER: 'unsafe',
+              NEXT: 'value',
+              PATH: '/unsafe',
+              SERVICE_API_KEY: 'unsafe',
+              lowercase: 'invalid',
+            }),
+          ).catch((error: Error) => envChangeRejection(error.message))
         }
       >
         update environment
@@ -84,7 +87,9 @@ vi.mock('./CloudHeterogeneousConfig', () => ({
 
 describe('ProfileEditor agent environment', () => {
   beforeEach(() => {
+    envChangeRejection.mockReset();
     updateAgentConfig.mockReset();
+    updateAgentConfig.mockResolvedValue(undefined);
     state.config = {
       agencyConfig: {
         boundDeviceId: 'device-1',
@@ -103,15 +108,30 @@ describe('ProfileEditor agent environment', () => {
     fireEvent.click(screen.getByRole('button', { name: 'update environment' }));
 
     await waitFor(() => {
-      expect(updateAgentConfig).toHaveBeenCalledWith({
-        agencyConfig: {
-          env: { GITHUB_CRED_KEY: 'credential-ref', NEXT: 'value', SOURCE: 'agency' },
+      expect(updateAgentConfig).toHaveBeenCalledWith(
+        {
+          agencyConfig: {
+            env: { GITHUB_CRED_KEY: 'credential-ref', NEXT: 'value', SOURCE: 'agency' },
+          },
         },
-      });
+        // Without these the editor would report a save the store never made observable.
+        { replacePaths: ['agencyConfig.env'], throwOnError: true },
+      );
     });
     expect(updateAgentConfig.mock.calls[0][0].agencyConfig).not.toHaveProperty(
       'heterogeneousProvider',
     );
+  });
+
+  it('propagates a persistence failure to the editor instead of resolving', async () => {
+    updateAgentConfig.mockRejectedValue(new Error('save rejected'));
+    render(<ProfileEditor />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'update environment' }));
+
+    await waitFor(() => {
+      expect(envChangeRejection).toHaveBeenCalledWith('save rejected');
+    });
   });
 
   it('falls back to heterogeneousProvider.env for legacy agents', () => {

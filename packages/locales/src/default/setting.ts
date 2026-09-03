@@ -262,6 +262,7 @@ export default {
   'heterogeneousStatus.cloud.tokenPlaceholder': 'Paste your OAuth token here',
   'heterogeneousStatus.cloud.tokenChange': 'Change',
   'heterogeneousStatus.cloud.tokenSave': 'Save',
+  'heterogeneousStatus.cloud.tokenSaveError': 'Could not save the Claude Code token. Try again.',
   'heterogeneousStatus.cloud.tokenCancel': 'Cancel',
   'heterogeneousStatus.cloud.githubLabel': 'GitHub Connection',
   'heterogeneousStatus.cloud.githubDesc':

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 
-import type { TopicWorkspaceBindingStore } from './bindingStore';
+import { type TopicWorkspaceBindingStore, WorkspaceAlreadyBoundError } from './bindingStore';
 import { ProjectWorkspaceService } from './index';
 
 const snapshot: TopicExecutionSnapshot = {
@@ -103,6 +103,46 @@ describe('ProjectWorkspaceService', () => {
     expect(bind).toHaveBeenCalledWith(
       expect.objectContaining({ topicId: 'topic-a', workspaceId: 'pws-scratch' }),
     );
+  });
+
+  it('preserves scratch catalog evidence when a concurrent formal bind wins', async () => {
+    const { bindingStore, service, workspaceModel } = createService();
+    const createdAt = new Date('2026-09-03T00:00:00.000Z');
+    vi.spyOn(workspaceModel, 'getOrCreate').mockResolvedValue({
+      accessedAt: createdAt,
+      createdAt,
+      deviceId: 'device-a',
+      displayName: 'scratch-a',
+      env: null,
+      envFiles: [],
+      id: 'pws-scratch',
+      kind: 'scratch',
+      lastUsedAt: createdAt,
+      repoType: null,
+      rootPath: '/tmp/scratch-a',
+      scan: null,
+      scannedAt: null,
+      scopeKey: 'scratch:device-a:/tmp/scratch-a',
+      skillPolicy: null,
+      updatedAt: createdAt,
+      userId: 'user-a',
+      workspaceId: null,
+    });
+    vi.spyOn(bindingStore, 'bind').mockRejectedValue(new WorkspaceAlreadyBoundError());
+    const deleteScratch = vi.spyOn(workspaceModel, 'deleteScratch').mockResolvedValue();
+
+    const rejected = await service
+      .bindScratchAfterToolSuccess({
+        deviceId: 'device-a',
+        rootPath: '/tmp/scratch-a',
+        toolSucceeded: true,
+        topicId: 'topic-a',
+      })
+      .catch((error) => error);
+
+    expect(rejected).toBeInstanceOf(WorkspaceAlreadyBoundError);
+    expect(rejected).toMatchObject({ scratchWorkspaceId: 'pws-scratch' });
+    expect(deleteScratch).not.toHaveBeenCalled();
   });
 
   it('never exposes persisted environment values in list DTOs', async () => {

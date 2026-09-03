@@ -84,7 +84,7 @@ import {
   processCommands,
 } from './commandBus';
 import { materializeLocalSystemToolSnapshots } from './localSystemToolSnapshots';
-import { hasConfiguredAgentEnv, routeManagedEnvRuntime } from './managedEnvRuntime';
+import { routeDesktopWorkspaceRuntime } from './managedEnvRuntime';
 /**
  * Extended params for sendMessage with context
  */
@@ -509,13 +509,13 @@ export class ConversationLifecycleActionImpl {
       workspaceInit: workspaceItem?.scan,
     };
 
-    // The renderer cache is not authoritative for encrypted user/workspace env
-    // (and can be empty after a failed catalog/topic fetch). Probe the server's
-    // value-free summary before choosing an in-process Electron runtime. Any
-    // unknown/failure routes through gateway so plaintext is never silently
-    // dropped; the frozen local/device target is preserved by the intent below.
-    runtimeType = await routeManagedEnvRuntime(runtimeType, {
-      hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
+    // Native Electron topics run through the server workspace coordinator.
+    // This preserves local/device intent while giving first-use cwd tools the
+    // only production path that can lazily bind scratch; explicit absolute-path
+    // reads can remain unbound. LocalSystem may be injected dynamically for a
+    // device-capable plan, so even a bound topic with an empty static plugin
+    // list cannot safely prove that renderer-local execution is plain chat.
+    runtimeType = await routeDesktopWorkspaceRuntime(runtimeType, {
       topicId: context.topicId ?? undefined,
       workspaceId: frozenWorkspaceId,
     });
@@ -647,8 +647,7 @@ export class ConversationLifecycleActionImpl {
       // would silently execute under the agent's current default dir B and
       // lose resume.
       const workingDirectory = frozenWorkingDirectory;
-      const agentExecutionEnv =
-        agentConfig?.agencyConfig?.env ?? heterogeneousProvider.env;
+      const agentExecutionEnv = agentConfig?.agencyConfig?.env ?? heterogeneousProvider.env;
       const frozenHeterogeneousProvider = {
         ...heterogeneousProvider,
         ...(agentExecutionEnv ? { env: { ...agentExecutionEnv } } : {}),
@@ -1405,20 +1404,25 @@ export class ConversationLifecycleActionImpl {
       const parentAgentConfig = context.agentId
         ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())
         : undefined;
-      const targetAgentConfig =
-        agentSelectors.getAgentConfigById(targetAgentId)(getAgentStoreState());
-
       await dispatchNonHeteroSubAgent(
         { kind: 'mention', targetAgentId, instruction, parentMessageId: toolMessage.id },
         {
           conversationContext: context,
           boundDeviceId: parentAgentConfig?.agencyConfig?.boundDeviceId,
-          hasAgentEnv: hasConfiguredAgentEnv(targetAgentConfig?.agencyConfig),
           heterogeneousProvider: parentAgentConfig?.agencyConfig?.heterogeneousProvider,
           inPortalThread,
           isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
           messages: messagesWithInstruction,
           parentOperationId: operationId,
+          workspaceId:
+            (context.topicId
+              ? getProjectWorkspaceStoreState().topicStatesById?.[context.topicId]?.snapshot
+                  ?.workspaceId
+              : undefined) ??
+            (context.topicId
+              ? topicSelectors.getTopicById(context.topicId)(this.#get())?.metadata
+                  ?.executionSnapshot?.workspaceId
+              : undefined),
         },
         this.#get(),
       );

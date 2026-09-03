@@ -13,6 +13,7 @@ import { TRPCError } from '@trpc/server';
 
 import { AgentModel } from '@/database/models/agent';
 import { BriefModel } from '@/database/models/brief';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TaskModel } from '@/database/models/task';
 import { TaskTopicModel } from '@/database/models/taskTopic';
 import { TopicModel } from '@/database/models/topic';
@@ -21,8 +22,10 @@ import type { LobeChatDatabase } from '@/database/type';
 
 import { AiAgentService } from '../aiAgent';
 import { BriefService } from '../brief';
+import { DeviceGateway } from '../deviceGateway';
 import { extractFileIdsFromEditorData } from '../file/extractFileIdsFromEditorData';
 import { resolveAttachmentMetadata } from '../file/resolveAttachments';
+import { TopicDeletionService } from '../projectWorkspace/topicDeletion';
 import { type SubtaskGraphPlan, TaskGraphService } from '../taskGraph';
 import { type ReviewResult, TaskReviewService } from '../taskReview';
 import { TaskRunnerService } from '../taskRunner';
@@ -64,6 +67,11 @@ export interface RunReadySubtasksResult {
   skipped?: { reason: 'nothing-runnable' };
 }
 
+export interface TaskServiceDependencies {
+  deviceGateway?: Pick<DeviceGateway, 'cleanupScratchWorkspace'>;
+  projectWorkspaceModel?: Pick<ProjectWorkspaceModel, 'deleteScratch' | 'findById'>;
+}
+
 export class TaskService {
   private agentModel: AgentModel;
   private briefModel: BriefModel;
@@ -72,11 +80,17 @@ export class TaskService {
   private taskModel: TaskModel;
   private taskTopicModel: TaskTopicModel;
   private topicModel: TopicModel;
+  private topicDeletionService: TopicDeletionService;
   private userId: string;
 
   private workspaceId?: string;
 
-  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
+  constructor(
+    db: LobeChatDatabase,
+    userId: string,
+    workspaceId?: string,
+    deps: TaskServiceDependencies = {},
+  ) {
     this.db = db;
     this.userId = userId;
     this.workspaceId = workspaceId;
@@ -84,6 +98,12 @@ export class TaskService {
     this.taskModel = new TaskModel(db, userId, workspaceId);
     this.taskTopicModel = new TaskTopicModel(db, userId, workspaceId);
     this.topicModel = new TopicModel(db, userId, workspaceId);
+    this.topicDeletionService = new TopicDeletionService({
+      deviceGateway: deps.deviceGateway ?? new DeviceGateway(),
+      projectWorkspaceModel: deps.projectWorkspaceModel ?? new ProjectWorkspaceModel(db, userId),
+      topicModel: this.topicModel,
+      userId,
+    });
     this.briefModel = new BriefModel(db, userId, workspaceId);
     this.briefService = new BriefService(db, userId, workspaceId);
   }
@@ -153,8 +173,14 @@ export class TaskService {
       await aiAgentService.interruptTask({ operationId: target.operationId });
     }
 
-    await this.taskTopicModel.remove(target.taskId, topicId);
-    await this.topicModel.delete(topicId);
+    await this.topicDeletionService.removeById(topicId, {
+      // The topic FK cascades task_topics. Remove the task relation first so
+      // TaskTopicModel can decrement totalTopics, but only after device scratch
+      // cleanup has succeeded through TopicDeletionService's fail-closed gate.
+      beforeDelete: async () => {
+        await this.taskTopicModel.remove(target.taskId, topicId);
+      },
+    });
   }
 
   /**

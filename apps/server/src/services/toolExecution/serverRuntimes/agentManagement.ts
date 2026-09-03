@@ -14,6 +14,7 @@ import {
 import { AgentModel } from '@/database/models/agent';
 import { PluginModel } from '@/database/models/plugin';
 import { DiscoverService } from '@/server/services/discover';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 
 import { type ToolExecutionContext, type ToolExecutionResult } from '../types';
 import { type ServerRuntimeRegistration } from './types';
@@ -371,6 +372,7 @@ export const agentManagementRuntime: ServerRuntimeRegistration = {
           const updatedParts: string[] = [];
 
           if (config && Object.keys(config).length > 0) {
+            assertConfigurableAgentExecutionEnv(config);
             await agentModel.updateConfig(agentId, config as Record<string, unknown>);
             updatedParts.push(`config: ${Object.keys(config).join(', ')}`);
           }

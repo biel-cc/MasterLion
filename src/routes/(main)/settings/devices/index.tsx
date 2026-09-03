@@ -5,11 +5,11 @@ import { MonitorUpIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { UserEnvironment } from '@/features/DeviceWorkspaces';
 import SettingHeader from '@/routes/(main)/settings/features/SettingHeader';
 
 import ConnectDeviceModal from './features/ConnectDeviceModal';
 import DeviceList from './features/DeviceList';
-import UserEnvironment from './features/UserEnvironment';
 
 const Page = memo(() => {
   const { t } = useTranslation('setting');
