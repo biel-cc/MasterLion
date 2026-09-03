@@ -100,7 +100,10 @@ describe('useEffectiveWorkspace', () => {
 
   it('returns bound with the persisted workspace root as cwd', () => {
     mocks.activeTopicId = 'topic-1';
-    mocks.topic = { id: 'topic-1', metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') } };
+    mocks.topic = {
+      id: 'topic-1',
+      metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') },
+    };
     useProjectWorkspaceStore.setState({
       workspacesById: {
         'ws-a': { deviceId: 'desktop-1', id: 'ws-a', kind: 'device', rootPath: '/projects/a/' },
@@ -172,7 +175,10 @@ describe('useEffectiveWorkspace', () => {
     mocks.currentDeviceId = undefined;
     mocks.devices = [{ defaultCwd: null, deviceId: 'desktop-1', online: false }];
     mocks.activeTopicId = 'topic-1';
-    mocks.topic = { id: 'topic-1', metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') } };
+    mocks.topic = {
+      id: 'topic-1',
+      metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') },
+    };
     useProjectWorkspaceStore.setState({
       workspacesById: {
         'ws-a': { deviceId: 'desktop-1', id: 'ws-a', kind: 'device', rootPath: '/projects/a' },
@@ -248,7 +254,10 @@ describe('useEffectiveWorkspace', () => {
 
   it('composes topic grants as access roots without changing the primary cwd', () => {
     mocks.activeTopicId = 'topic-1';
-    mocks.topic = { id: 'topic-1', metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') } };
+    mocks.topic = {
+      id: 'topic-1',
+      metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') },
+    };
     useProjectWorkspaceStore.setState({
       grantsByTopicDevice: {
         'topic-1::desktop-1': [
@@ -299,7 +308,10 @@ describe('useEffectiveWorkingDirectory', () => {
 
   it('returns the bound cwd', () => {
     mocks.activeTopicId = 'topic-1';
-    mocks.topic = { id: 'topic-1', metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') } };
+    mocks.topic = {
+      id: 'topic-1',
+      metadata: { executionSnapshot: boundSnapshot('ws-a', 'device') },
+    };
     useProjectWorkspaceStore.setState({
       workspacesById: {
         'ws-a': { deviceId: 'desktop-1', id: 'ws-a', kind: 'device', rootPath: '/projects/a' },

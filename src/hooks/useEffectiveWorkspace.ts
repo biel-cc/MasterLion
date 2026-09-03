@@ -196,7 +196,8 @@ export const useEffectiveWorkspace = (
 
     // First pass identifies the device so the right topic grants are composed.
     const preliminary = resolveExecutionContext(baseInput);
-    const grantDeviceId = preliminary.plan.kind === 'device' ? preliminary.plan.deviceId : undefined;
+    const grantDeviceId =
+      preliminary.plan.kind === 'device' ? preliminary.plan.deviceId : undefined;
     const grants =
       resolvedTopicId && grantDeviceId
         ? (grantsByTopicDevice[buildTopicDeviceKey(resolvedTopicId, grantDeviceId)] ?? [])

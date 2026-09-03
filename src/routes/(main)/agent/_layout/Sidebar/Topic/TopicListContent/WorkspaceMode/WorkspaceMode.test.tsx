@@ -7,9 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
+import WorkspaceMode from './index';
 import RecentSection from './RecentSection';
 import WorkspaceGroupItem from './WorkspaceGroupItem';
-import WorkspaceMode from './index';
 
 const mocks = vi.hoisted(() => ({
   navigation: {
@@ -26,7 +26,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@lobechat/const', () => ({ isDesktop: true }));
 vi.mock('@lobehub/ui', () => ({
-  Accordion: ({ children }: { children?: ReactNode }) => <div data-testid="accordion">{children}</div>,
+  Accordion: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="accordion">{children}</div>
+  ),
   AccordionItem: ({
     action,
     children,
@@ -208,13 +210,15 @@ describe('WorkspaceMode sidebar', () => {
   it('workspace group "+" only writes a draft intent and opens a draft', () => {
     render(
       <WorkspaceGroupItem
-        activeTopicId="t-1"
         expanded
+        activeTopicId="t-1"
         group={{ topics: [topic('bound')], workspace, workspaceId: 'ws-app' }}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addTopicInWorkspace' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addTopicInWorkspace' }),
+    );
 
     const key = buildDraftConversationKey({ agentId: 'agent-1' });
     expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({

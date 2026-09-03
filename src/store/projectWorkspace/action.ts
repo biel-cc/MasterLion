@@ -143,9 +143,7 @@ export class ProjectWorkspaceActionImpl {
     this.#set({ topicStatesById }, false, 'setTopicState');
   };
 
-  useFetchTopicState = (
-    topicId?: string | null,
-  ): SWRResponse<TopicWorkspaceState | undefined> =>
+  useFetchTopicState = (topicId?: string | null): SWRResponse<TopicWorkspaceState | undefined> =>
     useClientDataSWR<TopicWorkspaceState | undefined>(
       topicId && this.#get().seamAvailable ? projectWorkspaceSwrKeys.topicState(topicId) : null,
       async () => {

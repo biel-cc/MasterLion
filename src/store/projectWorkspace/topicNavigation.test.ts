@@ -18,10 +18,7 @@ const topic = (id: string, over: Partial<ChatTopic> = {}): ChatTopic => ({
   ...over,
 });
 
-const workspace = (
-  id: string,
-  over: Partial<ProjectWorkspaceItem> = {},
-): ProjectWorkspaceItem => ({
+const workspace = (id: string, over: Partial<ProjectWorkspaceItem> = {}): ProjectWorkspaceItem => ({
   deviceId: 'device-1',
   id,
   kind: 'device',
@@ -45,7 +42,11 @@ describe('buildWorkspaceTopicNavigation', () => {
   const workspacesById = {
     'ws-a': workspace('ws-a'),
     'ws-b': workspace('ws-b'),
-    'ws-sandbox': workspace('ws-sandbox', { deviceId: undefined, kind: 'sandbox', rootPath: '/workspace' }),
+    'ws-sandbox': workspace('ws-sandbox', {
+      deviceId: undefined,
+      kind: 'sandbox',
+      rootPath: '/workspace',
+    }),
     'ws-scratch': workspace('ws-scratch', { kind: 'scratch', rootPath: '/tmp/scratch/t' }),
   };
 
@@ -78,9 +79,9 @@ describe('buildWorkspaceTopicNavigation', () => {
     );
 
     expect(navigation.workspaceGroups.map((group) => group.workspaceId)).toEqual(['ws-b', 'ws-a']);
-    expect(navigation.workspaceGroups.every((group) => !group.workspaceId.startsWith('project:'))).toBe(
-      true,
-    );
+    expect(
+      navigation.workspaceGroups.every((group) => !group.workspaceId.startsWith('project:')),
+    ).toBe(true);
     expect(navigation.workspaceGroups[1].topics.map((item) => item.id)).toEqual(['a2', 'a1']);
     expect(navigation.recent).toEqual([]);
   });
@@ -91,7 +92,10 @@ describe('buildWorkspaceTopicNavigation', () => {
       topic('plain'),
       topic('scratch', { metadata: snapshotMeta('ws-scratch', 'scratch') as any }),
     ];
-    const navigation = buildWorkspaceTopicNavigation(topics, { topicStatesById: {}, workspacesById });
+    const navigation = buildWorkspaceTopicNavigation(topics, {
+      topicStatesById: {},
+      workspacesById,
+    });
 
     const grouped = new Set(navigation.workspaceGroups.flatMap((g) => g.topics.map((t) => t.id)));
     const recent = new Set(navigation.recent.map((entry) => entry.topic.id));
@@ -122,7 +126,12 @@ describe('buildWorkspaceTopicNavigation', () => {
             workspaceId: 'ws-b',
             workspaceKind: 'device',
           },
-          workspace: { deviceId: 'device-1', id: 'ws-b', kind: 'device', rootPath: '/projects/ws-b' },
+          workspace: {
+            deviceId: 'device-1',
+            id: 'ws-b',
+            kind: 'device',
+            rootPath: '/projects/ws-b',
+          },
         },
       },
       workspacesById,
@@ -153,7 +162,10 @@ describe('buildWorkspaceTopicNavigation', () => {
     });
 
     expect(navigation.workspaceGroups.map((group) => group.workspaceId)).toEqual(['ws-a']);
-    expect(navigation.recent.map((entry) => entry.topic.id).sort()).toEqual(['nodevice', 'unknown']);
+    expect(navigation.recent.map((entry) => entry.topic.id).sort()).toEqual([
+      'nodevice',
+      'unknown',
+    ]);
   });
 
   it('sorts recent by updatedAt with favorites pinned first', () => {

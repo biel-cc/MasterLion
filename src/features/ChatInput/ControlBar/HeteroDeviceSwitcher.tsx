@@ -308,247 +308,249 @@ interface HeteroDeviceSwitcherProps {
   onSelectTarget?: (target: DeviceExecutionTarget, deviceId?: string) => Promise<void> | void;
 }
 
-const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({
-  agentId,
-  boundDeviceId: conversationDeviceId,
-  executionTarget: conversationTarget,
-  onSelectTarget,
-}) => {
-  const { t } = useTranslation(['chat', 'common']);
-  const [open, setOpen] = useState(false);
-  const desktopAppDisabled = isProductFeatureDisabled('desktopApp');
+const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
+  ({
+    agentId,
+    boundDeviceId: conversationDeviceId,
+    executionTarget: conversationTarget,
+    onSelectTarget,
+  }) => {
+    const { t } = useTranslation(['chat', 'common']);
+    const [open, setOpen] = useState(false);
+    const desktopAppDisabled = isProductFeatureDisabled('desktopApp');
 
-  const agencyConfig = useAgentStore(agentByIdSelectors.getAgencyConfigById(agentId));
-  const updateAgentConfigById = useAgentStore((s) => s.updateAgentConfigById);
+    const agencyConfig = useAgentStore(agentByIdSelectors.getAgencyConfigById(agentId));
+    const updateAgentConfigById = useAgentStore((s) => s.updateAgentConfigById);
 
-  const heteroType = agencyConfig?.heterogeneousProvider?.type;
-  const boundDeviceId = onSelectTarget ? conversationDeviceId : agencyConfig?.boundDeviceId;
+    const heteroType = agencyConfig?.heterogeneousProvider?.type;
+    const boundDeviceId = onSelectTarget ? conversationDeviceId : agencyConfig?.boundDeviceId;
 
-  // Heterogeneous agents (Claude Code / Codex — remote types already early-return
-  // below) bring their own toolchain and must execute somewhere, so `'none'`
-  // (plain chat, no execution environment) isn't a valid target for them: hide
-  // the option and never fall back to / honour a stale stored `'none'`.
-  const isHetero = !!heteroType;
+    // Heterogeneous agents (Claude Code / Codex — remote types already early-return
+    // below) bring their own toolchain and must execute somewhere, so `'none'`
+    // (plain chat, no execution environment) isn't a valid target for them: hide
+    // the option and never fall back to / honour a stale stored `'none'`.
+    const isHetero = !!heteroType;
 
-  const { data: devices, isLoading } = lambdaQuery.device.listDevices.useQuery(undefined, {
-    staleTime: 30_000,
-  });
+    const { data: devices, isLoading } = lambdaQuery.device.listDevices.useQuery(undefined, {
+      staleTime: 30_000,
+    });
 
-  // The current machine's own gateway deviceId (desktop only), used only to
-  // badge the matching device row. The dedicated local "This device" option
-  // remains visible in desktop mode.
-  useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
-  const gatewayDeviceInfo = useElectronStore((s) => s.gatewayDeviceInfo);
-  const currentDeviceId = isDesktop ? gatewayDeviceInfo?.deviceId : undefined;
+    // The current machine's own gateway deviceId (desktop only), used only to
+    // badge the matching device row. The dedicated local "This device" option
+    // remains visible in desktop mode.
+    useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
+    const gatewayDeviceInfo = useElectronStore((s) => s.gatewayDeviceInfo);
+    const currentDeviceId = isDesktop ? gatewayDeviceInfo?.deviceId : undefined;
 
-  // Effective target: shared with server dispatch. In particular, a hetero
-  // desktop "local" selection that carries this desktop's boundDeviceId becomes
-  // a device target when the same agent is opened from web.
-  const executionTarget =
-    (onSelectTarget ? conversationTarget : undefined) ??
-    resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
-  const isCloudSandboxEnabled = useServerConfigStore(serverConfigSelectors.enableCloudSandbox);
+    // Effective target: shared with server dispatch. In particular, a hetero
+    // desktop "local" selection that carries this desktop's boundDeviceId becomes
+    // a device target when the same agent is opened from web.
+    const executionTarget =
+      (onSelectTarget ? conversationTarget : undefined) ??
+      resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
+    const isCloudSandboxEnabled = useServerConfigStore(serverConfigSelectors.enableCloudSandbox);
 
-  const handleSelect = useCallback(
-    async (target: DeviceExecutionTarget, deviceId?: string) => {
-      setOpen(false);
+    const handleSelect = useCallback(
+      async (target: DeviceExecutionTarget, deviceId?: string) => {
+        setOpen(false);
 
-      // `executionTarget` is the single source of truth — the server tool
-      // gate + client `getRuntimeModeById` derive `runtimeMode` from it.
-      let nextBoundDeviceId = target === 'device' ? deviceId : boundDeviceId;
-      if (target === 'local') {
-        nextBoundDeviceId = currentDeviceId;
-        if (!nextBoundDeviceId) {
-          try {
-            nextBoundDeviceId = (await gatewayConnectionService.getDeviceInfo())?.deviceId;
-          } catch {
-            nextBoundDeviceId = undefined;
+        // `executionTarget` is the single source of truth — the server tool
+        // gate + client `getRuntimeModeById` derive `runtimeMode` from it.
+        let nextBoundDeviceId = target === 'device' ? deviceId : boundDeviceId;
+        if (target === 'local') {
+          nextBoundDeviceId = currentDeviceId;
+          if (!nextBoundDeviceId) {
+            try {
+              nextBoundDeviceId = (await gatewayConnectionService.getDeviceInfo())?.deviceId;
+            } catch {
+              nextBoundDeviceId = undefined;
+            }
           }
+          if (isHetero && !nextBoundDeviceId) return;
         }
-        if (isHetero && !nextBoundDeviceId) return;
-      }
 
-      // Conversation scope: the draft intent / topic snapshot owns the choice.
-      if (onSelectTarget) {
-        await onSelectTarget(target, nextBoundDeviceId);
-        return;
-      }
+        // Conversation scope: the draft intent / topic snapshot owns the choice.
+        if (onSelectTarget) {
+          await onSelectTarget(target, nextBoundDeviceId);
+          return;
+        }
 
-      await updateAgentConfigById(agentId, {
-        agencyConfig: {
-          ...agencyConfig,
-          executionTarget: target,
-          ...(nextBoundDeviceId ? { boundDeviceId: nextBoundDeviceId } : {}),
-        },
-      });
-    },
-    [
-      agentId,
-      agencyConfig,
-      boundDeviceId,
-      currentDeviceId,
-      isHetero,
-      onSelectTarget,
-      updateAgentConfigById,
-    ],
-  );
+        await updateAgentConfigById(agentId, {
+          agencyConfig: {
+            ...agencyConfig,
+            executionTarget: target,
+            ...(nextBoundDeviceId ? { boundDeviceId: nextBoundDeviceId } : {}),
+          },
+        });
+      },
+      [
+        agentId,
+        agencyConfig,
+        boundDeviceId,
+        currentDeviceId,
+        isHetero,
+        onSelectTarget,
+        updateAgentConfigById,
+      ],
+    );
 
-  // Don't render for remote hetero agents — they use RemoteAgentConfigCard in profile.
-  if (heteroType && isRemoteHeterogeneousType(heteroType)) return null;
+    // Don't render for remote hetero agents — they use RemoteAgentConfigCard in profile.
+    if (heteroType && isRemoteHeterogeneousType(heteroType)) return null;
 
-  const boundDevice =
-    executionTarget === 'device' ? devices?.find((d) => d.deviceId === boundDeviceId) : undefined;
-  const hasNoDevices = !devices || devices.length === 0;
-  // On web with no device, the prominent download card below replaces the small
-  // header link — avoid showing the same CTA twice.
-  const showWebDownloadCard = !isDesktop && hasNoDevices && !isLoading;
+    const boundDevice =
+      executionTarget === 'device' ? devices?.find((d) => d.deviceId === boundDeviceId) : undefined;
+    const hasNoDevices = !devices || devices.length === 0;
+    // On web with no device, the prominent download card below replaces the small
+    // header link — avoid showing the same CTA twice.
+    const showWebDownloadCard = !isDesktop && hasNoDevices && !isLoading;
 
-  // Compute chip
-  let chipIcon: ReactNode = <Icon icon={BoxIcon} size={14} />;
-  let chipLabel = t('heteroAgent.executionTarget.sandbox');
-  if (executionTarget === 'none') {
-    chipIcon = <Icon icon={MonitorOffIcon} size={14} />;
-    chipLabel = t('heteroAgent.executionTarget.none');
-  } else if (executionTarget === 'local') {
-    chipIcon = <Icon icon={LaptopIcon} size={14} />;
-    chipLabel = t('heteroAgent.executionTarget.local');
-  } else if (executionTarget === 'device') {
-    chipIcon = getDeviceIcon(boundDevice?.platform);
-    chipLabel =
-      boundDevice?.friendlyName ??
-      boundDevice?.hostname ??
-      t('heteroAgent.executionTarget.unknownDevice');
-  }
+    // Compute chip
+    let chipIcon: ReactNode = <Icon icon={BoxIcon} size={14} />;
+    let chipLabel = t('heteroAgent.executionTarget.sandbox');
+    if (executionTarget === 'none') {
+      chipIcon = <Icon icon={MonitorOffIcon} size={14} />;
+      chipLabel = t('heteroAgent.executionTarget.none');
+    } else if (executionTarget === 'local') {
+      chipIcon = <Icon icon={LaptopIcon} size={14} />;
+      chipLabel = t('heteroAgent.executionTarget.local');
+    } else if (executionTarget === 'device') {
+      chipIcon = getDeviceIcon(boundDevice?.platform);
+      chipLabel =
+        boundDevice?.friendlyName ??
+        boundDevice?.hostname ??
+        t('heteroAgent.executionTarget.unknownDevice');
+    }
 
-  const isActive = (target: DeviceExecutionTarget, deviceId?: string) => {
-    if (target === 'device') return executionTarget === 'device' && boundDeviceId === deviceId;
-    return executionTarget === target;
-  };
+    const isActive = (target: DeviceExecutionTarget, deviceId?: string) => {
+      if (target === 'device') return executionTarget === 'device' && boundDeviceId === deviceId;
+      return executionTarget === target;
+    };
 
-  const renderDeviceRow = (d: NonNullable<typeof devices>[number]) => (
-    <OptionRow
-      active={isActive('device', d.deviceId)}
-      disabled={!d.online}
-      icon={getDeviceIcon(d.platform)}
-      key={d.deviceId}
-      label={d.friendlyName || d.hostname || d.deviceId}
-      tag={d.deviceId === currentDeviceId ? t('heteroAgent.executionTarget.local') : undefined}
-      desc={
-        <>
-          <span className={d.online ? styles.dotOnline : styles.dotOffline} />
-          <span>
-            {d.online
-              ? t('heteroAgent.executionTarget.online')
-              : t('heteroAgent.executionTarget.offline')}
-          </span>
-        </>
-      }
-      onClick={() => void handleSelect('device', d.deviceId)}
-    />
-  );
-
-  const content = (
-    <Flexbox gap={6} style={{ maxWidth: 320, minWidth: 280 }}>
-      <div className={styles.header}>
-        <Flexbox horizontal align={'center'} gap={4}>
-          <span className={styles.headerTitle}>{t('heteroAgent.executionTarget.title')}</span>
-          <Tooltip title={t('heteroAgent.executionTarget.infoTooltip')}>
-            <span className={styles.headerInfo}>
-              <Icon icon={InfoIcon} size={12} />
+    const renderDeviceRow = (d: NonNullable<typeof devices>[number]) => (
+      <OptionRow
+        active={isActive('device', d.deviceId)}
+        disabled={!d.online}
+        icon={getDeviceIcon(d.platform)}
+        key={d.deviceId}
+        label={d.friendlyName || d.hostname || d.deviceId}
+        tag={d.deviceId === currentDeviceId ? t('heteroAgent.executionTarget.local') : undefined}
+        desc={
+          <>
+            <span className={d.online ? styles.dotOnline : styles.dotOffline} />
+            <span>
+              {d.online
+                ? t('heteroAgent.executionTarget.online')
+                : t('heteroAgent.executionTarget.offline')}
             </span>
-          </Tooltip>
-        </Flexbox>
-        {isDesktop || showWebDownloadCard ? null : (
-          <Tooltip title={t('productFeatures.disabled', { ns: 'common' })}>
-            <span className={cx(styles.headerLink, desktopAppDisabled && styles.optionDisabled)}>
-              <Icon icon={MonitorDownIcon} size={11} />
-              <span>
+          </>
+        }
+        onClick={() => void handleSelect('device', d.deviceId)}
+      />
+    );
+
+    const content = (
+      <Flexbox gap={6} style={{ maxWidth: 320, minWidth: 280 }}>
+        <div className={styles.header}>
+          <Flexbox horizontal align={'center'} gap={4}>
+            <span className={styles.headerTitle}>{t('heteroAgent.executionTarget.title')}</span>
+            <Tooltip title={t('heteroAgent.executionTarget.infoTooltip')}>
+              <span className={styles.headerInfo}>
+                <Icon icon={InfoIcon} size={12} />
+              </span>
+            </Tooltip>
+          </Flexbox>
+          {isDesktop || showWebDownloadCard ? null : (
+            <Tooltip title={t('productFeatures.disabled', { ns: 'common' })}>
+              <span className={cx(styles.headerLink, desktopAppDisabled && styles.optionDisabled)}>
+                <Icon icon={MonitorDownIcon} size={11} />
+                <span>
+                  {desktopAppDisabled
+                    ? t('productFeatures.disabled', { ns: 'common' })
+                    : t('heteroAgent.executionTarget.downloadDesktop')}
+                </span>
+              </span>
+            </Tooltip>
+          )}
+        </div>
+        {isHetero ? null : (
+          <OptionRow
+            active={isActive('none')}
+            desc={t('heteroAgent.executionTarget.noneDesc')}
+            icon={<Icon icon={MonitorOffIcon} size={14} />}
+            label={t('heteroAgent.executionTarget.none')}
+            onClick={() => void handleSelect('none')}
+          />
+        )}
+        {isDesktop ? (
+          <OptionRow
+            active={isActive('local')}
+            desc={t('heteroAgent.executionTarget.localDesc')}
+            icon={<Icon icon={LaptopIcon} size={14} />}
+            label={t('heteroAgent.executionTarget.local')}
+            onClick={() => void handleSelect('local')}
+          />
+        ) : null}
+        <OptionRow
+          active={isActive('sandbox')}
+          disabled={!isCloudSandboxEnabled}
+          icon={<Icon icon={BoxIcon} size={14} />}
+          label={t('heteroAgent.executionTarget.sandbox')}
+          desc={
+            isCloudSandboxEnabled
+              ? t('heteroAgent.executionTarget.sandboxDesc')
+              : t('heteroAgent.executionTarget.sandboxUnavailableDesc', {
+                  defaultValue: 'Cloud sandbox is not configured on the server',
+                })
+          }
+          onClick={() => void handleSelect('sandbox')}
+        />
+        {(devices ?? []).map((d) => renderDeviceRow(d))}
+        {hasNoDevices && isLoading ? (
+          <div className={styles.empty}>{t('heteroAgent.executionTarget.loading')}</div>
+        ) : null}
+        {showWebDownloadCard ? (
+          <div className={cx(styles.downloadCard, desktopAppDisabled && styles.optionDisabled)}>
+            <div className={styles.optionIcon}>
+              <Icon icon={MonitorDownIcon} size={14} />
+            </div>
+            <div className={styles.optionMeta}>
+              <div className={styles.optionTitle}>
                 {desktopAppDisabled
                   ? t('productFeatures.disabled', { ns: 'common' })
-                  : t('heteroAgent.executionTarget.downloadDesktop')}
-              </span>
-            </span>
-          </Tooltip>
-        )}
-      </div>
-      {isHetero ? null : (
-        <OptionRow
-          active={isActive('none')}
-          desc={t('heteroAgent.executionTarget.noneDesc')}
-          icon={<Icon icon={MonitorOffIcon} size={14} />}
-          label={t('heteroAgent.executionTarget.none')}
-          onClick={() => void handleSelect('none')}
-        />
-      )}
-      {isDesktop ? (
-        <OptionRow
-          active={isActive('local')}
-          desc={t('heteroAgent.executionTarget.localDesc')}
-          icon={<Icon icon={LaptopIcon} size={14} />}
-          label={t('heteroAgent.executionTarget.local')}
-          onClick={() => void handleSelect('local')}
-        />
-      ) : null}
-      <OptionRow
-        active={isActive('sandbox')}
-        disabled={!isCloudSandboxEnabled}
-        icon={<Icon icon={BoxIcon} size={14} />}
-        label={t('heteroAgent.executionTarget.sandbox')}
-        desc={
-          isCloudSandboxEnabled
-            ? t('heteroAgent.executionTarget.sandboxDesc')
-            : t('heteroAgent.executionTarget.sandboxUnavailableDesc', {
-                defaultValue: 'Cloud sandbox is not configured on the server',
-              })
-        }
-        onClick={() => void handleSelect('sandbox')}
-      />
-      {(devices ?? []).map((d) => renderDeviceRow(d))}
-      {hasNoDevices && isLoading ? (
-        <div className={styles.empty}>{t('heteroAgent.executionTarget.loading')}</div>
-      ) : null}
-      {showWebDownloadCard ? (
-        <div className={cx(styles.downloadCard, desktopAppDisabled && styles.optionDisabled)}>
-          <div className={styles.optionIcon}>
-            <Icon icon={MonitorDownIcon} size={14} />
-          </div>
-          <div className={styles.optionMeta}>
-            <div className={styles.optionTitle}>
-              {desktopAppDisabled
-                ? t('productFeatures.disabled', { ns: 'common' })
-                : t('heteroAgent.executionTarget.downloadDesktopTitle')}
-            </div>
-            <div className={styles.desc}>
-              {desktopAppDisabled
-                ? t('productFeatures.disabled', { ns: 'common' })
-                : t('heteroAgent.executionTarget.downloadDesktopDesc')}
+                  : t('heteroAgent.executionTarget.downloadDesktopTitle')}
+              </div>
+              <div className={styles.desc}>
+                {desktopAppDisabled
+                  ? t('productFeatures.disabled', { ns: 'common' })
+                  : t('heteroAgent.executionTarget.downloadDesktopDesc')}
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
-      {hasNoDevices && !isLoading && isDesktop ? (
-        <div className={styles.empty}>{t('heteroAgent.executionTarget.noDevices')}</div>
-      ) : null}
-    </Flexbox>
-  );
+        ) : null}
+        {hasNoDevices && !isLoading && isDesktop ? (
+          <div className={styles.empty}>{t('heteroAgent.executionTarget.noDevices')}</div>
+        ) : null}
+      </Flexbox>
+    );
 
-  return (
-    <Popover
-      content={content}
-      open={open}
-      placement="topLeft"
-      styles={{ content: { padding: 4 } }}
-      trigger="click"
-      onOpenChange={setOpen}
-    >
-      <div className={styles.button}>
-        {chipIcon}
-        <span className={styles.buttonLabel}>{chipLabel}</span>
-        <Icon icon={ChevronDownIcon} size={12} />
-      </div>
-    </Popover>
-  );
-});
+    return (
+      <Popover
+        content={content}
+        open={open}
+        placement="topLeft"
+        styles={{ content: { padding: 4 } }}
+        trigger="click"
+        onOpenChange={setOpen}
+      >
+        <div className={styles.button}>
+          {chipIcon}
+          <span className={styles.buttonLabel}>{chipLabel}</span>
+          <Icon icon={ChevronDownIcon} size={12} />
+        </div>
+      </Popover>
+    );
+  },
+);
 
 HeteroDeviceSwitcher.displayName = 'HeteroDeviceSwitcher';
 

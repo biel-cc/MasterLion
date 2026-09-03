@@ -56,14 +56,14 @@ const RecentSection = memo<RecentSectionProps>(({ entries, activeTopicId, active
               id={topic.id}
               key={topic.id}
               metadata={topic.metadata}
+              status={topic.status}
+              threadId={activeThreadId}
+              title={topic.title}
               scratchWorkspace={
                 placement.reason === 'scratch' && workspace?.rootPath
                   ? { rootPath: workspace.rootPath }
                   : undefined
               }
-              status={topic.status}
-              threadId={activeThreadId}
-              title={topic.title}
             />
           ))}
         </Flexbox>

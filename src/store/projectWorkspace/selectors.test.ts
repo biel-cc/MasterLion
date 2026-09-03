@@ -35,9 +35,11 @@ const state: ProjectWorkspaceState = {
 
 describe('projectWorkspaceSelectors', () => {
   it('lists only formal device workspaces for a device', () => {
-    expect(projectWorkspaceSelectors.getDeviceWorkspaces('device-1')(state).map((w) => w.id)).toEqual([
-      'ws-a',
-    ]);
+    expect(
+      projectWorkspaceSelectors
+        .getDeviceWorkspaces('device-1')(state)
+        .map((w) => w.id),
+    ).toEqual(['ws-a']);
     expect(projectWorkspaceSelectors.getDeviceWorkspaces(undefined)(state)).toEqual([]);
   });
 
@@ -52,7 +54,9 @@ describe('projectWorkspaceSelectors', () => {
       'ws-a',
     );
     expect(projectWorkspaceSelectors.getTopicState(null)(state)).toBeUndefined();
-    expect(projectWorkspaceSelectors.getDraftIntent('draft::agent-a')(state)?.workspaceId).toBe('ws-a');
+    expect(projectWorkspaceSelectors.getDraftIntent('draft::agent-a')(state)?.workspaceId).toBe(
+      'ws-a',
+    );
     expect(projectWorkspaceSelectors.getTopicGrants('topic-1', 'device-1')(state)).toHaveLength(1);
     expect(projectWorkspaceSelectors.getTopicGrants('topic-1', 'device-2')(state)).toEqual([]);
   });

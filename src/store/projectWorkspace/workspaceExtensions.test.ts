@@ -1,5 +1,13 @@
+/**
+ * @vitest-environment happy-dom
+ */
+import { render, screen } from '@testing-library/react';
+import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import enChat from '../../../locales/en-US/chat.json';
+import zhChat from '../../../locales/zh-CN/chat.json';
+import WorkspaceExtensions from '../../routes/(main)/settings/devices/features/WorkspaceExtensions';
 import {
   listWorkspaceExtensions,
   registerWorkspaceExtension,
@@ -38,5 +46,28 @@ describe('workspace extension registry', () => {
         workspace: { id: 'w', kind: 'device', rootPath: '/p' },
       }),
     ).toBe('second');
+  });
+
+  it('mounts registered extension renderers without importing their owning features', () => {
+    registerWorkspaceExtension({
+      key: 'environment',
+      render: ({ workspace }) => createElement('span', null, `env:${workspace.id}`),
+    });
+
+    render(
+      createElement(WorkspaceExtensions, {
+        deviceId: 'device-1',
+        workspace: { deviceId: 'device-1', id: 'workspace-1', kind: 'device', rootPath: '/app' },
+      }),
+    );
+
+    expect(screen.getByTestId('workspace-extensions')).toHaveTextContent('env:workspace-1');
+  });
+
+  it('ships paired default-cwd recommendation copy without changing canonical defaults', () => {
+    expect(enChat['workspaceRuntime.settings.defaultCwdRecommendation']).toContain(
+      'does not automatically bind',
+    );
+    expect(zhChat['workspaceRuntime.settings.defaultCwdRecommendation']).toContain('不会自动绑定');
   });
 });

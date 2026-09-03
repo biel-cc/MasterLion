@@ -24,10 +24,16 @@ export interface WorkspaceDraftIntent {
  * `accessRoots`, and a rejection is recorded so the panel can stay consistent.
  */
 export interface PathConsentDecision {
+  actualCwd: string;
   at: number;
+  deviceId: string;
   modes: PathAccessMode[];
+  operationId: string;
+  primaryCwd: string;
+  requestedPath: string;
   rootPath: string;
-  scope: 'operation' | 'reject';
+  scope: 'operation' | 'reject' | 'topic';
+  topicId: string;
 }
 
 export type ProjectWorkspaceErrorCode =
@@ -53,7 +59,10 @@ export interface ProjectWorkspaceState {
   grantsByTopicDevice: Record<string, WorkspaceAccessGrant[]>;
   isWorkspacesInit: boolean;
   lastError?: ProjectWorkspaceUiError;
-  /** Keyed by tool message id. Operation consent only; topic grants live in `grantsByTopicDevice`. */
+  /**
+   * Keyed by tool message id. These are UI decisions awaiting device proof and
+   * operation resume; acknowledged topic grants alone live in `grantsByTopicDevice`.
+   */
   operationConsentByMessage: Record<string, PathConsentDecision>;
   /** Incremented when a consumer asks the workspace picker to take focus. */
   pickerFocusNonce: number;

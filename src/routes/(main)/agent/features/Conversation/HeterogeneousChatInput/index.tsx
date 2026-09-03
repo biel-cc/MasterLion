@@ -79,7 +79,7 @@ const HeterogeneousChatInput = memo(() => {
   // applies this gate.
   const effective = useEffectiveWorkspace(agentId);
   const focusWorkspacePicker = useProjectWorkspaceStore((s) => s.focusWorkspacePicker);
-  const workspaceBlocked = effective.state === 'unbound' || effective.state === 'unrouted';
+  const workspaceBlocked = effective.state !== 'bound';
   const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
 
   const goToAgentProfile = () => {
@@ -159,6 +159,7 @@ const HeterogeneousChatInput = memo(() => {
   const renderWorkspaceGuard = () => {
     if (!workspaceBlocked || deviceBlocked) return null;
     const isUnrouted = effective.state === 'unrouted';
+    const isScratch = effective.state === 'scratch';
     return (
       <WideScreenContainer>
         <Flexbox align={'center'} paddingBlock={'0 8px'} paddingInline={12}>
@@ -167,11 +168,7 @@ const HeterogeneousChatInput = memo(() => {
             style={{ maxWidth: 880, width: '100%' }}
             type={'warning'}
             action={
-              <Button
-                size={'small'}
-                type={'primary'}
-                onClick={() => focusWorkspacePicker()}
-              >
+              <Button size={'small'} type={'primary'} onClick={() => focusWorkspacePicker()}>
                 {tw('workspaceRuntime.hetero.gate.action')}
               </Button>
             }
@@ -180,12 +177,16 @@ const HeterogeneousChatInput = memo(() => {
                 ? tw(
                     `workspaceRuntime.hetero.gate.unrouted.${effective.unroutedReason ?? 'no-bound-device'}`,
                   )
-                : tw('workspaceRuntime.hetero.gate.desc')
+                : isScratch
+                  ? tw('workspaceRuntime.hetero.gate.scratchDesc')
+                  : tw('workspaceRuntime.hetero.gate.desc')
             }
             title={
               isUnrouted
                 ? tw('workspaceRuntime.hetero.gate.unroutedTitle')
-                : tw('workspaceRuntime.hetero.gate.title')
+                : isScratch
+                  ? tw('workspaceRuntime.hetero.gate.scratchTitle')
+                  : tw('workspaceRuntime.hetero.gate.title')
             }
           />
         </Flexbox>
@@ -205,14 +206,15 @@ const HeterogeneousChatInput = memo(() => {
       {renderWorkspaceGuard()}
       <ChatInput
         controlBarSlot={<HeteroControlBar />}
+        disableSend={inputDisabled}
         leftActions={leftActions}
         rightActions={rightActions}
+        skipScrollMarginWithList={!hasGuard}
         sendButtonProps={{
           disabled: inputDisabled,
           onDisabledSend: workspaceBlocked ? () => focusWorkspacePicker() : undefined,
           shape: 'round',
         }}
-        skipScrollMarginWithList={!hasGuard}
         onEditorReady={(instance) => {
           // Sync to global ChatStore for compatibility with other features
           useChatStore.setState({ mainInputEditor: instance });

@@ -84,7 +84,14 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
         { target, targetDeviceId: workspace?.deviceId, workspaceId },
       );
       useChatStore.getState().switchTopic(null, { skipRefreshMessage: true });
-    }, [activeAgentId, activeGroupId, currentDeviceId, setDraftWorkspaceIntent, workspace, workspaceId]);
+    }, [
+      activeAgentId,
+      activeGroupId,
+      currentDeviceId,
+      setDraftWorkspaceIntent,
+      workspace,
+      workspaceId,
+    ]);
 
     const canAddTopic = !!activeAgentId;
 

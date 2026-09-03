@@ -10,7 +10,9 @@ import Body, { ChatSidebarKey } from './Body';
 const taskProps = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 vi.mock('@lobehub/ui', () => ({
-  Accordion: ({ children }: { children?: ReactNode }) => <div data-testid="accordion">{children}</div>,
+  Accordion: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="accordion">{children}</div>
+  ),
   Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 

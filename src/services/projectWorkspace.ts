@@ -119,7 +119,9 @@ export const isWorkspaceAlreadyBoundError = (error: unknown): boolean => {
   if (error instanceof WorkspaceAlreadyBoundError) return true;
   if (!error || typeof error !== 'object') return false;
   const candidate = error as { code?: unknown; message?: unknown };
-  return candidate.code === WORKSPACE_ALREADY_BOUND || candidate.message === WORKSPACE_ALREADY_BOUND;
+  return (
+    candidate.code === WORKSPACE_ALREADY_BOUND || candidate.message === WORKSPACE_ALREADY_BOUND
+  );
 };
 
 export const isProjectWorkspaceSeamUnavailableError = (error: unknown): boolean =>

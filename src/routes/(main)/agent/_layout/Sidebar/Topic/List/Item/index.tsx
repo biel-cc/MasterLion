@@ -278,12 +278,12 @@ const TopicItem = memo<TopicItemProps>(
     const scratchTag = scratchWorkspace ? (
       <Tooltip title={scratchWorkspace.rootPath}>
         <Tag
-          aria-label={tw('workspaceRuntime.sidebar.scratchTooltip', {
-            path: scratchWorkspace.rootPath,
-          })}
           data-testid="topic-scratch-tag"
           size={'small'}
           style={{ color: cssVar.colorTextDescription, flex: 'none', fontSize: 10 }}
+          aria-label={tw('workspaceRuntime.sidebar.scratchTooltip', {
+            path: scratchWorkspace.rootPath,
+          })}
         >
           {tw('workspaceRuntime.sidebar.scratchTag')}
         </Tag>
@@ -346,18 +346,6 @@ const TopicItem = memo<TopicItemProps>(
           disabled={editing}
           extra={<RunningElapsedTime agentId={activeAgentId} topicId={id} />}
           href={href}
-          title={
-            scratchTag ? (
-              <Flexbox horizontal align={'center'} gap={6} style={{ minWidth: 0 }}>
-                <Text ellipsis style={{ color: 'inherit', fontSize: 'inherit', minWidth: 0 }}>
-                  {titleNode}
-                </Text>
-                {scratchTag}
-              </Flexbox>
-            ) : (
-              titleNode
-            )
-          }
           titleColor={cssVar.colorText}
           icon={(() => {
             if (isWaitingForHuman) {
@@ -409,6 +397,18 @@ const TopicItem = memo<TopicItemProps>(
               />
             );
           })()}
+          title={
+            scratchTag ? (
+              <Flexbox horizontal align={'center'} gap={6} style={{ minWidth: 0 }}>
+                <Text ellipsis style={{ color: 'inherit', fontSize: 'inherit', minWidth: 0 }}>
+                  {titleNode}
+                </Text>
+                {scratchTag}
+              </Flexbox>
+            ) : (
+              titleNode
+            )
+          }
           onClick={handleClick}
           onDoubleClick={() => void handleDoubleClick()}
         />

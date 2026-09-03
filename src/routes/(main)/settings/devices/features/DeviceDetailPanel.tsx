@@ -15,6 +15,7 @@ import { electronSystemService } from '@/services/electron/system';
 import { nextWorkingDirs } from '@/store/device';
 
 import { getDeviceIcon } from './getDeviceIcon';
+import WorkspacesSection from './WorkspacesSection';
 
 const styles = createStaticStyles(({ css }) => ({
   container: css`
@@ -60,6 +61,8 @@ interface DeviceDetailPanelProps {
 
 const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onClose }) => {
   const { t } = useTranslation('setting');
+  const { t: tChat } = useTranslation('chat');
+  const tw = tChat as unknown as (key: string) => string;
   const utils = lambdaQuery.useUtils();
 
   const [name, setName] = useState(device.friendlyName ?? '');
@@ -216,7 +219,12 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
             </Button>
           )}
         </Flexbox>
+        <Text fontSize={12} type="secondary">
+          {tw('workspaceRuntime.settings.defaultCwdRecommendation')}
+        </Text>
       </Flexbox>
+
+      <WorkspacesSection deviceId={device.deviceId} />
 
       {/* ─── Recent directories ─── */}
       <Flexbox gap={6}>

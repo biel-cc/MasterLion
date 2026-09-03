@@ -67,7 +67,11 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
       async (target: DeviceExecutionTarget, deviceId?: string) => {
         setTargetError(undefined);
         const targetDeviceId =
-          target === 'device' ? deviceId : target === 'local' ? (deviceId ?? currentDeviceId) : undefined;
+          target === 'device'
+            ? deviceId
+            : target === 'local'
+              ? (deviceId ?? currentDeviceId)
+              : undefined;
         if (effective.isDraft || !effective.topicId) {
           setDraftTargetIntent(effective.draftKey, { target, targetDeviceId });
           return;
@@ -97,7 +101,9 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     // Local machine probes the filesystem for repoType; a remote device's repoType
     // comes from the cached `workingDirs` entry (we can't probe a remote fs here).
     const localRepoType = useRepoType(isLocalDevice ? cwd : undefined);
-    const remoteDirs = useDeviceStore(deviceSelectors.getDeviceWorkingDirs(effective.targetDeviceId));
+    const remoteDirs = useDeviceStore(
+      deviceSelectors.getDeviceWorkingDirs(effective.targetDeviceId),
+    );
     const remoteRepoType = remoteDirs.find((d) => d.path === cwd)?.repoType;
     const repoType = isLocalDevice ? localRepoType : remoteRepoType;
 

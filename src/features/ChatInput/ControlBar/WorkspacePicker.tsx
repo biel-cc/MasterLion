@@ -1,8 +1,7 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
-import { Flexbox, Icon, Tag, Tooltip } from '@lobehub/ui';
-import { Popover } from '@lobehub/ui/base-ui';
+import { Flexbox, Icon, Popover, Tag, Tooltip } from '@lobehub/ui';
 import { createStaticStyles, cssVar, cx } from 'antd-style';
 import {
   ChevronDownIcon,
@@ -205,7 +204,6 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
     useEffect(() => {
       if (pickerFocusNonce === lastFocusNonce.current) return;
       lastFocusNonce.current = pickerFocusNonce;
-      if (mode !== 'select') return;
       triggerRef.current?.focus();
       setInnerOpen(true);
       onOpenChange?.(true);
@@ -215,7 +213,9 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
     const isLocalDevice = isDesktop && !!deviceId && deviceId === currentDeviceId;
 
-    const workspaces = useProjectWorkspaceStore(projectWorkspaceSelectors.getDeviceWorkspaces(deviceId));
+    const workspaces = useProjectWorkspaceStore(
+      projectWorkspaceSelectors.getDeviceWorkspaces(deviceId),
+    );
     const recents = useDeviceStore(deviceSelectors.getDeviceWorkingDirs(deviceId));
     const seamAvailable = useProjectWorkspaceStore(projectWorkspaceSelectors.isSeamAvailable);
 
@@ -253,7 +253,12 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
         });
       }
       for (const entry of recents) {
-        push({ kind: 'recent', label: getDirName(entry.path), path: entry.path, repoType: entry.repoType });
+        push({
+          kind: 'recent',
+          label: getDirName(entry.path),
+          path: entry.path,
+          repoType: entry.repoType,
+        });
       }
       return list;
     }, [effective.recommendation, recents, workspaces]);
@@ -325,7 +330,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
         aria-label={tw('workspaceRuntime.picker.title')}
         data-testid="workspace-picker"
         gap={4}
-        role="listbox"
+        role="dialog"
         style={{ minWidth: 300 }}
       >
         <div className={styles.sectionTitle}>
@@ -360,7 +365,6 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
                         data-testid={`workspace-picker-row-${row.kind}`}
                         disabled={bind.pending}
                         key={row.path}
-                        role="option"
                         type="button"
                         onClick={() => void pick(row)}
                       >
@@ -420,7 +424,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
     const defaultTrigger = (
       <button
         aria-expanded={open}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         className={cx(styles.button, needsAttention && styles.buttonAttention)}
         data-testid="workspace-picker-trigger"
         ref={triggerRef}

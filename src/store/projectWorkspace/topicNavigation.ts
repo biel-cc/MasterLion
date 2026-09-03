@@ -225,7 +225,8 @@ export const buildWorkspaceTopicNavigation = (
   topics: readonly ChatTopic[],
   context: TopicNavigationContext,
 ): WorkspaceTopicNavigation => {
-  const field: 'createdAt' | 'updatedAt' = context.sortBy === 'createdAt' ? 'createdAt' : 'updatedAt';
+  const field: 'createdAt' | 'updatedAt' =
+    context.sortBy === 'createdAt' ? 'createdAt' : 'updatedAt';
   const scopeIndex = buildScopeIndex(context.workspacesById);
   const placementById: Record<string, TopicPlacement> = {};
   const groups = new Map<string, TopicNavigationWorkspaceGroup>();

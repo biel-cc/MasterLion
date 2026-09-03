@@ -135,7 +135,9 @@ describe('projectWorkspace store actions', () => {
         workspace: deviceWorkspace,
       });
       store.getState().upsertWorkspaces([deviceWorkspace]);
-      store.getState().setTopicState('topic-1', { snapshot: { ...snapshot, workspaceId: undefined, workspaceKind: undefined } });
+      store.getState().setTopicState('topic-1', {
+        snapshot: { ...snapshot, workspaceId: undefined, workspaceKind: undefined },
+      });
 
       const outcome = await store
         .getState()

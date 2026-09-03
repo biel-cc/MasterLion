@@ -116,6 +116,7 @@ describe('HeterogeneousChatInput workspace gate', () => {
     const guard = screen.getByTestId('hetero-workspace-guard');
     expect(guard).toHaveTextContent('workspaceRuntime.hetero.gate.title');
     expect(screen.getByTestId('send')).toBeDisabled();
+    expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(true);
 
     fireEvent.click(screen.getByText('workspaceRuntime.hetero.gate.action'));
     expect(mocks.focusWorkspacePicker).toHaveBeenCalledTimes(1);
@@ -132,14 +133,28 @@ describe('HeterogeneousChatInput workspace gate', () => {
       'workspaceRuntime.hetero.gate.unrouted.bound-device-offline',
     );
     expect(screen.getByTestId('send')).toBeDisabled();
+    expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(true);
   });
 
-  it.each(['bound', 'scratch'])('allows send when %s', (state) => {
-    mocks.effective = { state };
+  it('blocks scratch and opens the new referenced-topic picker', () => {
+    mocks.effective = { state: 'scratch' };
+    render(<HeterogeneousChatInput />);
+
+    expect(screen.getByTestId('hetero-workspace-guard')).toHaveTextContent(
+      'workspaceRuntime.hetero.gate.scratchTitle',
+    );
+    expect(screen.getByTestId('send')).toBeDisabled();
+    fireEvent.click(screen.getByText('workspaceRuntime.hetero.gate.action'));
+    expect(mocks.focusWorkspacePicker).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows send when bound', () => {
+    mocks.effective = { state: 'bound' };
     render(<HeterogeneousChatInput />);
 
     expect(screen.queryByTestId('hetero-workspace-guard')).not.toBeInTheDocument();
     expect(screen.getByTestId('send')).not.toBeDisabled();
+    expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(false);
     expect(mocks.chatInputProps.at(-1)?.sendButtonProps.onDisabledSend).toBeUndefined();
   });
 });
