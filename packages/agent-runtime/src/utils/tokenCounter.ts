@@ -12,6 +12,8 @@ export interface TokenCountOptions {
   driftMultiplier?: number;
   /** Model's max context window token count */
   maxWindowToken?: number;
+  /** Provider-specific estimates for media in the exact outgoing request. */
+  providerMedia?: Array<{ estimatedTokens: number; id?: string; messageId?: string }>;
   /** Threshold ratio for triggering compression, default 0.5 */
   thresholdRatio?: number;
   /**
@@ -23,7 +25,7 @@ export interface TokenCountOptions {
   tools?: unknown[];
 }
 
-/** Default max context window (128k tokens) */
+/** Legacy default. Context-budget preflight resolves unknown model windows conservatively. */
 export const DEFAULT_MAX_CONTEXT = 128_000;
 
 /** Default threshold ratio (50% of max context) */
@@ -47,6 +49,8 @@ export interface CompressionCheckResult {
    * tool calls + reasoning + tool_call_id + tool definitions).
    */
   currentTokenCount: number;
+  /** Drift-adjusted estimate used for every budget decision. */
+  estimatedPromptTokens: number;
   /**
    * `true` when `adjustedTokenCount > threshold`. The adjusted count includes
    * a drift multiplier (default 1.25×) to compensate for the gap between
@@ -54,6 +58,8 @@ export interface CompressionCheckResult {
    * upstream tokenizers actually overflow the model's context window.
    */
   needsCompression: boolean;
+  /** Fingerprint of provider-visible messages, tools, and media estimates. */
+  payloadFingerprint: string;
   /** Compression threshold (`maxWindowToken × thresholdRatio`) */
   threshold: number;
 }
@@ -72,13 +78,16 @@ export function shouldCompress(
   const accounting = countContextTokens({
     messages,
     options: { driftMultiplier: options.driftMultiplier ?? DEFAULT_DRIFT_MULTIPLIER },
+    providerMedia: options.providerMedia,
     tools: options.tools,
   });
   const threshold = getCompressionThreshold(options);
 
   return {
     currentTokenCount: accounting.rawTotal,
+    estimatedPromptTokens: accounting.adjustedTotal,
     needsCompression: accounting.adjustedTotal > threshold,
+    payloadFingerprint: accounting.payloadFingerprint,
     threshold,
   };
 }

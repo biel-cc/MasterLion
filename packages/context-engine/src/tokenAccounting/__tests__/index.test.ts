@@ -21,10 +21,12 @@ describe('countContextTokens', () => {
 
       expect(result.rawTotal).toBe(0);
       expect(result.adjustedTotal).toBe(0);
+      expect(result.attachments).toEqual([]);
       expect(result.driftMultiplier).toBe(DEFAULT_DRIFT_MULTIPLIER);
       expect(result.messages).toEqual([]);
       expect(result.tools).toEqual([]);
       expect(result.bySource).toEqual({
+        attachment: 0,
         content: 0,
         reasoning: 0,
         thoughtSignature: 0,
@@ -32,6 +34,7 @@ describe('countContextTokens', () => {
         toolCalls: 0,
         toolDefinition: 0,
       });
+      expect(result.payloadFingerprint).toMatch(/^ctx-v1-/);
     });
 
     it('respects a custom driftMultiplier', () => {
@@ -58,6 +61,41 @@ describe('countContextTokens', () => {
         [1, 'assistant'],
         [2, 'tool'],
       ]);
+    });
+  });
+
+  describe('final provider payload', () => {
+    it('counts provider media with messages and resolved tools in one accounting result', () => {
+      const result = countContextTokens({
+        messages: [mkMsg({ content: 'describe the image', id: 'user-1', role: 'user' })],
+        providerMedia: [{ estimatedTokens: 1234, id: 'image-1', messageId: 'user-1' }],
+        tools: [{ function: { name: 'inspect_image' }, type: 'function' }],
+      });
+
+      expect(result.bySource.attachment).toBe(1234);
+      expect(result.bySource.content).toBeGreaterThan(0);
+      expect(result.bySource.toolDefinition).toBeGreaterThan(0);
+      expect(result.rawTotal).toBe(
+        result.bySource.attachment + result.bySource.content + result.bySource.toolDefinition,
+      );
+      expect(result.attachments).toEqual([
+        { estimatedTokens: 1234, id: 'image-1', index: 0, messageId: 'user-1' },
+      ]);
+    });
+
+    it('fingerprints only provider-visible message fields and final payload additions', () => {
+      const base = mkMsg({ content: 'same payload', id: 'user-1', role: 'user' });
+      const first = countContextTokens({ messages: [base] });
+      const dbOnlyChange = countContextTokens({
+        messages: [{ ...base, metadata: { localOnly: 'changed' } } as UIChatMessage],
+      });
+      const providerChange = countContextTokens({
+        messages: [base],
+        providerMedia: [{ estimatedTokens: 10, id: 'image-1', messageId: 'user-1' }],
+      });
+
+      expect(dbOnlyChange.payloadFingerprint).toBe(first.payloadFingerprint);
+      expect(providerChange.payloadFingerprint).not.toBe(first.payloadFingerprint);
     });
   });
 

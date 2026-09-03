@@ -58,20 +58,32 @@ describe('GeneralChatAgent', () => {
       agentConfig: { maxSteps: 100 },
       compressionConfig: {
         enabled: true,
-        maxWindowToken: 1,
+        maxWindowToken: 200,
       },
       operationId: 'test-session',
       modelRuntimeConfig: mockModelRuntimeConfig,
     });
 
-  const expectCompressionInstruction = (messages: AgentState['messages']) => ({
-    type: 'compress_context',
-    payload: {
-      currentTokenCount: expect.any(Number),
-      existingSummary: undefined,
-      messages,
-    },
-  });
+  const expectCompressionInstruction = (messages: AgentState['messages']) =>
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        attempt: 1,
+        candidateIds: expect.any(Array),
+        currentTokenCount: expect.any(Number),
+        existingSummary: undefined,
+        messages,
+        payloadFingerprint: expect.stringMatching(/^ctx-v1-/),
+        preservedIds: expect.any(Array),
+      }),
+      type: 'compress_context',
+    });
+
+  const oversizedHistoryMessage = {
+    content: 'old answer',
+    id: 'oversized-history',
+    metadata: { usage: { totalOutputTokens: 101 } },
+    role: 'assistant',
+  };
 
   describe('init and user_input phase', () => {
     it('should return call_llm instruction for init phase', async () => {
@@ -139,9 +151,11 @@ describe('GeneralChatAgent', () => {
         messages: [
           {
             content: '',
+            id: 'old-answer',
             metadata: { usage: { totalOutputTokens: 100_001 } },
             role: 'assistant',
           },
+          { content: '', id: 'latest-user', role: 'user' },
         ] as any,
       });
       const context = createMockContext('init', { model: 'gpt-4o-mini', provider: 'openai' });
@@ -163,9 +177,11 @@ describe('GeneralChatAgent', () => {
       const messages = [
         {
           content: '',
+          id: 'old-answer',
           metadata: { usage: { totalOutputTokens: 50_000 } },
           role: 'assistant',
         },
+        { content: '', id: 'latest-user', role: 'user' },
       ] as any;
       const context = createMockContext('init', { model: 'gpt-4o-mini', provider: 'openai' });
 
@@ -176,7 +192,13 @@ describe('GeneralChatAgent', () => {
         operationId: 'test-session',
         modelRuntimeConfig: mockModelRuntimeConfig,
       });
-      const noToolsResult = await agentNoTools.runner(context, createMockState({ messages }));
+      const noToolsResult = await agentNoTools.runner(
+        context,
+        createMockState({
+          messages,
+          metadata: { contextBudget: { candidateIds: ['old-answer'] } },
+        }),
+      );
       expect((noToolsResult as any).type).toBe('call_llm');
 
       // With a chunky tool manifest (~66K tokens) total raw input is ~116K,
@@ -197,9 +219,47 @@ describe('GeneralChatAgent', () => {
       });
       const withToolsResult = await agentWithTools.runner(
         context,
-        createMockState({ messages, tools: [bigTool] as any }),
+        createMockState({
+          messages,
+          metadata: { contextBudget: { candidateIds: ['old-answer'] } },
+          tools: [bigTool] as any,
+        }),
       );
       expect((withToolsResult as any).type).toBe('compress_context');
+    });
+
+    it('should return an actionable TAIL_TOO_LARGE result for a huge latest attachment', async () => {
+      const agent = new GeneralChatAgent({
+        agentConfig: { maxSteps: 100 },
+        compressionConfig: { enabled: true, maxWindowToken: 128_000 },
+        operationId: 'test-session',
+        modelRuntimeConfig: mockModelRuntimeConfig,
+      });
+      const state = createMockState({
+        messages: [
+          { ...oversizedHistoryMessage, metadata: { usage: { totalOutputTokens: 1000 } } },
+          { content: 'inspect', id: 'latest-user', role: 'user' },
+        ] as any,
+      });
+
+      const result = await agent.runner(
+        createMockContext('init', {
+          contextBudget: {
+            providerMedia: [
+              { estimatedTokens: 200_000, id: 'huge-image', messageId: 'latest-user' },
+            ],
+          },
+          model: 'gpt-4o-mini',
+          provider: 'openai',
+        }),
+        state,
+      );
+
+      expect(result).toMatchObject({
+        contextBudget: { decision: { code: 'TAIL_TOO_LARGE', kind: 'fail' } },
+        reasonDetail: 'TAIL_TOO_LARGE',
+        type: 'finish',
+      });
     });
   });
 
@@ -751,6 +811,7 @@ describe('GeneralChatAgent', () => {
 
       const state = createMockState({
         messages: [
+          oversizedHistoryMessage,
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: '' },
           { role: 'tool', content: 'Result', tool_call_id: 'call-1' },
@@ -778,12 +839,13 @@ describe('GeneralChatAgent', () => {
         thresholdRatio: 0.5,
       };
       const messages = [
-        { role: 'user', content: 'Hello' },
         {
           content: '',
+          id: 'old-answer',
           metadata: { usage: { totalOutputTokens: 50_000 } },
           role: 'assistant',
         },
+        { role: 'user', content: 'Hello' },
         { role: 'tool', content: 'Result', tool_call_id: 'call-1' },
       ] as any;
       // Chunky tool manifest that alone is enough to push the request over the
@@ -1228,6 +1290,7 @@ describe('GeneralChatAgent', () => {
 
       const state = createMockState({
         messages: [
+          oversizedHistoryMessage,
           { role: 'user', content: 'Hello' },
           { role: 'assistant', content: '' },
           { role: 'tool', content: 'Result 1', tool_call_id: 'call-1' },
@@ -1284,6 +1347,72 @@ describe('GeneralChatAgent', () => {
         type: 'finish',
         reason: 'error_recovery',
         reasonDetail: 'Unknown error occurred',
+      });
+    });
+
+    it('should parse an observed context limit and request one provider-error compression', async () => {
+      const agent = new GeneralChatAgent({
+        agentConfig: { maxSteps: 100 },
+        operationId: 'test-session',
+        modelRuntimeConfig: mockModelRuntimeConfig,
+      });
+      const state = createMockState({
+        messages: [
+          { ...oversizedHistoryMessage, metadata: { usage: { totalOutputTokens: 20_000 } } },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+        ] as any,
+      });
+
+      const result = await agent.runner(
+        createMockContext('error', {
+          error: { code: 'ExceededContextWindow', contextWindowTokens: 32_000 },
+        }),
+        state,
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            observedWindowTokens: 32_000,
+            trigger: 'provider-error',
+            windowTokens: 32_000,
+          }),
+          type: 'compress_context',
+        }),
+      );
+    });
+
+    it('should stop a second provider context error with RETRY_EXHAUSTED', async () => {
+      const agent = new GeneralChatAgent({
+        agentConfig: { maxSteps: 100 },
+        operationId: 'test-session',
+        modelRuntimeConfig: mockModelRuntimeConfig,
+      });
+      const state = createMockState({
+        messages: [
+          oversizedHistoryMessage,
+          { content: 'continue', id: 'latest-user', role: 'user' },
+        ] as any,
+      });
+
+      const result = await agent.runner(
+        createMockContext('error', {
+          contextBudget: {
+            attemptState: {
+              compressionAttempt: 1,
+              payloadFingerprint: 'ctx-v1-retry',
+              sentPayloadFingerprints: ['ctx-v1-first', 'ctx-v1-retry'],
+            },
+          },
+          error: { code: 'ExceededContextWindow', contextWindowTokens: 32_000 },
+        }),
+        state,
+      );
+
+      expect(result).toMatchObject({
+        contextBudget: { decision: { code: 'RETRY_EXHAUSTED', kind: 'fail' } },
+        reasonDetail: 'RETRY_EXHAUSTED',
+        type: 'finish',
       });
     });
   });
@@ -1697,6 +1826,7 @@ describe('GeneralChatAgent', () => {
 
       const state = createMockState({
         messages: [
+          oversizedHistoryMessage,
           { role: 'user', content: 'Execute task' },
           { role: 'assistant', content: '' },
           { role: 'task', content: 'Task result', metadata: { instruction: 'Do task' } },
@@ -1814,6 +1944,7 @@ describe('GeneralChatAgent', () => {
 
       const state = createMockState({
         messages: [
+          oversizedHistoryMessage,
           { role: 'user', content: 'Execute tasks' },
           { role: 'assistant', content: '' },
           { role: 'task', content: 'Task 1 result', metadata: { instruction: 'Do task 1' } },
@@ -1858,9 +1989,15 @@ describe('GeneralChatAgent', () => {
       });
 
       const context = createMockContext('compression_result', {
+        afterTokens: 20,
+        attempt: 1,
+        beforeTokens: 1000,
         compressedMessages,
         parentMessageId: 'assistant-msg-after-compression',
+        outcome: 'compressed',
+        payloadFingerprint: 'ctx-v1-before-compression',
         skipped: false,
+        trigger: 'threshold',
       });
 
       const result = await agent.runner(context, state);
@@ -1875,6 +2012,78 @@ describe('GeneralChatAgent', () => {
           provider: 'openai',
           tools: state.tools,
         },
+      });
+    });
+
+    it.each([
+      {
+        afterTokens: 100,
+        beforeTokens: 100,
+        code: 'NO_CANDIDATES',
+        outcome: 'skipped',
+      },
+      {
+        afterTokens: 100,
+        beforeTokens: 100,
+        code: 'SUMMARY_FAILED',
+        outcome: 'failed',
+      },
+      {
+        afterTokens: 100,
+        beforeTokens: 100,
+        outcome: 'compressed',
+      },
+    ] as const)('should not call_llm after a $outcome compression outcome', async (outcome) => {
+      const agent = new GeneralChatAgent({
+        agentConfig: { maxSteps: 100 },
+        operationId: 'test-session',
+        modelRuntimeConfig: mockModelRuntimeConfig,
+      });
+      const result = await agent.runner(
+        createMockContext('compression_result', {
+          ...outcome,
+          attempt: 1,
+          compressedMessages: [{ content: 'unchanged', id: 'latest-user', role: 'user' }],
+          groupId: 'compression-1',
+          payloadFingerprint: 'ctx-v1-before',
+          trigger: 'final-preflight',
+        }),
+        createMockState(),
+      );
+
+      expect(result).toMatchObject({ type: 'finish' });
+      expect((result as any).type).not.toBe('call_llm');
+    });
+
+    it('should not call_llm when compression preserves the same final fingerprint', async () => {
+      const agent = createCompressionAgent();
+      const messages = [
+        oversizedHistoryMessage,
+        { content: 'latest', id: 'latest-user', role: 'user' },
+      ] as any;
+      const state = createMockState({ messages });
+      const instruction = (await agent.runner(
+        createMockContext('init', { model: 'gpt-4o-mini', provider: 'openai' }),
+        state,
+      )) as any;
+
+      const result = await agent.runner(
+        createMockContext('compression_result', {
+          afterTokens: 1,
+          attempt: 1,
+          beforeTokens: 200,
+          compressedMessages: messages,
+          groupId: 'compression-1',
+          outcome: 'compressed',
+          payloadFingerprint: instruction.payload.payloadFingerprint,
+          trigger: 'threshold',
+        }),
+        state,
+      );
+
+      expect(result).toMatchObject({
+        contextBudget: { decision: { code: 'RETRY_EXHAUSTED' } },
+        type: 'finish',
       });
     });
   });
