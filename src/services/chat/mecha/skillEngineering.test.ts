@@ -1,3 +1,4 @@
+import type { SkillProvider } from '@lobechat/types/src/projectWorkspace';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { agentSkillService } from '@/services/skill';
@@ -180,5 +181,91 @@ describe('resolveClientSkills', () => {
     expect(skill).toMatchObject({ identifier: 'my-skill' });
     expect(skill?.content).toBeUndefined();
     expect(skill?.activated).toBeFalsy();
+  });
+
+  it('uses registry precedence so a user skill shadows a same-named builtin', async () => {
+    setToolState({
+      agentSkills: [
+        { description: 'user version', id: 'db-1', identifier: 'user-deploy', name: 'Deploy' },
+      ],
+      builtinSkills: [
+        {
+          content: 'builtin version',
+          description: 'builtin version',
+          identifier: 'builtin-deploy',
+          name: 'Deploy',
+          source: 'builtin',
+        },
+      ],
+    });
+
+    const result = await resolveClientSkills([]);
+
+    expect(result.skills.map(({ identifier }) => identifier)).toEqual(['user-deploy']);
+    expect(result.registry?.entries).toEqual([
+      expect.objectContaining({ status: 'available' }),
+      expect.objectContaining({ shadowedBy: 'user:user-deploy', status: 'shadowed' }),
+    ]);
+  });
+
+  it('merges accepted project context and an explicit agent provider into one registry', async () => {
+    setToolState({});
+    const agentProvider: SkillProvider & { source: 'agent' } = {
+      list: async (context) => [
+        {
+          content: 'agent instructions',
+          description: 'Agent-local review',
+          identifier: 'agent-review',
+          key: `agent:${context.agentId}:review`,
+          name: 'review',
+          ownerId: context.agentId,
+          scope: 'personal',
+          source: 'agent',
+        },
+      ],
+      source: 'agent',
+    };
+
+    const result = await resolveClientSkills([], {
+      agentProvider,
+      skillContext: {
+        agentId: 'agent-7',
+        skillPolicy: {
+          includeAgentSkills: true,
+          includeProjectSkills: true,
+          includeUserSkills: true,
+        },
+        userId: 'user-7',
+        workspace: { id: 'workspace-7', kind: 'device', rootPath: '/repo' },
+        workspaceInit: {
+          instructions: [],
+          skills: [
+            {
+              description: 'Project deployment',
+              name: 'deploy',
+              path: '/repo/.agents/skills/deploy/SKILL.md',
+            },
+          ],
+        },
+      },
+    });
+
+    expect(
+      result.registry?.entries
+        .filter(({ status }) => status === 'available')
+        .map(({ ref }) => ref),
+    ).toEqual([
+      expect.objectContaining({
+        identifier: 'project:deploy',
+        location: '/repo/.agents/skills/deploy/SKILL.md',
+        ownerId: 'workspace-7',
+        source: 'project',
+      }),
+      expect.objectContaining({
+        identifier: 'agent-review',
+        ownerId: 'agent-7',
+        source: 'agent',
+      }),
+    ]);
   });
 });

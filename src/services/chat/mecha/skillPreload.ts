@@ -1,20 +1,6 @@
-import {
-  CredsIdentifier,
-  type CredSummary,
-  injectCredsContext,
-  type UserCredsContext,
-} from '@lobechat/builtin-tool-creds';
-import { resourcesTreePrompt } from '@lobechat/prompts';
 import type { RuntimeSelectedSkill, UserCredSummary } from '@lobechat/types';
 
-import { agentSkillService } from '@/services/skill';
-import { getToolStoreState } from '@/store/tool';
-
-interface PreloadedSkill {
-  content: string;
-  identifier: string;
-  name: string;
-}
+import { resolveClientSkillRegistry } from './clientSkillRegistry';
 
 interface PrepareSelectedSkillPreloadParams {
   message: string;
@@ -74,73 +60,6 @@ const resolveSelectedSkills = (
 };
 
 /**
- * Convert UserCredSummary to CredSummary for injection
- */
-const mapToCredSummary = (cred: UserCredSummary): CredSummary => ({
-  description: cred.description,
-  key: cred.key,
-  name: cred.name,
-  type: cred.type,
-});
-
-/**
- * Build creds context for injection
- */
-const buildCredsContext = (userCreds?: UserCredSummary[]): UserCredsContext => ({
-  creds: (userCreds || []).map(mapToCredSummary),
-  settingsUrl: '/settings/creds',
-});
-
-const loadSkillContent = async (
-  selectedSkill: RuntimeSelectedSkill,
-  userCreds?: UserCredSummary[],
-): Promise<PreloadedSkill | undefined> => {
-  const toolState = getToolStoreState();
-
-  const builtinSkill = (toolState.builtinSkills || []).find(
-    (skill) => skill.identifier === selectedSkill.identifier,
-  );
-
-  if (builtinSkill) {
-    let content = builtinSkill.content;
-
-    // Inject creds context for the creds skill
-    if (builtinSkill.identifier === CredsIdentifier) {
-      const credsContext = buildCredsContext(userCreds);
-      content = injectCredsContext(content, credsContext);
-    }
-
-    return {
-      content,
-      identifier: builtinSkill.identifier,
-      name: builtinSkill.name,
-    };
-  }
-
-  const listItem = (toolState.agentSkills || []).find(
-    (skill) => skill.identifier === selectedSkill.identifier,
-  );
-
-  const detail =
-    (listItem && toolState.agentSkillDetailMap?.[listItem.id]) ||
-    (listItem ? await agentSkillService.getById(listItem.id) : undefined) ||
-    (await agentSkillService.getByIdentifier(selectedSkill.identifier));
-
-  if (!detail?.content) return undefined;
-
-  const hasResources = !!(detail.resources && Object.keys(detail.resources).length > 0);
-  const content = hasResources
-    ? detail.content + '\n\n' + resourcesTreePrompt(detail.name, detail.resources!)
-    : detail.content;
-
-  return {
-    content,
-    identifier: detail.identifier,
-    name: detail.name,
-  };
-};
-
-/**
  * Enrich selected skills with preloaded content from skill store.
  * Skills with available content get it attached directly, enabling
  * SelectedSkillInjector to inline the content into the user message
@@ -155,12 +74,20 @@ export const resolveSelectedSkillsWithContent = async ({
 
   if (resolved.length === 0) return [];
 
-  const enriched = await Promise.all(
-    resolved.map(async (skill) => {
-      const loaded = await loadSkillContent(skill, userCreds);
-      return loaded ? { ...skill, content: loaded.content } : skill;
-    }),
-  );
+  const registry = await resolveClientSkillRegistry({
+    contentIdentifiers: resolved.map(({ identifier }) => identifier),
+    userCreds,
+  });
+  const byIdentifier = new Map(registry.skills.map((skill) => [skill.identifier, skill]));
 
-  return enriched;
+  return resolved.map((skill) => {
+    const registered = byIdentifier.get(skill.identifier);
+    if (!registered) return skill;
+    return {
+      ...skill,
+      ...(registered.content && { content: registered.content }),
+      // Registry name is the exact activateSkill lookup key; UI labels are not.
+      name: registered.name,
+    };
+  });
 };

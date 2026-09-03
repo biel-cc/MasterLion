@@ -1,4 +1,6 @@
 import { EMPTY_ARRAY } from '@lobechat/const';
+import type { SkillRegistryResult } from '@lobechat/context-engine';
+import type { SkillScope, SkillSourceKind } from '@lobechat/types/src/projectWorkspace';
 import {
   ContextMenuTrigger,
   Flexbox,
@@ -12,9 +14,25 @@ import { createStaticStyles, cx } from 'antd-style';
 import { ChevronRightIcon, FileIcon, FolderIcon, type LucideIcon } from 'lucide-react';
 import type React from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import {
+  skillRegistryErrorI18n,
+  type SkillRegistryI18nDescriptor,
+  skillRegistryReasonI18n,
+  skillScopeI18n,
+  skillSourceI18n,
+} from './registryI18n';
+import {
+  type SkillRegistryErrorCode,
+  type SkillRegistryReasonCode,
+  toSkillRegistryListModel,
+} from './registryModel';
 
 export interface SkillListItem {
   description?: string;
+  /** Stable registry error code for a non-runnable row. */
+  errorCode?: SkillRegistryErrorCode;
   /**
    * File count shown next to the name. Omit (or pass 0) for atomic skills with
    * no embedded files — e.g. user-level skills sourced from MCP servers.
@@ -27,6 +45,11 @@ export interface SkillListItem {
   files?: string[];
   id: string;
   name: string;
+  /** Stable registry policy or precedence reason for a non-runnable row. */
+  reasonCode?: SkillRegistryReasonCode;
+  scope?: SkillScope;
+  source?: SkillSourceKind;
+  status?: 'available' | 'disabled' | 'error' | 'shadowed';
 }
 
 /**
@@ -55,7 +78,8 @@ interface SkillsListProps {
    * read-only rows (no menu, native right-click preserved).
    */
   getRowActions?: (item: SkillListItem) => SkillRowAction[];
-  items: SkillListItem[];
+  /** Compatibility input until every forbidden route caller is registry-wired. */
+  items?: SkillListItem[];
   onOpenFile?: (item: SkillListItem, relativePath: string) => void;
   onOpenSkill?: (item: SkillListItem) => void;
   /**
@@ -64,6 +88,8 @@ interface SkillsListProps {
    * (see `writeSkillDragData`), letting the chat input resolve it on drop.
    */
   onSkillDragStart?: (item: SkillListItem, event: React.DragEvent) => void;
+  /** Preferred input: the policy/result trace returned by SkillRegistry. */
+  registryResult?: SkillRegistryResult;
 }
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -129,6 +155,15 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     color: ${cssVar.colorTextTertiary};
+  `,
+  itemDisabled: css`
+    cursor: not-allowed;
+    opacity: 0.58;
+  `,
+  itemMeta: css`
+    flex-shrink: 0;
+    font-size: 10px;
+    color: ${cssVar.colorTextQuaternary};
   `,
   rowAction: css`
     cursor: pointer;
@@ -230,6 +265,16 @@ const buildSkillTree = (paths: string[]): TreeNode[] => {
 const TREE_BASE_INSET = 24;
 const TREE_DEPTH_INDENT = 14;
 
+type SkillRegistryTranslate = (
+  key: string,
+  options: { defaultValue: string },
+) => unknown;
+
+const translateDescriptor = (
+  translate: SkillRegistryTranslate,
+  descriptor: SkillRegistryI18nDescriptor,
+): string => String(translate(descriptor.key, { defaultValue: descriptor.defaultValue }));
+
 interface TreeRowProps {
   depth: number;
   expanded: Set<string>;
@@ -323,11 +368,24 @@ const SkillRow = memo<SkillRowProps>(
     onToggle,
     reserveChevronSlot,
   }) => {
+    const { t } = useTranslation('chat');
     const files = item.files ?? EMPTY_ARRAY;
+    const isDisabled =
+      !!item.errorCode || item.status === 'disabled' || item.status === 'shadowed';
     const hasFiles = files.length > 0;
     const hasActions = actions.length > 0;
     const tree = useMemo(() => buildSkillTree(files), [files]);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+    const errorTitle = item.errorCode
+      ? translateDescriptor(t, skillRegistryErrorI18n[item.errorCode])
+      : undefined;
+    const reasonTitle = item.reasonCode
+      ? translateDescriptor(t, skillRegistryReasonI18n[item.reasonCode])
+      : undefined;
+    const metadata = [
+      item.source && translateDescriptor(t, skillSourceI18n[item.source]),
+      item.scope && translateDescriptor(t, skillScopeI18n[item.scope]),
+    ].filter(Boolean);
 
     const toggleFolder = useCallback((folderPath: string) => {
       setExpandedFolders((prev) => {
@@ -342,13 +400,15 @@ const SkillRow = memo<SkillRowProps>(
       (): GenericItemType[] =>
         actions.map((action) => ({
           danger: action.danger,
-          disabled: action.disabled,
+          disabled: action.disabled || isDisabled,
           icon: <Icon icon={action.icon} />,
           key: action.key,
           label: action.label,
-          onClick: () => action.onClick(item),
+          onClick: () => {
+            if (!isDisabled) action.onClick(item);
+          },
         })),
-      [actions, item],
+      [actions, isDisabled, item],
     );
 
     // The description Tooltip wraps just the name (a ref-forwarding leaf) and the
@@ -356,7 +416,11 @@ const SkillRow = memo<SkillRowProps>(
     // a clean DOM-forwarding child. Nesting them (Tooltip around the trigger, or
     // vice versa) would drop `onContextMenu` / the ref on the way through.
     const nameNode = (
-      <Text ellipsis style={{ color: 'inherit', flex: 1, minWidth: 0 }} onClick={onOpenSkill}>
+      <Text
+        ellipsis
+        style={{ color: 'inherit', flex: 1, minWidth: 0 }}
+        onClick={isDisabled ? undefined : onOpenSkill}
+      >
         {item.name}
       </Text>
     );
@@ -365,10 +429,11 @@ const SkillRow = memo<SkillRowProps>(
       <Flexbox
         horizontal
         align={'center'}
-        className={styles.item}
-        draggable={!!onDragStart}
+        className={cx(styles.item, isDisabled && styles.itemDisabled)}
+        draggable={!!onDragStart && !isDisabled}
         gap={6}
-        onDragStart={onDragStart}
+        title={errorTitle ?? reasonTitle}
+        onDragStart={isDisabled ? undefined : onDragStart}
       >
         {hasFiles ? (
           <Flexbox
@@ -400,6 +465,9 @@ const SkillRow = memo<SkillRowProps>(
         ) : (
           nameNode
         )}
+        {(item.source || item.scope) && (
+          <span className={styles.itemMeta}>{metadata.join(' · ')}</span>
+        )}
         {typeof item.fileCount === 'number' && item.fileCount > 0 && (
           <span className={cx('skill-row-count', styles.itemCount)}>{item.fileCount}</span>
         )}
@@ -416,7 +484,7 @@ const SkillRow = memo<SkillRowProps>(
                   )}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (action.disabled) return;
+                    if (action.disabled || isDisabled) return;
                     action.onClick(item);
                   }}
                 >
@@ -453,8 +521,14 @@ const SkillRow = memo<SkillRowProps>(
 SkillRow.displayName = 'SkillsListSkillRow';
 
 const SkillsList = memo<SkillsListProps>(
-  ({ getRowActions, items, onOpenFile, onOpenSkill, onSkillDragStart }) => {
+  ({ getRowActions, items: legacyItems, onOpenFile, onOpenSkill, onSkillDragStart, registryResult }) => {
+    const { t } = useTranslation('chat');
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+    const registryModel = useMemo(
+      () => (registryResult ? toSkillRegistryListModel(registryResult) : undefined),
+      [registryResult],
+    );
+    const items = registryModel?.items ?? legacyItems ?? EMPTY_ARRAY;
 
     const toggle = useCallback((id: string) => {
       setExpanded((prev) => {
@@ -472,6 +546,21 @@ const SkillsList = memo<SkillsListProps>(
 
     return (
       <Flexbox gap={2}>
+        {registryModel?.errors.map((error, index) => {
+          const errorText = translateDescriptor(t, skillRegistryErrorI18n[error.code]);
+          const sourceText = translateDescriptor(t, skillSourceI18n[error.source]);
+          const message = `${errorText} (${sourceText})`;
+          return (
+            <Text
+              className={styles.description}
+              key={`${error.code}:${error.source}:${index}`}
+              title={message}
+              type={'danger'}
+            >
+              {message}
+            </Text>
+          );
+        })}
         {items.map((item) => (
           <SkillRow
             actions={getRowActions?.(item) ?? EMPTY_ARRAY}

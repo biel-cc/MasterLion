@@ -4,3 +4,4 @@ export { default as SkillSection } from './SkillSection';
 export type { SkillListItem, SkillRowAction } from './SkillsList';
 export { default as SkillsList } from './SkillsList';
 export { useProjectSkills, type UseProjectSkillsResult } from './useProjectSkills';
+export { toSkillRegistryListModel, type SkillRegistryListModel } from './registryModel';
