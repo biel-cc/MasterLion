@@ -55,7 +55,37 @@ const normalizeResolvedWorkspace = (workspace: WorkspaceRef): WorkspaceRef => ({
 const getWorkspaceById = (
   id: string | undefined,
   workspaces: ResolveExecutionContextInput['workspaces'],
-): WorkspaceRef | undefined => (id ? workspaces?.[id] : undefined);
+): WorkspaceRef | undefined => {
+  const workspace = id ? workspaces?.[id] : undefined;
+  return workspace?.id === id ? workspace : undefined;
+};
+
+const matchesBoundWorkspaceEvidence = (
+  workspace: WorkspaceRef,
+  workspaceId: string,
+  input: Pick<ResolveExecutionContextInput, 'snapshot' | 'topic'>,
+): boolean => {
+  if (workspace.id !== workspaceId) return false;
+
+  const { snapshot, topic } = input;
+  if (snapshot?.workspaceId) {
+    if (snapshot.workspaceId !== workspaceId) return false;
+    if (snapshot.workspaceKind && workspace.kind !== snapshot.workspaceKind) return false;
+    if (snapshot.boundDeviceId && workspace.deviceId !== snapshot.boundDeviceId) return false;
+  }
+
+  if (topic?.workspaceId && topic.workspaceId !== workspaceId) return false;
+  if (topic?.boundDeviceId && workspace.deviceId !== topic.boundDeviceId) return false;
+  if (
+    topic?.workingDirectory &&
+    (!isAbsoluteFilesystemPath(topic.workingDirectory) ||
+      normalizeRootPath(workspace.rootPath) !== normalizeRootPath(topic.workingDirectory))
+  ) {
+    return false;
+  }
+
+  return true;
+};
 
 const isDeviceWorkspaceFor = (workspace: WorkspaceRef | undefined, deviceId: string): boolean =>
   !!workspace &&
@@ -70,8 +100,14 @@ const resolveDeviceWorkspace = (
   const boundWorkspaceId = input.snapshot?.workspaceId ?? input.topic?.workspaceId;
   const boundWorkspace = getWorkspaceById(boundWorkspaceId, input.workspaces);
   if (boundWorkspaceId) {
+    if (
+      !boundWorkspace ||
+      !matchesBoundWorkspaceEvidence(boundWorkspace, boundWorkspaceId, input)
+    ) {
+      return undefined;
+    }
     return isDeviceWorkspaceFor(boundWorkspace, deviceId)
-      ? normalizeResolvedWorkspace(boundWorkspace!)
+      ? normalizeResolvedWorkspace(boundWorkspace)
       : undefined;
   }
 
@@ -104,10 +140,19 @@ const resolveSandboxWorkspace = (input: ResolveExecutionContextInput): Workspace
   const workspaceId = input.snapshot?.workspaceId ?? input.topic?.workspaceId;
   const persisted = getWorkspaceById(workspaceId, input.workspaces);
 
-  if (workspaceId && persisted?.kind !== 'sandbox') return undefined;
+  if (workspaceId) {
+    if (
+      !persisted ||
+      persisted.kind !== 'sandbox' ||
+      !matchesBoundWorkspaceEvidence(persisted, workspaceId, input) ||
+      normalizeRootPath(persisted.rootPath) !== '/workspace'
+    ) {
+      return undefined;
+    }
+    return normalizeResolvedWorkspace(persisted);
+  }
 
   return {
-    ...(persisted?.kind === 'sandbox' ? persisted : undefined),
     kind: 'sandbox',
     rootPath: '/workspace',
   };

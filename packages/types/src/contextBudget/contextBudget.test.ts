@@ -112,6 +112,21 @@ describe('decideContextBudget', () => {
       ),
     ).toMatchObject({ code: 'RETRY_EXHAUSTED', kind: 'fail' });
   });
+
+  it('prioritizes second provider-error exhaustion over tail and candidate classification', () => {
+    expect(
+      decideContextBudget(
+        input({
+          candidateIds: [],
+          compressionAttempt: 1,
+          offending: [{ estimatedTokens: 40_000, messageId: 'tail-1', source: 'attachment' }],
+          promptTokens: 45_000,
+          tailTokens: 40_000,
+          trigger: 'provider-error',
+        }),
+      ),
+    ).toMatchObject({ code: 'RETRY_EXHAUSTED', kind: 'fail' });
+  });
 });
 
 describe('canContinueAfterCompression', () => {

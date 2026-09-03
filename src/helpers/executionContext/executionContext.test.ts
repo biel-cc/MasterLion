@@ -211,6 +211,64 @@ describe('resolveExecutionContext', () => {
     expect(result.unresolvedReason).toBeUndefined();
   });
 
+  it('rejects a map-key match when the workspace row carries a different id', () => {
+    const result = resolveExecutionContext({
+      isDesktop: true,
+      onlineDeviceIds: ['device-a'],
+      snapshot: snapshot({ workspaceId: 'workspace-a', workspaceKind: 'device' }),
+      workspaces: { 'workspace-a': workspace({ id: 'workspace-other' }) },
+    });
+
+    expect(result).toMatchObject({ unresolvedReason: 'no-workspace' });
+    expect(result.cwd).toBeUndefined();
+    expect(result.workspace).toBeUndefined();
+    expect(result.accessRoots).toBeUndefined();
+  });
+
+  it('rejects same-id workspace kind drift from the captured snapshot', () => {
+    const result = resolveExecutionContext({
+      isDesktop: true,
+      onlineDeviceIds: ['device-a'],
+      snapshot: snapshot({ workspaceId: 'workspace-a', workspaceKind: 'scratch' }),
+      workspaces: { 'workspace-a': workspace({ kind: 'device' }) },
+    });
+
+    expect(result).toMatchObject({ unresolvedReason: 'no-workspace' });
+    expect(result.cwd).toBeUndefined();
+    expect(result.workspace).toBeUndefined();
+    expect(result.accessRoots).toBeUndefined();
+  });
+
+  it('rejects device and root tuple drift instead of rewriting the captured binding', () => {
+    const topicSnapshot = snapshot({ workspaceId: 'workspace-a', workspaceKind: 'device' });
+    const topic = {
+      boundDeviceId: 'device-a',
+      workingDirectory: '/code/masterino',
+      workspaceId: 'workspace-a',
+    };
+    const wrongDevice = resolveExecutionContext({
+      isDesktop: true,
+      onlineDeviceIds: ['device-a'],
+      snapshot: topicSnapshot,
+      topic,
+      workspaces: { 'workspace-a': workspace({ deviceId: 'device-b' }) },
+    });
+    const wrongRoot = resolveExecutionContext({
+      isDesktop: true,
+      onlineDeviceIds: ['device-a'],
+      snapshot: topicSnapshot,
+      topic,
+      workspaces: { 'workspace-a': workspace({ rootPath: '/kind-root-drift' }) },
+    });
+
+    for (const result of [wrongDevice, wrongRoot]) {
+      expect(result).toMatchObject({ unresolvedReason: 'no-workspace' });
+      expect(result.cwd).toBeUndefined();
+      expect(result.workspace).toBeUndefined();
+      expect(result.accessRoots).toBeUndefined();
+    }
+  });
+
   it('does not fall through to a legacy path when an authoritative snapshot workspace is missing', () => {
     const result = resolveExecutionContext({
       isDesktop: true,

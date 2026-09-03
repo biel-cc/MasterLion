@@ -134,10 +134,13 @@ const fail = (
  * context-budget lane; this function only enforces bounded attempts and identical-payload rules.
  */
 export const decideContextBudget = (input: DecideContextBudgetInput): ContextBudgetDecision => {
+  if (input.trigger === 'provider-error' && input.compressionAttempt >= 1) {
+    return fail('RETRY_EXHAUSTED', input.offending);
+  }
+
   if (input.tailTokens > input.budgetTokens) return fail('TAIL_TOO_LARGE', input.offending);
 
   if (input.trigger === 'provider-error') {
-    if (input.compressionAttempt >= 1) return fail('RETRY_EXHAUSTED', input.offending);
     if (input.candidateIds.length === 0) return fail('NO_CANDIDATES', input.offending);
     return {
       attempt: 1,
