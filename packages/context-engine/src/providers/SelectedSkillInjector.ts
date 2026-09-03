@@ -25,8 +25,11 @@ export interface SelectedSkillInjectorConfig {
 export const formatSelectedSkills = (selectedSkills: RuntimeSelectedSkill[]): string | null => {
   if (selectedSkills.length === 0) return null;
 
+  const hasUnloadedSkills = selectedSkills.some((skill) => !skill.content);
   const lines = [
-    'The user explicitly selected these skills for this request. Their full instructions are already loaded below — do NOT call activateSkill for these skills, use the provided content directly.',
+    hasUnloadedSkills
+      ? 'The user selected these skills. Follow embedded instructions directly; call activateSkill with the exact name for entries whose instructions are not embedded.'
+      : 'The user selected these skills and their instructions are embedded below. Follow them directly without activating them again.',
     '<selected_skills>',
   ];
 

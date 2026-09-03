@@ -181,4 +181,29 @@ describe('resolveClientSkills', () => {
     expect(skill?.content).toBeUndefined();
     expect(skill?.activated).toBeFalsy();
   });
+
+  it('uses registry precedence so a user skill shadows a same-named builtin', async () => {
+    setToolState({
+      agentSkills: [
+        { description: 'user version', id: 'db-1', identifier: 'user-deploy', name: 'Deploy' },
+      ],
+      builtinSkills: [
+        {
+          content: 'builtin version',
+          description: 'builtin version',
+          identifier: 'builtin-deploy',
+          name: 'Deploy',
+          source: 'builtin',
+        },
+      ],
+    });
+
+    const result = await resolveClientSkills([]);
+
+    expect(result.skills.map(({ identifier }) => identifier)).toEqual(['user-deploy']);
+    expect(result.registry?.entries).toEqual([
+      expect.objectContaining({ status: 'available' }),
+      expect.objectContaining({ shadowedBy: 'user:user-deploy', status: 'shadowed' }),
+    ]);
+  });
 });

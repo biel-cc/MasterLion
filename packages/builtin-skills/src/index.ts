@@ -4,12 +4,14 @@ import { AgentBrowserSkill } from './agent-browser';
 import { ArtifactsSkill } from './artifacts';
 import { LobeHubSkill } from './lobehub';
 import { OfficeDocumentsSkill } from './office-documents';
+import { SkillCreatorSkill } from './skill-creator';
 import { TaskSkill } from './task';
 
 export { AgentBrowserIdentifier } from './agent-browser';
 export { ArtifactsIdentifier } from './artifacts';
 export { LobeHubIdentifier } from './lobehub';
 export { OfficeDocumentsIdentifier } from './office-documents';
+export { SkillCreatorIdentifier } from './skill-creator';
 export { TaskIdentifier } from './task';
 
 export const builtinSkills: BuiltinSkill[] = [
@@ -17,6 +19,7 @@ export const builtinSkills: BuiltinSkill[] = [
   ArtifactsSkill,
   LobeHubSkill,
   OfficeDocumentsSkill,
+  SkillCreatorSkill,
   TaskSkill,
   // FindSkillsSkill
 ];

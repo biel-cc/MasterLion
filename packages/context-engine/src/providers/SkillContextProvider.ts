@@ -1,4 +1,9 @@
-import { type SkillItem, type SkillSource, skillsPrompts } from '@lobechat/prompts';
+import {
+  type SkillItem,
+  type SkillScope,
+  type SkillSource,
+  skillsPrompts,
+} from '@lobechat/prompts';
 import debug from 'debug';
 
 import { BaseSystemRoleProvider } from '../base/BaseSystemRoleProvider';
@@ -32,8 +37,11 @@ export interface SkillMeta {
   content?: string;
   description: string;
   identifier: string;
+  /** Stable registry key (`source:identifier`) for trace correlation. */
+  key?: string;
   location?: string;
   name: string;
+  scope?: SkillScope;
   /**
    * Skill origin. `project` skills are discovered on the device filesystem and
    * loaded on demand via the readFile tool (see `location`).
@@ -52,7 +60,7 @@ export interface SkillContextProviderConfig {
 /**
  * Skill Context Provider
  * Injects lightweight skill metadata into the system prompt so the LLM knows
- * which skills are available and can invoke them via `runSkill`.
+ * which skills are available and can invoke them via `activateSkill`.
  */
 export class SkillContextProvider extends BaseSystemRoleProvider {
   readonly name = 'SkillContextProvider';
@@ -91,8 +99,10 @@ export class SkillContextProvider extends BaseSystemRoleProvider {
       const skills: SkillItem[] = availableSkills.map((skill) => ({
         description: skill.description,
         identifier: skill.identifier,
+        key: skill.key,
         location: skill.location,
         name: skill.name,
+        scope: skill.scope,
         source: skill.source,
       }));
 
