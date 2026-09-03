@@ -143,16 +143,19 @@ export const acceptanceMatrix = [
   },
   {
     command: 'vitest',
-    failCondition: 'Auto-run permits out-of-scope write or sensitive read.',
+    failCondition:
+      'Auto-run permits out-of-scope write/sensitive read, reports another code, or calls provider.',
     fixture: 'Structured write outside roots and sensitive read under auto-run.',
-    observable: 'Both fail before provider/device execution; write code is SCOPE_DENIED.',
+    observable: 'Both return SCOPE_DENIED before provider execution; both provider counts stay 0.',
     testId: 'AC-P06',
   },
   {
     command: 'vitest',
-    failCondition: 'Model-supplied cwd reaches spawn or override warning is absent.',
+    failCondition:
+      'Model-supplied cwd reaches spawn, override warning is absent, or warning leaks requested cwd.',
     fixture: 'runCommand.cwd points outside the primary workspace.',
-    observable: 'Spawn cwd is primary cwd and audit includes the override warning.',
+    observable:
+      'Spawn cwd is primary cwd and audit contains only stable MODEL_CWD_OVERRIDDEN warning data.',
     testId: 'AC-P07',
   },
   {
@@ -258,9 +261,10 @@ export const acceptanceMatrix = [
   {
     command: 'electron',
     failCondition:
-      'Card actions mismatch fail code or diagnostics contain source/attachment secrets.',
+      'SUMMARY_FAILED lacks retry/model-switch actions, another code enables retry, or diagnostics leak secrets.',
     fixture: 'All context fail codes with canary text and attachment names.',
-    observable: 'Code-specific actions and redacted diagnostics.',
+    observable:
+      'SUMMARY_FAILED can retry/switch compression model; NO_CANDIDATES and RETRY_EXHAUSTED cannot retry; diagnostics are redacted.',
     testId: 'AC-C08',
   },
   {

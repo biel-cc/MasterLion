@@ -105,12 +105,29 @@ test('AC-C04 provides visible manual feedback when compression has no candidates
 
 test('AC-C08 aligns error-card actions and redacts message and attachment content', async () => {
   await withObservation('AC-C08', (observed) => {
-    expect(observed.cards.map(({ code }) => code)).toEqual([
-      'TAIL_TOO_LARGE',
-      'NO_CANDIDATES',
-      'SUMMARY_FAILED',
-      'RETRY_EXHAUSTED',
+    expect(observed.cards).toEqual([
+      {
+        actions: ['truncate_tool_results', 'detach_attachments', 'switch_model', 'fork_topic'],
+        code: 'TAIL_TOO_LARGE',
+      },
+      {
+        actions: ['truncate_tool_results', 'detach_attachments', 'switch_model', 'fork_topic'],
+        code: 'NO_CANDIDATES',
+      },
+      {
+        actions: ['retry_compression', 'switch_compression_model', 'switch_model', 'fork_topic'],
+        code: 'SUMMARY_FAILED',
+      },
+      { actions: ['switch_model', 'fork_topic'], code: 'RETRY_EXHAUSTED' },
     ]);
+    const cardsByCode = Object.fromEntries(
+      observed.cards.map(({ actions, code }) => [code, actions]),
+    );
+    expect(cardsByCode.NO_CANDIDATES).not.toContain('retry_compression');
+    expect(cardsByCode.SUMMARY_FAILED).toEqual(
+      expect.arrayContaining(['retry_compression', 'switch_compression_model']),
+    );
+    expect(cardsByCode.RETRY_EXHAUSTED).not.toContain('retry_compression');
     for (const secret of observed.secrets) expect(observed.diagnostics).not.toContain(secret);
   });
 });

@@ -37,6 +37,20 @@ export const acceptanceIds = [
 
 export type AcceptanceId = (typeof acceptanceIds)[number];
 
+export type ContextBudgetFailCode =
+  | 'NO_CANDIDATES'
+  | 'RETRY_EXHAUSTED'
+  | 'SUMMARY_FAILED'
+  | 'TAIL_TOO_LARGE';
+
+export type ContextErrorCardAction =
+  | 'detach_attachments'
+  | 'fork_topic'
+  | 'retry_compression'
+  | 'switch_compression_model'
+  | 'switch_model'
+  | 'truncate_tool_results';
+
 export type RuntimeTarget = 'device' | 'local' | 'none' | 'sandbox';
 
 export interface AcceptanceResultMap {
@@ -75,7 +89,7 @@ export interface AcceptanceResultMap {
     skippedProviderCalls: number;
   };
   'AC-C08': {
-    cards: Array<{ actions: string[]; code: string }>;
+    cards: Array<{ actions: ContextErrorCardAction[]; code: ContextBudgetFailCode }>;
     diagnostics: string;
     secrets: string[];
   };
@@ -131,13 +145,13 @@ export interface AcceptanceResultMap {
     symlinkToSensitiveAllowed: boolean;
   };
   'AC-P06': {
-    sensitiveReadCode: string;
+    sensitiveReadCode: 'SCOPE_DENIED';
     sensitiveReadProviderCalls: number;
-    writeCode: string;
+    writeCode: 'SCOPE_DENIED';
     writeProviderCalls: number;
   };
   'AC-P07': {
-    auditWarnings: string[];
+    auditWarnings: Array<'MODEL_CWD_OVERRIDDEN'>;
     requestedCwd: string;
     spawnCwd: string;
   };

@@ -175,7 +175,7 @@ const cases: AcceptanceCase[] = [
     id: 'AC-P06',
     verify: async (adapter) => {
       expect(await adapter['AC-P06']()).toEqual({
-        sensitiveReadCode: 'SENSITIVE_PATH_DENIED',
+        sensitiveReadCode: 'SCOPE_DENIED',
         sensitiveReadProviderCalls: 0,
         writeCode: 'SCOPE_DENIED',
         writeProviderCalls: 0,
@@ -188,7 +188,8 @@ const cases: AcceptanceCase[] = [
       const observed = await adapter['AC-P07']();
       expect(observed.spawnCwd).not.toBe(observed.requestedCwd);
       expect(observed.spawnCwd).toBe('/code/masterino');
-      expect(observed.auditWarnings.join('\n')).toMatch(/cwd.*overrid/i);
+      expect(observed.auditWarnings).toEqual(['MODEL_CWD_OVERRIDDEN']);
+      expect(observed.auditWarnings.join('\n')).not.toContain(observed.requestedCwd);
     },
   },
   {
@@ -338,9 +339,20 @@ const cases: AcceptanceCase[] = [
           actions: ['truncate_tool_results', 'detach_attachments', 'switch_model', 'fork_topic'],
           code: 'NO_CANDIDATES',
         },
-        { actions: ['switch_model', 'fork_topic'], code: 'SUMMARY_FAILED' },
+        {
+          actions: ['retry_compression', 'switch_compression_model', 'switch_model', 'fork_topic'],
+          code: 'SUMMARY_FAILED',
+        },
         { actions: ['switch_model', 'fork_topic'], code: 'RETRY_EXHAUSTED' },
       ]);
+      const cardsByCode = Object.fromEntries(
+        observed.cards.map(({ actions, code }) => [code, actions]),
+      );
+      expect(cardsByCode.NO_CANDIDATES).not.toContain('retry_compression');
+      expect(cardsByCode.SUMMARY_FAILED).toEqual(
+        expect.arrayContaining(['retry_compression', 'switch_compression_model']),
+      );
+      expect(cardsByCode.RETRY_EXHAUSTED).not.toContain('retry_compression');
       for (const secret of observed.secrets) expect(observed.diagnostics).not.toContain(secret);
     },
   },

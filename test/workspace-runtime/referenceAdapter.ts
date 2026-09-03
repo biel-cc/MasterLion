@@ -56,7 +56,10 @@ export const referenceWorkspaceRuntimeAdapter: WorkspaceRuntimeAcceptanceAdapter
         actions: ['truncate_tool_results', 'detach_attachments', 'switch_model', 'fork_topic'],
         code: 'NO_CANDIDATES',
       },
-      { actions: ['switch_model', 'fork_topic'], code: 'SUMMARY_FAILED' },
+      {
+        actions: ['retry_compression', 'switch_compression_model', 'switch_model', 'fork_topic'],
+        code: 'SUMMARY_FAILED',
+      },
       { actions: ['switch_model', 'fork_topic'], code: 'RETRY_EXHAUSTED' },
     ],
     diagnostics:
@@ -127,13 +130,13 @@ export const referenceWorkspaceRuntimeAdapter: WorkspaceRuntimeAcceptanceAdapter
     symlinkToSensitiveAllowed: false,
   }),
   'AC-P06': result({
-    sensitiveReadCode: 'SENSITIVE_PATH_DENIED',
+    sensitiveReadCode: 'SCOPE_DENIED',
     sensitiveReadProviderCalls: 0,
     writeCode: 'SCOPE_DENIED',
     writeProviderCalls: 0,
   }),
   'AC-P07': result({
-    auditWarnings: ['MODEL_CWD_OVERRIDDEN: /tmp/injected -> /code/masterino'],
+    auditWarnings: ['MODEL_CWD_OVERRIDDEN'],
     requestedCwd: '/tmp/injected',
     spawnCwd: '/code/masterino',
   }),
