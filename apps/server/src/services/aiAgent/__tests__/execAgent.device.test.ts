@@ -638,7 +638,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       expect(mockCreateOperation).toHaveBeenCalledOnce();
     });
 
-    it('does not turn an unknown main model into chat when catalog persistence fails', async () => {
+    it('freezes an unknown main model as the compatible unverified chat fallback', async () => {
       const { AgentService } = await import('@/server/services/agent');
       vi.mocked(AgentService).mockImplementationOnce(
         () =>
@@ -659,11 +659,21 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
 
       await expect(
         service.execAgent({ agentId: 'agent-1', prompt: 'Continue' }),
-      ).rejects.toThrow('MODEL_NOT_CHAT_ELIGIBLE');
-      expect(mockCreateOperation).not.toHaveBeenCalled();
+      ).resolves.toMatchObject({ success: true });
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelCatalogSnapshot: expect.objectContaining({
+            entry: expect.objectContaining({
+              kind: 'chat',
+              kindSource: 'default',
+              modelId: 'private-unknown-v9',
+            }),
+          }),
+        }),
+      );
     });
 
-    it('rejects an unknown compression model before operation creation', async () => {
+    it('freezes an unknown compression model as the compatible unverified chat fallback', async () => {
       const { AgentService } = await import('@/server/services/agent');
       vi.mocked(AgentService).mockImplementationOnce(
         () =>
@@ -686,9 +696,19 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
 
       await expect(
         service.execAgent({ agentId: 'agent-1', prompt: 'Continue' }),
-      ).rejects.toThrow('MODEL_NOT_CHAT_ELIGIBLE');
+      ).resolves.toMatchObject({ success: true });
       expect(mockFindAiModel).toHaveBeenCalledWith('unknown-compressor', 'openai');
-      expect(mockCreateOperation).not.toHaveBeenCalled();
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compressionModelCatalogSnapshot: expect.objectContaining({
+            entry: expect.objectContaining({
+              kind: 'chat',
+              kindSource: 'default',
+              modelId: 'unknown-compressor',
+            }),
+          }),
+        }),
+      );
     });
 
     it('freezes an Electron local intent to the same online gateway device', async () => {
