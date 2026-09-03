@@ -1,9 +1,20 @@
 import type {
   DeviceExecutionTarget,
   LobeAgentAgencyConfig,
-  LobeAgentChatConfig,
-  RuntimeEnvMode,
-} from '@lobechat/types';
+} from '../../packages/types/src/agent/agencyConfig';
+import type { RuntimeEnvMode } from '../../packages/types/src/agent/agentConfig';
+import type { LobeAgentChatConfig } from '../../packages/types/src/agent/chatConfig';
+
+import type { ExecutionPlan } from '../../packages/types/src/executionContext';
+import type {
+  ExecutionTargetByPlatform,
+  TopicExecutionSnapshot,
+} from '../../packages/types/src/projectWorkspace';
+
+export type {
+  ExecutionPlan,
+  ExecutionPlanUnroutedReason,
+} from '../../packages/types/src/executionContext';
 
 /**
  * The agent's tool mode — explicit `chatConfig.toolMode` wins; otherwise derive
@@ -19,6 +30,8 @@ export const resolveToolMode = (
   chatConfig?.toolMode ?? (chatConfig?.enableAgentMode === false ? 'chat' : 'agent');
 
 export interface ResolveExecutionTargetOptions {
+  /** Platform-isolated defaults for future topics. */
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
   /**
    * Platform of the resolving side. On the server there is no real "desktop"
    * flag — callers pass `gatewayConfigured` as a proxy (a device-gateway
@@ -31,11 +44,13 @@ export interface ResolveExecutionTargetOptions {
    * coerces to `'local'` on desktop and `'sandbox'` on web.
    */
   isHetero?: boolean;
+  /** Server-authored topic state. When present it wins over every agent/platform default. */
+  topicSnapshot?: TopicExecutionSnapshot;
 }
 
 /**
- * Single source of truth for where an agent executes — one global
- * `agencyConfig.executionTarget` drives both desktop and web.
+ * Single source of truth for where an agent executes. Existing topic snapshots
+ * win; otherwise the current platform slot supplies the default.
  *
  * - `none`    → no execution environment (plain chat)
  * - `local`   → this machine (in-process; desktop only)
@@ -49,23 +64,24 @@ export interface ResolveExecutionTargetOptions {
  * to use is the user's observability/latency trade-off — never auto-collapse
  * `device(currentDeviceId)` into the in-process path.
  *
- * Defaults: desktop → `local`, web → `none`. On web `local` isn't available
- * (no local filesystem), so a stored `local` (synced from desktop) usually
- * resolves to `sandbox`. For heterogeneous CLI agents, a desktop `local`
- * selection that has already been bound to that desktop's `deviceId` resolves
- * to `device` on web, so the same machine can execute through `lh connect`.
+ * Defaults: desktop → `local`, web → `none`. The legacy global
+ * `agencyConfig.executionTarget` is read only as the web migration slot, so a
+ * historical web sandbox cannot contaminate desktop. A local/device target is
+ * never coerced to a cloud sandbox; routing availability is handled by
+ * `resolveExecutionPlan`.
  */
 export const resolveExecutionTarget = (
   agencyConfig: LobeAgentAgencyConfig | undefined,
-  { isDesktop, isHetero }: ResolveExecutionTargetOptions,
+  { executionTargetByPlatform, isDesktop, isHetero, topicSnapshot }: ResolveExecutionTargetOptions,
 ): DeviceExecutionTarget => {
-  const stored = agencyConfig?.executionTarget;
-  let effective = stored ?? (isDesktop ? 'local' : 'none');
-  if (isHetero && !isDesktop && stored === 'local' && agencyConfig?.boundDeviceId) {
-    return 'device';
-  }
+  if (topicSnapshot) return topicSnapshot.target;
+
+  const platformStored = isDesktop
+    ? executionTargetByPlatform?.desktop
+    : executionTargetByPlatform?.web;
+  const legacyWebTarget = isDesktop ? undefined : agencyConfig?.executionTarget;
+  let effective = platformStored ?? legacyWebTarget ?? (isDesktop ? 'local' : 'none');
   if (isHetero && effective === 'none') effective = isDesktop ? 'local' : 'sandbox';
-  if (!isDesktop && effective === 'local') return 'sandbox';
   return effective;
 };
 
@@ -97,43 +113,14 @@ export const executionTargetToRuntimeMode = (target: DeviceExecutionTarget): Run
 export const resolveRuntimeMode = (
   agencyConfig: LobeAgentAgencyConfig | undefined,
   isDesktop: boolean,
-): RuntimeEnvMode =>
-  executionTargetToRuntimeMode(resolveExecutionTarget(agencyConfig, { isDesktop }));
-
-export type ExecutionPlanUnroutedReason =
-  /** no bound device and more than one device online — the user must bind explicitly */
-  | 'ambiguous-online-devices'
-  /** an explicitly bound device exists but is offline — never silently fall back */
-  | 'bound-device-offline'
-  /** target is `device` but nothing is bound */
-  | 'no-bound-device'
-  /** no device online at all */
-  | 'no-online-device';
-
-/**
- * Where (and whether) a run executes, resolved ONCE at the entry point.
- * Downstream layers consume the plan instead of re-deriving the answer from
- * `executionTarget` / `boundDeviceId` / online state themselves.
- *
- * `target` is the EFFECTIVE execution target (platform defaults and coercions
- * applied; degraded to `none` when device access is denied) — consumers must
- * read it instead of re-resolving `agencyConfig.executionTarget`.
- */
-export type ExecutionPlan = { target: DeviceExecutionTarget } &
-  /** route execution / device tools to this device (the local machine is a registered device) */
-  (| { deviceId: string; kind: 'device' }
-    /**
-     * Device-targeted but no routable device right now. The run proceeds without
-     * an active device; the remote-device proxy may let the model activate one
-     * mid-run (native agents), or the caller may treat this as a hard error
-     * (hetero dispatch).
-     */
-    | { kind: 'device-unrouted'; reason: ExecutionPlanUnroutedReason }
-    /** plain chat — no execution environment, no run tools, no device ever */
-    | { kind: 'none' }
-    /** ephemeral cloud sandbox */
-    | { kind: 'sandbox' }
-  );
+  options: Pick<ResolveExecutionTargetOptions, 'executionTargetByPlatform' | 'topicSnapshot'> = {},
+): RuntimeEnvMode => {
+  const target = resolveExecutionTarget(agencyConfig, { ...options, isDesktop });
+  // A web client can route a local snapshot through its bound device, but it
+  // never gains in-process local tools and must not turn that state into cloud.
+  if (!isDesktop && target === 'local') return 'none';
+  return executionTargetToRuntimeMode(target);
+};
 
 /** Device tools (local-system / remote-device proxy) only exist in device-capable sessions. */
 export const isDeviceCapablePlan = (plan: ExecutionPlan): boolean =>
@@ -157,6 +144,7 @@ export interface ResolveExecutionPlanParams {
    * always need a runtime.
    */
   chatConfig?: LobeAgentChatConfig;
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
   isDesktop: boolean;
   isHetero?: boolean;
   /**
@@ -172,6 +160,8 @@ export interface ResolveExecutionPlanParams {
    * of the stored target.
    */
   requestedDeviceId?: string;
+  /** Server-authored topic state; prevents agent defaults from changing an existing topic. */
+  topicSnapshot?: TopicExecutionSnapshot;
 }
 
 /**
@@ -194,10 +184,12 @@ export const resolveExecutionPlan = (params: ResolveExecutionPlanParams): Execut
     agencyConfig,
     canUseDevice = true,
     chatConfig,
+    executionTargetByPlatform,
     isDesktop,
     isHetero,
     onlineDeviceIds,
     requestedDeviceId,
+    topicSnapshot,
   } = params;
 
   // Chat mode = no execution environment (plain chat). It's orthogonal to the
@@ -207,21 +199,24 @@ export const resolveExecutionPlan = (params: ResolveExecutionPlanParams): Execut
   // agents always need a runtime, so they never take this path.
   if (resolveToolMode(chatConfig) === 'chat' && !isHetero) return { kind: 'none', target: 'none' };
 
-  const target = resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
+  const target = resolveExecutionTarget(agencyConfig, {
+    executionTargetByPlatform,
+    isDesktop,
+    isHetero,
+    topicSnapshot,
+  });
   const wantsDevice = !!requestedDeviceId || target === 'device' || target === 'local';
 
   if (!wantsDevice || !canUseDevice) {
     if (target === 'sandbox') return { kind: 'sandbox', target: 'sandbox' };
-    // Hetero agents must execute somewhere — a device-capable target denied
-    // by the access policy falls back to the cloud sandbox (which never
-    // touches user machines) instead of the hetero-invalid `none`.
-    if (isHetero) return { kind: 'sandbox', target: 'sandbox' };
-    // a device-capable target denied by the access policy degrades to plain
-    // chat — the effective target is `none`, not the stored one
+    // Access denial disables device execution. It never turns a local/device
+    // intent into a billable cloud run (including heterogeneous agents).
     return { kind: 'none', target: 'none' };
   }
 
-  const boundDeviceId = requestedDeviceId || agencyConfig?.boundDeviceId;
+  const boundDeviceId =
+    requestedDeviceId ||
+    (topicSnapshot ? topicSnapshot.boundDeviceId : agencyConfig?.boundDeviceId);
   // requestedDeviceId may force device routing over a non-device stored target
   const effectiveTarget = target === 'local' ? 'local' : 'device';
 
@@ -236,6 +231,12 @@ export const resolveExecutionPlan = (params: ResolveExecutionPlanParams): Execut
     return onlineDeviceIds.includes(boundDeviceId)
       ? { deviceId: boundDeviceId, kind: 'device', target: effectiveTarget }
       : { kind: 'device-unrouted', reason: 'bound-device-offline', target: effectiveTarget };
+  }
+
+  // A captured topic is authoritative. If it lacks a device binding, do not
+  // guess another online machine (especially when web opens a desktop-local topic).
+  if (topicSnapshot) {
+    return { kind: 'device-unrouted', reason: 'no-bound-device', target: effectiveTarget };
   }
 
   if (onlineDeviceIds.length === 1) {

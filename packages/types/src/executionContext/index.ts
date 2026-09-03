@@ -1,0 +1,120 @@
+import type { DeviceExecutionTarget } from '../agent/agencyConfig';
+import type { TopicExecutionSnapshot, WorkspaceKind, WorkspaceRef } from '../projectWorkspace';
+
+export type PathAccessMode = 'exec' | 'read' | 'write';
+
+export interface WorkspaceAccessGrant {
+  createdAt: string;
+  deviceId: string;
+  expiresAt?: string;
+  id: string;
+  lastUsedAt?: string;
+  modes: PathAccessMode[];
+  requestedVia: { messageId?: string; reason?: string; toolCallId?: string };
+  revokedAt?: string;
+  /** Persisted grants are topic-scoped; operation consent is never stored here. */
+  scope: 'topic';
+  /** Device-realpathed, normalized absolute path. */
+  rootPath: string;
+  topicId: string;
+  userId: string;
+}
+
+export interface ExecutionAccessRoot {
+  grantId?: string;
+  modes: PathAccessMode[];
+  /** Device-realpathed, normalized absolute path. */
+  rootPath: string;
+  scope: 'operation' | 'primary' | 'topic';
+  source: 'direct-user-message' | 'user-approval' | 'workspace';
+}
+
+export type ExecutionEnvLayer = 'agent' | 'call' | 'host' | 'topic' | 'user' | 'workspace';
+
+/** Server/device-only resolved values. Browser-facing copies use ExecutionEnvSummary. */
+export interface ExecutionEnv {
+  secretKeys: string[];
+  sources: Record<string, ExecutionEnvLayer>;
+  values: Record<string, string>;
+}
+
+/** Client-safe projection: names only, never values. */
+export interface ExecutionEnvSummary {
+  keys: string[];
+  secretKeys: string[];
+}
+
+export interface ExecutionEnvRef {
+  agentId: string;
+  topicId?: string;
+  workspaceId?: string;
+}
+
+export interface ResolveExecutionEnvRequest {
+  agentId: string;
+  operationId: string;
+  topicId?: string;
+  userId: string;
+  workspaceId?: string;
+}
+
+/** IO boundary implemented by the environment lane; this contract performs no merge or storage. */
+export interface ExecutionEnvAdapter {
+  resolve: (request: ResolveExecutionEnvRequest) => Promise<ExecutionEnv>;
+  summarize: (env: ExecutionEnv) => ExecutionEnvSummary;
+}
+
+export type ExecutionPlanUnroutedReason =
+  | 'ambiguous-online-devices'
+  | 'bound-device-offline'
+  | 'no-bound-device'
+  | 'no-online-device';
+
+export type ExecutionPlan = { target: DeviceExecutionTarget } & (
+  | { deviceId: string; kind: 'device' }
+  | { kind: 'device-unrouted'; reason: ExecutionPlanUnroutedReason }
+  | { kind: 'none' }
+  | { kind: 'sandbox' }
+);
+
+export type ExecutionContextUnresolvedReason = 'device-unrouted' | 'no-workspace' | 'target-none';
+
+/** The single, operation-scoped execution result consumed by all execution channels. */
+export interface ExecutionContext {
+  accessRoots?: ExecutionAccessRoot[];
+  cwd?: string;
+  /** Server/device-only. Never serialize values to a browser-facing response. */
+  env?: ExecutionEnv;
+  envSummary?: ExecutionEnvSummary;
+  /** Correlates cwd/access/model/budget traces without copying their payloads. */
+  operationId?: string;
+  plan: ExecutionPlan;
+  snapshot?: TopicExecutionSnapshot;
+  unresolvedReason?: ExecutionContextUnresolvedReason;
+  version: 1;
+  workspace?: WorkspaceRef;
+}
+
+/** Optional transport subset. Old devices ignore fields they do not understand. */
+export interface ToolCallExecutionContext {
+  accessRoots?: ExecutionAccessRoot[];
+  cwd?: string;
+  /** Gateway/server channel only. Renderer-originated calls use envRef. */
+  env?: Record<string, string>;
+  envRef?: ExecutionEnvRef;
+  workspaceKind?: WorkspaceKind;
+  workspaceRootPath?: string;
+}
+
+export type ExecutionContextErrorCode =
+  | 'DEVICE_UNROUTED'
+  | 'LOCAL_TARGET_UNAVAILABLE'
+  | 'TARGET_NONE'
+  | 'WORKSPACE_ALREADY_BOUND'
+  | 'WORKSPACE_REQUIRED';
+
+export interface ExecutionContextError {
+  code: ExecutionContextErrorCode;
+  message: string;
+  unroutedReason?: ExecutionPlanUnroutedReason;
+}

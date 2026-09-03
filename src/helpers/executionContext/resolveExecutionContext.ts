@@ -1,0 +1,216 @@
+import type { LobeAgentAgencyConfig } from '../../../packages/types/src/agent/agencyConfig';
+import type { LobeAgentChatConfig } from '../../../packages/types/src/agent/chatConfig';
+import type {
+  ExecutionAccessRoot,
+  ExecutionContext,
+  ExecutionContextError,
+  ExecutionEnv,
+  ToolCallExecutionContext,
+} from '../../../packages/types/src/executionContext';
+import type {
+  ExecutionTargetByPlatform,
+  TopicExecutionSnapshot,
+  WorkspaceRef,
+} from '../../../packages/types/src/projectWorkspace';
+
+import { resolveExecutionPlan } from '../executionTarget';
+import { buildExecutionAccessRoots } from './accessRoots';
+import { isAbsoluteFilesystemPath, normalizeRootPath } from './workspaceIdentity';
+
+export interface ExecutionAgencyConfig extends LobeAgentAgencyConfig {
+  defaultWorkspaceByDevice?: Record<string, string>;
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
+}
+
+export interface LegacyTopicWorkspaceEvidence {
+  boundDeviceId?: string;
+  /** Compatibility mirror; URLs and repository slugs are rejected. */
+  workingDirectory?: string;
+  workspaceId?: string;
+}
+
+export interface ResolveExecutionContextInput {
+  accessRoots?: readonly ExecutionAccessRoot[];
+  agencyConfig?: ExecutionAgencyConfig;
+  canUseDevice?: boolean;
+  chatConfig?: LobeAgentChatConfig;
+  env?: ExecutionEnv;
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
+  initialTopicMetadata?: { workingDirectory?: string; workspaceId?: string };
+  isDesktop: boolean;
+  isHetero?: boolean;
+  onlineDeviceIds?: string[];
+  operationId?: string;
+  requestedDeviceId?: string;
+  snapshot?: TopicExecutionSnapshot;
+  topic?: LegacyTopicWorkspaceEvidence;
+  workspaces?: Readonly<Record<string, WorkspaceRef | undefined>>;
+}
+
+const normalizeResolvedWorkspace = (workspace: WorkspaceRef): WorkspaceRef => ({
+  ...workspace,
+  rootPath: normalizeRootPath(workspace.rootPath),
+});
+
+const getWorkspaceById = (
+  id: string | undefined,
+  workspaces: ResolveExecutionContextInput['workspaces'],
+): WorkspaceRef | undefined => (id ? workspaces?.[id] : undefined);
+
+const isDeviceWorkspaceFor = (workspace: WorkspaceRef | undefined, deviceId: string): boolean =>
+  !!workspace &&
+  (workspace.kind === 'device' || workspace.kind === 'scratch') &&
+  workspace.deviceId === deviceId &&
+  isAbsoluteFilesystemPath(workspace.rootPath);
+
+const resolveDeviceWorkspace = (
+  input: ResolveExecutionContextInput,
+  deviceId: string,
+): WorkspaceRef | undefined => {
+  const snapshotWorkspace = getWorkspaceById(input.snapshot?.workspaceId, input.workspaces);
+  if (input.snapshot?.workspaceId) {
+    return isDeviceWorkspaceFor(snapshotWorkspace, deviceId)
+      ? normalizeResolvedWorkspace(snapshotWorkspace!)
+      : undefined;
+  }
+
+  const topicWorkspace = getWorkspaceById(input.topic?.workspaceId, input.workspaces);
+  if (isDeviceWorkspaceFor(topicWorkspace, deviceId)) {
+    return normalizeResolvedWorkspace(topicWorkspace!);
+  }
+
+  const topicPath = input.topic?.workingDirectory;
+  if (
+    topicPath &&
+    isAbsoluteFilesystemPath(topicPath) &&
+    (!input.topic?.boundDeviceId || input.topic.boundDeviceId === deviceId)
+  ) {
+    return normalizeResolvedWorkspace({ deviceId, kind: 'device', rootPath: topicPath });
+  }
+
+  const initialWorkspace = getWorkspaceById(
+    input.initialTopicMetadata?.workspaceId,
+    input.workspaces,
+  );
+  if (isDeviceWorkspaceFor(initialWorkspace, deviceId)) {
+    return normalizeResolvedWorkspace(initialWorkspace!);
+  }
+
+  const initialPath = input.initialTopicMetadata?.workingDirectory;
+  if (initialPath && isAbsoluteFilesystemPath(initialPath)) {
+    return normalizeResolvedWorkspace({ deviceId, kind: 'device', rootPath: initialPath });
+  }
+
+  return undefined;
+};
+
+const resolveSandboxWorkspace = (input: ResolveExecutionContextInput): WorkspaceRef => {
+  const workspaceId = input.snapshot?.workspaceId ?? input.topic?.workspaceId;
+  const persisted = getWorkspaceById(workspaceId, input.workspaces);
+
+  return {
+    ...(persisted?.kind === 'sandbox' ? persisted : undefined),
+    kind: 'sandbox',
+    rootPath: '/workspace',
+  };
+};
+
+/** Pure resolver: callers preload all rows/evidence; this function performs no IO or binding. */
+export const resolveExecutionContext = (input: ResolveExecutionContextInput): ExecutionContext => {
+  const executionTargetByPlatform =
+    input.executionTargetByPlatform ?? input.agencyConfig?.executionTargetByPlatform;
+  const plan = resolveExecutionPlan({
+    agencyConfig: input.agencyConfig,
+    canUseDevice: input.canUseDevice,
+    chatConfig: input.chatConfig,
+    executionTargetByPlatform,
+    isDesktop: input.isDesktop,
+    isHetero: input.isHetero,
+    onlineDeviceIds: input.onlineDeviceIds,
+    requestedDeviceId: input.requestedDeviceId,
+    topicSnapshot: input.snapshot,
+  });
+  const common = {
+    env: input.env,
+    operationId: input.operationId,
+    plan,
+    snapshot: input.snapshot,
+    version: 1 as const,
+  };
+
+  if (plan.kind === 'none') {
+    return {
+      ...common,
+      accessRoots: buildExecutionAccessRoots(undefined, input.accessRoots),
+      unresolvedReason: 'target-none',
+    };
+  }
+
+  if (plan.kind === 'device-unrouted') {
+    return {
+      ...common,
+      accessRoots: buildExecutionAccessRoots(undefined, input.accessRoots),
+      unresolvedReason: 'device-unrouted',
+    };
+  }
+
+  const workspace =
+    plan.kind === 'sandbox'
+      ? resolveSandboxWorkspace(input)
+      : resolveDeviceWorkspace(input, plan.deviceId);
+
+  if (!workspace) {
+    return {
+      ...common,
+      accessRoots: buildExecutionAccessRoots(undefined, input.accessRoots),
+      unresolvedReason: 'no-workspace',
+    };
+  }
+
+  const cwd = workspace.rootPath;
+  return {
+    ...common,
+    accessRoots: buildExecutionAccessRoots(cwd, input.accessRoots),
+    cwd,
+    workspace,
+  };
+};
+
+export const assertExecutionContextReady = (
+  context: ExecutionContext,
+  options: { requireWorkspace: boolean },
+): ExecutionContextError | undefined => {
+  if (context.plan.kind === 'none' && options.requireWorkspace) {
+    return { code: 'TARGET_NONE', message: 'No execution target is selected.' };
+  }
+
+  if (context.plan.kind === 'device-unrouted') {
+    const isLocal = context.plan.target === 'local';
+    return {
+      code: isLocal ? 'LOCAL_TARGET_UNAVAILABLE' : 'DEVICE_UNROUTED',
+      message: isLocal
+        ? 'The local execution target is unavailable.'
+        : 'The selected device is unavailable.',
+      unroutedReason: context.plan.reason,
+    };
+  }
+
+  if (options.requireWorkspace && !context.workspace) {
+    return { code: 'WORKSPACE_REQUIRED', message: 'A workspace is required for this operation.' };
+  }
+
+  return undefined;
+};
+
+/** Server/gateway projection. Browser paths must pass envRef and omit includeEnvValues. */
+export const toToolCallExecutionContext = (
+  context: ExecutionContext,
+  options: { envRef?: ToolCallExecutionContext['envRef']; includeEnvValues?: boolean } = {},
+): ToolCallExecutionContext => ({
+  accessRoots: context.accessRoots,
+  cwd: context.cwd,
+  env: options.includeEnvValues ? context.env?.values : undefined,
+  envRef: options.envRef,
+  workspaceKind: context.workspace?.kind,
+  workspaceRootPath: context.workspace?.rootPath,
+});
