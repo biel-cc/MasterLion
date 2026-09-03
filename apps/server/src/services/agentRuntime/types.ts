@@ -344,6 +344,8 @@ export interface OperationCreationParams {
   botContext?: ChatTopicBotContext;
   /** Bot platform context for injecting platform capabilities (e.g. markdown support) */
   botPlatformContext?: BotPlatformContext;
+  /** Model evidence frozen together with this operation. */
+  compressionModelCatalogSnapshot?: ModelCatalogSnapshot;
   /**
    * Device-access policy decision computed once per turn by
    * `resolveDeviceAccessPolicy`. Forwarded into `state.metadata.deviceAccessPolicy`
@@ -381,7 +383,6 @@ export interface OperationCreationParams {
   /** Initial step count offset for resumed operations (accumulated from previous runs) */
   initialStepCount?: number;
   maxSteps?: number;
-  /** Model evidence frozen together with this operation. */
   modelCatalogSnapshot?: ModelCatalogSnapshot;
   modelRuntimeConfig?: any;
   operationId: string;

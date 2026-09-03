@@ -906,7 +906,6 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       );
     }
     const sessionId = randomUUID();
-
     this.sessions.set(sessionId, {
       // If resuming, pre-set the agent session ID so sendPrompt adds --resume
       agentSessionId: params.resumeSessionId,

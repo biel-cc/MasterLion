@@ -245,6 +245,13 @@ const authorizePath = async ({
     } catch {
       continue;
     }
+    if (
+      root.scope === 'operation' &&
+      root.source === 'direct-user-message' &&
+      !isWithin(realRoot, homeDir)
+    ) {
+      continue;
+    }
     if (isSensitiveRoot(realRoot, homeDir) || !isWithin(target, realRoot)) continue;
     if (
       !root.modes.includes(mode) ||
@@ -418,7 +425,12 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
   now = new Date(),
   trace = {},
 }: PrepareToolCallExecutionOptions & { args: T }): Promise<PreparedToolCallExecution<T>> => {
-  if (!context) return { args, legacy: true, scopeAudit: [], warnings: [] };
+  if (!context) {
+    if (LOCAL_SYSTEM_APIS.has(apiName) && (trace.operationId || trace.topicId)) {
+      throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
+    }
+    return { args, legacy: true, scopeAudit: [], warnings: [] };
+  }
   if (!LOCAL_SYSTEM_APIS.has(apiName)) {
     return { args, legacy: false, scopeAudit: [], warnings: [] };
   }

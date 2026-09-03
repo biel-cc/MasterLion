@@ -330,6 +330,9 @@ export class MessageModel {
   private pluginsOwnership = () =>
     buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messagePlugins);
 
+  private filesOwnership = () =>
+    buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messagesFiles);
+
   /**
    * Lock the message row before merging metadata so a stale caller snapshot cannot overwrite
    * server-owned lifecycle markers written by ensureToolMessage or commitToolResult.
@@ -2404,7 +2407,19 @@ export class MessageModel {
         'db.message.update.transaction',
         () =>
           this.db.transaction(async (trx) => {
-            // 1. insert message files
+            // 1. imageList has replace semantics. An explicit [] detaches every
+            // file association; omitting the field preserves existing files.
+            if (imageList !== undefined) {
+              await runTimedStage(
+                timing,
+                'db.message.update.imageFiles.delete',
+                () =>
+                  trx
+                    .delete(messagesFiles)
+                    .where(and(eq(messagesFiles.messageId, id), this.filesOwnership())),
+                { imageCount: imageList.length },
+              );
+            }
             if (imageList && imageList.length > 0) {
               await runTimedStage(
                 timing,
@@ -2466,7 +2481,7 @@ export class MessageModel {
             }
           }),
         {
-          hasImageList: !!imageList?.length,
+          hasImageList: imageList !== undefined,
           hasMetadata: !!metadataPatch,
           valueKeys: Object.keys(message),
         },

@@ -32,10 +32,7 @@ import {
   type ExecVirtualSubAgentParams,
   type UIChatMessage,
 } from '@lobechat/types';
-import type {
-  TopicExecutionSnapshot,
-  WorkspaceRef,
-} from '@lobechat/types/src/projectWorkspace';
+import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 import urlJoin from 'url-join';
 
@@ -428,6 +425,7 @@ export class AgentRuntimeService {
       userMemory,
       deviceSystemInfo,
       operationSkillSet,
+      compressionModelCatalogSnapshot,
       modelCatalogSnapshot,
       skillRegistryResult,
       parentOperationId,
@@ -518,6 +516,7 @@ export class AgentRuntimeService {
           executionBudget,
           // need be removed
           modelRuntimeConfig,
+          compressionModelCatalogSnapshot,
           modelCatalogSnapshot,
           queueRetries,
           queueRetryDelay,

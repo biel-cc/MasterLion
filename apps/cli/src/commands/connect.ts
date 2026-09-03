@@ -287,14 +287,18 @@ async function runConnect(options: ConnectOptions, isDaemonChild: boolean) {
       log.toolCall(toolCall.apiName, requestId, undefined, operationId);
     }
 
-    const result = executionContext
-      ? await executeToolCall(toolCall.apiName, toolCall.arguments, timeout, executionContext, {
-          deviceId: deviceId ?? client.currentDeviceId,
-          operationId,
-          toolCallId: toolCallId ?? requestId,
-          topicId,
-        })
-      : await executeToolCall(toolCall.apiName, toolCall.arguments, timeout);
+    const result = await executeToolCall(
+      toolCall.apiName,
+      toolCall.arguments,
+      timeout,
+      executionContext,
+      {
+        deviceId: deviceId ?? client.currentDeviceId,
+        operationId,
+        toolCallId: toolCallId ?? requestId,
+        topicId,
+      },
+    );
 
     if (isDaemonChild) {
       appendLog(

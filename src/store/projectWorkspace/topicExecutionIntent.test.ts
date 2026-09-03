@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type * as ConstVersion from '@/const/version';
+
+import { buildDraftConversationKey } from './draftKey';
+import { resolvePendingTopicExecutionIntent } from './topicExecutionIntent';
+
+const mocks = vi.hoisted(() => ({
+  agentConfig: undefined as any,
+  getDeviceInfo: vi.fn(),
+  isDesktop: true,
+  workspaceState: {
+    draftByConversationKey: {},
+    topicStatesById: {},
+    workspacesById: {},
+  } as any,
+}));
+
+vi.mock('@/const/version', async (importOriginal) => {
+  const actual = await importOriginal<typeof ConstVersion>();
+  return {
+    ...actual,
+    get isDesktop() {
+      return mocks.isDesktop;
+    },
+  };
+});
+
+vi.mock('@/services/electron/gatewayConnection', () => ({
+  gatewayConnectionService: { getDeviceInfo: mocks.getDeviceInfo },
+}));
+
+vi.mock('@/store/agent', () => ({ getAgentStoreState: () => ({}) }));
+vi.mock('@/store/agent/selectors', () => ({
+  agentSelectors: { getAgentConfigById: () => () => mocks.agentConfig },
+}));
+vi.mock('./store', () => ({
+  getProjectWorkspaceStoreState: () => mocks.workspaceState,
+}));
+
+describe('resolvePendingTopicExecutionIntent', () => {
+  beforeEach(() => {
+    mocks.agentConfig = undefined;
+    mocks.getDeviceInfo.mockReset();
+    mocks.isDesktop = true;
+    mocks.workspaceState = {
+      draftByConversationKey: {},
+      topicStatesById: {},
+      workspacesById: {},
+    };
+  });
+
+  afterEach(() => vi.clearAllMocks());
+
+  it('freezes desktop chat-only topics as local instead of rewriting target to none', async () => {
+    mocks.agentConfig = { chatConfig: { toolMode: 'chat' } };
+    mocks.getDeviceInfo.mockResolvedValue({ deviceId: 'desktop-device' });
+
+    await expect(
+      resolvePendingTopicExecutionIntent({ agentId: 'agent-1', isNewTopic: true }),
+    ).resolves.toEqual({
+      draftKey: buildDraftConversationKey({ agentId: 'agent-1' }),
+      intent: {
+        platform: 'desktop',
+        target: 'local',
+        targetDeviceId: 'desktop-device',
+      },
+    });
+  });
+
+  it('uses web none as the native new-topic default and never probes desktop IPC', async () => {
+    mocks.isDesktop = false;
+
+    const result = await resolvePendingTopicExecutionIntent({
+      agentId: 'agent-1',
+      isNewTopic: true,
+    });
+
+    expect(result?.intent).toEqual({ platform: 'web', target: 'none' });
+    expect(mocks.getDeviceInfo).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit draft workspace and target override the agent platform default', async () => {
+    const draftKey = buildDraftConversationKey({ agentId: 'agent-1', groupId: 'group-1' });
+    mocks.agentConfig = {
+      agencyConfig: { executionTargetByPlatform: { desktop: 'sandbox' } },
+    };
+    mocks.workspaceState.draftByConversationKey[draftKey] = {
+      target: 'device',
+      targetDeviceId: 'draft-device',
+      updatedAt: 1,
+      workspaceId: 'workspace-1',
+    };
+    mocks.workspaceState.workspacesById['workspace-1'] = {
+      deviceId: 'draft-device',
+      id: 'workspace-1',
+      kind: 'device',
+      rootPath: '/repo',
+    };
+
+    const result = await resolvePendingTopicExecutionIntent({
+      agentId: 'agent-1',
+      groupId: 'group-1',
+      isNewTopic: true,
+    });
+
+    expect(result?.intent).toEqual({
+      platform: 'desktop',
+      target: 'device',
+      targetDeviceId: 'draft-device',
+      workspaceId: 'workspace-1',
+    });
+  });
+
+  it('gives an existing server snapshot priority over changed agent defaults', async () => {
+    mocks.agentConfig = {
+      agencyConfig: { executionTargetByPlatform: { desktop: 'sandbox' } },
+    };
+
+    const result = await resolvePendingTopicExecutionIntent({
+      agentId: 'agent-1',
+      isNewTopic: false,
+      topicId: 'topic-1',
+      topicSnapshot: {
+        boundDeviceId: 'frozen-device',
+        target: 'local',
+        targetCapturedAt: '2026-09-04T00:00:00.000Z',
+        version: 1,
+      },
+    });
+
+    expect(result).toEqual({
+      intent: {
+        platform: 'desktop',
+        target: 'local',
+        targetDeviceId: 'frozen-device',
+      },
+    });
+    expect(mocks.getDeviceInfo).not.toHaveBeenCalled();
+  });
+});

@@ -36,8 +36,23 @@ const stableSerialize = (value: unknown): string => {
     .join(',')}}`;
 };
 
+const projectProviderTextContent = (content: unknown): unknown => {
+  if (!Array.isArray(content)) return content;
+
+  return content.map((part) => {
+    if (!part || typeof part !== 'object') return part;
+
+    const value = part as Record<string, unknown>;
+    if (value.type === 'image_url' || value.type === 'video_url') {
+      return { type: value.type };
+    }
+
+    return part;
+  });
+};
+
 const messagePayloadProjection = (message: CountContextTokensParams['messages'][number]) => ({
-  content: message.content,
+  content: projectProviderTextContent(message.content),
   reasoning: message.reasoning,
   role: message.role,
   toolCallId: message.tool_call_id,
@@ -165,7 +180,7 @@ export const countContextTokens = ({
       bumpSource(bySource, 'content', recordedOutputTokens);
     } else {
       // Per-field estimation
-      bumpSource(bySource, 'content', estimate(msg.content));
+      bumpSource(bySource, 'content', estimate(projectProviderTextContent(msg.content)));
 
       // Tool calls: lobe stores these on `msg.tools` (NOT OpenAI's `tool_calls`)
       // We project to what's actually sent: id + apiName + arguments + type.

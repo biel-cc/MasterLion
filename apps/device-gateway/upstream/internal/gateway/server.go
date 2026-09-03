@@ -190,15 +190,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 	timeout := normalizeToolCallTimeout(body.Timeout)
 	requestID := randomID()
 
-	request := map[string]any{
-		"requestId": requestID,
-		"timeout":   int(timeout / time.Millisecond),
-		"toolCall":  json.RawMessage(body.ToolCall),
-		"type":      "tool_call_request",
-	}
-	if body.OperationID != "" {
-		request["operationId"] = body.OperationID
-	}
+	request := buildToolCallRequest(body, requestID, timeout)
 
 	msg, status := h.dispatch(target, requestID, timeout+toolCallTimeoutPadding, request)
 	switch status {
@@ -209,6 +201,31 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 	case dispatchOffline:
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 	}
+}
+
+func buildToolCallRequest(body deviceHTTPBody, requestID string, timeout time.Duration) map[string]any {
+	request := map[string]any{
+		"requestId": requestID,
+		"timeout":   int(timeout / time.Millisecond),
+		"toolCall":  json.RawMessage(body.ToolCall),
+		"type":      "tool_call_request",
+	}
+	if body.OperationID != "" {
+		request["operationId"] = body.OperationID
+	}
+	if len(body.ExecutionContext) > 0 {
+		request["executionContext"] = body.ExecutionContext
+	}
+	if body.TopicID != "" {
+		request["topicId"] = body.TopicID
+	}
+	if body.ToolCallID != "" {
+		request["toolCallId"] = body.ToolCallID
+	}
+	if body.DeviceID != "" {
+		request["deviceId"] = body.DeviceID
+	}
+	return request
 }
 
 func (s *Server) handleSystemInfo(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {

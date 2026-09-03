@@ -4,6 +4,7 @@ import {
   type RecentTopicGroupMember,
 } from '@lobechat/types';
 import { cleanObject } from '@lobechat/utils';
+import { TRPCError } from '@trpc/server';
 import { inArray } from 'drizzle-orm';
 import { after } from 'next/server';
 import { z } from 'zod';
@@ -20,9 +21,11 @@ import { TopicShareModel } from '@/database/models/topicShare';
 import { AgentMigrationRepo } from '@/database/repositories/agentMigration';
 import { TopicImporterRepo } from '@/database/repositories/topicImporter';
 import { chatGroups } from '@/database/schemas';
+import { normalizeRootPath } from '@/helpers/executionContext';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { resolveTopicCreationExecutionMetadata } from '@/server/services/aiAgent/topicExecutionIntent';
+import { DeviceGateway } from '@/server/services/deviceGateway';
 import { type BatchTaskResult } from '@/types/service';
 
 import {
@@ -42,6 +45,7 @@ const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
       agentModel: new AgentModel(ctx.serverDB, ctx.userId, wsId),
       agentOperationModel: new AgentOperationModel(ctx.serverDB, ctx.userId, wsId),
       chatGroupModel: new ChatGroupModel(ctx.serverDB, ctx.userId, wsId),
+      projectWorkspaceModel: new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
       topicImporterRepo: new TopicImporterRepo(ctx.serverDB, ctx.userId, wsId),
       topicModel: new TopicModel(ctx.serverDB, ctx.userId, wsId),
       topicShareModel: new TopicShareModel(ctx.serverDB, ctx.userId, wsId),
@@ -570,6 +574,52 @@ export const topicRouter = router({
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
+      const topic = await ctx.topicModel.findById(input.id);
+      if (!topic) return ctx.topicModel.delete(input.id);
+
+      const metadata = topic.metadata as {
+        boundDeviceId?: string;
+        executionSnapshot?: {
+          boundDeviceId?: string;
+          workspaceId?: string;
+          workspaceKind?: string;
+        };
+        workspaceId?: string;
+        workspaceKind?: string;
+      } | null;
+      const snapshot = metadata?.executionSnapshot;
+      const workspaceId = snapshot?.workspaceId ?? metadata?.workspaceId;
+      const workspaceKind = snapshot?.workspaceKind ?? metadata?.workspaceKind;
+      const workspace = workspaceId
+        ? await ctx.projectWorkspaceModel.findById(workspaceId)
+        : undefined;
+
+      if (workspaceKind === 'scratch' || workspace?.kind === 'scratch') {
+        const deviceId = workspace?.deviceId ?? snapshot?.boundDeviceId ?? metadata?.boundDeviceId;
+        if (!workspaceId || !workspace || workspace.kind !== 'scratch' || !deviceId) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: 'Scratch workspace evidence is incomplete',
+          });
+        }
+
+        const cleaned = await new DeviceGateway().cleanupScratchWorkspace({
+          deviceId,
+          topicId: input.id,
+          userId: ctx.userId,
+        });
+        if (!cleaned || normalizeRootPath(cleaned.root) !== normalizeRootPath(workspace.rootPath)) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: 'Scratch workspace could not be safely cleaned on its owning device',
+          });
+        }
+
+        const result = await ctx.topicModel.delete(input.id);
+        await ctx.projectWorkspaceModel.deleteScratch(workspaceId);
+        return result;
+      }
+
       return ctx.topicModel.delete(input.id);
     }),
 
@@ -737,8 +787,11 @@ export const topicRouter = router({
       // Keep accepting authority-shaped fields for rolling-upgrade compatibility, but never let
       // renderer payloads author the execution binding. Only ProjectWorkspaceService may persist
       // these mirrors together with the server-authored executionSnapshot.
-      const { boundDeviceId: _boundDeviceId, workingDirectory: _workingDirectory, ...metadata } =
-        input.metadata;
+      const {
+        boundDeviceId: _boundDeviceId,
+        workingDirectory: _workingDirectory,
+        ...metadata
+      } = input.metadata;
       return ctx.topicModel.updateMetadata(input.id, metadata);
     }),
 });

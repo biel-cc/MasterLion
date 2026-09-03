@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     recent: [] as any[],
     workspaceGroups: [] as any[],
   },
+  loadError: undefined as unknown,
+  loading: false,
+  reload: vi.fn(),
   switchTopic: vi.fn(),
   topicItems: [] as Array<Record<string, unknown>>,
   updateAgentConfigById: vi.fn(),
@@ -55,7 +58,12 @@ vi.mock('@lobehub/ui', () => ({
   ),
   Center: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   Flexbox: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
-    <div data-testid={props['data-testid'] as string | undefined}>{children}</div>
+    <div
+      data-testid={props['data-testid'] as string | undefined}
+      role={props.role as string | undefined}
+    >
+      {children}
+    </div>
   ),
   Icon: () => null,
   Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
@@ -73,6 +81,7 @@ vi.mock('lucide-react', () => ({
   HandIcon: () => null,
   MoreHorizontal: () => null,
   PlusIcon: () => null,
+  RefreshCwIcon: () => null,
   TriangleAlertIcon: () => null,
 }));
 vi.mock('react-i18next', () => ({
@@ -81,23 +90,18 @@ vi.mock('react-i18next', () => ({
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('url-join', () => ({ default: (...parts: string[]) => parts.join('/') }));
 vi.mock('@/components/RingLoading', () => ({ default: () => null }));
-vi.mock('@/features/NavPanel/components/NavItem', () => ({ default: () => null }));
-vi.mock('@/features/NavPanel/components/SkeletonList', () => ({ default: () => null }));
-vi.mock('@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item', () => ({
-  default: (props: Record<string, unknown>) => {
-    mocks.topicItems.push(props);
-    return (
-      <div data-testid="topic-item">
-        {props.title as string}
-        {props.scratchWorkspace ? <span data-testid="topic-scratch-tag" /> : null}
-      </div>
-    );
-  },
+vi.mock('@/features/NavPanel/components/NavItem', () => ({
+  default: ({ onClick, title }: { onClick?: () => void; title?: ReactNode }) =>
+    onClick ? <button onClick={onClick}>{title}</button> : <span>{title}</span>,
 }));
+vi.mock('@/features/NavPanel/components/SkeletonList', () => ({ default: () => null }));
 vi.mock('./useWorkspaceTopicNavigation', () => ({
   useWorkspaceTopicNavigation: () => ({
     groupIds: mocks.navigation.workspaceGroups.map((g: any) => g.workspaceId),
     navigation: mocks.navigation,
+    loadError: mocks.loadError,
+    loading: mocks.loading,
+    reload: mocks.reload,
     topicSortBy: 'updatedAt',
   }),
 }));
@@ -156,11 +160,23 @@ const workspace = {
   kind: 'device' as const,
   rootPath: '/projects/app',
 };
+const TopicItemStub = (props: Record<string, unknown>) => {
+  mocks.topicItems.push(props);
+  return (
+    <div data-testid="topic-item">
+      {props.title as string}
+      {props.scratchWorkspace ? <span data-testid="topic-scratch-tag" /> : null}
+    </div>
+  );
+};
 
 describe('WorkspaceMode sidebar', () => {
   beforeEach(() => {
     mocks.topicItems.length = 0;
     mocks.switchTopic.mockClear();
+    mocks.loadError = undefined;
+    mocks.loading = false;
+    mocks.reload.mockClear();
     mocks.updateAgentConfigById.mockClear();
     mocks.updateAgentRuntimeEnvConfigById.mockClear();
     useProjectWorkspaceStore.setState({ draftByConversationKey: {} });
@@ -179,7 +195,7 @@ describe('WorkspaceMode sidebar', () => {
   });
 
   it('renders the workspace section above the fixed recent section', () => {
-    render(<WorkspaceMode />);
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
 
     const sections = [...document.querySelectorAll('[data-testid]')].map((node) =>
       node.getAttribute('data-testid'),
@@ -192,7 +208,7 @@ describe('WorkspaceMode sidebar', () => {
   });
 
   it('keeps workspace and recent rows disjoint and tags only scratch rows', () => {
-    render(<WorkspaceMode />);
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
 
     const rendered = mocks.topicItems.map((item) => item.id);
     expect(new Set(rendered).size).toBe(rendered.length);
@@ -205,10 +221,29 @@ describe('WorkspaceMode sidebar', () => {
 
   it('shows the empty recent copy without a workspace section when nothing is grouped', () => {
     mocks.navigation = { placementById: {}, recent: [], workspaceGroups: [] };
-    render(<WorkspaceMode />);
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
 
     expect(screen.queryByTestId('topic-workspace-section')).not.toBeInTheDocument();
     expect(screen.getByText('workspaceRuntime.sidebar.recentEmpty')).toBeInTheDocument();
+  });
+
+  it('does not flash an empty Recent section while workspace evidence is loading', () => {
+    mocks.navigation = { placementById: {}, recent: [], workspaceGroups: [] };
+    mocks.loading = true;
+
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+
+    expect(screen.queryByText('workspaceRuntime.sidebar.recentEmpty')).not.toBeInTheDocument();
+  });
+
+  it('surfaces workspace load errors with a retry action', () => {
+    mocks.loadError = new Error('offline');
+
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.retry' }));
+
+    expect(screen.getByTestId('topic-workspace-load-error')).toHaveAttribute('role', 'alert');
+    expect(mocks.reload).toHaveBeenCalledOnce();
   });
 
   it('workspace group "+" only writes a draft intent and opens a draft', () => {
@@ -217,6 +252,7 @@ describe('WorkspaceMode sidebar', () => {
         expanded
         activeTopicId="t-1"
         group={{ topics: [topic('bound')], workspace, workspaceId: 'ws-app' }}
+        TopicItemComponent={TopicItemStub as any}
       />,
     );
 
@@ -236,7 +272,13 @@ describe('WorkspaceMode sidebar', () => {
   });
 
   it('RecentSection passes scratch root only for scratch placements', () => {
-    render(<RecentSection activeTopicId="t-1" entries={mocks.navigation.recent} />);
+    render(
+      <RecentSection
+        activeTopicId="t-1"
+        entries={mocks.navigation.recent}
+        TopicItemComponent={TopicItemStub as any}
+      />,
+    );
 
     expect(mocks.topicItems.find((item) => item.id === 'plain')?.scratchWorkspace).toBeUndefined();
     expect(mocks.topicItems.find((item) => item.id === 'scratch')?.scratchWorkspace).toEqual({

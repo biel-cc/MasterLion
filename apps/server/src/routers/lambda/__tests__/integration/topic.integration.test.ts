@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { type LobeChatDatabase } from '@lobechat/database';
-import { sessions, topics } from '@lobechat/database/schemas';
+import { projectWorkspaces, sessions, topics } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,13 @@ vi.mock('next/server', () => ({
   after: vi.fn((callback: () => void) => callback()),
 }));
 
+const cleanupScratchWorkspaceMock = vi.hoisted(() => vi.fn());
+vi.mock('@/server/services/deviceGateway', () => ({
+  DeviceGateway: vi.fn().mockImplementation(() => ({
+    cleanupScratchWorkspace: cleanupScratchWorkspaceMock,
+  })),
+}));
+
 /**
  * Topic Router Integration Tests
  *
@@ -34,6 +41,7 @@ describe('Topic Router Integration Tests', () => {
   let testAgentId: string;
 
   beforeEach(async () => {
+    cleanupScratchWorkspaceMock.mockReset();
     serverDB = await getTestDB();
     testDB = serverDB;
     userId = await createTestUser(serverDB);
@@ -734,6 +742,98 @@ describe('Topic Router Integration Tests', () => {
       const deletedTopic = await serverDB.select().from(topics).where(eq(topics.id, topicId));
 
       expect(deletedTopic).toHaveLength(0);
+    });
+
+    it('removes a scratch topic only after its owning device confirms directory cleanup', async () => {
+      const rootPath = '/tmp/masterino-scratch/topic-cleanup';
+      const [workspace] = await serverDB
+        .insert(projectWorkspaces)
+        .values({
+          deviceId: 'device-1',
+          kind: 'scratch',
+          rootPath,
+          scopeKey: `scratch:device-1:${rootPath}`,
+          userId,
+        })
+        .returning();
+      const [scratchTopic] = await serverDB
+        .insert(topics)
+        .values({
+          metadata: {
+            executionSnapshot: {
+              boundDeviceId: 'device-1',
+              target: 'device',
+              targetCapturedAt: '2026-09-04T00:00:00.000Z',
+              version: 1,
+              workspaceId: workspace.id,
+            },
+          },
+          sessionId: testSessionId,
+          title: 'Temporary topic',
+          userId,
+        })
+        .returning();
+      cleanupScratchWorkspaceMock.mockResolvedValue({ removed: true, root: rootPath });
+
+      await topicRouter
+        .createCaller(createTestContext(userId))
+        .removeTopic({ id: scratchTopic.id });
+
+      expect(cleanupScratchWorkspaceMock).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        topicId: scratchTopic.id,
+        userId,
+      });
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratchTopic.id)),
+      ).resolves.toHaveLength(0);
+      await expect(
+        serverDB.select().from(projectWorkspaces).where(eq(projectWorkspaces.id, workspace.id)),
+      ).resolves.toHaveLength(0);
+    });
+
+    it('keeps scratch records when its owning device cannot confirm cleanup', async () => {
+      const rootPath = '/tmp/masterino-scratch/topic-offline';
+      const [workspace] = await serverDB
+        .insert(projectWorkspaces)
+        .values({
+          deviceId: 'device-1',
+          kind: 'scratch',
+          rootPath,
+          scopeKey: `scratch:device-1:${rootPath}`,
+          userId,
+        })
+        .returning();
+      const [scratchTopic] = await serverDB
+        .insert(topics)
+        .values({
+          metadata: {
+            executionSnapshot: {
+              boundDeviceId: 'device-1',
+              target: 'device',
+              targetCapturedAt: '2026-09-04T00:00:00.000Z',
+              version: 1,
+              workspaceId: workspace.id,
+              workspaceKind: 'scratch',
+            },
+          },
+          sessionId: testSessionId,
+          title: 'Offline temporary topic',
+          userId,
+        })
+        .returning();
+      cleanupScratchWorkspaceMock.mockResolvedValue(undefined);
+
+      await expect(
+        topicRouter.createCaller(createTestContext(userId)).removeTopic({ id: scratchTopic.id }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratchTopic.id)),
+      ).resolves.toHaveLength(1);
+      await expect(
+        serverDB.select().from(projectWorkspaces).where(eq(projectWorkspaces.id, workspace.id)),
+      ).resolves.toHaveLength(1);
     });
 
     it('should count topics', async () => {

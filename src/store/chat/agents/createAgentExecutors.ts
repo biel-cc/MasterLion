@@ -17,7 +17,11 @@ import type {
   SubAgentsBatchResultPayload,
 } from '@lobechat/agent-runtime';
 import { UsageCounter } from '@lobechat/agent-runtime';
-import { countContextTokens, type ToolsEngine } from '@lobechat/context-engine';
+import {
+  countContextTokens,
+  type OperationSkillSet,
+  type ToolsEngine,
+} from '@lobechat/context-engine';
 import { chainCompressContext } from '@lobechat/prompts';
 import {
   type ChatMessageError,
@@ -177,6 +181,8 @@ export const createAgentExecutors = (context: {
   metadata?: Pick<MessageMetadata, 'trigger'>;
   messageKey: string;
   operationId: string;
+  /** Registry winners captured once for the enclosing operation. */
+  operationSkills?: OperationSkillSet['skills'];
   parentId: string;
   skipCreateFirstMessage?: boolean;
   /** ToolsEngine for expanding dynamically activated tools */
@@ -499,6 +505,7 @@ export const createAgentExecutors = (context: {
           groupId,
           messages,
           model: llmPayload.model,
+          operationSkills: context.operationSkills,
           provider: llmPayload.provider,
           resolvedAgentConfig,
           topicId: topicId ?? undefined,

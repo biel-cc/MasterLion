@@ -219,6 +219,33 @@ export class DeviceGateway {
     }
   }
 
+  /** Delete the deterministic topic scratch directory on its owning device. */
+  async cleanupScratchWorkspace(params: {
+    deviceId: string;
+    timeout?: number;
+    topicId: string;
+    userId: string;
+  }): Promise<{ removed: boolean; root: string } | undefined> {
+    const { userId, deviceId, topicId, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ removed: boolean; root: string }>(
+        { deviceId, timeout, userId },
+        { method: 'cleanupScratchWorkspace', params: { topicId } },
+      );
+      if (!result.success || !result.data?.root) {
+        log('cleanupScratchWorkspace: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data;
+    } catch (error) {
+      log('cleanupScratchWorkspace: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
   /**
    * Generic helper for the granular git read RPCs (branch / PR / working-tree /
    * ahead-behind). Returns `undefined` when the gateway is unconfigured, the

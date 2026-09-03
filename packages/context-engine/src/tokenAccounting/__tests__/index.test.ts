@@ -97,6 +97,42 @@ describe('countContextTokens', () => {
       expect(dbOnlyChange.payloadFingerprint).toBe(first.payloadFingerprint);
       expect(providerChange.payloadFingerprint).not.toBe(first.payloadFingerprint);
     });
+
+    it('accounts base64 media through providerMedia instead of treating transport bytes as text', () => {
+      const tiny = countContextTokens({
+        messages: [
+          mkMsg({
+            content: [
+              { text: 'inspect', type: 'text' },
+              { image_url: { url: 'data:image/png;base64,abc' }, type: 'image_url' },
+            ] as any,
+            id: 'user-1',
+            role: 'user',
+          }),
+        ],
+        providerMedia: [{ estimatedTokens: 1000, id: 'image-1', messageId: 'user-1' }],
+      });
+      const large = countContextTokens({
+        messages: [
+          mkMsg({
+            content: [
+              { text: 'inspect', type: 'text' },
+              {
+                image_url: { url: `data:image/png;base64,${'a'.repeat(100_000)}` },
+                type: 'image_url',
+              },
+            ] as any,
+            id: 'user-1',
+            role: 'user',
+          }),
+        ],
+        providerMedia: [{ estimatedTokens: 1000, id: 'image-1', messageId: 'user-1' }],
+      });
+
+      expect(large.bySource.content).toBe(tiny.bySource.content);
+      expect(large.bySource.attachment).toBe(1000);
+      expect(large.payloadFingerprint).toBe(tiny.payloadFingerprint);
+    });
   });
 
   describe('content counting', () => {

@@ -13,6 +13,8 @@ import type { IStreamEventManager } from './types';
 const log = debug('lobe-server:agent-runtime:dispatch-client-tool');
 
 interface DispatchContext {
+  /** Device selected by the frozen operation plan. */
+  deviceId?: string;
   /** Browser-safe projection of the immutable operation execution boundary. */
   executionContext?: ToolCallExecutionContext;
   operationId: string;
@@ -25,6 +27,8 @@ interface DispatchContext {
    * a suggester, this dispatcher is the arbiter.
    */
   timeoutMs?: number;
+  /** Topic selected by the frozen operation context. */
+  topicId?: string;
 }
 
 const clampTimeout = (value: number): number =>
@@ -103,13 +107,13 @@ export async function dispatchClientTool(
     await streamManager.sendToolExecute(operationId, {
       apiName: chatToolPayload.apiName,
       arguments: chatToolPayload.arguments,
-      ...((ctx.executionContext ? { executionContext: ctx.executionContext } : {}) as Record<
-        string,
-        unknown
-      >),
+      deviceId: ctx.deviceId,
+      executionContext: ctx.executionContext,
       executionTimeoutMs: timeoutMs,
       identifier: chatToolPayload.identifier,
+      operationId,
       toolCallId: chatToolPayload.id,
+      topicId: ctx.topicId,
     });
 
     const result = await waiter.waitForResult(chatToolPayload.id, timeoutMs);

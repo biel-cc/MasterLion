@@ -68,6 +68,7 @@ type deviceHTTPBody struct {
 	SystemContext    string            `json:"systemContext,omitempty"`
 	Timeout          int               `json:"timeout,omitempty"`
 	ToolCall         json.RawMessage   `json:"toolCall,omitempty"`
+	ToolCallID       string            `json:"toolCallId,omitempty"`
 	TopicID          string            `json:"topicId,omitempty"`
 	UserID           string            `json:"userId"`
 }

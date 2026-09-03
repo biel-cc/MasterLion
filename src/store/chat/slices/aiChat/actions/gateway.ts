@@ -347,6 +347,7 @@ export class GatewayActionImpl {
       agentId: context.agentId,
       groupId: context.groupId,
       isNewTopic: isCreateNewTopic,
+      topicId: context.topicId,
     });
 
     const result = await aiAgentService.execAgentTask(

@@ -9,7 +9,14 @@ import HeterogeneousChatInput from './index';
 
 const mocks = vi.hoisted(() => ({
   chatInputProps: [] as Array<Record<string, any>>,
-  effective: { state: 'bound', unroutedReason: undefined } as Record<string, unknown>,
+  deviceGuardOptions: [] as Array<Record<string, unknown>>,
+  effective: {
+    context: { plan: { kind: 'local', target: 'local' } },
+    state: 'bound',
+    target: 'local',
+    targetDeviceId: undefined,
+    unroutedReason: undefined,
+  } as Record<string, any>,
   focusWorkspacePicker: vi.fn(),
 }));
 
@@ -82,7 +89,10 @@ vi.mock('@/hooks/useEffectiveWorkspace', () => ({
   useEffectiveWorkspace: () => mocks.effective,
 }));
 vi.mock('@/hooks/useRemoteAgentDeviceGuard', () => ({
-  useRemoteAgentDeviceGuard: () => ({ refresh: vi.fn(), status: 'ok' }),
+  useRemoteAgentDeviceGuard: (options: Record<string, unknown>) => {
+    mocks.deviceGuardOptions.push(options);
+    return { refresh: vi.fn(), status: 'ok' };
+  },
 }));
 vi.mock('@/store/agent', () => ({
   useAgentStore: (selector: (s: any) => unknown) => selector({}),
@@ -106,11 +116,22 @@ vi.mock('./HeteroControlBar', () => ({ default: () => null }));
 describe('HeterogeneousChatInput workspace gate', () => {
   beforeEach(() => {
     mocks.chatInputProps.length = 0;
+    mocks.deviceGuardOptions.length = 0;
     mocks.focusWorkspacePicker.mockClear();
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      state: 'bound',
+      target: 'local',
+      targetDeviceId: undefined,
+    };
   });
 
   it('disables send and focuses the workspace picker while unbound', () => {
-    mocks.effective = { state: 'unbound' };
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      state: 'unbound',
+      target: 'local',
+    };
     render(<HeterogeneousChatInput />);
 
     const guard = screen.getByTestId('hetero-workspace-guard');
@@ -126,7 +147,13 @@ describe('HeterogeneousChatInput workspace gate', () => {
   });
 
   it('disables send with the unrouted reason', () => {
-    mocks.effective = { state: 'unrouted', unroutedReason: 'bound-device-offline' };
+    mocks.effective = {
+      context: { plan: { kind: 'device-unrouted', reason: 'bound-device-offline', target: 'device' } },
+      state: 'unrouted',
+      target: 'device',
+      targetDeviceId: 'device-topic',
+      unroutedReason: 'bound-device-offline',
+    };
     render(<HeterogeneousChatInput />);
 
     expect(screen.getByTestId('hetero-workspace-guard')).toHaveTextContent(
@@ -134,10 +161,20 @@ describe('HeterogeneousChatInput workspace gate', () => {
     );
     expect(screen.getByTestId('send')).toBeDisabled();
     expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(true);
+    expect(mocks.deviceGuardOptions.at(-1)).toEqual({
+      agentId: 'agent-1',
+      deviceId: 'device-topic',
+      enabled: true,
+    });
   });
 
   it('blocks scratch and opens the new referenced-topic picker', () => {
-    mocks.effective = { state: 'scratch' };
+    mocks.effective = {
+      context: { plan: { deviceId: 'device-topic', kind: 'device', target: 'device' } },
+      state: 'scratch',
+      target: 'device',
+      targetDeviceId: 'device-topic',
+    };
     render(<HeterogeneousChatInput />);
 
     expect(screen.getByTestId('hetero-workspace-guard')).toHaveTextContent(
@@ -149,12 +186,33 @@ describe('HeterogeneousChatInput workspace gate', () => {
   });
 
   it('allows send when bound', () => {
-    mocks.effective = { state: 'bound' };
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      state: 'bound',
+      target: 'local',
+    };
     render(<HeterogeneousChatInput />);
 
     expect(screen.queryByTestId('hetero-workspace-guard')).not.toBeInTheDocument();
     expect(screen.getByTestId('send')).not.toBeDisabled();
     expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(false);
     expect(mocks.chatInputProps.at(-1)?.sendButtonProps.onDisabledSend).toBeUndefined();
+  });
+
+  it('guards the topic-scoped device even when the agent default resolves elsewhere', () => {
+    mocks.effective = {
+      context: { plan: { deviceId: 'device-topic', kind: 'device', target: 'device' } },
+      state: 'bound',
+      target: 'device',
+      targetDeviceId: 'device-topic',
+    };
+
+    render(<HeterogeneousChatInput />);
+
+    expect(mocks.deviceGuardOptions.at(-1)).toEqual({
+      agentId: 'agent-1',
+      deviceId: 'device-topic',
+      enabled: true,
+    });
   });
 });

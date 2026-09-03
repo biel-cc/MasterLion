@@ -11,7 +11,11 @@ import { createPathScopeAudit } from '@lobechat/builtin-tool-local-system';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
 import { isDesktop } from '@lobechat/const';
-import { type ToolsEngine } from '@lobechat/context-engine';
+import {
+  DEFAULT_SKILL_POLICY,
+  type OperationSkillSet,
+  type ToolsEngine,
+} from '@lobechat/context-engine';
 import { buildTaskDetailPrompt, buildTaskListPrompt } from '@lobechat/prompts';
 import {
   type ConversationContext,
@@ -20,6 +24,7 @@ import {
   type RuntimeInitialContext,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { SkillProviderContext } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
@@ -27,17 +32,16 @@ import { aiAgentService } from '@/services/aiAgent';
 import { isCanUseVideo, isCanUseVision } from '@/services/chat/helper';
 import { type ResolvedAgentConfig } from '@/services/chat/mecha';
 import { composeEnabledTools, resolveAgentConfig } from '@/services/chat/mecha';
+import { resolveClientSkills } from '@/services/chat/mecha/skillEngineering';
 import { localFileService } from '@/services/electron/localFileService';
 import { messageService } from '@/services/message';
-import { getAgentStoreState } from '@/store/agent';
-import { agentSelectors } from '@/store/agent/selectors';
 import { aiModelSelectors } from '@/store/aiInfra/selectors';
 import { getAiInfraStoreState } from '@/store/aiInfra/store';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
 import { emitClientAgentSignalSourceEvent } from '@/store/chat/slices/aiChat/actions/agentSignalBridge';
 import { type ChatStore } from '@/store/chat/store';
 import { notifyDesktopHumanApprovalRequired } from '@/store/chat/utils/desktopNotification';
-import { getElectronStoreState } from '@/store/electron';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
 import { getServerConfigStoreState, serverConfigSelectors } from '@/store/serverConfig';
 import { getTaskStoreState } from '@/store/task';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
@@ -113,6 +117,7 @@ export class StreamingExecutorActionImpl {
     operationId,
     subAgentId: paramSubAgentId,
     isSubAgent,
+    workingDirectory: operationWorkingDirectory,
   }: {
     messages: UIChatMessage[];
     parentMessageId: string;
@@ -130,6 +135,8 @@ export class StreamingExecutorActionImpl {
      */
     subAgentId?: string;
     isSubAgent?: boolean;
+    /** Operation-frozen cwd; agent defaults are recommendations, never authority. */
+    workingDirectory?: string;
   }): {
     state: AgentState;
     context: AgentRuntimeContext;
@@ -272,11 +279,14 @@ export class StreamingExecutorActionImpl {
       provider: agentConfigData.provider!,
     };
 
-    const topicWorkingDirectory = topicSelectors.currentTopicWorkingDirectory(this.#get());
-    const currentDeviceId = getElectronStoreState().gatewayDeviceInfo?.deviceId;
-    const agentWorkingDirectory =
-      agentSelectors.currentAgentWorkingDirectory(currentDeviceId)(getAgentStoreState());
-    const workingDirectory = topicWorkingDirectory ?? agentWorkingDirectory;
+    const topicWorkspace = topicId
+      ? getProjectWorkspaceStoreState().topicStatesById[topicId]?.workspace
+      : undefined;
+    const topicWorkingDirectory = topicId
+      ? topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.workingDirectory
+      : undefined;
+    const workingDirectory =
+      operationWorkingDirectory ?? topicWorkspace?.rootPath ?? topicWorkingDirectory;
 
     // Create initial state or use provided state
     const state =
@@ -420,12 +430,17 @@ export class StreamingExecutorActionImpl {
     inPortalThread?: boolean;
     metadata?: Pick<MessageMetadata, 'trigger'>;
     messages: UIChatMessage[];
+    /** Registry winners captured by a caller that already resolved draft workspace authority. */
+    operationSkills?: OperationSkillSet['skills'];
     operationId?: string;
     parentMessageId: string;
     parentMessageType: 'user' | 'assistant' | 'tool';
     parentOperationId?: string;
     skipCreateFirstMessage?: boolean;
+    skillContext?: SkillProviderContext;
     isSubAgent?: boolean;
+    /** Cwd captured before persistence/runtime dispatch for this operation. */
+    workingDirectory?: string;
   }): Promise<{ cost?: Cost; model?: string; provider?: string; usage?: Usage } | void> => {
     const {
       disableTools,
@@ -535,6 +550,7 @@ export class StreamingExecutorActionImpl {
         operationId,
         subAgentId, // Pass subAgentId for agent config retrieval (behavior depends on scope)
         isSubAgent, // Pass isSubAgent to filter out lobe-agent tool in sub-agent context
+        workingDirectory: params.workingDirectory,
       });
 
       // Use model/provider from resolved agentConfig
@@ -548,6 +564,27 @@ export class StreamingExecutorActionImpl {
         // TODO: Support dedicated compression model from chatConfig.compressionModelId
         compressionModel: { model, provider: provider! },
       };
+      const topicWorkspaceState = topicId
+        ? getProjectWorkspaceStoreState().topicStatesById[topicId]
+        : undefined;
+      const workspaceItem = topicWorkspaceState?.workspace?.id
+        ? getProjectWorkspaceStoreState().workspacesById[topicWorkspaceState.workspace.id]
+        : undefined;
+      const skillContext = params.skillContext ?? {
+        agentId: effectiveAgentId || agentId || 'client-agent',
+        skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
+        userId: 'client-user',
+        workspace: topicWorkspaceState?.workspace ?? workspaceItem,
+        workspaceInit: workspaceItem?.scan,
+      };
+      const operationSkills =
+        params.operationSkills ??
+        (
+          await resolveClientSkills(agentConfig.plugins, {
+            policy: skillContext.skillPolicy,
+            skillContext,
+          })
+        ).skills;
       // ===========================================
       // Step 2: Create and Execute Agent Runtime
       // ===========================================
@@ -576,6 +613,7 @@ export class StreamingExecutorActionImpl {
           metadata: params.metadata,
           messageKey,
           operationId,
+          operationSkills,
           parentId: params.parentMessageId,
           skipCreateFirstMessage: params.skipCreateFirstMessage,
           toolsEngine, // Pass toolsEngine for dynamic tool injection via activateTools

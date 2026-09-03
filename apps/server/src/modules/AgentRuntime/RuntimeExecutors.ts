@@ -81,10 +81,7 @@ import type {
   ToolCallExecutionContext,
 } from '@lobechat/types/src/executionContext';
 import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
-import type {
-  TopicExecutionSnapshot,
-  WorkspaceRef,
-} from '@lobechat/types/src/projectWorkspace';
+import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import {
   isLocalOrPrivateUrl,
   sanitizeToolCallArguments,
@@ -486,6 +483,67 @@ const inlineProviderImageContentParts = async (
   );
 
   return changed ? nextMessages : messages;
+};
+
+const PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE = 1000;
+
+/**
+ * Build redacted accounting records from the exact provider message shape.
+ * URLs and base64 bytes deliberately never leave this function.
+ */
+export const collectProviderMediaTokenEstimates = (
+  messages: Readonly<ChatStreamPayload['messages']>,
+  sourceMessages: UIChatMessage[] = [],
+) => {
+  const fileIdLookup = buildProviderImageFileIdLookup(sourceMessages);
+  const estimates: Array<{ estimatedTokens: number; id: string; messageId?: string }> = [];
+
+  messages.forEach((message, messageIndex) => {
+    if (!Array.isArray(message.content)) return;
+
+    message.content.forEach((part: any, partIndex) => {
+      if (part?.type !== 'image_url' && part?.type !== 'video_url') return;
+
+      const url = part.image_url?.url ?? part.video_url?.url;
+      const messageId = typeof (message as any).id === 'string' ? (message as any).id : undefined;
+      estimates.push({
+        estimatedTokens: PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE,
+        id:
+          (typeof url === 'string' && fileIdLookup.get(url)) ||
+          `${messageId ?? `message-${messageIndex}`}:media-${partIndex}`,
+        messageId,
+      });
+    });
+  });
+
+  return estimates;
+};
+
+export const resolveCompressionSummaryBudgetTokens = (params: {
+  compressionModel: { model: string; provider: string };
+  compressionModelCatalogSnapshot?: ModelCatalogSnapshot;
+  mainModelCatalogSnapshot?: ModelCatalogSnapshot;
+}) => {
+  const { compressionModel, compressionModelCatalogSnapshot, mainModelCatalogSnapshot } = params;
+  const matchingSnapshot = [compressionModelCatalogSnapshot, mainModelCatalogSnapshot].find(
+    (snapshot) =>
+      snapshot?.entry.modelId === compressionModel.model &&
+      snapshot.entry.providerId === compressionModel.provider,
+  );
+
+  return Math.max(2048, (matchingSnapshot?.entry.contextWindowTokens ?? 32_000) - 1024);
+};
+
+const renderMessageForCompression = (message: UIChatMessage) => {
+  const content = Array.isArray(message.content)
+    ? message.content.map((part: any) => {
+        if (part?.type === 'image_url') return '[image attachment]';
+        if (part?.type === 'video_url') return '[video attachment]';
+        return part?.text ?? part;
+      })
+    : message.content;
+
+  return `${message.role}: ${typeof content === 'string' ? content : JSON.stringify(content)}`;
 };
 
 /**
@@ -1098,6 +1156,7 @@ const projectExecutionContextForClient = (
  */
 type BudgetedChatStreamPayload = Omit<ChatStreamPayload, 'messages'> & {
   messages: UIChatMessage[];
+  providerMedia?: Array<{ estimatedTokens: number; id?: string; messageId?: string }>;
 };
 
 export const createRuntimeExecutors = (
@@ -1780,6 +1839,10 @@ export const createRuntimeExecutors = (
 
       // Construct ChatStreamPayload
       const stream = ctx.stream ?? true;
+      const providerMedia = collectProviderMediaTokenEstimates(
+        processedMessages,
+        sourceMessagesForProviderImages,
+      );
       const providerMessages = await inlineProviderImageContentParts(
         processedMessages,
         sourceMessagesForProviderImages,
@@ -1788,6 +1851,7 @@ export const createRuntimeExecutors = (
       const chatPayload = {
         messages: providerMessages,
         model,
+        providerMedia,
         stream,
         tools,
         // ModelExtendParams keeps provider-specific effort/thinking values as loose
@@ -1805,6 +1869,7 @@ export const createRuntimeExecutors = (
       if (executionBudget) {
         const projectedInputTokens = countContextTokens({
           messages: providerMessages as UIChatMessage[],
+          providerMedia,
           tools,
         }).adjustedTotal;
         const preflightBudgetReason = getExecutionBudgetReason(state, projectedInputTokens);
@@ -1987,138 +2052,154 @@ export const createRuntimeExecutors = (
             topicId,
           },
         );
-        const compressionModel = state.modelRuntimeConfig?.compressionModel ?? {
-          model,
-          provider,
+        const compressionQuery = {
+          agentId: state.metadata?.agentId,
+          threadId: state.metadata?.threadId,
+          topicId,
         };
-        const compressionRuntime = await initModelRuntimeFromDB(
-          ctx.serverDB,
-          ctx.userId!,
-          compressionModel.provider,
-          ctx.workspaceId,
-        );
-        const summaryWindow = Math.max(
-          2048,
-          Math.min(
-            compressionModel.model === model && compressionModel.provider === provider
-              ? (resolvedContextWindowTokens ?? 32_000)
-              : 32_000,
-            32_000,
-          ) - 1024,
-        );
 
-        let finalSummary = '';
-        const result = await compressContextHierarchically<
-          UIChatMessage,
-          Partial<ChatStreamPayload>
-        >({
-          buildRequest: (items) =>
-            chainCompressContext(
-              items.map(
-                (item, index) =>
-                  ({
-                    content: item.text,
-                    createdAt: Date.now(),
-                    id: `summary-input-${index}`,
-                    role: 'user',
-                    updatedAt: Date.now(),
-                  }) as UIChatMessage,
-              ),
-            ),
-          candidateIds: evaluation.partition.candidateIds,
-          createSummaryMessage: (summary, candidateIds, groupId) => {
-            finalSummary = summary;
-            return {
-              content: `[Conversation summary]\n${summary}`,
-              createdAt: Date.now(),
-              id: groupId,
-              metadata: { contextBudget: { candidateIds } },
-              // This replacement is sent directly to the provider; keep a
-              // provider-valid role instead of the UI-only compressedGroup.
-              role: 'user',
-              updatedAt: Date.now(),
-            } as UIChatMessage;
-          },
-          getMessageId: (message, index) => message.id || `payload-message-${index}`,
-          groupId: compressionGroup.messageGroupId,
-          measurePayload: (messages) => {
-            const accounting = countContextTokens({ messages: [...messages], tools });
-            return {
-              payloadFingerprint: accounting.payloadFingerprint,
-              tokens: accounting.adjustedTotal,
-            };
-          },
-          measureRequest: (request) =>
-            countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
-              .adjustedTotal,
-          messages: payload.messages as UIChatMessage[],
-          renderMessage: (message) =>
-            `${message.role}: ${typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}`,
-          summarize: async (request) => {
-            let summary = '';
-            let summaryError: unknown;
-            const response = await compressionRuntime.chat(
-              {
-                ...request,
-                messages: request.messages ?? [],
-                model: compressionModel.model,
-                stream: true,
-              },
-              {
-                callback: {
-                  onError: async (error) => {
-                    summaryError = error;
-                  },
-                  onText: async (text) => {
-                    summary += text;
-                  },
-                },
-                user: ctx.userId,
-              },
-            );
-            await consumeStreamUntilDone(response);
-            if (summaryError) throw summaryError;
-            return summary;
-          },
-          summaryModelBudgetTokens: summaryWindow,
-          trigger:
-            evaluation.decision.kind === 'compress'
-              ? evaluation.decision.trigger
-              : 'final-preflight',
-        });
-
-        if (result.outcome.outcome !== 'compressed' || !finalSummary) {
-          throw new Error(
-            ('code' in result.outcome && result.outcome.code) || 'SUMMARY_FAILED',
+        try {
+          const compressionModel = state.modelRuntimeConfig?.compressionModel ?? {
+            model,
+            provider,
+          };
+          const compressionRuntime = await initModelRuntimeFromDB(
+            ctx.serverDB,
+            ctx.userId!,
+            compressionModel.provider,
+            ctx.workspaceId,
           );
+          const summaryWindow = resolveCompressionSummaryBudgetTokens({
+            compressionModel,
+            compressionModelCatalogSnapshot: state.metadata?.compressionModelCatalogSnapshot as
+              | ModelCatalogSnapshot
+              | undefined,
+            mainModelCatalogSnapshot: operationModelCatalogSnapshot,
+          });
+
+          let finalSummary = '';
+          const result = await compressContextHierarchically<
+            UIChatMessage,
+            Partial<ChatStreamPayload>
+          >({
+            buildRequest: (items) =>
+              chainCompressContext(
+                items.map(
+                  (item, index) =>
+                    ({
+                      content: item.text,
+                      createdAt: Date.now(),
+                      id: `summary-input-${index}`,
+                      role: 'user',
+                      updatedAt: Date.now(),
+                    }) as UIChatMessage,
+                ),
+              ),
+            candidateIds: evaluation.partition.candidateIds,
+            createSummaryMessage: (summary, candidateIds, groupId) => {
+              finalSummary = summary;
+              return {
+                content: `[Conversation summary]\n${summary}`,
+                createdAt: Date.now(),
+                id: groupId,
+                metadata: { contextBudget: { candidateIds } },
+                // This replacement is sent directly to the provider; keep a
+                // provider-valid role instead of the UI-only compressedGroup.
+                role: 'user',
+                updatedAt: Date.now(),
+              } as UIChatMessage;
+            },
+            getMessageId: (message, index) => message.id || `payload-message-${index}`,
+            groupId: compressionGroup.messageGroupId,
+            measurePayload: (messages) => {
+              const accounting = countContextTokens({
+                messages: [...messages],
+                providerMedia: collectProviderMediaTokenEstimates(
+                  messages as Readonly<ChatStreamPayload['messages']>,
+                  sourceMessagesForProviderImages,
+                ),
+                tools,
+              });
+              return {
+                payloadFingerprint: accounting.payloadFingerprint,
+                tokens: accounting.adjustedTotal,
+              };
+            },
+            measureRequest: (request) =>
+              countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
+                .adjustedTotal,
+            messages: payload.messages as UIChatMessage[],
+            renderMessage: renderMessageForCompression,
+            summarize: async (request) => {
+              let summary = '';
+              let summaryError: unknown;
+              const response = await compressionRuntime.chat(
+                {
+                  ...request,
+                  messages: request.messages ?? [],
+                  model: compressionModel.model,
+                  stream: true,
+                },
+                {
+                  callback: {
+                    onError: async (error) => {
+                      summaryError = error;
+                    },
+                    onText: async (text) => {
+                      summary += text;
+                    },
+                  },
+                  user: ctx.userId,
+                },
+              );
+              await consumeStreamUntilDone(response);
+              if (summaryError) throw summaryError;
+              return summary;
+            },
+            summaryModelBudgetTokens: summaryWindow,
+            trigger:
+              evaluation.decision.kind === 'compress'
+                ? evaluation.decision.trigger
+                : 'final-preflight',
+          });
+
+          if (result.outcome.outcome !== 'compressed' || !finalSummary) {
+            throw new Error(('code' in result.outcome && result.outcome.code) || 'SUMMARY_FAILED');
+          }
+
+          const finalized = await messageService.finalizeCompression(
+            compressionGroup.messageGroupId,
+            finalSummary,
+            compressionQuery,
+          );
+          if (!Array.isArray(finalized.messages)) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+
+          const stateMessages = (finalized.messages as UIChatMessage[]).filter(
+            (message) => message.id !== assistantMessageItem.id,
+          );
+          persistedAutoCompression = {
+            inputFingerprint: evaluation.payloadFingerprint,
+            outcome: result.outcome,
+            providerMessages: result.messages,
+            stateMessages,
+          };
+          events.push({ groupId: compressionGroup.messageGroupId, type: 'compression_complete' });
+
+          return {
+            outcome: result.outcome,
+            payload: {
+              ...payload,
+              messages: result.messages,
+              providerMedia: collectProviderMediaTokenEstimates(
+                result.messages as ChatStreamPayload['messages'],
+                sourceMessagesForProviderImages,
+              ),
+            },
+          };
+        } catch (error) {
+          await messageService.cancelCompression(compressionGroup.messageGroupId, compressionQuery);
+          throw error;
         }
-
-        const finalized = await messageService.finalizeCompression(
-          compressionGroup.messageGroupId,
-          finalSummary,
-          {
-            agentId: state.metadata?.agentId,
-            threadId: state.metadata?.threadId,
-            topicId,
-          },
-        );
-        if (!Array.isArray(finalized.messages)) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
-
-        const stateMessages = (finalized.messages as UIChatMessage[]).filter(
-          (message) => message.id !== assistantMessageItem.id,
-        );
-        persistedAutoCompression = {
-          inputFingerprint: evaluation.payloadFingerprint,
-          outcome: result.outcome,
-          providerMessages: result.messages,
-          stateMessages,
-        };
-        events.push({ groupId: compressionGroup.messageGroupId, type: 'compression_complete' });
-
-        return {
-          outcome: result.outcome,
-          payload: { ...payload, messages: result.messages },
-        };
       };
 
       const maxAttempts = resolveLLMMaxAttempts(provider);
@@ -2194,8 +2275,9 @@ export const createRuntimeExecutors = (
               const remainingExecutionTimeMs = getRemainingExecutionTimeMs(state);
               const callProvider = async (budgetPayload: BudgetedChatStreamPayload) => {
                 streamError = undefined;
+                const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
                 const response = await modelRuntime.chat(
-                  budgetPayload as unknown as ChatStreamPayload,
+                  providerPayload as unknown as ChatStreamPayload,
                   {
                     ...(remainingExecutionTimeMs === undefined
                       ? {}
@@ -2433,7 +2515,10 @@ export const createRuntimeExecutors = (
                   promptTokens: evaluation?.estimatedPromptTokens ?? 0,
                 });
                 Object.assign(budgetError, {
-                  contextBudget: budgetedCall.decision,
+                  contextBudget: {
+                    decision: budgetedCall.decision,
+                    trace: evaluation?.trace,
+                  },
                   contextBudgetAttemptState: budgetedCall.attemptState,
                 });
                 throw budgetError;
@@ -2895,6 +2980,19 @@ export const createRuntimeExecutors = (
       payloadFingerprint,
       trigger: compressionTrigger,
     });
+    let pendingCompression:
+      | {
+          groupId: string;
+          messageService: MessageService;
+          query: { agentId?: string; threadId?: string; topicId: string };
+        }
+      | undefined;
+    const cancelPendingCompression = async () => {
+      if (!pendingCompression) return;
+      const pending = pendingCompression;
+      await pending.messageService.cancelCompression(pending.groupId, pending.query);
+      pendingCompression = undefined;
+    };
 
     if (!topicId || !ctx.userId) {
       return {
@@ -2981,11 +3079,21 @@ export const createRuntimeExecutors = (
         threadId: state.metadata?.threadId,
         topicId,
       });
+      pendingCompression = {
+        groupId: compressionResult.messageGroupId,
+        messageService,
+        query: {
+          agentId: state.metadata?.agentId,
+          threadId: state.metadata?.threadId,
+          topicId,
+        },
+      };
 
       const compressionModel =
         newState.modelRuntimeConfig?.compressionModel || newState.modelRuntimeConfig;
 
       if (!compressionModel?.model || !compressionModel?.provider) {
+        await cancelPendingCompression();
         return {
           events,
           newState,
@@ -2993,7 +3101,6 @@ export const createRuntimeExecutors = (
             payload: {
               ...failedCompressionPayload({
                 compressedMessages: compressedMessagesFallback,
-                groupId: compressionResult.messageGroupId,
                 parentMessageId: latestAssistantMessage?.id,
               }),
             } as GeneralAgentCompressionResultPayload,
@@ -3017,7 +3124,15 @@ export const createRuntimeExecutors = (
 
       let summaryContent = '';
       const summaryUsages: any[] = [];
-      const summaryWindow = Math.max(2048, 32_000 - 1024);
+      const summaryWindow = resolveCompressionSummaryBudgetTokens({
+        compressionModel,
+        compressionModelCatalogSnapshot: newState.metadata?.compressionModelCatalogSnapshot as
+          | ModelCatalogSnapshot
+          | undefined,
+        mainModelCatalogSnapshot: newState.metadata?.modelCatalogSnapshot as
+          | ModelCatalogSnapshot
+          | undefined,
+      });
       const hierarchy = await compressContextHierarchically<
         UIChatMessage,
         Partial<ChatStreamPayload>
@@ -3049,7 +3164,13 @@ export const createRuntimeExecutors = (
         getMessageId: (message, index) => message.id || `compression-message-${index}`,
         groupId: compressionResult.messageGroupId,
         measurePayload: (payloadMessages) => {
-          const measurement = countContextTokens({ messages: [...payloadMessages] });
+          const measurement = countContextTokens({
+            messages: [...payloadMessages],
+            providerMedia: collectProviderMediaTokenEstimates(
+              payloadMessages as Readonly<ChatStreamPayload['messages']>,
+              messages as UIChatMessage[],
+            ),
+          });
           return {
             payloadFingerprint: measurement.payloadFingerprint,
             tokens: measurement.adjustedTotal,
@@ -3059,12 +3180,7 @@ export const createRuntimeExecutors = (
           countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
             .adjustedTotal,
         messages: compressionResult.messagesToSummarize as UIChatMessage[],
-        renderMessage: (message) =>
-          `${message.role}: ${
-            typeof message.content === 'string'
-              ? message.content
-              : JSON.stringify(message.content)
-          }`,
+        renderMessage: renderMessageForCompression,
         summarize: async (request) => {
           let chunkSummary = '';
           let summaryError: any;
@@ -3118,6 +3234,7 @@ export const createRuntimeExecutors = (
           topicId,
         },
       );
+      pendingCompression = undefined;
 
       const compressedMessagesBase =
         finalCompression.messages || compressionResult.messagesToSummarize;
@@ -3204,6 +3321,11 @@ export const createRuntimeExecutors = (
         },
       };
     } catch (error) {
+      try {
+        await cancelPendingCompression();
+      } catch (rollbackError) {
+        log(`${stagePrefix} Compression rollback failed. error=%O`, rollbackError);
+      }
       log(
         `${stagePrefix} Compression failed. originalTokens=%d error=%O`,
         currentTokenCount,
@@ -3436,6 +3558,10 @@ export const createRuntimeExecutors = (
             }),
           );
           const dispatchResult = await dispatchClientTool(chatToolPayload, {
+            deviceId:
+              preparedExecutionContext.executionContext?.plan.kind === 'device'
+                ? preparedExecutionContext.executionContext.plan.deviceId
+                : undefined,
             executionContext: projectExecutionContextForClient(
               state,
               preparedExecutionContext.executionContext,
@@ -3443,6 +3569,7 @@ export const createRuntimeExecutors = (
             operationId,
             streamManager,
             timeoutMs,
+            topicId: state.metadata?.topicId ?? ctx.topicId,
           });
           execution = { attempts: 1, result: dispatchResult };
         } else {
@@ -4042,7 +4169,9 @@ export const createRuntimeExecutors = (
     let scratchBindPromise: Promise<ExecutionContext | undefined> | undefined;
     let boundScratchExecutionContext: ExecutionContext | undefined;
     const prepareBatchExecutionContext = (tool: ChatToolPayload) => {
-      if (!requiresPrimaryCwdForTool({ executionContext: getFrozenExecutionContext(state), tool })) {
+      if (
+        !requiresPrimaryCwdForTool({ executionContext: getFrozenExecutionContext(state), tool })
+      ) {
         return Promise.resolve({ executionContext: getFrozenExecutionContext(state) });
       }
       scratchPreparedPromise ??= prepareToolExecutionContext(ctx, state, tool);
@@ -4180,6 +4309,10 @@ export const createRuntimeExecutors = (
                 }),
               );
               const dispatchResult = await dispatchClientTool(chatToolPayload, {
+                deviceId:
+                  preparedExecutionContext.executionContext?.plan.kind === 'device'
+                    ? preparedExecutionContext.executionContext.plan.deviceId
+                    : undefined,
                 executionContext: projectExecutionContextForClient(
                   state,
                   preparedExecutionContext.executionContext,
@@ -4187,6 +4320,7 @@ export const createRuntimeExecutors = (
                 operationId,
                 streamManager,
                 timeoutMs,
+                topicId: state.metadata?.topicId ?? ctx.topicId,
               });
               execution = { attempts: 1, result: dispatchResult };
             } else {
@@ -4284,7 +4418,11 @@ export const createRuntimeExecutors = (
             }
 
             if (execution.result.success && preparedExecutionContext.scratchRoot) {
-              scratchBindPromise ??= bindPreparedScratchContext(ctx, state, preparedExecutionContext);
+              scratchBindPromise ??= bindPreparedScratchContext(
+                ctx,
+                state,
+                preparedExecutionContext,
+              );
               boundScratchExecutionContext = await scratchBindPromise;
             }
 

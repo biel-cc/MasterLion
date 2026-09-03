@@ -187,6 +187,36 @@ func TestBuildAgentRunRequestForwardsFrozenAuthority(t *testing.T) {
 	}
 }
 
+func TestBuildToolCallRequestForwardsFrozenAuthority(t *testing.T) {
+	body := deviceHTTPBody{
+		DeviceID:         "device-1",
+		ExecutionContext: json.RawMessage(`{"cwd":"/workspace","operationId":"op-1"}`),
+		OperationID:      "op-1",
+		ToolCall:         json.RawMessage(`{"apiName":"readFile","arguments":"{}"}`),
+		ToolCallID:       "tool-call-1",
+		TopicID:          "topic-1",
+	}
+
+	payload, err := json.Marshal(buildToolCallRequest(body, "request-1", 30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(payload, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"deviceId", "executionContext", "operationId", "toolCallId", "topicId"} {
+		if _, ok := forwarded[key]; !ok {
+			t.Fatalf("tool-call authority field %q was dropped: %#v", key, forwarded)
+		}
+	}
+	executionContext := forwarded["executionContext"].(map[string]any)
+	if executionContext["operationId"] != "op-1" {
+		t.Fatalf("wrong execution context: %#v", executionContext)
+	}
+}
+
 func TestUnauthenticatedConnectionCannotReplaceAuthenticatedConnection(t *testing.T) {
 	srv, privateKey := newTestServer(t)
 	httpServer := httptest.NewServer(srv.Routes())

@@ -50,10 +50,7 @@ import type {
   WorkspaceInitResult,
 } from '@lobechat/types';
 import { RequestTrigger, ThreadStatus, ThreadType } from '@lobechat/types';
-import type {
-  ExecutionContext,
-  ExecutionEnv,
-} from '@lobechat/types/src/executionContext';
+import type { ExecutionContext, ExecutionEnv } from '@lobechat/types/src/executionContext';
 import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { nanoid } from '@lobechat/utils';
 import debug from 'debug';
@@ -600,9 +597,7 @@ export class AiAgentService {
         isHetero: params.isHetero,
         onlineDeviceIds: params.onlineDeviceIds,
         operationId: params.operationId,
-        requestedDeviceId: topicWorkspaceState.snapshot
-          ? undefined
-          : params.requestedDeviceId,
+        requestedDeviceId: topicWorkspaceState.snapshot ? undefined : params.requestedDeviceId,
         snapshot: topicWorkspaceState.snapshot,
         topic: legacyTopic,
         workspaces,
@@ -771,11 +766,7 @@ export class AiAgentService {
   }) => {
     const workspaceModel = new ProjectWorkspaceModel(this.db, this.userId);
     const service = new ProjectWorkspaceService({
-      bindingStore: new DatabaseTopicWorkspaceBindingStore(
-        this.db,
-        this.userId,
-        this.workspaceId,
-      ),
+      bindingStore: new DatabaseTopicWorkspaceBindingStore(this.db, this.userId, this.workspaceId),
       workspaceModel,
     });
     return service.bindScratchAfterToolSuccess({
@@ -1429,15 +1420,11 @@ export class AiAgentService {
           this.userId,
           this.workspaceId,
         );
-        const current = await bindingStore.getState(topicId);
-        if (!current) throw new Error(`Topic not found: ${topicId}`);
-        if (!current.snapshot) {
-          await bindingStore.captureTarget({
-            boundDeviceId: appContext.topicExecutionIntent.targetDeviceId,
-            target: appContext.topicExecutionIntent.target,
-            topicId,
-          });
-        }
+        await bindingStore.captureTargetIfAbsent({
+          boundDeviceId: appContext.topicExecutionIntent.targetDeviceId,
+          target: appContext.topicExecutionIntent.target,
+          topicId,
+        });
       }
     }
 
@@ -1656,6 +1643,18 @@ export class AiAgentService {
       operationId,
       provider,
     });
+    const compressionModel = agentConfig.chatConfig?.compressionModelId
+      ? { model: agentConfig.chatConfig.compressionModelId, provider }
+      : { model, provider };
+    const compressionModelCatalogSnapshot =
+      compressionModel.model === model
+        ? modelCatalogSnapshot
+        : await this.resolveFrozenModelCatalog({
+            builtinModels,
+            model: compressionModel.model,
+            operationId,
+            provider: compressionModel.provider,
+          });
     const skillRegistryResult = await this.resolveFrozenSkillRegistry({
       activeDeviceId: planDeviceId,
       agentConfig,
@@ -1666,16 +1665,14 @@ export class AiAgentService {
     });
     const heterogeneousSkills = skillRegistryResult.skills
       .filter(({ content, source }) => !!content && source !== 'project')
-      .map(
-      ({ content, description, identifier, key, name, source }) => ({
+      .map(({ content, description, identifier, key, name, source }) => ({
         content,
         description,
         identifier,
         key,
         name,
         source,
-      }),
-    );
+      }));
     const heterogeneousAuthorityContext = [
       '<frozen_execution_authority>',
       JSON.stringify({
@@ -2080,11 +2077,13 @@ export class AiAgentService {
           // would mislead the agent).
           const { buildRemoteDeviceHeteroContext } =
             await import('@/server/services/heterogeneousAgent/remoteDeviceHeteroContext');
-          const deviceSystemContext = `${heterogeneousAuthorityContext}\n\n${buildRemoteDeviceHeteroContext({
-            agentSystemContext: agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
-            conversationHistory,
-            cwd: executionContext.cwd,
-          })}`;
+          const deviceSystemContext = `${heterogeneousAuthorityContext}\n\n${buildRemoteDeviceHeteroContext(
+            {
+              agentSystemContext: agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
+              conversationHistory,
+              cwd: executionContext.cwd,
+            },
+          )}`;
 
           const result = await deviceGateway.dispatchAgentRun({
             ...heteroParams,
@@ -3240,7 +3239,8 @@ export class AiAgentService {
         initialMessages: allMessages,
         initialStepCount,
         maxSteps,
-        modelRuntimeConfig: { model, provider },
+        compressionModelCatalogSnapshot,
+        modelRuntimeConfig: { compressionModel, model, provider },
         modelCatalogSnapshot,
         hooks,
         operationId,

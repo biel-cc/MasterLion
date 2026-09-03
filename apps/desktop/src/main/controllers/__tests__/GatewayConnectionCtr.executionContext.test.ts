@@ -47,6 +47,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
   let workspace: string;
   const handleRunCommand = vi.fn(async () => ({ success: true, stdout: 'ok' }));
   const readFile = vi.fn(async () => ({ content: 'safe' }));
+  const spawnLhHeteroExec = vi.fn();
 
   const localFileCtr = {
     handleEditFile: vi.fn(),
@@ -79,7 +80,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
             getRemoteServerUrl: vi.fn(async () => 'https://example.test'),
           };
         }
-        if (Controller === HeterogeneousAgentCtr) return { spawnLhHeteroExec: vi.fn() };
+        if (Controller === HeterogeneousAgentCtr) return { spawnLhHeteroExec };
         return {};
       },
     } as any);
@@ -87,7 +88,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
   const context = () => ({
     accessRoots: [
       {
-        modes: ['read', 'write', 'exec'] as const,
+        modes: ['read' as const, 'write' as const, 'exec' as const],
         rootPath: workspace,
         scope: 'primary' as const,
         source: 'workspace' as const,
@@ -110,6 +111,72 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     await rm(tempRoot, { force: true, recursive: true });
   });
 
+  it('authorizes a standalone renderer tool_execute inside the frozen workspace', async () => {
+    const file = path.join(workspace, 'safe.txt');
+    await writeFile(file, 'safe');
+    const controller = makeController();
+
+    const result = await controller.executeLocalToolCall({
+      apiName: 'readFile',
+      args: { path: 'safe.txt' },
+      executionContext: context(),
+      trace: {
+        deviceId: 'device-1',
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.content).toContain('safe');
+    expect(readFile).toHaveBeenCalledWith({
+      endLine: undefined,
+      path: file,
+      startLine: undefined,
+    });
+  });
+
+  it('blocks an absolute standalone renderer read outside the frozen workspace', async () => {
+    const outside = path.join(tempRoot, 'outside.txt');
+    await writeFile(outside, 'secret');
+    const controller = makeController();
+
+    const result = await controller.executeLocalToolCall({
+      apiName: 'readFile',
+      args: { path: outside },
+      executionContext: context(),
+      trace: {
+        deviceId: 'device-1',
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      },
+    });
+
+    expect(result).toMatchObject({ content: 'INTERVENTION_REQUIRED', success: false });
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when standalone tool_execute loses its execution context', async () => {
+    const file = path.join(workspace, 'safe.txt');
+    await writeFile(file, 'safe');
+    const controller = makeController();
+
+    const result = await controller.executeLocalToolCall({
+      apiName: 'readFile',
+      args: { path: file },
+      trace: {
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      },
+    });
+
+    expect(result).toMatchObject({ content: 'WORKSPACE_REQUIRED', success: false });
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
   it('overrides model runCommand.cwd and returns redacted scope evidence', async () => {
     const controller = makeController();
     const result = await (controller as any).executeToolCall(
@@ -127,6 +194,33 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     ]);
     expect(JSON.stringify(result.state.workspaceWarnings)).not.toContain('/tmp/evil');
     expect(JSON.stringify(result)).not.toContain('MODEL_SECRET');
+  });
+
+  it('spawns a gateway agent run with only the server-frozen cwd and environment', async () => {
+    const controller = makeController();
+
+    const result = await (controller as any).executeAgentRun({
+      agentType: 'codex',
+      cwd: '/tmp/legacy',
+      env: { LEGACY_SECRET: 'drop' },
+      executionContext: context(),
+      jwt: 'operation-jwt',
+      operationId: 'op-1',
+      prompt: 'run in the project',
+      topicId: 'topic-1',
+      type: 'agent_run_request',
+    });
+
+    expect(result).toEqual({ status: 'accepted' });
+    expect(spawnLhHeteroExec).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: workspace,
+        env: { WORKSPACE_ENV: 'kept' },
+        operationId: 'op-1',
+        topicId: 'topic-1',
+      }),
+    );
+    expect(JSON.stringify(spawnLhHeteroExec.mock.calls[0])).not.toContain('LEGACY_SECRET');
   });
 
   it('returns WORKSPACE_REQUIRED before spawning when v2 context has no cwd', async () => {

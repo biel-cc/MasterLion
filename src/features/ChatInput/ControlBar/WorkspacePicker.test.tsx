@@ -106,4 +106,42 @@ describe('WorkspacePicker', () => {
       expect(clearError).toHaveBeenCalledOnce();
     });
   });
+
+  it('shows an honest loading state instead of flashing an empty list', () => {
+    const bind = {
+      clearError: vi.fn(),
+      deviceId: 'device-1',
+      pending: false,
+      select: vi.fn(),
+      startReferencedTopic: vi.fn(),
+    } as unknown as BindWorkspaceOnce;
+
+    render(<WorkspacePicker open bind={bind} effective={{ ...effective, loading: true }} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('workspaceRuntime.picker.loading');
+    expect(screen.queryByText('workspaceRuntime.picker.empty')).not.toBeInTheDocument();
+  });
+
+  it('surfaces evidence load failures and lets the user retry', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const bind = {
+      clearError: vi.fn(),
+      deviceId: 'device-1',
+      pending: false,
+      select: vi.fn(),
+      startReferencedTopic: vi.fn(),
+    } as unknown as BindWorkspaceOnce;
+
+    render(
+      <WorkspacePicker
+        open
+        bind={bind}
+        effective={{ ...effective, loadError: new Error('offline'), reload }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.picker.retry' }));
+    expect(reload).toHaveBeenCalledOnce();
+    expect(screen.queryByText('workspaceRuntime.picker.empty')).not.toBeInTheDocument();
+  });
 });

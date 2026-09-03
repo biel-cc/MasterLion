@@ -4,4 +4,10 @@ export { defaultGetLocalFilePreview } from './filePreview';
 export { defaultGetProjectFileIndex } from './projectFileIndex';
 export * from './projectSkillAuthoring';
 export * from './types';
-export { initWorkspace, listProjectSkills, statPath, verifySkillPaths } from './workspace';
+export {
+  cleanupScratchWorkspace,
+  initWorkspace,
+  listProjectSkills,
+  statPath,
+  verifySkillPaths,
+} from './workspace';

@@ -957,6 +957,7 @@ describe('GatewayActionImpl', () => {
         mockRuntime.isLocal = false;
         mockRuntime.isChatMode = false;
         mockGateway.getDeviceInfo.mockReset();
+        getProjectWorkspaceStoreState().setTopicState('topic-1', undefined);
       });
 
       const send = async () => {
@@ -996,19 +997,59 @@ describe('GatewayActionImpl', () => {
         );
       });
 
-      // Regression guard (chat mode → no execution environment): chat mode must
-      // not resolve this machine's deviceId even on a local target, otherwise
-      // the server presets activeDeviceId and re-injects lobe-local-system.
-      it('does not resolve a deviceId in chat mode, even when local mode is set', async () => {
+      // Chat/tool mode controls capabilities for this operation, not the topic's
+      // immutable execution identity. The first turn must still capture local +
+      // this device so enabling tools later cannot drift to another target/cwd.
+      it('preserves local topic intent in desktop chat mode', async () => {
         mockEnv.isDesktop = true;
         mockRuntime.isLocal = true;
         mockRuntime.isChatMode = true;
+        mockGateway.getDeviceInfo.mockResolvedValue({ deviceId: 'device-local-1' });
+
+        await send();
+
+        expect(mockGateway.getDeviceInfo).toHaveBeenCalledTimes(1);
+        expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            appContext: expect.objectContaining({
+              topicExecutionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local-1',
+              },
+            }),
+            deviceId: 'device-local-1',
+          }),
+          expect.anything(),
+        );
+      });
+
+      it('forwards an existing topic local snapshot and bound device without consulting defaults', async () => {
+        mockEnv.isDesktop = true;
+        mockRuntime.isLocal = false;
+        getProjectWorkspaceStoreState().setTopicState('topic-1', {
+          snapshot: {
+            boundDeviceId: 'device-snapshot-1',
+            target: 'local',
+            targetCapturedAt: '2026-09-03T00:00:00.000Z',
+            version: 1,
+          },
+        });
 
         await send();
 
         expect(mockGateway.getDeviceInfo).not.toHaveBeenCalled();
         expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
-          expect.objectContaining({ deviceId: undefined }),
+          expect.objectContaining({
+            appContext: expect.objectContaining({
+              topicExecutionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-snapshot-1',
+              },
+            }),
+            deviceId: 'device-snapshot-1',
+          }),
           expect.anything(),
         );
       });

@@ -1,3 +1,5 @@
+import type { ToolCallExecutionContext } from '@lobechat/types/src/executionContext';
+
 // ─── Agent Stream Event (mirrors server StreamEvent) ───
 
 export type AgentStreamEventType =
@@ -143,12 +145,20 @@ export interface ToolExecuteData {
   apiName: string;
   /** JSON-encoded argument string as returned by the LLM. */
   arguments: string;
+  /** Device identity used by the main-process authorization tuple. */
+  deviceId?: string;
+  /** Browser-safe projection of the operation's immutable execution boundary. */
+  executionContext?: ToolCallExecutionContext;
   /** Per-invocation deadline. Server caps against its own function budget. */
   executionTimeoutMs: number;
   /** Tool plugin identifier (e.g. "local-system"). */
   identifier: string;
+  /** Operation identity repeated inside the payload for the renderer→main hop. */
+  operationId?: string;
   /** Unique tool call id; used as the correlation key for the returned result. */
   toolCallId: string;
+  /** Topic identity used to validate topic- and operation-scoped grants. */
+  topicId?: string;
 }
 
 // ─── WebSocket Protocol Messages ───

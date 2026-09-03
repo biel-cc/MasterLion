@@ -603,6 +603,43 @@ describe('DeviceGateway', () => {
     });
   });
 
+  describe('cleanupScratchWorkspace', () => {
+    it('passes only the topic identity to the owning device RPC', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({
+        data: { removed: true, root: '/scratch/topic-1' },
+        success: true,
+      });
+
+      const result = await new DeviceGateway().cleanupScratchWorkspace({
+        deviceId: 'dev-1',
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      expect(result).toEqual({ removed: true, root: '/scratch/topic-1' });
+      expect(mockClient.invokeRpc).toHaveBeenCalledWith(
+        { deviceId: 'dev-1', timeout: 8000, userId: 'user-1' },
+        { method: 'cleanupScratchWorkspace', params: { topicId: 'topic-1' } },
+      );
+    });
+
+    it('fails closed when the device cannot confirm its scratch root', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({ error: 'offline', success: false });
+
+      await expect(
+        new DeviceGateway().cleanupScratchWorkspace({
+          deviceId: 'dev-1',
+          topicId: 'topic-1',
+          userId: 'user-1',
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('listProjectSkills', () => {
     const configure = () => {
       mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';

@@ -19,6 +19,7 @@ const createService = () => {
       throw new Error('not implemented');
     },
     captureTarget: async () => snapshot,
+    captureTargetIfAbsent: async () => snapshot,
     getState: async () => ({ snapshot }),
   };
   return {
@@ -29,6 +30,15 @@ const createService = () => {
 };
 
 describe('ProjectWorkspaceService', () => {
+  it('uses the atomic first-writer-wins target capture seam for legacy migration', async () => {
+    const { bindingStore, service } = createService();
+    const captureTargetIfAbsent = vi.spyOn(bindingStore, 'captureTargetIfAbsent');
+
+    await service.captureTargetIfAbsent({ target: 'local', topicId: 'topic-a' });
+
+    expect(captureTargetIfAbsent).toHaveBeenCalledWith({ target: 'local', topicId: 'topic-a' });
+  });
+
   it('keeps five plain-chat resolutions read-only and unbound', async () => {
     const { bindingStore, service, workspaceModel } = createService();
     const getState = vi.spyOn(bindingStore, 'getState');

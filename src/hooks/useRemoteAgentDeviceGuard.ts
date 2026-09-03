@@ -14,6 +14,11 @@ export type RemoteAgentDeviceStatus =
 interface UseRemoteAgentDeviceGuardOptions {
   /** The conversation's agent — validate this agent's bound device, not the global active one. */
   agentId: string;
+  /**
+   * Topic/draft-scoped device. When supplied it wins over the agent default so
+   * the guard checks the same execution plan that will dispatch the run.
+   */
+  deviceId?: string;
   enabled?: boolean;
 }
 
@@ -29,13 +34,14 @@ interface UseRemoteAgentDeviceGuardResult {
  */
 export const useRemoteAgentDeviceGuard = ({
   agentId,
+  deviceId,
   enabled = true,
 }: UseRemoteAgentDeviceGuardOptions): UseRemoteAgentDeviceGuardResult => {
   const agencyConfig = useAgentStore((s) =>
     agentId ? s.agentMap[agentId]?.agencyConfig : undefined,
   );
 
-  const boundDeviceId = agencyConfig?.boundDeviceId;
+  const boundDeviceId = deviceId ?? agencyConfig?.boundDeviceId;
   const providerType = agencyConfig?.heterogeneousProvider?.type;
 
   const [status, setStatus] = useState<RemoteAgentDeviceStatus>('checking');

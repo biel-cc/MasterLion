@@ -264,8 +264,8 @@ const sanitizeDiagnostics = (value: unknown): ContextBudgetDiagnosticsInput | un
 /**
  * Extract the typed failure the runtime attached to a chat message error.
  *
- * Accepts either `body.contextBudget = { decision, trace }` (the shape produced by
- * `createContextBudgetFailure`) or the same fields spread directly onto the body.
+ * Accepts `body.contextBudget = { decision, trace }`, the same fields spread directly
+ * onto the body, and the short-lived legacy shape where `contextBudget` was the decision.
  * Returns `undefined` for legacy errors so callers keep the generic exceeded-context fallback.
  */
 export const getContextBudgetFailureFromErrorBody = (
@@ -274,7 +274,7 @@ export const getContextBudgetFailureFromErrorBody = (
   if (!isRecord(body)) return undefined;
 
   const container = isRecord(body.contextBudget) ? body.contextBudget : body;
-  const decision = sanitizeFailDecision(container.decision);
+  const decision = sanitizeFailDecision(container.decision ?? container);
   if (!decision) return undefined;
 
   const trace = sanitizeDiagnostics(container.trace);

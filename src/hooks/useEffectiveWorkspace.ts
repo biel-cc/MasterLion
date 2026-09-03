@@ -11,7 +11,7 @@ import type {
   WorkspaceKind,
   WorkspaceRef,
 } from '@lobechat/types/src/projectWorkspace';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { type ExecutionAgencyConfig, resolveExecutionContext } from '@/helpers/executionContext';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
@@ -50,7 +50,12 @@ export interface EffectiveWorkspace {
   /** Key of the draft intent record for this conversation container. */
   draftKey: string;
   isDraft: boolean;
+  loadError?: unknown;
+  /** Initial evidence is still loading; consumers must not present this as an empty/unavailable state. */
+  loading?: boolean;
   recommendation: WorkspaceRecommendation;
+  /** Retry all evidence requests used by this projection. */
+  reload?: () => Promise<void>;
   state: EffectiveWorkspaceState;
   target: DeviceExecutionTarget;
   targetDeviceId?: string;
@@ -89,16 +94,16 @@ export const useEffectiveWorkspace = (
   const canFetch = isLogin || isDesktop;
 
   // Self-populate the stores this view depends on (SWR dedupes by key).
-  useDeviceStore((s) => s.useFetchDevices)(canFetch);
-  useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
-  useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(canFetch);
+  const devicesRequest = useDeviceStore((s) => s.useFetchDevices)(canFetch);
+  const gatewayRequest = useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
+  const workspacesRequest = useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(canFetch);
 
   const activeTopicId = useChatStore((s) => s.activeTopicId);
   const activeGroupId = useChatStore((s) => s.activeGroupId);
   const topicId = options.topicId === undefined ? activeTopicId : options.topicId;
   const resolvedTopicId = topicId ?? undefined;
 
-  useProjectWorkspaceStore((s) => s.useFetchTopicState)(resolvedTopicId);
+  const topicRequest = useProjectWorkspaceStore((s) => s.useFetchTopicState)(resolvedTopicId);
 
   const topic = useChatStore((s) =>
     resolvedTopicId ? topicSelectors.getTopicById(resolvedTopicId)(s) : undefined,
@@ -120,6 +125,21 @@ export const useEffectiveWorkspace = (
   );
   const workspacesById = useProjectWorkspaceStore((s) => s.workspacesById);
   const grantsByTopicDevice = useProjectWorkspaceStore((s) => s.grantsByTopicDevice);
+  const reload = useCallback(async () => {
+    const requests = [devicesRequest, gatewayRequest, workspacesRequest, topicRequest];
+    await Promise.all(requests.map((request) => request?.mutate?.()));
+  }, [devicesRequest, gatewayRequest, topicRequest, workspacesRequest]);
+  const loading = Boolean(
+    devicesRequest?.isLoading ||
+      gatewayRequest?.isLoading ||
+      workspacesRequest?.isLoading ||
+      topicRequest?.isLoading,
+  );
+  const loadError =
+    devicesRequest?.error ??
+    gatewayRequest?.error ??
+    workspacesRequest?.error ??
+    topicRequest?.error;
 
   return useMemo<EffectiveWorkspace>(() => {
     const isDraft = !resolvedTopicId;
@@ -248,7 +268,10 @@ export const useEffectiveWorkspace = (
       cwd: context.cwd,
       draftKey,
       isDraft,
+      loadError,
+      loading,
       recommendation,
+      reload,
       state,
       target: plan.target,
       targetDeviceId,
@@ -265,6 +288,9 @@ export const useEffectiveWorkspace = (
     draftKey,
     grantsByTopicDevice,
     isDevicesInit,
+    loadError,
+    loading,
+    reload,
     resolvedTopicId,
     topic,
     topicState,

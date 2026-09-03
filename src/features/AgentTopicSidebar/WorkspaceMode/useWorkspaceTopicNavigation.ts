@@ -17,7 +17,10 @@ import type { TopicSortBy } from '@/types/topic';
 
 export interface WorkspaceTopicNavigationView {
   groupIds: string[];
+  loadError?: unknown;
+  loading: boolean;
   navigation: WorkspaceTopicNavigation;
+  reload: () => Promise<unknown>;
   topicSortBy: TopicSortBy;
 }
 
@@ -31,7 +34,9 @@ export const useWorkspaceTopicNavigation = (): WorkspaceTopicNavigationView => {
   const topicSortBy = useUserStore(preferenceSelectors.topicSortBy);
   const isLogin = useUserStore(authSelectors.isLogin);
 
-  useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(isLogin || isDesktop);
+  const workspaceRequest = useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(
+    isLogin || isDesktop,
+  );
 
   const topics = useChatStore(
     topicSelectors.displayTopicsForSidebar(topicPageSize, topicSortBy),
@@ -56,7 +61,14 @@ export const useWorkspaceTopicNavigation = (): WorkspaceTopicNavigationView => {
   );
 
   return useMemo(
-    () => ({ groupIds, navigation, topicSortBy }),
-    [groupIds, navigation, topicSortBy],
+    () => ({
+      groupIds,
+      loadError: workspaceRequest?.error,
+      loading: Boolean(workspaceRequest?.isLoading),
+      navigation,
+      reload: async () => workspaceRequest?.mutate?.(),
+      topicSortBy,
+    }),
+    [groupIds, navigation, topicSortBy, workspaceRequest],
   );
 };

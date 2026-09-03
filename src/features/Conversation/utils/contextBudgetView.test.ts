@@ -113,6 +113,14 @@ describe('getContextBudgetFailureFromErrorBody', () => {
     expect(spread).toEqual(nested);
   });
 
+  it('accepts the legacy runtime shape where contextBudget is the fail decision', () => {
+    const decision = buildErrorBody('SUMMARY_FAILED').contextBudget.decision;
+    const result = getContextBudgetFailureFromErrorBody({ contextBudget: decision });
+
+    expect(result?.decision).toMatchObject({ code: 'SUMMARY_FAILED', kind: 'fail' });
+    expectNoSecrets(result);
+  });
+
   it('whitelists the decision: known actions and sources only, ids and counts only', () => {
     const result = getContextBudgetFailureFromErrorBody({
       contextBudget: {

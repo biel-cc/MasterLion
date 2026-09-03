@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { detectRepoType } from '@lobechat/local-file-shell';
 
 import type {
+  CleanupScratchWorkspaceParams,
+  CleanupScratchWorkspaceResult,
   EnsureScratchWorkspaceParams,
   EnsureScratchWorkspaceResult,
   InitWorkspaceParams,
@@ -29,13 +31,21 @@ const MAX_SKILL_FILE_COUNT = 1000;
 
 const SKILL_SOURCES = ['.agents/skills', '.claude/skills'] as const;
 
-const toSafeTopicSegment = (topicId: string): string => {
+const toSafeTopicSegment = (topicId: unknown): string => {
+  if (typeof topicId !== 'string') throw new Error('topicId is required');
   const trimmed = topicId.trim();
   if (!trimmed) throw new Error('topicId is required');
   if (/^[A-Z0-9][\w.-]{0,127}$/i.test(trimmed) && trimmed !== '.' && trimmed !== '..') {
     return trimmed;
   }
   return `topic-${createHash('sha256').update(trimmed).digest('hex').slice(0, 32)}`;
+};
+
+const assertSafeScratchRoot = (root: string): void => {
+  const resolved = path.resolve(root);
+  if (resolved === path.parse(resolved).root || resolved === path.resolve(os.homedir())) {
+    throw new Error('SCOPE_DENIED');
+  }
 };
 
 const toPosixRelativePath = (filePath: string) => filePath.split(path.sep).join('/');
@@ -284,18 +294,14 @@ export const ensureScratchWorkspace = async (
   }
 
   const normalizedRoot = path.resolve(scratchRoot);
-  if (
-    normalizedRoot === path.parse(normalizedRoot).root ||
-    normalizedRoot === path.resolve(os.homedir())
-  ) {
-    throw new Error('SCOPE_DENIED');
-  }
+  assertSafeScratchRoot(normalizedRoot);
 
   const topicId = typeof params === 'string' ? params : params?.topicId;
   const topicSegment = toSafeTopicSegment(topicId);
 
   await mkdir(normalizedRoot, { recursive: true });
   const realRoot = await realpath(normalizedRoot);
+  assertSafeScratchRoot(realRoot);
   const requested = path.join(realRoot, topicSegment);
   await mkdir(requested, { recursive: true });
   const realRequested = await realpath(requested);
@@ -305,4 +311,45 @@ export const ensureScratchWorkspace = async (
   }
 
   return { root: realRequested, topicSegment };
+};
+
+/**
+ * Delete only the deterministic topic directory below the configured scratch
+ * root. The RPC deliberately accepts no path, so it cannot become an arbitrary
+ * recursive-delete primitive.
+ */
+export const cleanupScratchWorkspace = async (
+  params: CleanupScratchWorkspaceParams,
+  scratchRoot: string | undefined,
+): Promise<CleanupScratchWorkspaceResult> => {
+  if (!scratchRoot || !path.isAbsolute(scratchRoot)) throw new Error('SCRATCH_ROOT_REQUIRED');
+
+  const normalizedRoot = path.resolve(scratchRoot);
+  assertSafeScratchRoot(normalizedRoot);
+
+  const topicSegment = toSafeTopicSegment(params?.topicId);
+  let realRoot: string;
+  try {
+    realRoot = await realpath(normalizedRoot);
+    assertSafeScratchRoot(realRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { removed: false, root: path.join(normalizedRoot, topicSegment), topicSegment };
+  }
+
+  const requested = path.join(realRoot, topicSegment);
+  const relative = path.relative(realRoot, requested);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  try {
+    await lstat(requested);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { removed: false, root: requested, topicSegment };
+  }
+
+  await rm(requested, { force: true, recursive: true });
+  return { removed: true, root: requested, topicSegment };
 };

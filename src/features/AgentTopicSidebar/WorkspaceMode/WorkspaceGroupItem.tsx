@@ -5,7 +5,6 @@ import { FolderClosedIcon, FolderOpenIcon, PlusIcon } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import TopicItem from '@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
 import { useElectronStore } from '@/store/electron';
@@ -17,6 +16,7 @@ import {
 
 import { CollapsedStatusBadges, CollapsedUnreadDot } from './CollapsedIndicators';
 import { getProjectTopicStatusCounts, hasProjectTopicStatusCounts } from './statusCounts';
+import type { WorkspaceTopicItemComponent } from './types';
 
 const styles = createStaticStyles(({ css }) => ({
   addTopicAction: css`
@@ -49,6 +49,7 @@ export interface WorkspaceGroupItemProps {
   activeTopicId?: string;
   expanded: boolean;
   group: TopicNavigationWorkspaceGroup;
+  TopicItemComponent: WorkspaceTopicItemComponent;
 }
 
 /**
@@ -57,7 +58,7 @@ export interface WorkspaceGroupItemProps {
  * agent defaults, device defaults or agency config.
  */
 const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
-  ({ group, activeTopicId, activeThreadId, expanded }) => {
+  ({ group, activeTopicId, activeThreadId, expanded, TopicItemComponent }) => {
     const { t } = useTranslation('chat');
     const { workspaceId, workspace, topics } = group;
 
@@ -162,7 +163,7 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
       >
         <Flexbox gap={1} paddingBlock={1}>
           {topics.map((topic) => (
-            <TopicItem
+            <TopicItemComponent
               active={activeTopicId === topic.id}
               fav={topic.favorite}
               id={topic.id}

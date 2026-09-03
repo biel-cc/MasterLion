@@ -76,6 +76,10 @@ export class ProjectWorkspaceService {
   captureTarget = async (params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date }) =>
     this.deps.bindingStore.captureTarget(params);
 
+  captureTargetIfAbsent = async (
+    params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date },
+  ) => this.deps.bindingStore.captureTargetIfAbsent(params);
+
   bindTopic = async (params: {
     now?: Date;
     target?: DeviceExecutionTarget;

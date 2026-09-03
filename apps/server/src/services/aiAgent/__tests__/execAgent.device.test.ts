@@ -92,6 +92,7 @@ vi.mock('@/server/modules/KeyVaultsEncrypt', () => ({
 
 vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
   DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    captureTargetIfAbsent: vi.fn(),
     getState: mockBindingGetState,
   })),
 }));

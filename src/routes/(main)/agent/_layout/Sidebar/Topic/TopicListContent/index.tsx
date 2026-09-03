@@ -5,7 +5,6 @@ import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import urlJoin from 'url-join';
 
-import { WorkspaceMode } from '@/features/AgentTopicSidebar';
 import EmptyNavItem from '@/features/NavPanel/components/EmptyNavItem';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
 import { useFetchChatTopics } from '@/hooks/useFetchChatTopics';
@@ -54,7 +53,7 @@ const TopicListContent = memo(() => {
         />
       )}
       {isDesktop ? (
-        <WorkspaceMode />
+        <ByProjectMode />
       ) : topicGroupMode === 'flat' ? (
         <FlatMode />
       ) : topicGroupMode === 'byProject' ? (

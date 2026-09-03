@@ -181,6 +181,33 @@ describe('prepareToolCallExecution', () => {
     ).rejects.toMatchObject({ code: 'SCOPE_DENIED' });
   });
 
+  it('does not auto-consent to direct-message roots outside the user home', async () => {
+    const outsideHome = path.join(tempRoot, 'system-mount');
+    await mkdir(outsideHome);
+    const target = path.join(outsideHome, 'note.txt');
+    await writeFile(target, 'outside');
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args: { path: target },
+        context: {
+          accessRoots: [
+            {
+              modes: ['read'],
+              operationId: 'op-outside',
+              rootPath: outsideHome,
+              scope: 'operation',
+              source: 'direct-user-message',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-outside' },
+      }),
+    ).rejects.toMatchObject({ code: 'INTERVENTION_REQUIRED' });
+  });
+
   it('allows an explicit absolute read on an unbound topic when an operation root covers it', async () => {
     const file = path.join(workspace, 'notes.txt');
     await writeFile(file, 'notes');
@@ -469,5 +496,15 @@ describe('prepareToolCallExecution', () => {
       scopeAudit: [],
       warnings: [],
     });
+  });
+
+  it('fails closed when a v2 operation loses its execution context in transit', async () => {
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'runCommand',
+        args: { command: 'pwd' },
+        trace: { operationId: 'op-v2', topicId: 'topic-v2' },
+      }),
+    ).rejects.toMatchObject({ code: 'WORKSPACE_REQUIRED' });
   });
 });

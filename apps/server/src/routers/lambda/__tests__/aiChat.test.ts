@@ -14,11 +14,35 @@ import { aiChatRouter } from '../aiChat';
 
 const flushAsyncTasks = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+const workspaceMocks = vi.hoisted(() => ({
+  captureTargetIfAbsent: vi.fn(),
+  findById: vi.fn(),
+  getOrCreate: vi.fn(),
+}));
+
 vi.mock('@/database/models/agent');
 vi.mock('@/database/models/message');
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn(() => ({
+    findById: workspaceMocks.findById,
+    getOrCreate: workspaceMocks.getOrCreate,
+  })),
+  toWorkspaceRef: (workspace: Record<string, unknown>) => ({
+    deviceId: workspace.deviceId,
+    displayName: workspace.displayName,
+    id: workspace.id,
+    kind: workspace.kind,
+    rootPath: workspace.rootPath,
+  }),
+}));
 vi.mock('@/database/models/thread');
 vi.mock('@/database/models/topic');
 vi.mock('@/server/services/aiChat');
+vi.mock('@/server/services/projectWorkspace', () => ({
+  DatabaseTopicWorkspaceBindingStore: vi.fn(() => ({
+    captureTargetIfAbsent: workspaceMocks.captureTargetIfAbsent,
+  })),
+}));
 vi.mock('@/server/services/file', () => ({
   FileService: vi.fn(),
 }));
@@ -172,6 +196,100 @@ describe('aiChatRouter', () => {
     );
     expect(res.isCreateNewTopic).toBe(false);
     expect(res.topicId).toBe('t-exist');
+  });
+
+  it('atomically resolves a new-topic execution intent into server-authored metadata', async () => {
+    workspaceMocks.findById.mockResolvedValueOnce({
+      deviceId: 'device-1',
+      displayName: 'Repo',
+      id: 'workspace-1',
+      kind: 'device',
+      rootPath: '/repo',
+    });
+    const mockCreateTopic = vi.fn().mockResolvedValue({ id: 't-intent' });
+    vi.mocked(TopicModel).mockImplementation(() => ({ create: mockCreateTopic }) as any);
+    mockMessageModel(
+      vi.fn().mockResolvedValueOnce({ id: 'm-user' }).mockResolvedValueOnce({ id: 'm-assistant' }),
+    );
+    vi.mocked(AiChatService).mockImplementation(
+      () =>
+        ({
+          getMessagesAndTopics: vi.fn().mockResolvedValue({ messages: [], topics: undefined }),
+        }) as any,
+    );
+
+    await aiChatRouter.createCaller(mockCtx as any).sendMessageInServer({
+      newAssistantMessage: { model: 'gpt-4o', provider: 'openai' },
+      newTopic: {
+        executionIntent: {
+          platform: 'desktop',
+          target: 'local',
+          targetDeviceId: 'device-1',
+          workspaceId: 'workspace-1',
+        },
+        title: 'Intent topic',
+      },
+      newUserMessage: { content: 'hi' },
+      sessionId: 's1',
+    });
+
+    expect(mockCreateTopic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          boundDeviceId: 'device-1',
+          executionSnapshot: expect.objectContaining({
+            boundDeviceId: 'device-1',
+            target: 'local',
+            version: 1,
+            workspaceId: 'workspace-1',
+            workspaceKind: 'device',
+          }),
+          workingDirectory: '/repo',
+          workspaceId: 'workspace-1',
+          workspaceKind: 'device',
+        }),
+      }),
+    );
+  });
+
+  it('freezes a legacy topic target through the binding store before persisting messages', async () => {
+    const mockCreateMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'm-user' })
+      .mockResolvedValueOnce({ id: 'm-assistant' });
+    mockMessageModel(mockCreateMessage);
+    workspaceMocks.captureTargetIfAbsent.mockResolvedValueOnce({
+      target: 'local',
+      targetCapturedAt: '2026-09-04T00:00:00.000Z',
+      version: 1,
+    });
+    vi.mocked(AiChatService).mockImplementation(
+      () =>
+        ({
+          getMessagesAndTopics: vi.fn().mockResolvedValue({ messages: [], topics: undefined }),
+        }) as any,
+    );
+
+    await aiChatRouter.createCaller(mockCtx as any).sendMessageInServer({
+      newAssistantMessage: { model: 'gpt-4o', provider: 'openai' },
+      newUserMessage: { content: 'hi' },
+      sessionId: 's1',
+      topicExecutionIntent: {
+        platform: 'desktop',
+        target: 'local',
+        targetDeviceId: 'device-1',
+      },
+      topicId: 't-legacy',
+    });
+
+    expect(workspaceMocks.captureTargetIfAbsent).toHaveBeenCalledWith({
+      boundDeviceId: 'device-1',
+      target: 'local',
+      topicId: 't-legacy',
+    });
+    expect(workspaceMocks.captureTargetIfAbsent.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateMessage.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('should pass threadId to both user and assistant messages when provided', async () => {

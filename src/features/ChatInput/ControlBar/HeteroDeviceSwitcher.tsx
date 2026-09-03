@@ -5,7 +5,15 @@ import { isDesktop } from '@lobechat/const';
 import { isRemoteHeterogeneousType } from '@lobechat/heterogeneous-agents';
 import type { DeviceExecutionTarget } from '@lobechat/types';
 import { Microsoft } from '@lobehub/icons';
-import { Flexbox, Icon, Popover, Tooltip } from '@lobehub/ui';
+import { Flexbox, Icon, Tooltip } from '@lobehub/ui';
+import {
+  PopoverPopup,
+  PopoverPortal,
+  PopoverPositioner,
+  PopoverRoot,
+  PopoverTriggerElement,
+  PopoverViewport,
+} from '@lobehub/ui/base-ui';
 import { createStaticStyles, cssVar, cx } from 'antd-style';
 import {
   BoxIcon,
@@ -40,8 +48,10 @@ const styles = createStaticStyles(({ css }) => ({
 
     height: 28px;
     padding-inline: 8px;
+    border: none;
     border-radius: 6px;
 
+    font: inherit;
     font-size: 12px;
     color: ${cssVar.colorTextSecondary};
     white-space: nowrap;
@@ -51,6 +61,11 @@ const styles = createStaticStyles(({ css }) => ({
     &:hover {
       color: ${cssVar.colorText};
       background: ${cssVar.colorFillSecondary};
+    }
+
+    &:focus-visible {
+      outline: 2px solid ${cssVar.colorPrimaryBorder};
+      outline-offset: 1px;
     }
   `,
   buttonLabel: css`
@@ -130,12 +145,24 @@ const styles = createStaticStyles(({ css }) => ({
 
     padding-block: 8px;
     padding-inline: 8px;
+    border: none;
     border-radius: ${cssVar.borderRadius};
+
+    width: 100%;
+    font: inherit;
+    text-align: start;
+    background: transparent;
 
     transition: background-color 0.2s;
 
     &:hover {
       background: ${cssVar.colorFillTertiary};
+    }
+
+    &:focus-visible {
+      background: ${cssVar.colorFillTertiary};
+      outline: 2px solid ${cssVar.colorPrimaryBorder};
+      outline-offset: -2px;
     }
   `,
   optionActive: css`
@@ -246,15 +273,16 @@ interface OptionRowProps {
 
 const OptionRow = memo<OptionRowProps>(({ active, desc, disabled, icon, label, onClick, tag }) => {
   return (
-    <div
+    <button
+      aria-pressed={active}
       className={cx(
         styles.option,
         active && styles.optionActive,
         disabled && styles.optionDisabled,
       )}
-      onClick={() => {
-        if (!disabled) onClick();
-      }}
+      disabled={disabled}
+      type="button"
+      onClick={onClick}
     >
       <div className={styles.optionIcon}>{icon}</div>
       <div className={styles.optionMeta}>
@@ -265,7 +293,7 @@ const OptionRow = memo<OptionRowProps>(({ active, desc, disabled, icon, label, o
         {desc ? <div className={styles.desc}>{desc}</div> : null}
       </div>
       {active ? <Icon className={styles.check} icon={CheckIcon} size={14} /> : null}
-    </div>
+    </button>
   );
 });
 
@@ -534,20 +562,28 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     );
 
     return (
-      <Popover
-        content={content}
-        open={open}
-        placement="topLeft"
-        styles={{ content: { padding: 4 } }}
-        trigger="click"
-        onOpenChange={setOpen}
-      >
-        <div className={styles.button}>
-          {chipIcon}
-          <span className={styles.buttonLabel}>{chipLabel}</span>
-          <Icon icon={ChevronDownIcon} size={12} />
-        </div>
-      </Popover>
+      <PopoverRoot open={open} onOpenChange={setOpen}>
+        <PopoverTriggerElement>
+          <button
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-label={`${t('heteroAgent.executionTarget.title')}: ${chipLabel}`}
+            className={styles.button}
+            type="button"
+          >
+            {chipIcon}
+            <span className={styles.buttonLabel}>{chipLabel}</span>
+            <Icon icon={ChevronDownIcon} size={12} />
+          </button>
+        </PopoverTriggerElement>
+        <PopoverPortal>
+          <PopoverPositioner placement="topLeft">
+            <PopoverPopup aria-label={t('heteroAgent.executionTarget.title')}>
+              <PopoverViewport>{content}</PopoverViewport>
+            </PopoverPopup>
+          </PopoverPositioner>
+        </PopoverPortal>
+      </PopoverRoot>
     );
   },
 );

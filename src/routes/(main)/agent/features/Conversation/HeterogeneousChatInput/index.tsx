@@ -11,12 +11,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import urlJoin from 'url-join';
 
 import { useHeteroAgentCloudConfig } from '@/business/client/hooks/useHeteroAgentCloudConfig';
-import { isDesktop } from '@/const/version';
 import { type ActionKeys } from '@/features/ChatInput';
 import { ChatInput } from '@/features/Conversation';
 import { contextSelectors, useConversationStore } from '@/features/Conversation/store';
 import WideScreenContainer from '@/features/WideScreenContainer';
-import { resolveExecutionTarget } from '@/helpers/executionTarget';
 import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useRemoteAgentDeviceGuard } from '@/hooks/useRemoteAgentDeviceGuard';
 import { useAgentStore } from '@/store/agent';
@@ -44,10 +42,8 @@ const rightActions: ActionKeys[] = [];
  */
 const HeterogeneousChatInput = memo(() => {
   const { t } = useTranslation('chat');
-  // Scope every hetero check to the conversation's agent. Passing `agentId`
-  // into the cloud-credential and device guards keeps them validating the same
-  // agent that `agencyConfig`/`isDeviceExecution` are computed from, instead of
-  // the global (hijack-prone) active agent.
+  // Scope every hetero check to the conversation's agent and effective topic
+  // execution context instead of the global (hijack-prone) active agent.
   const agentId = useConversationStore(contextSelectors.agentId);
   const { isConfigured, goToConfig } = useHeteroAgentCloudConfig(agentId);
   const params = useParams<{ aid: string }>();
@@ -57,11 +53,12 @@ const HeterogeneousChatInput = memo(() => {
     (s) => agentSelectors.getAgentConfigById(agentId)(s)?.agencyConfig,
   );
   const providerType = agencyConfig?.heterogeneousProvider?.type;
-  const executionTarget = resolveExecutionTarget(agencyConfig, {
-    isDesktop,
-    isHetero: !!providerType,
-  });
   const isRemoteAgent = !!providerType && isRemoteHeterogeneousType(providerType);
+
+  // The effective contract includes the current draft intent / topic snapshot.
+  // Do not re-resolve from agent defaults here: that would make the send gate
+  // disagree with the target switcher and the eventual dispatcher.
+  const effective = useEffectiveWorkspace(agentId);
 
   // A run goes to an `lh connect` device when the provider is a remote-only type
   // (openclaw / hermes) OR a local-CLI type (claude-code / codex) resolves to a
@@ -69,15 +66,20 @@ const HeterogeneousChatInput = memo(() => {
   // bound device must be online before we let the user send — guard it here
   // instead of failing at dispatch time.
   const isDeviceExecution =
-    isRemoteAgent || (executionTarget === 'device' && !!agencyConfig?.boundDeviceId);
+    isRemoteAgent ||
+    effective.context.plan.kind === 'device' ||
+    effective.context.plan.kind === 'device-unrouted';
 
-  const { status, refresh } = useRemoteAgentDeviceGuard({ agentId, enabled: isDeviceExecution });
+  const { status, refresh } = useRemoteAgentDeviceGuard({
+    agentId,
+    deviceId: effective.targetDeviceId,
+    enabled: isDeviceExecution,
+  });
 
   // Heterogeneous agents bring their own toolchain and must have a formal
   // workspace before the first send / resume. `unbound` and `unrouted` come
   // straight from the accepted execution context; native chat input never
   // applies this gate.
-  const effective = useEffectiveWorkspace(agentId);
   const focusWorkspacePicker = useProjectWorkspaceStore((s) => s.focusWorkspacePicker);
   const workspaceBlocked = effective.state !== 'bound';
   const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;

@@ -8,9 +8,11 @@ import { agentService } from '@/services/agent';
 import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
+import { projectWorkspaceService } from '@/services/projectWorkspace';
 import * as agentGroupStore from '@/store/agentGroup';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
+import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { getSessionStoreState } from '@/store/session';
 import * as toolStoreModule from '@/store/tool';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
@@ -43,6 +45,12 @@ vi.mock('@lobechat/const', async (importOriginal) => {
   };
 });
 
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return mockConstEnv.isDesktop;
+  },
+}));
+
 vi.mock('../heterogeneousAgentExecutor', () => ({
   executeHeterogeneousAgent: (...args: any[]) => executeHeterogeneousAgentMock(...args),
 }));
@@ -71,6 +79,12 @@ beforeEach(() => {
   vi.spyOn(agentService, 'getAgentConfigById').mockResolvedValue(createMockAgentConfig() as any);
 
   act(() => {
+    useProjectWorkspaceStore.setState({
+      draftByConversationKey: {},
+      topicStatesById: {},
+      workspaceIdsByDevice: {},
+      workspacesById: {},
+    });
     useChatStore.setState({
       refreshMessages: vi.fn(),
       refreshTopic: vi.fn(),
@@ -92,6 +106,28 @@ const createTestContext = (agentId: string = TEST_IDS.SESSION_ID) => ({
   topicId: null,
   threadId: null,
 });
+
+const seedFormalHeterogeneousWorkspace = (agentId: string = TEST_IDS.SESSION_ID) => {
+  const draftKey = buildDraftConversationKey({ agentId });
+  useProjectWorkspaceStore.setState({
+    draftByConversationKey: {
+      [draftKey]: {
+        target: 'local',
+        updatedAt: Date.now(),
+        workspaceId: 'workspace-project',
+      },
+    },
+    workspaceIdsByDevice: { 'device-local': ['workspace-project'] },
+    workspacesById: {
+      'workspace-project': {
+        deviceId: 'device-local',
+        id: 'workspace-project',
+        kind: 'device',
+        rootPath: '/Users/me/project',
+      },
+    },
+  });
+};
 
 describe('ConversationLifecycle actions', () => {
   describe('sendMessage', () => {
@@ -988,6 +1024,7 @@ describe('ConversationLifecycle actions', () => {
             model: 'claude-sonnet-4-6',
           },
         });
+        seedFormalHeterogeneousWorkspace();
 
         const { result } = renderHook(() => useChatStore());
 
@@ -1015,12 +1052,203 @@ describe('ConversationLifecycle actions', () => {
 
         expect(sendMessageInServerSpy).toHaveBeenCalledWith(
           expect.objectContaining({
+            newTopic: expect.objectContaining({
+              executionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local',
+                workspaceId: 'workspace-project',
+              },
+            }),
             newAssistantMessage: {
               provider: 'codex',
             },
           }),
           expect.any(AbortController),
         );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({
+            workingDirectory: '/Users/me/project',
+          }),
+        );
+      });
+
+      it('loads a missing existing-topic binding before freezing hetero cwd and intent', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        vi.spyOn(projectWorkspaceService, 'getTopicState').mockResolvedValue({
+          snapshot: {
+            boundDeviceId: 'device-existing',
+            target: 'local',
+            targetCapturedAt: '2026-09-04T00:00:00.000Z',
+            version: 1,
+            workspaceBoundAt: '2026-09-04T00:00:00.000Z',
+            workspaceId: 'workspace-existing',
+            workspaceKind: 'device',
+          },
+          workspace: {
+            deviceId: 'device-existing',
+            id: 'workspace-existing',
+            kind: 'device',
+            rootPath: '/Users/me/existing-project',
+          },
+        });
+        act(() => {
+          useChatStore.setState({
+            activeAgentId: TEST_IDS.SESSION_ID,
+            activeTopicId: TEST_IDS.TOPIC_ID,
+            topicDataMap: {
+              [topicMapKey({ agentId: TEST_IDS.SESSION_ID })]: {
+                currentPage: 0,
+                hasMore: false,
+                items: [{ id: TEST_IDS.TOPIC_ID, title: 'Existing topic' }],
+                pageSize: 20,
+                total: 1,
+              },
+            },
+          } as any);
+        });
+        vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          messages: [
+            createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
+            createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
+          ],
+          topicId: TEST_IDS.TOPIC_ID,
+          topics: [],
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        } as any);
+        executeHeterogeneousAgentMock.mockResolvedValue(undefined);
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
+            },
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(projectWorkspaceService.getTopicState).toHaveBeenCalledWith(TEST_IDS.TOPIC_ID);
+        expect(aiChatService.sendMessageInServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            topicExecutionIntent: {
+              platform: 'desktop',
+              target: 'local',
+              targetDeviceId: 'device-existing',
+            },
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({
+            workingDirectory: '/Users/me/existing-project',
+          }),
+        );
+      });
+
+      it('routes managed workspace env through the server/device transport, never direct IPC', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        seedFormalHeterogeneousWorkspace();
+        useProjectWorkspaceStore.setState((state) => ({
+          workspacesById: {
+            ...state.workspacesById,
+            'workspace-project': {
+              ...state.workspacesById['workspace-project'],
+              envKeys: [{ key: 'API_TOKEN', secret: true }],
+            },
+          },
+        }));
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        act(() => {
+          useChatStore.setState({ executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID }),
+          }),
+        );
+        expect(executeHeterogeneousAgentMock).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+      });
+
+      it('routes native desktop managed env through the server/device transport', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+            },
+          },
+        });
+        seedFormalHeterogeneousWorkspace();
+        useProjectWorkspaceStore.setState((state) => ({
+          workspacesById: {
+            ...state.workspacesById,
+            'workspace-project': {
+              ...state.workspacesById['workspace-project'],
+              envKeys: [{ key: 'API_TOKEN', secret: true }],
+            },
+          },
+        }));
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        act(() => {
+          useChatStore.setState({ executeClientAgent, executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID }),
+          }),
+        );
+        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
       });
 
       it('should materialize local file mention editor data into persisted tool-result snapshots', async () => {
@@ -1032,6 +1260,7 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         });
+        seedFormalHeterogeneousWorkspace();
         mockLocalFileService.readLocalFile.mockResolvedValue({
           charCount: 17,
           content: 'export const x = 1;',

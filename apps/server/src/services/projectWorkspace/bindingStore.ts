@@ -59,6 +59,7 @@ export interface CaptureTopicTargetParams {
 export interface TopicWorkspaceBindingStore {
   bind: (params: BindTopicWorkspaceParams) => Promise<BindTopicWorkspaceResult>;
   captureTarget: (params: CaptureTopicTargetParams) => Promise<TopicExecutionSnapshot>;
+  captureTargetIfAbsent: (params: CaptureTopicTargetParams) => Promise<TopicExecutionSnapshot>;
   getState: (topicId: string) => Promise<TopicWorkspaceState | undefined>;
 }
 
@@ -299,7 +300,10 @@ export class DatabaseTopicWorkspaceBindingStore implements TopicWorkspaceBinding
     });
   };
 
-  captureTarget = async (params: CaptureTopicTargetParams): Promise<TopicExecutionSnapshot> => {
+  private writeTarget = async (
+    params: CaptureTopicTargetParams,
+    onlyIfAbsent: boolean,
+  ): Promise<TopicExecutionSnapshot> => {
     const now = params.now ?? new Date();
     return this.db.transaction(async (tx) => {
       const topic = await selectTopicForUpdate(tx, this.ownership, params.topicId);
@@ -310,6 +314,11 @@ export class DatabaseTopicWorkspaceBindingStore implements TopicWorkspaceBinding
 
       const metadata = topic.metadata as ServerTopicMetadata | null | undefined;
       const current = readSnapshot(metadata);
+      // Legacy-topic migration is a lock-protected compare-and-set. Concurrent
+      // first operations must all observe the first committed target instead
+      // of allowing the last waiter to overwrite it.
+      if (onlyIfAbsent && current) return current;
+
       const boundWorkspaceId = readBoundWorkspaceId(metadata, current);
       let workspace = legacyWorkspaceEvidence(metadata);
       if (boundWorkspaceId) {
@@ -349,6 +358,15 @@ export class DatabaseTopicWorkspaceBindingStore implements TopicWorkspaceBinding
       return next;
     });
   };
+
+  /** Explicit target switch used by the user-facing target picker. */
+  captureTarget = async (params: CaptureTopicTargetParams): Promise<TopicExecutionSnapshot> =>
+    this.writeTarget(params, false);
+
+  /** Atomic first-writer-wins capture used only by legacy-topic migration. */
+  captureTargetIfAbsent = async (
+    params: CaptureTopicTargetParams,
+  ): Promise<TopicExecutionSnapshot> => this.writeTarget(params, true);
 
   getState = async (topicId: string): Promise<TopicWorkspaceState | undefined> => {
     const [topic] = await this.db

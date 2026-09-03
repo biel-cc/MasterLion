@@ -28,6 +28,7 @@ import {
   validateProjectSkillOnDevice,
 } from './projectSkillAuthoring';
 import type {
+  CleanupScratchWorkspaceParams,
   DeviceControlDeps,
   EnsureScratchWorkspaceParams,
   HeterogeneousAgentRunParams,
@@ -39,6 +40,7 @@ import type {
   VerifySkillPathsParams,
 } from './types';
 import {
+  cleanupScratchWorkspace,
   ensureScratchWorkspace,
   initWorkspace,
   listProjectSkills,
@@ -56,6 +58,7 @@ import {
 export const DEVICE_RPC_METHODS = [
   'initWorkspace',
   'ensureScratchWorkspace',
+  'cleanupScratchWorkspace',
   'runHeterogeneousAgent',
   'listProjectSkills',
   'statPath',
@@ -108,6 +111,13 @@ export const executeDeviceRpc = async (
   deps: DeviceControlDeps,
 ): Promise<unknown> => {
   switch (method) {
+    case 'cleanupScratchWorkspace': {
+      return cleanupScratchWorkspace(
+        params as CleanupScratchWorkspaceParams,
+        deps.scratchRoot,
+      );
+    }
+
     case 'ensureScratchWorkspace': {
       return ensureScratchWorkspace(
         params as EnsureScratchWorkspaceParams | string,

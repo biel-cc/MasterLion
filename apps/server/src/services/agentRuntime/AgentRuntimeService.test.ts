@@ -394,6 +394,7 @@ describe('AgentRuntimeService', () => {
       await service.createOperation({
         ...mockParams,
         autoStart: false,
+        compressionModelCatalogSnapshot: modelCatalogSnapshot,
         executionContext,
         modelCatalogSnapshot,
         skillRegistryResult,
@@ -403,6 +404,7 @@ describe('AgentRuntimeService', () => {
         'test-operation-1',
         expect.objectContaining({
           metadata: expect.objectContaining({
+            compressionModelCatalogSnapshot: modelCatalogSnapshot,
             contextBudget: { catalogSnapshot: modelCatalogSnapshot },
             executionContext,
             modelCatalogSnapshot,

@@ -17,6 +17,22 @@ const assertCompatibleTarget = (target: DeviceExecutionTarget, workspace: Worksp
   }
 };
 
+/** Shared semantic validation for every mutation that accepts renderer intent. */
+export const assertValidTopicExecutionIntent = (intent: TopicExecutionIntent) => {
+  if (intent.platform === 'web' && intent.target === 'local') {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'A web client cannot create a local execution target',
+    });
+  }
+  if ((intent.target === 'none' || intent.target === 'sandbox') && intent.targetDeviceId) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Execution target ${intent.target} cannot bind a device`,
+    });
+  }
+};
+
 /**
  * Validate a one-shot client intent and build the server-authored metadata
  * written in the topic INSERT. The resulting executionSnapshot is therefore
@@ -31,18 +47,7 @@ export const resolveTopicCreationExecutionMetadata = async (params: {
 }): Promise<ChatTopicMetadata | undefined> => {
   const { intent, metadata, organizationWorkspaceId, workspaceModel } = params;
   if (!intent) return metadata;
-  if (intent.platform === 'web' && intent.target === 'local') {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'A web client cannot create a local execution target',
-    });
-  }
-  if ((intent.target === 'none' || intent.target === 'sandbox') && intent.targetDeviceId) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `Execution target ${intent.target} cannot bind a device`,
-    });
-  }
+  assertValidTopicExecutionIntent(intent);
 
   const now = params.now ?? new Date();
   let workspace = intent.workspaceId

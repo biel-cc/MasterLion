@@ -1,7 +1,10 @@
-import type { TopicExecutionIntent } from '@lobechat/types/src/projectWorkspace';
+import type {
+  TopicExecutionIntent,
+  TopicExecutionSnapshot,
+} from '@lobechat/types/src/projectWorkspace';
 
 import { isDesktop } from '@/const/version';
-import { resolveExecutionTarget, resolveToolMode } from '@/helpers/executionTarget';
+import { resolveExecutionTarget } from '@/helpers/executionTarget';
 import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
@@ -25,8 +28,10 @@ export const resolvePendingTopicExecutionIntent = async (params: {
   agentId?: string | null;
   groupId?: string | null;
   isNewTopic: boolean;
+  topicSnapshot?: TopicExecutionSnapshot;
+  topicId?: string | null;
 }): Promise<PendingTopicExecutionIntent | undefined> => {
-  const { agentId, groupId, isNewTopic } = params;
+  const { agentId, groupId, isNewTopic, topicId } = params;
 
   const workspaceState = getProjectWorkspaceStoreState();
   const draftKey = isNewTopic ? buildDraftConversationKey({ agentId, groupId }) : undefined;
@@ -36,27 +41,31 @@ export const resolvePendingTopicExecutionIntent = async (params: {
     : undefined;
   const agencyConfig = agentConfig?.agencyConfig;
   const platform = isDesktop ? 'desktop' : 'web';
+  const topicSnapshot =
+    params.topicSnapshot ??
+    (topicId ? workspaceState.topicStatesById[topicId]?.snapshot : undefined);
   const configuredTarget = resolveExecutionTarget(agencyConfig, {
     executionTargetByPlatform: draft?.target
       ? { ...agencyConfig?.executionTargetByPlatform, [platform]: draft.target }
       : agencyConfig?.executionTargetByPlatform,
     isDesktop,
     isHetero: !!agencyConfig?.heterogeneousProvider,
+    topicSnapshot,
   });
-  const target =
-    resolveToolMode(agentConfig?.chatConfig ?? undefined) === 'chat' &&
-    !agencyConfig?.heterogeneousProvider
-      ? 'none'
-      : configuredTarget;
+  // Tool mode controls which tools are exposed for this operation; it must not
+  // rewrite topic execution identity. In particular, a desktop chat-only
+  // first turn still freezes `local`, so enabling tools later cannot make the
+  // cwd silently inherit a newer global default.
+  const target = configuredTarget;
 
   const workspace = draft?.workspaceId
     ? workspaceState.workspacesById[draft.workspaceId]
     : undefined;
   let targetDeviceId =
-    draft?.target === 'device'
+    topicSnapshot?.boundDeviceId ??
+    (draft?.target === 'device'
       ? draft.targetDeviceId
-      : workspace?.deviceId ??
-        (target === 'device' ? agencyConfig?.boundDeviceId : undefined);
+      : (workspace?.deviceId ?? (target === 'device' ? agencyConfig?.boundDeviceId : undefined)));
 
   if (target === 'local' && isDesktop && !targetDeviceId) {
     try {

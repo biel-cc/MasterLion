@@ -94,6 +94,8 @@ interface ContextEngineeringContext {
   memoryContext?: MemoryContext;
   messages: UIChatMessage[];
   model: string;
+  /** Operation-frozen registry winners. When present, do not re-read mutable skill stores. */
+  operationSkills?: OperationSkillSet['skills'];
   /** Agent's enabled plugin/tool/skill identifiers (from agentConfig.plugins) */
   plugins?: string[];
   provider: string;
@@ -131,6 +133,7 @@ export const contextEngineering = async ({
   stepContext,
   topicId,
   memoryContext,
+  operationSkills,
 }: ContextEngineeringContext): Promise<OpenAIChatMessage[]> => {
   log('tools: %o', tools);
 
@@ -645,7 +648,9 @@ export const contextEngineering = async ({
   // In manual mode: only expose user-selected skills (filtered by pluginIds).
   let enabledSkills: OperationSkillSet['skills'] | undefined;
   if (plugins) {
-    const skillSet = await resolveClientSkills(plugins);
+    const skillSet = operationSkills
+      ? { skills: operationSkills }
+      : await resolveClientSkills(plugins);
     if (isInAutoSkillMode) {
       enabledSkills = skillSet.skills;
     } else {

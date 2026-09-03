@@ -110,9 +110,15 @@ export const selectRuntimeType = (
   if (ctx.heterogeneousProvider) {
     const target = resolveExecutionTarget(
       { boundDeviceId: ctx.boundDeviceId, executionTarget: ctx.executionTarget },
-      { isDesktop, isHetero: true },
+      {
+        executionTargetByPlatform: ctx.executionTarget
+          ? { [isDesktop ? 'desktop' : 'web']: ctx.executionTarget }
+          : undefined,
+        isDesktop,
+        isHetero: true,
+      },
     );
-    return target === 'local' ? 'hetero' : 'gateway';
+    return isDesktop && target === 'local' ? 'hetero' : 'gateway';
   }
   if (ctx.isGatewayMode) return 'gateway';
   return 'client';

@@ -27,7 +27,12 @@ describe('WorkspaceEnvService', () => {
       });
     const service = new WorkspaceEnvService(model, { encrypt });
 
-    await service.save({ key: 'API_TOKEN', secret: true, value: 'plain-token', workspaceId: 'ws-1' });
+    await service.save({
+      key: 'API_TOKEN',
+      secret: true,
+      value: 'plain-token',
+      workspaceId: 'ws-1',
+    });
 
     expect(encrypt).toHaveBeenCalledWith('plain-token');
     expect(updateEnvironment).toHaveBeenCalledWith('ws-1', {
@@ -58,4 +63,5 @@ describe('WorkspaceEnvService', () => {
     });
     expect(encrypt).not.toHaveBeenCalled();
   });
+
 });

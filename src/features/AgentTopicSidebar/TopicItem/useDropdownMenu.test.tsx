@@ -10,6 +10,8 @@ const permissionMock = vi.hoisted(() => ({
   create_content: true,
   edit_own_content: true,
 }));
+const confirmModalMock = vi.hoisted(() => vi.fn());
+const removeTopicMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -19,6 +21,10 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@lobehub/ui', () => ({
   Icon: () => null,
+}));
+
+vi.mock('@lobehub/ui/base-ui', () => ({
+  confirmModal: confirmModalMock,
 }));
 
 vi.mock('antd', () => ({
@@ -79,7 +85,7 @@ vi.mock('@/store/chat', () => ({
       duplicateTopic: vi.fn(),
       favoriteTopic: vi.fn(),
       markTopicCompleted: vi.fn(),
-      removeTopic: vi.fn(),
+      removeTopic: removeTopicMock,
       unmarkTopicCompleted: vi.fn(),
       updateTopicTitle: vi.fn(),
     }),
@@ -102,6 +108,8 @@ const getMenuItem = (
 
 describe('useTopicItemDropdownMenu', () => {
   beforeEach(() => {
+    confirmModalMock.mockReset();
+    removeTopicMock.mockReset().mockResolvedValue(undefined);
     permissionMock.create_content = true;
     permissionMock.edit_own_content = true;
   });
@@ -130,5 +138,23 @@ describe('useTopicItemDropdownMenu', () => {
 
     expect(getMenuItem(items, 'copySessionId')).not.toMatchObject({ disabled: true });
     expect(getMenuItem(items, 'copyLink')).not.toMatchObject({ disabled: true });
+  });
+
+  it('routes scratch cleanup through the confirmed topic removal service', async () => {
+    const { result } = renderHook(() =>
+      useTopicItemDropdownMenu({
+        id: 'topic-scratch',
+        scratchWorkspace: { rootPath: '/tmp/masterino/topic-scratch' },
+        title: 'Temporary topic',
+      }),
+    );
+    const cleanup = getMenuItem(result.current.dropdownMenu(), 'delete');
+
+    expect(cleanup).toMatchObject({ label: 'workspaceRuntime.sidebar.cleanupScratch' });
+    cleanup && 'onClick' in cleanup && cleanup.onClick?.({} as never);
+    expect(confirmModalMock).toHaveBeenCalledOnce();
+
+    await confirmModalMock.mock.calls[0][0].onOk();
+    expect(removeTopicMock).toHaveBeenCalledWith('topic-scratch');
   });
 });

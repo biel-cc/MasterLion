@@ -8,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -89,6 +89,61 @@ describe('executeDeviceRpc', () => {
     await executeDeviceRpc('statPath', { path: root }, deps);
 
     await expect(access(deps.scratchRoot!)).rejects.toBeDefined();
+  });
+
+  it('cleans only the deterministic topic scratch directory and is idempotent', async () => {
+    const deps = makeDeps();
+    const scratch = (await executeDeviceRpc(
+      'ensureScratchWorkspace',
+      { topicId: 'topic-cleanup' },
+      deps,
+    )) as { root: string };
+    await writeFile(path.join(scratch.root, 'result.txt'), 'temporary');
+
+    await expect(
+      executeDeviceRpc('cleanupScratchWorkspace', { topicId: 'topic-cleanup' }, deps),
+    ).resolves.toMatchObject({ removed: true, root: scratch.root });
+    await expect(access(scratch.root)).rejects.toBeDefined();
+    await expect(access(deps.scratchRoot!)).resolves.toBeUndefined();
+
+    await expect(
+      executeDeviceRpc('cleanupScratchWorkspace', { topicId: 'topic-cleanup' }, deps),
+    ).resolves.toMatchObject({ removed: false, root: scratch.root });
+  });
+
+  it('cannot use scratch cleanup as an arbitrary recursive-delete primitive', async () => {
+    const deps = makeDeps();
+    await expect(executeDeviceRpc('cleanupScratchWorkspace', {}, deps)).rejects.toThrow(
+      'topicId is required',
+    );
+    await expect(
+      executeDeviceRpc('cleanupScratchWorkspace', { topicId: '../../' }, deps),
+    ).resolves.toMatchObject({ removed: false, topicSegment: expect.stringMatching(/^topic-/) });
+    await expect(access(root)).resolves.toBeUndefined();
+
+    await expect(
+      executeDeviceRpc(
+        'cleanupScratchWorkspace',
+        { topicId: 'topic' },
+        {
+          ...deps,
+          scratchRoot: '/',
+        },
+      ),
+    ).rejects.toThrow('SCOPE_DENIED');
+  });
+
+  it('rejects a scratch root symlink that resolves to the home directory', async () => {
+    const scratchRoot = path.join(root, '.unsafe-scratch-link');
+    await symlink(homedir(), scratchRoot, 'dir');
+    const deps = { ...makeDeps(), scratchRoot };
+
+    await expect(
+      executeDeviceRpc('ensureScratchWorkspace', { topicId: 'topic' }, deps),
+    ).rejects.toThrow('SCOPE_DENIED');
+    await expect(
+      executeDeviceRpc('cleanupScratchWorkspace', { topicId: 'topic' }, deps),
+    ).rejects.toThrow('SCOPE_DENIED');
   });
 
   it('canonicalizes an existing path on the device and rejects relative input', async () => {

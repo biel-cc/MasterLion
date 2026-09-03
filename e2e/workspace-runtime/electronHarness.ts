@@ -2,28 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { AcceptanceResultMap } from '../../test/workspace-runtime/contracts';
-
-export type ElectronAcceptanceId =
-  | 'AC-C04'
-  | 'AC-C08'
-  | 'AC-M03'
-  | 'AC-P08'
-  | 'AC-W04'
-  | 'AC-W05'
-  | 'AC-W06'
-  | 'AC-W07'
-  | 'AC-W08'
-  | 'AC-W09'
-  | 'AC-W10'
-  | 'AC-X02';
+import type { Page } from '@playwright/test';
 
 export interface ElectronWorkspaceRuntimeSession {
   close: () => Promise<void>;
-  observe: <Id extends ElectronAcceptanceId>(id: Id) => Promise<AcceptanceResultMap[Id]>;
+  page: Page;
 }
 
-/** Launches the real Electron process with isolated app state and observes through preload IPC. */
+/** Launches the real Electron process with isolated app state and exposes its production renderer. */
 export const launchElectronWorkspaceRuntimeSession =
   async (): Promise<ElectronWorkspaceRuntimeSession> => {
     const stateRoot = await mkdtemp(path.join(tmpdir(), 'masterino-workspace-runtime-e2e-'));
@@ -39,17 +25,6 @@ export const launchElectronWorkspaceRuntimeSession =
         await electronApp.close();
         await rm(stateRoot, { force: true, recursive: true });
       },
-      observe: async <Id extends ElectronAcceptanceId>(id: Id) =>
-        page.evaluate(
-          (acceptanceId) =>
-            (
-              window as unknown as {
-                masterinoElectronE2E: {
-                  observeWorkspaceRuntime: (value: ElectronAcceptanceId) => Promise<unknown>;
-                };
-              }
-            ).masterinoElectronE2E.observeWorkspaceRuntime(acceptanceId),
-          id,
-        ) as Promise<AcceptanceResultMap[Id]>,
+      page,
     };
   };

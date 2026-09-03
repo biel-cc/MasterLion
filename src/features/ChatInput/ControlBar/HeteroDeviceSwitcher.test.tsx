@@ -22,13 +22,17 @@ vi.mock('@lobehub/icons', () => ({ Microsoft: () => null }));
 vi.mock('@lobehub/ui', () => ({
   Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Icon: () => null,
-  Popover: ({ children, content }: { children?: ReactNode; content?: ReactNode }) => (
-    <div>
-      {children}
-      {content}
-    </div>
-  ),
   Tooltip: ({ children }: { children?: ReactNode }) => <>{children}</>,
+}));
+vi.mock('@lobehub/ui/base-ui', () => ({
+  PopoverPopup: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
+    <div role="dialog" {...props}>{children}</div>
+  ),
+  PopoverPortal: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  PopoverPositioner: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  PopoverRoot: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  PopoverTriggerElement: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  PopoverViewport: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 vi.mock('antd-style', () => ({
   createStaticStyles: () => new Proxy({}, { get: (_target, property) => String(property) }),
@@ -97,6 +101,10 @@ describe('HeteroDeviceSwitcher', () => {
     clickSandboxOption();
 
     expect(mocks.updateAgentConfigById).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /executionTarget\.title/ })).toHaveAttribute(
+      'aria-haspopup',
+      'dialog',
+    );
   });
 
   it('allows selecting sandbox when the server reports it as configured', async () => {

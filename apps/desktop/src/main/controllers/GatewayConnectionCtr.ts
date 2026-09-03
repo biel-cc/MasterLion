@@ -280,6 +280,22 @@ export default class GatewayConnectionCtr extends ControllerModule {
     return { success: true };
   }
 
+  /**
+   * Execute a server-dispatched standalone Electron local-system call through
+   * the same device-authoritative boundary as the central gateway transport.
+   * The renderer is only a courier: main independently realpaths and validates
+   * every path against the frozen execution context before touching the host.
+   */
+  @IpcMethod()
+  async executeLocalToolCall(params: {
+    apiName: string;
+    args: Record<string, unknown>;
+    executionContext?: GatewayToolCallExecutionContext;
+    trace?: ExecutionBoundaryTrace;
+  }): Promise<BuiltinServerRuntimeOutput> {
+    return this.executeToolCall(params.apiName, params.args, params.executionContext, params.trace);
+  }
+
   // ─── Auto Connect ───
 
   private async tryAutoConnect() {

@@ -346,7 +346,22 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
         {!seamAvailable && (
           <div className={styles.note}>{tw('workspaceRuntime.picker.seamUnavailable')}</div>
         )}
-        {unavailable ? (
+        {effective.loading ? (
+          <div className={styles.note} data-testid="workspace-picker-loading" role="status">
+            {tw('workspaceRuntime.picker.loading')}
+          </div>
+        ) : effective.loadError ? (
+          <div className={styles.error} data-testid="workspace-picker-load-error" role="alert">
+            {tw('workspaceRuntime.picker.loadError')}
+            <button
+              className={styles.errorAction}
+              type="button"
+              onClick={() => void effective.reload?.()}
+            >
+              {tw('workspaceRuntime.picker.retry')}
+            </button>
+          </div>
+        ) : unavailable ? (
           <div className={styles.note} data-testid="workspace-picker-unavailable">
             {unavailable}
           </div>

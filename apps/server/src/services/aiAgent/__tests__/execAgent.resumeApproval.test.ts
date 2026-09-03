@@ -144,6 +144,7 @@ vi.mock('@/server/services/deviceGateway', () => ({
 
 vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
   DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    captureTargetIfAbsent: vi.fn(),
     getState: mockGetWorkspaceState,
   })),
 }));

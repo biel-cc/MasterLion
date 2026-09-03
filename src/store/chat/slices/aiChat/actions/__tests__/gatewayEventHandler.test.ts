@@ -479,7 +479,9 @@ describe('createGatewayEventHandler', () => {
       await flush();
 
       expect(store.internal_executeClientTool).toHaveBeenCalledWith(toolExecuteData, {
+        localOperationId: 'op-1',
         operationId: 'op-1',
+        topicId: 'topic-1',
       });
     });
 
@@ -495,7 +497,9 @@ describe('createGatewayEventHandler', () => {
       await flush();
 
       expect(store.internal_executeClientTool).toHaveBeenCalledWith(toolExecuteData, {
+        localOperationId: 'op-1',
         operationId: 'gw-op-server',
+        topicId: 'topic-1',
       });
     });
 

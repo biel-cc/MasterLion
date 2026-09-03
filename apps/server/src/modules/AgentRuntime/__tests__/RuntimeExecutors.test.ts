@@ -7,9 +7,15 @@ import * as ContextEngineering from '@/server/modules/Mecha/ContextEngineering';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 
 import { ModelEmptyError } from '../ModelEmptyError';
-import { createRuntimeExecutors, type RuntimeExecutorContext } from '../RuntimeExecutors';
+import {
+  collectProviderMediaTokenEstimates,
+  createRuntimeExecutors,
+  resolveCompressionSummaryBudgetTokens,
+  type RuntimeExecutorContext,
+} from '../RuntimeExecutors';
 
 const mockCreateCompressionGroup = vi.fn();
+const mockCancelCompression = vi.fn();
 const mockFinalizeCompression = vi.fn();
 const mockBuiltinModels = vi.hoisted(() => [
   {
@@ -52,6 +58,7 @@ vi.mock('@/server/modules/ModelRuntime', () => ({
 
 vi.mock('@/server/services/message', () => ({
   MessageService: vi.fn().mockImplementation(() => ({
+    cancelCompression: mockCancelCompression,
     createCompressionGroup: mockCreateCompressionGroup,
     finalizeCompression: mockFinalizeCompression,
   })),
@@ -129,6 +136,7 @@ describe('RuntimeExecutors', () => {
     mockGetFileByteArray.mockReset();
     mockUploadBase64.mockReset();
     vi.mocked(initModelRuntimeFromDB).mockReset();
+    mockCancelCompression.mockReset();
     mockCreateCompressionGroup.mockReset();
     mockFinalizeCompression.mockReset();
     mockCreateCompressionGroup.mockResolvedValue({
@@ -136,6 +144,7 @@ describe('RuntimeExecutors', () => {
       messagesToSummarize: [],
       success: true,
     });
+    mockCancelCompression.mockResolvedValue({ messages: [], success: true });
     mockFinalizeCompression.mockResolvedValue({ success: true });
     vi.mocked(initModelRuntimeFromDB).mockResolvedValue({
       chat: vi.fn().mockImplementation(async (_payload: any, options: any) => {
@@ -226,6 +235,61 @@ describe('RuntimeExecutors', () => {
       messages,
     },
     type: 'compress_context' as const,
+  });
+
+  describe('operation-frozen context budget inputs', () => {
+    it('uses the matching compression model catalog window without a 32k cap', () => {
+      expect(
+        resolveCompressionSummaryBudgetTokens({
+          compressionModel: { model: 'summary-model', provider: 'openai' },
+          compressionModelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 128_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'summary-model',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+        }),
+      ).toBe(126_976);
+    });
+
+    it('redacts provider media bytes while retaining stable accounting identity', () => {
+      expect(
+        collectProviderMediaTokenEstimates(
+          [
+            {
+              content: [
+                { text: 'inspect', type: 'text' },
+                { image_url: { url: 'https://files.example/image-1' }, type: 'image_url' },
+              ],
+              id: 'message-1',
+              role: 'user',
+            },
+          ] as any,
+          [
+            {
+              id: 'message-1',
+              imageList: [{ id: 'file-1', url: 'https://files.example/image-1' }],
+              role: 'user',
+            } as any,
+          ],
+        ),
+      ).toEqual([{ estimatedTokens: 1000, id: 'file-1', messageId: 'message-1' }]);
+    });
   });
 
   describe('call_llm executor', () => {
@@ -342,11 +406,109 @@ describe('RuntimeExecutors', () => {
       };
 
       await expect(executors.call_llm!(instruction, state)).rejects.toMatchObject({
-        contextBudget: expect.objectContaining({ kind: 'fail' }),
+        contextBudget: {
+          decision: expect.objectContaining({ kind: 'fail' }),
+          trace: expect.any(Object),
+        },
         error: expect.objectContaining({ ctx: 32_000 }),
         name: 'FinalContextWindowError',
       });
       expect(chat).not.toHaveBeenCalled();
+    });
+
+    it('accounts outgoing visual parts at the final preflight and never forwards accounting metadata', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('done');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'supported',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          topicId: 'topic-123',
+        },
+      });
+      const imageParts = Array.from({ length: 40 }, (_, index) => ({
+        image_url: { url: `https://files.example/${index}.png` },
+        type: 'image_url',
+      }));
+
+      await expect(
+        executors.call_llm!(
+          {
+            payload: {
+              messages: [
+                {
+                  content: [{ text: 'inspect', type: 'text' }, ...imageParts],
+                  id: 'tail',
+                  role: 'user',
+                },
+              ],
+              model: 'gpt-4',
+              provider: 'openai',
+              tools: [],
+            },
+            type: 'call_llm' as const,
+          },
+          state,
+        ),
+      ).rejects.toMatchObject({ name: 'FinalContextWindowError' });
+      expect(chat).not.toHaveBeenCalled();
+    });
+
+    it('strips providerMedia before the actual model runtime call', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('done');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+
+      await executors.call_llm!(
+        {
+          payload: {
+            messages: [
+              {
+                content: [
+                  { text: 'inspect', type: 'text' },
+                  { image_url: { url: 'https://files.example/image.png' }, type: 'image_url' },
+                ],
+                id: 'tail',
+                role: 'user',
+              },
+            ],
+            model: 'gpt-4',
+            provider: 'openai',
+            tools: [],
+          },
+          type: 'call_llm' as const,
+        },
+        createMockState(),
+      );
+
+      expect(chat.mock.calls[0][0]).not.toHaveProperty('providerMedia');
     });
 
     it('persists final-preflight auto compression before sending the reduced payload', async () => {
@@ -357,9 +519,7 @@ describe('RuntimeExecutors', () => {
       vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
       mockCreateCompressionGroup.mockResolvedValue({
         messageGroupId: 'auto-group',
-        messagesToSummarize: [
-          { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
-        ],
+        messagesToSummarize: [{ content: 'x'.repeat(150_000), id: 'old-history', role: 'user' }],
         success: true,
       });
       mockFinalizeCompression.mockResolvedValue({
@@ -440,6 +600,70 @@ describe('RuntimeExecutors', () => {
         expect.arrayContaining([
           expect.objectContaining({ groupId: 'auto-group', type: 'compression_complete' }),
         ]),
+      );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
+    });
+
+    it('rolls back a pending final-preflight compression group when summarization fails', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onError?.({ message: 'summary failed' });
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'auto-failed-group',
+        messagesToSummarize: [],
+        success: true,
+      });
+      const messages = [
+        { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await expect(
+        executors.call_llm!(
+          {
+            payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+            type: 'call_llm' as const,
+          },
+          state,
+        ),
+      ).rejects.toMatchObject({ name: 'FinalContextWindowError' });
+
+      expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockCancelCompression).toHaveBeenCalledWith(
+        'auto-failed-group',
+        expect.objectContaining({ topicId: 'topic-123' }),
       );
     });
 
@@ -1243,6 +1467,10 @@ describe('RuntimeExecutors', () => {
 
       expect(mockCreateCompressionGroup).toHaveBeenCalledTimes(1);
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockCancelCompression).toHaveBeenCalledWith(
+        'group-123',
+        expect.objectContaining({ topicId: 'topic-123' }),
+      );
       expect(result.nextContext?.payload as any).toMatchObject({
         code: 'SUMMARY_FAILED',
         compressedMessages: [{ content: 'history', role: 'user' }],
@@ -1272,6 +1500,7 @@ describe('RuntimeExecutors', () => {
         outcome: 'failed',
       });
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockCancelCompression).not.toHaveBeenCalled();
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({ type: 'compression_error' });
     });
@@ -1428,6 +1657,10 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockCancelCompression).toHaveBeenCalledWith(
+        'group-123',
+        expect.objectContaining({ topicId: 'topic-123' }),
+      );
       expect(result.nextContext?.payload as any).toMatchObject({
         code: 'SUMMARY_FAILED',
         outcome: 'failed',
@@ -2536,7 +2769,9 @@ describe('RuntimeExecutors', () => {
     });
 
     it('creates and binds scratch only when an unbound tool first needs cwd', async () => {
-      const ensureScratchWorkspace = vi.fn().mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
       const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
         snapshot: {
           boundDeviceId: 'device-a',
@@ -3551,7 +3786,9 @@ describe('RuntimeExecutors', () => {
     });
 
     it('shares one scratch creation and one bind across concurrent cwd-dependent tools', async () => {
-      const ensureScratchWorkspace = vi.fn().mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
       const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
         snapshot: {
           boundDeviceId: 'device-a',

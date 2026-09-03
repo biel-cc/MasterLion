@@ -1,13 +1,13 @@
 import type { ChatTopicStatus } from '@lobechat/types';
-import { type MenuProps } from '@lobehub/ui';
 import { Icon } from '@lobehub/ui';
-import { confirmModal } from '@lobehub/ui/base-ui';
+import { confirmModal, type DropdownItem } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import {
   CheckCircle2,
   Circle,
   ExternalLink,
   FolderInput,
+  FolderOpen,
   Hash,
   Link2,
   LucideCopy,
@@ -29,6 +29,7 @@ import { openShareModal } from '@/features/ShareModal';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useAppOrigin } from '@/hooks/useAppOrigin';
 import { usePermission } from '@/hooks/usePermission';
+import { localFileService } from '@/services/electron/localFileService';
 import { useAgentStore } from '@/store/agent';
 import { useChatStore } from '@/store/chat';
 import { useElectronStore } from '@/store/electron';
@@ -37,6 +38,7 @@ import { useGlobalStore } from '@/store/global';
 interface TopicItemDropdownMenuProps {
   fav?: boolean;
   id?: string;
+  scratchWorkspace?: { rootPath: string };
   status?: ChatTopicStatus | null;
   title: string;
 }
@@ -44,10 +46,12 @@ interface TopicItemDropdownMenuProps {
 export const useTopicItemDropdownMenu = ({
   fav,
   id,
+  scratchWorkspace,
   status,
   title,
 }: TopicItemDropdownMenuProps) => {
   const { t } = useTranslation(['topic', 'common']);
+  const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const { message } = App.useApp();
   const navigate = useWorkspaceAwareNavigate();
   const { allowed: canCreateTopic } = usePermission('create_content');
@@ -145,6 +149,18 @@ export const useTopicItemDropdownMenu = ({
       },
       ...(isDesktop
         ? [
+            ...(scratchWorkspace
+              ? [
+                  {
+                    icon: <Icon icon={FolderOpen} />,
+                    key: 'openScratchWorkspace',
+                    label: tw('workspaceRuntime.sidebar.openScratch', { ns: 'chat' }),
+                    onClick: () => {
+                      void localFileService.openLocalFileOrFolder(scratchWorkspace.rootPath, true);
+                    },
+                  },
+                ]
+              : []),
             {
               icon: <Icon icon={PanelTop} />,
               key: 'openInNewTab',
@@ -225,26 +241,35 @@ export const useTopicItemDropdownMenu = ({
         disabled: !canEditTopic,
         icon: <Icon icon={Trash} />,
         key: 'delete',
-        label: t('delete', { ns: 'common' }),
+        label: scratchWorkspace
+          ? tw('workspaceRuntime.sidebar.cleanupScratch', { ns: 'chat' })
+          : t('delete', { ns: 'common' }),
         onClick: () => {
           confirmModal({
             cancelText: t('cancel', { ns: 'common' }),
-            content: t('actions.confirmRemoveTopic'),
+            content: scratchWorkspace
+              ? tw('workspaceRuntime.sidebar.cleanupScratchConfirm', { ns: 'chat' })
+              : t('actions.confirmRemoveTopic'),
             okButtonProps: { danger: true },
-            okText: t('delete', { ns: 'common' }),
+            okText: scratchWorkspace
+              ? tw('workspaceRuntime.sidebar.cleanupScratch', { ns: 'chat' })
+              : t('delete', { ns: 'common' }),
             onOk: async () => {
               await removeTopic(id);
             },
-            title: t('delete', { ns: 'common' }),
+            title: scratchWorkspace
+              ? tw('workspaceRuntime.sidebar.cleanupScratch', { ns: 'chat' })
+              : t('delete', { ns: 'common' }),
           });
         },
       },
-    ].filter(Boolean) as MenuProps['items'];
+    ].filter(Boolean) as DropdownItem[];
   }, [
     id,
     fav,
     isCompleted,
     title,
+    scratchWorkspace,
     canCreateTopic,
     canEditTopic,
     activeAgentId,
@@ -260,6 +285,7 @@ export const useTopicItemDropdownMenu = ({
     addTab,
     navigate,
     t,
+    tw,
     message,
     handleOpenShareModal,
   ]);

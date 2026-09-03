@@ -77,6 +77,17 @@ export interface EnsureScratchWorkspaceResult {
   topicSegment: string;
 }
 
+export interface CleanupScratchWorkspaceParams {
+  /** Stable topic identifier; callers cannot supply an arbitrary filesystem path. */
+  topicId: string;
+}
+
+export interface CleanupScratchWorkspaceResult {
+  removed: boolean;
+  root: string;
+  topicSegment: string;
+}
+
 export interface VerifySkillPathsParams {
   skillDir: string;
   workspaceRoot: string;

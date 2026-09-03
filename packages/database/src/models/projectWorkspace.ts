@@ -163,6 +163,19 @@ export class ProjectWorkspaceModel {
     return row;
   };
 
+  /** Delete a user-owned scratch row; formal project/sandbox rows are never accepted. */
+  deleteScratch = async (id: string): Promise<void> => {
+    await this.db
+      .delete(projectWorkspaces)
+      .where(
+        and(
+          eq(projectWorkspaces.id, id),
+          eq(projectWorkspaces.userId, this.userId),
+          eq(projectWorkspaces.kind, 'scratch'),
+        ),
+      );
+  };
+
   list = async (
     filter: { deviceId?: string; kind?: WorkspaceKind } = {},
   ): Promise<ProjectWorkspaceRow[]> => {

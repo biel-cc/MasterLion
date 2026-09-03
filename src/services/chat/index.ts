@@ -6,7 +6,7 @@ import {
   REQUEST_TOPIC_ID_HEADER,
   REQUEST_TRIGGER_HEADER,
 } from '@lobechat/const';
-import { type OfficialToolItem } from '@lobechat/context-engine';
+import { type OfficialToolItem, type OperationSkillSet } from '@lobechat/context-engine';
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
 import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
 import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
@@ -74,6 +74,8 @@ interface GetChatCompletionPayload extends Partial<Omit<ChatStreamPayload, 'mess
   agentId?: string;
   groupId?: string;
   messages: UIChatMessage[];
+  /** Skill registry winners frozen at the client operation boundary. */
+  operationSkills?: OperationSkillSet['skills'];
   /**
    * Pre-resolved agent config from AgentRuntime layer.
    * Required to ensure config consistency and proper isSubAgent filtering.
@@ -132,6 +134,7 @@ class ChatService {
       groupId,
       topicId,
       resolvedAgentConfig,
+      operationSkills,
       ...params
     }: GetChatCompletionPayload,
     options?: FetchOptions,
@@ -298,6 +301,7 @@ class ChatService {
       manifests: enabledManifests,
       messages,
       model: payload.model,
+      operationSkills,
       plugins,
       provider: payload.provider!,
       sessionId: options?.trace?.sessionId,

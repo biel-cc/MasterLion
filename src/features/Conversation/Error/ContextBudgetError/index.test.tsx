@@ -26,13 +26,18 @@ const Wrapper = ({ children }: { children: ReactNode }) => (
 const render = (ui: ReactElement) => renderBase(ui, { wrapper: Wrapper });
 
 const executeCompressionMock = vi.fn();
+const switchTopicMock = vi.fn();
+const replaceMessagesMock = vi.fn();
 const regenerateUserMessageMock = vi.fn();
+const updateMessageContentMock = vi.fn();
 const storeState = vi.hoisted(() => ({
   context: { agentId: 'agent-1', topicId: 'topic-1' } as Record<string, unknown>,
+  dbMessages: [{ id: 'tool-1', role: 'tool' }] as Array<{ id: string; role: string }>,
   displayMessages: [{ id: 'assistant-1', parentId: 'user-1' }] as Array<{
     id: string;
     parentId?: string;
   }>,
+  updateMessage: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -48,16 +53,26 @@ vi.mock('@/hooks/usePermission', () => ({
 
 vi.mock('@/store/chat', () => ({
   useChatStore: {
-    getState: () => ({ executeCompression: executeCompressionMock }),
+    getState: () => ({
+      executeCompression: executeCompressionMock,
+      switchTopic: switchTopicMock,
+    }),
   },
+}));
+
+vi.mock('@/services/message', () => ({
+  messageService: { updateMessage: storeState.updateMessage },
 }));
 
 vi.mock('@/features/Conversation/store', () => ({
   useConversationStore: (selector: (state: unknown) => unknown) =>
     selector({
       context: storeState.context,
+      dbMessages: storeState.dbMessages,
       displayMessages: storeState.displayMessages,
       regenerateUserMessage: regenerateUserMessageMock,
+      replaceMessages: replaceMessagesMock,
+      updateMessageContent: updateMessageContentMock,
     }),
 }));
 
@@ -79,7 +94,11 @@ const button = (name: string) => screen.getByRole('button', { name });
 describe('<ContextBudgetError />', () => {
   beforeEach(() => {
     executeCompressionMock.mockReset().mockResolvedValue(undefined);
+    switchTopicMock.mockReset().mockResolvedValue(undefined);
+    replaceMessagesMock.mockReset();
     regenerateUserMessageMock.mockReset().mockResolvedValue(undefined);
+    updateMessageContentMock.mockReset().mockResolvedValue(undefined);
+    storeState.updateMessage.mockReset().mockResolvedValue({ messages: [], success: true });
     storeState.context = { agentId: 'agent-1', topicId: 'topic-1' };
     storeState.displayMessages = [{ id: 'assistant-1', parentId: 'user-1' }];
   });
@@ -127,8 +146,8 @@ describe('<ContextBudgetError />', () => {
 
     fireEvent.click(button('contextBudget.action.forkTopic'));
     expect(onForkTopic).toHaveBeenCalledTimes(1);
-    // Unwired actions are not rendered; the hint list still guides the user.
-    expect(screen.queryByRole('button', { name: 'contextBudget.action.switchModel' })).toBeNull();
+    // Built-in recovery actions stay available without route-level callbacks.
+    expect(screen.getByRole('button', { name: 'contextBudget.action.switchModel' })).toBeEnabled();
     expect(screen.getByRole('list', { name: 'contextBudget.hintsLabel' })).toBeInTheDocument();
   });
 
@@ -142,7 +161,9 @@ describe('<ContextBudgetError />', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'contextBudget.action.retryCompression' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'contextBudget.action.retryCompression' }),
+    ).toBeNull();
     expect(executeCompressionMock).not.toHaveBeenCalled();
     expect(regenerateUserMessageMock).not.toHaveBeenCalled();
 
@@ -150,12 +171,50 @@ describe('<ContextBudgetError />', () => {
     expect(onSwitchModel).toHaveBeenCalledTimes(1);
   });
 
-  it('TAIL_TOO_LARGE renders guidance only until the integration wires callbacks', () => {
-    render(<ContextBudgetError failure={failure('TAIL_TOO_LARGE')} id={'assistant-1'} />);
+  it('TAIL_TOO_LARGE wires built-in attachment, tool-result, model, and fork recovery', async () => {
+    const toolHeavyFailure = failure('TAIL_TOO_LARGE');
+    toolHeavyFailure.decision.offending = [{ estimatedTokens: 10, source: 'tool-result' }];
+    render(<ContextBudgetError failure={toolHeavyFailure} id={'assistant-1'} />);
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.queryByRole('group')).toBeNull();
+    expect(screen.getByRole('group')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'contextBudget.hintsLabel' })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.detachAttachments'));
+    });
+    expect(storeState.updateMessage).toHaveBeenCalledWith(
+      'user-1',
+      { imageList: [] },
+      storeState.context,
+    );
+    expect(regenerateUserMessageMock).toHaveBeenCalledWith('user-1');
+
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.truncateToolResults'));
+    });
+    expect(updateMessageContentMock).toHaveBeenCalledWith(
+      'tool-1',
+      '[Tool result removed to reduce context size]',
+    );
+
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.forkTopic'));
+    });
+    expect(switchTopicMock).toHaveBeenCalledWith(null, { skipRefreshMessage: true });
+  });
+
+  it('opens the real conversation model switcher for model recovery', () => {
+    const trigger = document.createElement('button');
+    trigger.dataset.chatModelSwitcherTrigger = '';
+    document.body.append(trigger);
+    const click = vi.spyOn(trigger, 'click');
+
+    render(<ContextBudgetError failure={failure('RETRY_EXHAUSTED')} id={'assistant-1'} />);
+    fireEvent.click(button('contextBudget.action.switchModel'));
+
+    expect(click).toHaveBeenCalledOnce();
+    trigger.remove();
   });
 
   it('lets the integration override the default summary retry', async () => {

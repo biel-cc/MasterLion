@@ -78,8 +78,8 @@ vi.mock('@/features/NavPanel/components/NavItem', () => ({
 vi.mock('@/business/client/hooks/useActiveWorkspaceSlug', () => ({
   useActiveWorkspaceSlug: () => 'team',
 }));
-vi.mock('@/routes/(main)/agent/channel/const', () => ({
-  getPlatformIcon: () => null,
+vi.mock('./platformIcon', () => ({
+  getTopicPlatformIcon: () => null,
 }));
 vi.mock('@/store/agent', () => ({
   // `agentMap` is read by `agentSelectors.isCurrentAgentHeterogeneous` →
@@ -103,7 +103,7 @@ vi.mock('@/store/electron', () => ({
   useElectronStore: (selector: (state: { addTab: () => void }) => unknown) =>
     selector({ addTab: vi.fn() }),
 }));
-vi.mock('../../hooks/useTopicNavigation', () => ({
+vi.mock('./useTopicNavigation', () => ({
   useTopicNavigation: () => useTopicNavigationMock(),
 }));
 vi.mock('./Actions', () => ({
@@ -115,11 +115,9 @@ vi.mock('./Editing', () => ({
 vi.mock('./useDropdownMenu', () => ({
   useTopicItemDropdownMenu: () => ({ dropdownMenu: [] }),
 }));
-vi.mock('../../TopicListContent/ThreadList', () => ({
-  default: ({ topicId }: { topicId: string }) => (
-    <div data-testid="topic-thread-list" data-topic-id={topicId} />
-  ),
-}));
+const ThreadListStub = ({ topicId }: { topicId: string }) => (
+  <div data-testid="topic-thread-list" data-topic-id={topicId} />
+);
 
 describe('TopicItem active state', () => {
   afterEach(() => {
@@ -136,7 +134,14 @@ describe('TopicItem active state', () => {
       urlTopicId: 'tpc_test',
     });
 
-    render(<TopicItem active={false} id="tpc_test" title="Topic" />);
+    render(
+      <TopicItem
+        active={false}
+        id="tpc_test"
+        title="Topic"
+        ThreadListComponent={ThreadListStub}
+      />,
+    );
 
     expect(screen.getByTestId('nav-item')).toHaveAttribute('data-active', 'true');
     expect(screen.getByTestId('topic-thread-list')).toHaveAttribute('data-topic-id', 'tpc_test');
