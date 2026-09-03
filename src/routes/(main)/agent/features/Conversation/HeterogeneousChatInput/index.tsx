@@ -17,10 +17,12 @@ import { ChatInput } from '@/features/Conversation';
 import { contextSelectors, useConversationStore } from '@/features/Conversation/store';
 import WideScreenContainer from '@/features/WideScreenContainer';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
+import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useRemoteAgentDeviceGuard } from '@/hooks/useRemoteAgentDeviceGuard';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import HeteroControlBar from './HeteroControlBar';
 
@@ -70,6 +72,15 @@ const HeterogeneousChatInput = memo(() => {
     isRemoteAgent || (executionTarget === 'device' && !!agencyConfig?.boundDeviceId);
 
   const { status, refresh } = useRemoteAgentDeviceGuard({ agentId, enabled: isDeviceExecution });
+
+  // Heterogeneous agents bring their own toolchain and must have a formal
+  // workspace before the first send / resume. `unbound` and `unrouted` come
+  // straight from the accepted execution context; native chat input never
+  // applies this gate.
+  const effective = useEffectiveWorkspace(agentId);
+  const focusWorkspacePicker = useProjectWorkspaceStore((s) => s.focusWorkspacePicker);
+  const workspaceBlocked = effective.state === 'unbound' || effective.state === 'unrouted';
+  const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
 
   const goToAgentProfile = () => {
     if (params.aid) navigate(urlJoin('/agent', params.aid, 'profile'));
@@ -145,20 +156,62 @@ const HeterogeneousChatInput = memo(() => {
     );
   };
 
+  const renderWorkspaceGuard = () => {
+    if (!workspaceBlocked || deviceBlocked) return null;
+    const isUnrouted = effective.state === 'unrouted';
+    return (
+      <WideScreenContainer>
+        <Flexbox align={'center'} paddingBlock={'0 8px'} paddingInline={12}>
+          <Alert
+            data-testid="hetero-workspace-guard"
+            style={{ maxWidth: 880, width: '100%' }}
+            type={'warning'}
+            action={
+              <Button
+                size={'small'}
+                type={'primary'}
+                onClick={() => focusWorkspacePicker()}
+              >
+                {tw('workspaceRuntime.hetero.gate.action')}
+              </Button>
+            }
+            description={
+              isUnrouted
+                ? tw(
+                    `workspaceRuntime.hetero.gate.unrouted.${effective.unroutedReason ?? 'no-bound-device'}`,
+                  )
+                : tw('workspaceRuntime.hetero.gate.desc')
+            }
+            title={
+              isUnrouted
+                ? tw('workspaceRuntime.hetero.gate.unroutedTitle')
+                : tw('workspaceRuntime.hetero.gate.title')
+            }
+          />
+        </Flexbox>
+      </WideScreenContainer>
+    );
+  };
+
   // Device execution doesn't use the cloud sandbox, so it doesn't need cloud
   // credentials — only the sandbox path gates on `isConfigured`.
-  const inputDisabled = (!isConfigured && !isDeviceExecution) || deviceBlocked;
-  const hasGuard = deviceBlocked || (!isConfigured && !isDeviceExecution);
+  const inputDisabled = (!isConfigured && !isDeviceExecution) || deviceBlocked || workspaceBlocked;
+  const hasGuard = deviceBlocked || (!isConfigured && !isDeviceExecution) || workspaceBlocked;
 
   return (
     <Flexbox>
       {renderCloudConfigGuard()}
       {renderDeviceGuard()}
+      {renderWorkspaceGuard()}
       <ChatInput
         controlBarSlot={<HeteroControlBar />}
         leftActions={leftActions}
         rightActions={rightActions}
-        sendButtonProps={{ disabled: inputDisabled, shape: 'round' }}
+        sendButtonProps={{
+          disabled: inputDisabled,
+          onDisabledSend: workspaceBlocked ? () => focusWorkspacePicker() : undefined,
+          shape: 'round',
+        }}
         skipScrollMarginWithList={!hasGuard}
         onEditorReady={(instance) => {
           // Sync to global ChatStore for compatibility with other features

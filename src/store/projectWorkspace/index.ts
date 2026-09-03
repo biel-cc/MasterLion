@@ -1,6 +1,7 @@
 export { projectWorkspaceSwrKeys, toWorkspaceRef } from './action';
 export * from './draftKey';
 export type {
+  PathConsentDecision,
   ProjectWorkspaceErrorCode,
   ProjectWorkspaceOutcome,
   ProjectWorkspaceState,

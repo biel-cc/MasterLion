@@ -9,12 +9,17 @@ export enum ChatSidebarKey {
   Topic = 'topic',
 }
 
+/**
+ * Sidebar body. Topic is the primary navigation and sits above Task: Task is
+ * an independent managed-execution module and keeps its own implementation,
+ * props and item key untouched — only the presentation order changed.
+ */
 const Body = memo(() => {
   return (
     <Flexbox paddingInline={4}>
       <Accordion defaultExpandedKeys={[ChatSidebarKey.Topic]} gap={8}>
-        <TaskList itemKey={ChatSidebarKey.Tasks} />
         <Topic itemKey={ChatSidebarKey.Topic} />
+        <TaskList itemKey={ChatSidebarKey.Tasks} />
       </Accordion>
     </Flexbox>
   );

@@ -290,9 +290,30 @@ const getDeviceIcon = (platform: string | null | undefined, size = 14): ReactNod
 
 interface HeteroDeviceSwitcherProps {
   agentId: string;
+  /**
+   * Conversation-scoped device to display instead of the agent's stored
+   * `boundDeviceId`. Used together with `executionTarget` / `onSelectTarget`.
+   */
+  boundDeviceId?: string;
+  /**
+   * Conversation-scoped target to display (draft intent or topic snapshot).
+   * When omitted the agent's stored default is resolved.
+   */
+  executionTarget?: DeviceExecutionTarget;
+  /**
+   * Conversation-scoped write path. When provided, a selection is handed to
+   * this callback (draft intent / topic snapshot capture) and the agent's
+   * stored defaults are never written.
+   */
+  onSelectTarget?: (target: DeviceExecutionTarget, deviceId?: string) => Promise<void> | void;
 }
 
-const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
+const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({
+  agentId,
+  boundDeviceId: conversationDeviceId,
+  executionTarget: conversationTarget,
+  onSelectTarget,
+}) => {
   const { t } = useTranslation(['chat', 'common']);
   const [open, setOpen] = useState(false);
   const desktopAppDisabled = isProductFeatureDisabled('desktopApp');
@@ -301,7 +322,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
   const updateAgentConfigById = useAgentStore((s) => s.updateAgentConfigById);
 
   const heteroType = agencyConfig?.heterogeneousProvider?.type;
-  const boundDeviceId = agencyConfig?.boundDeviceId;
+  const boundDeviceId = onSelectTarget ? conversationDeviceId : agencyConfig?.boundDeviceId;
 
   // Heterogeneous agents (Claude Code / Codex — remote types already early-return
   // below) bring their own toolchain and must execute somewhere, so `'none'`
@@ -323,7 +344,9 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
   // Effective target: shared with server dispatch. In particular, a hetero
   // desktop "local" selection that carries this desktop's boundDeviceId becomes
   // a device target when the same agent is opened from web.
-  const executionTarget = resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
+  const executionTarget =
+    (onSelectTarget ? conversationTarget : undefined) ??
+    resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
   const isCloudSandboxEnabled = useServerConfigStore(serverConfigSelectors.enableCloudSandbox);
 
   const handleSelect = useCallback(
@@ -345,6 +368,12 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
         if (isHetero && !nextBoundDeviceId) return;
       }
 
+      // Conversation scope: the draft intent / topic snapshot owns the choice.
+      if (onSelectTarget) {
+        await onSelectTarget(target, nextBoundDeviceId);
+        return;
+      }
+
       await updateAgentConfigById(agentId, {
         agencyConfig: {
           ...agencyConfig,
@@ -353,7 +382,15 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
         },
       });
     },
-    [agentId, agencyConfig, boundDeviceId, currentDeviceId, isHetero, updateAgentConfigById],
+    [
+      agentId,
+      agencyConfig,
+      boundDeviceId,
+      currentDeviceId,
+      isHetero,
+      onSelectTarget,
+      updateAgentConfigById,
+    ],
   );
 
   // Don't render for remote hetero agents — they use RemoteAgentConfigCard in profile.

@@ -22,6 +22,7 @@ import { type StoreSetter } from '@/store/types';
 
 import { buildTopicDeviceKey } from './draftKey';
 import type {
+  PathConsentDecision,
   ProjectWorkspaceErrorCode,
   ProjectWorkspaceOutcome,
   WorkspaceDraftIntent,
@@ -358,6 +359,31 @@ export class ProjectWorkspaceActionImpl {
       this.#recordError(outcome, input.topicId);
       return outcome;
     }
+  };
+
+  // ─── Operation path consent (client-only, integrate reads it) ───
+
+  setOperationPathConsent = (
+    messageId: string,
+    decision: Omit<PathConsentDecision, 'at'>,
+  ): void => {
+    this.#set(
+      {
+        operationConsentByMessage: {
+          ...this.#get().operationConsentByMessage,
+          [messageId]: { ...decision, at: Date.now() },
+        },
+      },
+      false,
+      'setOperationPathConsent',
+    );
+  };
+
+  clearOperationPathConsent = (messageId: string): void => {
+    if (!(messageId in this.#get().operationConsentByMessage)) return;
+    const operationConsentByMessage = { ...this.#get().operationConsentByMessage };
+    delete operationConsentByMessage[messageId];
+    this.#set({ operationConsentByMessage }, false, 'clearOperationPathConsent');
   };
 
   clearLastError = (): void => {

@@ -1,5 +1,5 @@
 import type { DeviceExecutionTarget } from '@lobechat/types/src/agent/agencyConfig';
-import type { WorkspaceAccessGrant } from '@lobechat/types/src/executionContext';
+import type { PathAccessMode, WorkspaceAccessGrant } from '@lobechat/types/src/executionContext';
 
 import type { ProjectWorkspaceItem, TopicWorkspaceState } from '@/services/projectWorkspace';
 
@@ -16,6 +16,18 @@ export interface WorkspaceDraftIntent {
   updatedAt: number;
   /** Explicit user selection for this draft only. */
   workspaceId?: string;
+}
+
+/**
+ * Operation-scoped path consent produced by the intervention UI. It is never
+ * persisted: integrate wiring reads it when it rebuilds the operation
+ * `accessRoots`, and a rejection is recorded so the panel can stay consistent.
+ */
+export interface PathConsentDecision {
+  at: number;
+  modes: PathAccessMode[];
+  rootPath: string;
+  scope: 'operation' | 'reject';
 }
 
 export type ProjectWorkspaceErrorCode =
@@ -41,6 +53,8 @@ export interface ProjectWorkspaceState {
   grantsByTopicDevice: Record<string, WorkspaceAccessGrant[]>;
   isWorkspacesInit: boolean;
   lastError?: ProjectWorkspaceUiError;
+  /** Keyed by tool message id. Operation consent only; topic grants live in `grantsByTopicDevice`. */
+  operationConsentByMessage: Record<string, PathConsentDecision>;
   /** Incremented when a consumer asks the workspace picker to take focus. */
   pickerFocusNonce: number;
   /** Whether the A1 router seam is reachable from this client build. */
@@ -54,6 +68,7 @@ export const initialState: ProjectWorkspaceState = {
   draftByConversationKey: {},
   grantsByTopicDevice: {},
   isWorkspacesInit: false,
+  operationConsentByMessage: {},
   pickerFocusNonce: 0,
   seamAvailable: false,
   topicStatesById: {},

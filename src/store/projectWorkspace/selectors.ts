@@ -3,7 +3,11 @@ import type { WorkspaceAccessGrant } from '@lobechat/types/src/executionContext'
 import type { ProjectWorkspaceItem, TopicWorkspaceState } from '@/services/projectWorkspace';
 
 import { buildTopicDeviceKey } from './draftKey';
-import type { ProjectWorkspaceState, WorkspaceDraftIntent } from './initialState';
+import type {
+  PathConsentDecision,
+  ProjectWorkspaceState,
+  WorkspaceDraftIntent,
+} from './initialState';
 
 const EMPTY_GRANTS: WorkspaceAccessGrant[] = [];
 const EMPTY_WORKSPACES: ProjectWorkspaceItem[] = [];
@@ -42,6 +46,11 @@ const getTopicGrants =
       ? (s.grantsByTopicDevice[buildTopicDeviceKey(topicId, deviceId)] ?? EMPTY_GRANTS)
       : EMPTY_GRANTS;
 
+const getOperationPathConsent =
+  (messageId?: string | null) =>
+  (s: ProjectWorkspaceState): PathConsentDecision | undefined =>
+    messageId ? s.operationConsentByMessage[messageId] : undefined;
+
 const isSeamAvailable = (s: ProjectWorkspaceState): boolean => s.seamAvailable;
 const lastError = (s: ProjectWorkspaceState) => s.lastError;
 const pickerFocusNonce = (s: ProjectWorkspaceState): number => s.pickerFocusNonce;
@@ -49,6 +58,7 @@ const pickerFocusNonce = (s: ProjectWorkspaceState): number => s.pickerFocusNonc
 export const projectWorkspaceSelectors = {
   getDeviceWorkspaces,
   getDraftIntent,
+  getOperationPathConsent,
   getTopicGrants,
   getTopicState,
   getWorkspaceById,
