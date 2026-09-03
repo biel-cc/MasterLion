@@ -70,24 +70,21 @@ describe('model catalog classifier and evidence merge', () => {
     ).toBe(true);
   });
 
-  it('fails closed without exact chat evidence and ignores a stale chat label on rerank ids', () => {
+  it('keeps the compatible chat fallback and ignores a stale chat label on rerank ids', () => {
     expect(
       isAiProviderModelChatEligible({
         id: 'company-unknown-v2',
         providerId: 'newapi',
         type: 'chat',
       }),
-    ).toBe(false);
+    ).toBe(true);
 
     const staleCatalog = mergeModelCatalogEntry({
       catalog: { kind: 'chat' },
       modelId: 'qwen3-vl-rerank',
       providerId: 'newapi',
     });
-    // The identifier hard-negative also wins during merge. Manually shape a
-    // stale persisted payload to cover old/bad rows created before this rule.
-    staleCatalog.entry.kind = 'chat';
-    staleCatalog.entry.kindSource = 'catalog';
+    expect(staleCatalog.entry).toMatchObject({ kind: 'chat', kindSource: 'catalog' });
     expect(
       isAiProviderModelChatEligible({
         id: 'qwen3-vl-rerank',
@@ -101,7 +98,7 @@ describe('model catalog classifier and evidence merge', () => {
   it('does not infer multimodal support from a vl-shaped name', () => {
     const catalog = mergeModelCatalogEntry({ modelId: 'company-vl-chat', providerId: 'newapi' });
 
-    expect(catalog.entry.kind).toBe('unknown');
+    expect(catalog.entry).toMatchObject({ kind: 'chat', kindSource: 'default' });
     expect(catalog.entry.inputModalities.image).toBe('unknown');
     expect(getChatInputModalityConclusion(catalog.entry).kind).toBe('unknown');
   });

@@ -42,12 +42,14 @@ vi.mock('@lobehub/ui', () => ({
       {action}
     </div>
   ),
+  Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock('@lobehub/ui/base-ui', () => ({
   Button: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => (
     <button type="button" onClick={onClick}>
       {children}
     </button>
   ),
-  Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),

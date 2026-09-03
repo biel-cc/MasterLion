@@ -31,6 +31,21 @@ vi.mock('@lobehub/ui', () => ({
       {description}
     </div>
   ),
+  Flexbox: ({
+    children,
+    horizontal: _horizontal,
+    paddingInline: _paddingInline,
+    ...props
+  }: {
+    children?: ReactNode;
+    horizontal?: boolean;
+    paddingInline?: number;
+  }) => <div {...props}>{children}</div>,
+  Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+}));
+
+vi.mock('@lobehub/ui/base-ui', () => ({
   Button: ({
     children,
     danger: _danger,
@@ -46,18 +61,6 @@ vi.mock('@lobehub/ui', () => ({
       {children}
     </button>
   ),
-  Flexbox: ({
-    children,
-    horizontal: _horizontal,
-    paddingInline: _paddingInline,
-    ...props
-  }: {
-    children?: ReactNode;
-    horizontal?: boolean;
-    paddingInline?: number;
-  }) => <div {...props}>{children}</div>,
-  Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
-  Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
 
 vi.mock('antd-style', () => ({

@@ -22,11 +22,6 @@ const MODEL_CATALOG_KINDS = new Set<ModelCatalogKind>([
   'unknown',
 ]);
 const OBSERVED_EVIDENCE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const POSITIVE_CHAT_KIND_SOURCES = new Set<ModelKindSource>([
-  'catalog',
-  'manual',
-  'provider-meta',
-]);
 
 const RERANK_KEYWORDS = ['rerank', 'reranker'] as const;
 const EMBEDDING_KEYWORDS = ['embedding', 'embed', 'bge', 'm3e'] as const;
@@ -216,9 +211,10 @@ export const classifyModelKindById = (modelId: string): KindEvidence => {
     return { kind: 'unknown', source: 'keyword' };
   }
 
-  // A model-shaped identifier is not positive chat evidence. Callers may only
-  // select it after an exact provider/catalog/manual source establishes chat.
-  return { kind: 'unknown', source: 'default' };
+  // Preserve forward compatibility for new chat identifiers. Hard-negative
+  // non-chat families above still win, while an unrecognised identifier is a
+  // selectable chat model with explicitly unverified/default evidence.
+  return { kind: 'chat', source: 'default' };
 };
 
 const isManualOverrideActive = (
@@ -278,8 +274,6 @@ const resolveKind = (
     ...(catalogKind ? [{ kind: catalogKind, source: 'catalog' as const }] : []),
     keywordKind,
   ];
-  const hardNegativeKeyword =
-    keywordKind.source === 'keyword' && keywordKind.kind !== 'chat' ? keywordKind : undefined;
 
   const selected: KindEvidence = activeManual?.denyChat
     ? (lowerCandidates[0] ?? keywordKind)
@@ -287,7 +281,7 @@ const resolveKind = (
       ? { kind: 'chat', source: 'manual' }
       : activeManual?.kind
         ? { kind: activeManual.kind, source: 'manual' }
-        : (hardNegativeKeyword ?? lowerCandidates[0] ?? keywordKind);
+        : (lowerCandidates[0] ?? keywordKind);
 
   for (const candidate of lowerCandidates) {
     if (candidate.kind !== selected.kind) {
@@ -549,16 +543,23 @@ export const getModelCatalogFromSettings = (settings: unknown) => {
 };
 
 /**
- * Fail-closed chat eligibility shared by selectors and runtime preflight.
- * `default` means no exact positive evidence, while a non-chat identifier is
- * a hard negative even if stale persisted metadata labels it as chat.
+ * Chat eligibility shared by selectors and runtime preflight. Identifier hard
+ * negatives reject stale catalog rows, but an active manual override remains
+ * authoritative and unknown/new identifiers retain the compatible chat
+ * fallback defined by the catalog contract.
  */
 export const isModelCatalogEntryChatEligible = (
   entry: Pick<ModelCatalogEntry, 'kind' | 'kindSource' | 'modelId'>,
 ): boolean => {
   const identifierEvidence = classifyModelKindById(entry.modelId);
-  if (identifierEvidence.source === 'keyword' && identifierEvidence.kind !== 'chat') return false;
-  return entry.kind === 'chat' && POSITIVE_CHAT_KIND_SOURCES.has(entry.kindSource);
+  if (
+    identifierEvidence.source === 'keyword' &&
+    identifierEvidence.kind !== 'chat' &&
+    entry.kindSource !== 'manual'
+  ) {
+    return false;
+  }
+  return entry.kind === 'chat';
 };
 
 export const isPersistedModelChatEligible = (catalog: PersistedModelCatalog) =>
