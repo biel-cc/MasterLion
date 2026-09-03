@@ -1,10 +1,11 @@
+import { filterAiProviderChatEligibleModels } from '@lobechat/business-model-bank';
 import { AiModelSourceEnum } from 'model-bank';
 
 import { type AIProviderStoreState } from '@/store/aiInfra/initialState';
 import { ModelSearchImplement } from '@/types/search';
 
 const aiProviderChatModelListIds = (s: AIProviderStoreState) =>
-  s.aiProviderModelList.filter((item) => item.type === 'chat').map((item) => item.id);
+  filterAiProviderChatEligibleModels(s.aiProviderModelList).map((item) => item.id);
 // List
 const enabledAiProviderModelList = (s: AIProviderStoreState) =>
   s.aiProviderModelList.filter((item) => item.enabled);
@@ -42,9 +43,7 @@ const getAiModelById = (id: string) => (s: AIProviderStoreState) =>
   s.aiProviderModelList.find((i) => i.id === id);
 
 const getEnabledModelById = (id: string, provider: string) => (s: AIProviderStoreState) =>
-  s.enabledAiModels?.find(
-    (i) => i.id === id && (provider ? provider === i.providerId : true),
-  );
+  s.enabledAiModels?.find((i) => i.id === id && (provider ? provider === i.providerId : true));
 
 const isModelSupportToolUse = (id: string, provider: string) => (s: AIProviderStoreState) => {
   const model = getEnabledModelById(id, provider)(s);

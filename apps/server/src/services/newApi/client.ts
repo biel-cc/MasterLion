@@ -79,11 +79,18 @@ export interface NewApiTokenUsageResponse {
 }
 
 export interface NewApiModelCard {
+  context_window?: number;
   created?: number;
   id: string;
+  input_modalities?: string[];
+  max_output_tokens?: number;
   object?: string;
   owned_by?: string;
   supported_endpoint_types?: string[];
+  supported_modalities?: string[];
+  type?: string;
+  unsupported_modalities?: string[];
+  version?: string;
 }
 
 export interface NewApiLogItem {

@@ -1,3 +1,4 @@
+import { isAiProviderModelChatEligible } from '@lobechat/business-model-bank';
 import {
   getModelPropertyWithFallback,
   resolveImageSinglePrice,
@@ -69,7 +70,10 @@ const createProviderModelCollector = (
 ) => {
   return async (enabledAiModels: EnabledAiModel[], providerId: string) => {
     const filteredModels = enabledAiModels.filter(
-      (model) => model.providerId === providerId && model.type === type && isAiModelVisible(model),
+      (model) =>
+        model.providerId === providerId &&
+        (type === 'chat' ? isAiProviderModelChatEligible(model) : model.type === type) &&
+        isAiModelVisible(model),
     );
 
     if (!filteredModels.length) return [];
@@ -499,7 +503,7 @@ export class AiProviderActionImpl {
 
         const enabledChatAiProviders = enabledAiProviders.filter((provider) => {
           return builtinAiModelList.some(
-            (model) => model.providerId === provider.id && model.type === 'chat',
+            (model) => model.providerId === provider.id && isAiProviderModelChatEligible(model),
           );
         });
 

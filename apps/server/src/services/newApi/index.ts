@@ -1,4 +1,11 @@
 import { DEFAULT_MODEL, isAihubModelHidden } from '@lobechat/business-const';
+import {
+  filterAiProviderChatEligibleModels,
+  getModelCatalogFromSettings,
+  loadModels as loadModelCatalog,
+  mergeModelCatalogEntry,
+  type PersistedModelCatalog,
+} from '@lobechat/business-model-bank';
 import { processMultiProviderModelList } from '@lobechat/model-runtime';
 import type {
   AihubRebindResult,
@@ -15,7 +22,12 @@ import type {
 import { TRPCError } from '@trpc/server';
 import { and, eq } from 'drizzle-orm';
 import { ModelProvider } from 'model-bank';
-import { AiModelSourceEnum, type AiProviderModelListItem } from 'model-bank';
+import {
+  type AiFullModelCard,
+  AiModelSourceEnum,
+  type AiModelType,
+  type AiProviderModelListItem,
+} from 'model-bank';
 
 import { AiModelModel } from '@/database/models/aiModel';
 import { AiProviderModel } from '@/database/models/aiProvider';
@@ -207,16 +219,6 @@ const toUsageLog = (log: NewApiLogItem): NewApiUsageLogItem => {
   };
 };
 
-const supportsChat = (model: NewApiModelCard) => {
-  const endpointTypes = model.supported_endpoint_types;
-  if (!endpointTypes || endpointTypes.length === 0) return true;
-
-  return endpointTypes.some((endpoint) => {
-    const normalized = endpoint.toLowerCase();
-    return normalized.includes('chat') || normalized.includes('responses');
-  });
-};
-
 const toAiModel = (model: ChatModelCard): AiProviderModelListItem => ({
   abilities: {
     files: Boolean(model.files),
@@ -246,20 +248,113 @@ const toFallbackAiModel = (model: NewApiModelCard): AiProviderModelListItem =>
     type: 'chat',
   });
 
-const enrichNewApiModels = async (
-  models: NewApiModelCard[],
-): Promise<AiProviderModelListItem[]> => {
-  const processedModels = await processMultiProviderModelList(models, ModelProvider.NewAPI);
+interface PreparedNewApiModel {
+  catalog?: AiFullModelCard;
+  model: AiProviderModelListItem;
+  raw: NewApiModelCard;
+}
+
+const prepareNewApiModels = async (models: NewApiModelCard[]): Promise<PreparedNewApiModel[]> => {
+  const [processedModels, catalogModels] = await Promise.all([
+    processMultiProviderModelList(models, ModelProvider.NewAPI),
+    loadModelCatalog(),
+  ]);
   const processedModelMap = new Map(processedModels.map((model) => [model.id, model]));
+  const catalogModelMap = new Map(catalogModels.map((model) => [model.id.toLowerCase(), model]));
 
   return models.map((model) => {
     const processedModel = processedModelMap.get(model.id);
-    return processedModel ? toAiModel(processedModel) : toFallbackAiModel(model);
+    return {
+      catalog: catalogModelMap.get(model.id.toLowerCase()),
+      model: processedModel ? toAiModel(processedModel) : toFallbackAiModel(model),
+      raw: model,
+    };
   });
 };
 
+const evidenceStateToBoolean = (state: 'supported' | 'unknown' | 'unsupported') => {
+  if (state === 'unknown') return undefined;
+  return state === 'supported';
+};
+
+const toAiModelType = (catalog: PersistedModelCatalog, parsedType: AiModelType): AiModelType => {
+  if (
+    catalog.entry.kind === 'unknown' &&
+    ['realtime', 'text2music', 'video'].includes(parsedType)
+  ) {
+    return parsedType;
+  }
+
+  if (
+    catalog.entry.kind === 'moderation' ||
+    catalog.entry.kind === 'rerank' ||
+    catalog.entry.kind === 'unknown'
+  ) {
+    // The legacy provider model DTO has no rerank/moderation/unknown members.
+    // Keep the precise kind in settings.modelCatalog and project a non-chat
+    // legacy type so older consumers cannot accidentally admit it as chat.
+    return 'embedding';
+  }
+
+  return catalog.entry.kind;
+};
+
+const materializeNewApiModel = (
+  prepared: PreparedNewApiModel,
+  existing?: AiProviderModelListItem,
+): AiProviderModelListItem => {
+  const previousCatalog = getModelCatalogFromSettings(existing?.settings);
+  const raw = prepared.raw;
+  const catalog = mergeModelCatalogEntry({
+    catalog: prepared.catalog
+      ? {
+          abilities: prepared.catalog.abilities,
+          contextWindowTokens: prepared.catalog.contextWindowTokens,
+          kind: prepared.catalog.type,
+          maxOutput: prepared.catalog.maxOutput,
+        }
+      : undefined,
+    manual: previousCatalog?.manual,
+    modelId: raw.id,
+    observed: previousCatalog?.observed,
+    providerId: ModelProvider.NewAPI,
+    providerMetadata: {
+      contextWindowTokens: raw.context_window,
+      declaredKind: raw.type,
+      endpointTypes: raw.supported_endpoint_types,
+      maxOutput: raw.max_output_tokens,
+      modelVersion: raw.version,
+      supportedInputModalities: [
+        ...(raw.input_modalities ?? []),
+        ...(raw.supported_modalities ?? []),
+      ],
+      unsupportedInputModalities: raw.unsupported_modalities,
+    },
+  });
+  const image = evidenceStateToBoolean(catalog.entry.inputModalities.image);
+  const files = evidenceStateToBoolean(catalog.entry.inputModalities.file);
+  const video = evidenceStateToBoolean(catalog.entry.inputModalities.video);
+
+  return {
+    ...prepared.model,
+    abilities: {
+      ...prepared.model.abilities,
+      ...(files === undefined ? { files: undefined } : { files }),
+      ...(image === undefined ? { vision: undefined } : { vision: image }),
+      ...(video === undefined ? { video: undefined } : { video }),
+    },
+    contextWindowTokens: catalog.entry.contextWindowTokens,
+    settings: {
+      ...existing?.settings,
+      ...prepared.model.settings,
+      modelCatalog: catalog,
+    },
+    type: toAiModelType(catalog, prepared.model.type),
+  };
+};
+
 const getDefaultModel = (models: AiProviderModelListItem[]) => {
-  const chatModels = models.filter((model) => model.type === 'chat');
+  const chatModels = filterAiProviderChatEligibleModels(models);
   if (chatModels.length === 0) return undefined;
 
   const defaultModel = chatModels.find((model) => model.id === DEFAULT_MODEL);
@@ -913,8 +1008,64 @@ export class NewApiService {
     }
   }
 
+  private async listModelMetadataBestEffort(key: string): Promise<NewApiModelCard[]> {
+    if (typeof this.client.listModels !== 'function') return [];
+
+    try {
+      const metadata = await this.client.listModels(key);
+      return Array.isArray(metadata) ? metadata : [];
+    } catch {
+      // The bridge/DB remains the authority for accessible ids. Metadata enriches
+      // classification only and must not make an otherwise healthy sync fail.
+      return [];
+    }
+  }
+
+  private async reconcileRemoteModels(prepared: PreparedNewApiModel[]) {
+    const reconcile = async (database: LobeChatDatabase) => {
+      const aiModelModel = new AiModelModel(database, this.userId);
+      const existingModels = await aiModelModel.getModelListByProviderId(ModelProvider.NewAPI);
+      const existingById = new Map(existingModels.map((model) => [model.id, model]));
+      const models = prepared.map((model) =>
+        materializeNewApiModel(model, existingById.get(model.raw.id)),
+      );
+      const incomingIds = new Set(models.map((model) => model.id));
+      const modelsToInsert: AiProviderModelListItem[] = [];
+
+      for (const model of models) {
+        const existing = existingById.get(model.id);
+        if (!existing) {
+          modelsToInsert.push(model);
+          continue;
+        }
+
+        if (existing.source === AiModelSourceEnum.Remote) {
+          await aiModelModel.update(model.id, ModelProvider.NewAPI, model);
+        }
+      }
+
+      await aiModelModel.batchUpdateAiModels(ModelProvider.NewAPI, modelsToInsert);
+
+      for (const existing of existingModels) {
+        if (existing.source === AiModelSourceEnum.Remote && !incomingIds.has(existing.id)) {
+          await aiModelModel.delete(existing.id, ModelProvider.NewAPI);
+        }
+      }
+
+      return models;
+    };
+
+    if (typeof this.db.transaction === 'function') {
+      return this.db.transaction((transaction) => reconcile(transaction as LobeChatDatabase));
+    }
+
+    // Minimal in-memory database doubles used by focused unit tests do not expose
+    // transactions. Production databases always take the branch above.
+    return reconcile(this.db);
+  }
+
   private async syncModelsForBinding(binding: UsableNewApiBindingItem, key: string) {
-    let models: AiProviderModelListItem[] | undefined;
+    let rawModels: NewApiModelCard[] | undefined;
 
     if (this.shouldUseReadOnlyDb()) {
       const [account, token] = await Promise.all([
@@ -923,7 +1074,12 @@ export class NewApiService {
       ]);
       const modelIds = await this.readOnlyDb.listAccessibleModels(account?.group, token);
       if (modelIds.length > 0) {
-        models = await enrichNewApiModels(modelIds.map((id) => ({ id })));
+        const metadata = await this.listModelMetadataBestEffort(key);
+        const accessibleIds = new Set(modelIds);
+        const metadataById = new Map(
+          metadata.filter((model) => accessibleIds.has(model.id)).map((model) => [model.id, model]),
+        );
+        rawModels = modelIds.map((id) => metadataById.get(id) ?? { id });
       } else if (this.isReadOnlyDbRequired()) {
         throw new TRPCError({
           code: 'NOT_FOUND',
@@ -932,21 +1088,18 @@ export class NewApiService {
       }
     }
 
-    if (!models) {
-      const remoteModels = await this.client.listModels(key);
-      models = await enrichNewApiModels(remoteModels.filter(supportsChat));
+    if (!rawModels) {
+      rawModels = await this.client.listModels(key);
     }
 
     // Apply the AIHUB_HIDDEN_MODELS deny-list before persisting, so models that
     // are still enabled in the Aihub abilities table but should no longer be
     // offered are dropped on the next sync and disappear after refresh.
-    models = models.filter((model) => !isAihubModelHidden(model.id));
+    rawModels = rawModels.filter((model) => !isAihubModelHidden(model.id));
 
+    const prepared = await prepareNewApiModels(rawModels);
+    const models = await this.reconcileRemoteModels(prepared);
     const defaultModel = getDefaultModel(models);
-
-    const aiModelModel = new AiModelModel(this.db, this.userId);
-    await aiModelModel.clearRemoteModels(ModelProvider.NewAPI);
-    await aiModelModel.batchUpdateAiModels(ModelProvider.NewAPI, models);
 
     // The credential is part of core Aihub readiness even when the user's
     // current model set has no chat default (for example embedding-only).
