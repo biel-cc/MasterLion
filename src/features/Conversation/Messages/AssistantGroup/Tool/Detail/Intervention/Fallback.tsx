@@ -61,6 +61,7 @@ interface FallbackInterventionProps {
   actionsPortalTarget?: HTMLDivElement | null;
   apiName: string;
   assistantGroupId?: string;
+  hideActions?: boolean;
   id: string;
   identifier: string;
   requestArgs: string;
@@ -68,7 +69,16 @@ interface FallbackInterventionProps {
 }
 
 const FallbackIntervention = memo<FallbackInterventionProps>(
-  ({ requestArgs, id, identifier, apiName, toolCallId, assistantGroupId, actionsPortalTarget }) => {
+  ({
+    requestArgs,
+    id,
+    identifier,
+    apiName,
+    toolCallId,
+    assistantGroupId,
+    actionsPortalTarget,
+    hideActions,
+  }) => {
     const { t } = useTranslation(['chat', 'plugin', 'common']);
     const approvalMode = useUserStore(toolInterventionSelectors.approvalMode);
     const [isEditing, setIsEditing] = useState(false);
@@ -216,7 +226,8 @@ const FallbackIntervention = memo<FallbackInterventionProps>(
           </>
         )}
 
-        {actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions}
+        {!hideActions &&
+          (actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions)}
       </Flexbox>
     );
   },

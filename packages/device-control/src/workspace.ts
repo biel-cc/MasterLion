@@ -1,4 +1,6 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { detectRepoType } from '@lobechat/local-file-shell';
@@ -6,6 +8,8 @@ import { detectRepoType } from '@lobechat/local-file-shell';
 import type {
   InitWorkspaceParams,
   InitWorkspaceResult,
+  EnsureScratchWorkspaceParams,
+  EnsureScratchWorkspaceResult,
   ListProjectSkillsParams,
   ListProjectSkillsResult,
   ProjectSkillItem,
@@ -20,6 +24,15 @@ const SKILL_FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 const MAX_SKILL_FILE_COUNT = 1000;
 
 const SKILL_SOURCES = ['.agents/skills', '.claude/skills'] as const;
+
+const toSafeTopicSegment = (topicId: string): string => {
+  const trimmed = topicId.trim();
+  if (!trimmed) throw new Error('topicId is required');
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(trimmed) && trimmed !== '.' && trimmed !== '..') {
+    return trimmed;
+  }
+  return `topic-${createHash('sha256').update(trimmed).digest('hex').slice(0, 32)}`;
+};
 
 const toPosixRelativePath = (filePath: string) => filePath.split(path.sep).join('/');
 
@@ -216,4 +229,40 @@ export const statPath = async (params: { path: string }): Promise<StatPathResult
   } catch {
     return { exists: false, isDirectory: false };
   }
+};
+
+/**
+ * Explicit-only scratch creation. Merely importing the module or handling chat
+ * never touches the filesystem; the directory is created only through this RPC.
+ */
+export const ensureScratchWorkspace = async (
+  params: EnsureScratchWorkspaceParams | string,
+  scratchRoot: string | undefined,
+): Promise<EnsureScratchWorkspaceResult> => {
+  if (!scratchRoot || !path.isAbsolute(scratchRoot)) {
+    throw new Error('SCRATCH_ROOT_REQUIRED');
+  }
+
+  const normalizedRoot = path.resolve(scratchRoot);
+  if (
+    normalizedRoot === path.parse(normalizedRoot).root ||
+    normalizedRoot === path.resolve(os.homedir())
+  ) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  const topicId = typeof params === 'string' ? params : params?.topicId;
+  const topicSegment = toSafeTopicSegment(topicId);
+
+  await mkdir(normalizedRoot, { recursive: true });
+  const realRoot = await realpath(normalizedRoot);
+  const requested = path.join(realRoot, topicSegment);
+  await mkdir(requested, { recursive: true });
+  const realRequested = await realpath(requested);
+  const relative = path.relative(realRoot, realRequested);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  return { root: realRequested, topicSegment };
 };

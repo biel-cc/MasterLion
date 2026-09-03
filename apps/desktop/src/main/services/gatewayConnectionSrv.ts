@@ -48,7 +48,14 @@ interface MessageApiHandler {
 }
 
 interface ToolCallHandler {
-  (apiName: string, args: unknown): Promise<ToolCallResult>;
+  (
+    apiName: string,
+    args: unknown,
+    request: Pick<
+      ToolCallRequestMessage,
+      'deviceId' | 'executionContext' | 'operationId' | 'requestId' | 'toolCallId' | 'topicId'
+    >,
+  ): Promise<ToolCallResult>;
 }
 
 /**
@@ -697,7 +704,14 @@ export default class GatewayConnectionService extends ServiceModule {
           throw new Error('No tool call handler configured');
         }
         const args = JSON.parse(argsStr);
-        result = await this.toolCallHandler(apiName, args);
+        result = await this.toolCallHandler(apiName, args, {
+          deviceId: request.deviceId ?? this.deviceId ?? undefined,
+          executionContext: request.executionContext,
+          operationId: request.operationId,
+          requestId,
+          toolCallId: request.toolCallId,
+          topicId: request.topicId,
+        });
       }
 
       // Forward the typed envelope unchanged. Critically, do NOT stringify the

@@ -18,6 +18,7 @@ const makeFakeChild = () => {
 
 const baseParams = {
   agentType: 'claudeCode',
+  cwd: '/work/dir',
   jwt: 'jwt',
   operationId: 'op',
   prompt: 'hi',
@@ -28,6 +29,14 @@ const baseParams = {
 describe('spawnHeteroAgentRun', () => {
   afterEach(() => {
     spawnMock.mockReset();
+  });
+
+  it('rejects a missing workspace without spawning', async () => {
+    await expect(spawnHeteroAgentRun({ ...baseParams, cwd: undefined })).resolves.toEqual({
+      reason: 'WORKSPACE_REQUIRED',
+      status: 'rejected',
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it('spawns `lh hetero exec` in server-ingest mode via the current CLI entry', async () => {
@@ -141,5 +150,22 @@ describe('spawnHeteroAgentRun', () => {
         { source: { id: 'file-1', type: 'url', url: 'https://signed/a.png' }, type: 'image' },
       ]),
     );
+  });
+
+  it('preserves resolved env without allowing it to replace gateway auth', () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    void spawnHeteroAgentRun({
+      ...baseParams,
+      env: { LOBEHUB_JWT: 'wrong', WORKSPACE_VALUE: 'kept' },
+      jwt: 'trusted-jwt',
+    });
+
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(options.env).toMatchObject({
+      LOBEHUB_JWT: 'trusted-jwt',
+      WORKSPACE_VALUE: 'kept',
+    });
   });
 });

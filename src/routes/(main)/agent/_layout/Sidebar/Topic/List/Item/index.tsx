@@ -139,6 +139,12 @@ interface TopicItemProps {
   id?: string;
   metadata?: ChatTopicMetadata;
   /**
+   * Present when the topic is bound to a temporary (scratch) directory. Renders a
+   * low-key tag with a tooltip that reveals the real path — the only affordance
+   * a scratch topic gets in the sidebar, so the row stays quiet otherwise.
+   */
+  scratchWorkspace?: { rootPath: string };
+  /**
    * Show the topic's project directory as a second line under the title. Used by
    * the by-status grouping, where the row otherwise carries no project context
    * (by-project mode already puts the directory in the group header).
@@ -150,8 +156,22 @@ interface TopicItemProps {
 }
 
 const TopicItem = memo<TopicItemProps>(
-  ({ id, title, fav, active, threadId, metadata, status, showWorkingDirectory }) => {
+  ({
+    id,
+    title,
+    fav,
+    active,
+    threadId,
+    metadata,
+    status,
+    scratchWorkspace,
+    showWorkingDirectory,
+  }) => {
     const { t } = useTranslation('topic');
+    // Workspace-runtime copy ships in locales/*/chat.json only, so the typed key
+    // union lags behind; narrow the translator once instead of casting per key.
+    const { t: tChat } = useTranslation('chat');
+    const tw = tChat as unknown as (key: string, options?: Record<string, unknown>) => string;
     const { isDarkMode } = useTheme();
     const activeAgentId = useAgentStore((s) => s.activeAgentId);
     const activeWorkspaceSlug = useActiveWorkspaceSlug();
@@ -255,6 +275,23 @@ const TopicItem = memo<TopicItemProps>(
         </Flexbox>
       ) : undefined;
 
+    const scratchTag = scratchWorkspace ? (
+      <Tooltip title={scratchWorkspace.rootPath}>
+        <Tag
+          data-testid="topic-scratch-tag"
+          size={'small'}
+          style={{ color: cssVar.colorTextDescription, flex: 'none', fontSize: 10 }}
+          aria-label={tw('workspaceRuntime.sidebar.scratchTooltip', {
+            path: scratchWorkspace.rootPath,
+          })}
+        >
+          {tw('workspaceRuntime.sidebar.scratchTag')}
+        </Tag>
+      </Tooltip>
+    ) : undefined;
+
+    const titleNode = title === '...' ? <DotsLoading gap={3} size={4} /> : title;
+
     const hasUnread = id && isUnreadCompleted;
     const unreadIcon = (
       <span className={styles.unreadWrapper}>
@@ -309,7 +346,6 @@ const TopicItem = memo<TopicItemProps>(
           disabled={editing}
           extra={<RunningElapsedTime agentId={activeAgentId} topicId={id} />}
           href={href}
-          title={title === '...' ? <DotsLoading gap={3} size={4} /> : title}
           titleColor={cssVar.colorText}
           icon={(() => {
             if (isWaitingForHuman) {
@@ -361,6 +397,18 @@ const TopicItem = memo<TopicItemProps>(
               />
             );
           })()}
+          title={
+            scratchTag ? (
+              <Flexbox horizontal align={'center'} gap={6} style={{ minWidth: 0 }}>
+                <Text ellipsis style={{ color: 'inherit', fontSize: 'inherit', minWidth: 0 }}>
+                  {titleNode}
+                </Text>
+                {scratchTag}
+              </Flexbox>
+            ) : (
+              titleNode
+            )
+          }
           onClick={handleClick}
           onDoubleClick={() => void handleDoubleClick()}
         />

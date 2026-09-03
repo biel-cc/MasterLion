@@ -128,6 +128,7 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
     ) {
       this.emit('agent_run_request', {
         agentType,
+        cwd: '/mock/workspace',
         jwt,
         operationId,
         prompt,
@@ -200,7 +201,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 vi.mock('node:os', () => ({
-  default: { hostname: vi.fn(() => 'mock-hostname') },
+  default: { homedir: vi.fn(() => '/mock/home'), hostname: vi.fn(() => 'mock-hostname') },
 }));
 
 vi.mock('@lobechat/device-gateway-client', () => ({
@@ -1002,10 +1003,12 @@ describe('GatewayConnectionCtr', () => {
       },
     );
 
-    it('forwards cwd and systemContext from the request to spawnLhHeteroExec', async () => {
+    it('forwards cwd, env, images, and systemContext to spawnLhHeteroExec', async () => {
       const client = await connectAndOpen();
       client.simulateAgentRunRequest('claude-code', 'op-ctx', 'hi', 'mock-jwt', {
         cwd: '/Users/alice/repo',
+        env: { WORKSPACE_VALUE: 'kept' },
+        imageList: [{ id: 'image-1', url: 'https://example.test/image.png' }],
         systemContext: 'WORKSPACE CONTEXT',
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -1013,6 +1016,8 @@ describe('GatewayConnectionCtr', () => {
       expect(mockHeterogeneousAgentCtr.spawnLhHeteroExec).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: '/Users/alice/repo',
+          env: { WORKSPACE_VALUE: 'kept' },
+          imageList: [{ id: 'image-1', url: 'https://example.test/image.png' }],
           systemContext: 'WORKSPACE CONTEXT',
         }),
       );
@@ -1037,6 +1042,21 @@ describe('GatewayConnectionCtr', () => {
           topicId: 'topic-1',
         }),
       );
+    });
+
+    it('rejects a missing cwd without invoking the spawn implementation', async () => {
+      const client = await connectAndOpen();
+      client.simulateAgentRunRequest('codex', 'op-no-workspace', 'hello', 'mock-jwt', {
+        cwd: undefined,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sendAgentRunAck).toHaveBeenCalledWith({
+        operationId: 'op-no-workspace',
+        reason: 'WORKSPACE_REQUIRED',
+        status: 'rejected',
+      });
+      expect(mockHeterogeneousAgentCtr.spawnLhHeteroExec).not.toHaveBeenCalled();
     });
 
     it('sends rejected ack when remote server URL is not configured', async () => {
@@ -1112,6 +1132,7 @@ describe('GatewayConnectionCtr', () => {
         'runHeteroTask',
         {
           agentType: 'openclaw',
+          cwd: '/mock/workspace',
           operationId: 'op-1',
           prompt: 'hello',
           taskId: 'task-1',
@@ -1139,6 +1160,7 @@ describe('GatewayConnectionCtr', () => {
         'runHeteroTask',
         {
           agentType: 'openclaw',
+          cwd: '/mock/workspace',
           operationId: 'op-1',
           prompt: 'msg1',
           taskId: 'task-1',
@@ -1155,6 +1177,7 @@ describe('GatewayConnectionCtr', () => {
         'runHeteroTask',
         {
           agentType: 'openclaw',
+          cwd: '/mock/workspace',
           operationId: 'op-2',
           prompt: 'msg2',
           taskId: 'task-2',
@@ -1180,6 +1203,7 @@ describe('GatewayConnectionCtr', () => {
         'runHeteroTask',
         {
           agentType: 'openclaw',
+          cwd: '/mock/workspace',
           operationId: 'op-1',
           prompt: 'a',
           taskId: 'task-a',
@@ -1195,6 +1219,7 @@ describe('GatewayConnectionCtr', () => {
         'runHeteroTask',
         {
           agentType: 'openclaw',
+          cwd: '/mock/workspace',
           operationId: 'op-2',
           prompt: 'b',
           taskId: 'task-b',

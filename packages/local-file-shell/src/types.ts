@@ -79,6 +79,66 @@ export interface KillCommandResult {
   success: boolean;
 }
 
+// ─── Device execution boundary ───
+
+export type PathAccessMode = 'exec' | 'read' | 'write';
+
+/**
+ * Device-side structural copy of the frozen ExecutionAccessRoot contract.
+ * Tuple fields are optional transport evidence for topic grants. A device
+ * rejects a topic grant when any of this evidence is absent or mismatched.
+ */
+export interface DeviceExecutionAccessRoot {
+  deviceId?: string;
+  expiresAt?: string;
+  grantId?: string;
+  modes: PathAccessMode[];
+  operationId?: string;
+  rootPath: string;
+  scope: 'operation' | 'primary' | 'topic';
+  source: 'direct-user-message' | 'user-approval' | 'workspace';
+  topicId?: string;
+}
+
+/** Structurally compatible with ToolCallExecutionContext from @lobechat/types. */
+export interface DeviceToolCallExecutionContext {
+  accessRoots?: DeviceExecutionAccessRoot[];
+  cwd?: string;
+  env?: Record<string, string>;
+  envRef?: { agentId: string; topicId?: string; workspaceId?: string };
+  workspaceKind?: 'device' | 'sandbox' | 'scratch';
+  workspaceRootPath?: string;
+}
+
+export interface ExecutionBoundaryTrace {
+  deviceId?: string;
+  operationId?: string;
+  topicId?: string;
+  toolCallId?: string;
+}
+
+export type ScopeVerdict = 'denied' | 'primary' | `consent:${string}` | `grant:${string}`;
+
+/** Redacted authorization evidence. Never contains file contents or env values. */
+export interface ScopeAuditEntry extends ExecutionBoundaryTrace {
+  cwdOverridden?: boolean;
+  mode: PathAccessMode;
+  path: string;
+  scopeVerdict: ScopeVerdict;
+}
+
+export interface PreparedToolCallExecution<T extends Record<string, any> = Record<string, any>> {
+  args: T;
+  legacy: boolean;
+  scopeAudit: ScopeAuditEntry[];
+  warnings: Array<{ code: 'MODEL_CWD_OVERRIDDEN'; overridden: true }>;
+}
+
+export type ExecutionBoundaryErrorCode =
+  | 'INTERVENTION_REQUIRED'
+  | 'SCOPE_DENIED'
+  | 'WORKSPACE_REQUIRED';
+
 // ─── File Types ───
 
 export interface ReadFileParams {

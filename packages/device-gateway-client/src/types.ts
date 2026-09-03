@@ -1,3 +1,8 @@
+import type {
+  ExecutionAccessRoot,
+  ToolCallExecutionContext,
+} from '@lobechat/types/src/executionContext';
+
 // ─── Device Info ───
 
 /** A single live gateway WebSocket connection belonging to a device. */
@@ -116,10 +121,34 @@ export interface GatewayMcpStdioParams {
  */
 export type GatewayToolCallType = 'tool' | 'mcp';
 
+/**
+ * Topic grants need their tuple on the untrusted device so it can independently
+ * reject stale or misrouted grants. The base fields remain the frozen C0
+ * ToolCallExecutionContext shape.
+ */
+export type GatewayExecutionAccessRoot = ExecutionAccessRoot & {
+  deviceId?: string;
+  expiresAt?: string;
+  operationId?: string;
+  topicId?: string;
+};
+
+export interface GatewayToolCallExecutionContext extends Omit<
+  ToolCallExecutionContext,
+  'accessRoots'
+> {
+  accessRoots?: GatewayExecutionAccessRoot[];
+}
+
 export interface ToolCallRequestMessage {
+  /** Device identity repeated on the wire for topic-grant tuple verification. */
+  deviceId?: string;
+  /** Frozen, operation-scoped execution boundary. Omitted by legacy servers. */
+  executionContext?: GatewayToolCallExecutionContext;
   /** Operation that triggered the call, propagated by the gateway for tracing. */
   operationId?: string;
   requestId: string;
+  topicId?: string;
   /** Per-call timeout (ms) the gateway forwards; clients pass it through. */
   timeout?: number;
   toolCall: {
@@ -135,6 +164,8 @@ export interface ToolCallRequestMessage {
      */
     type?: GatewayToolCallType;
   };
+  /** Stable id of this model tool invocation, distinct from the relay request id. */
+  toolCallId?: string;
   type: 'tool_call_request';
 }
 
@@ -198,6 +229,8 @@ export interface RpcResponseMessage {
 export interface AgentRunRequestMessage {
   agentType: string;
   cwd?: string;
+  /** Server-resolved execution environment. Optional for legacy requests. */
+  env?: Record<string, string>;
   /**
    * Image attachments from the user message, as URLs the device can fetch
    * (signed S3 URLs). Appended as image content blocks after the prompt so

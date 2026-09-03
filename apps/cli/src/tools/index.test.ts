@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -74,6 +74,37 @@ describe('executeToolCall', () => {
     expect(result.content).toContain('dispatched');
     const state = result.state as { output?: string; stdout?: string };
     expect(state.stdout ?? state.output).toContain('dispatched');
+  });
+
+  it('uses execution-context cwd and emits a redacted override audit', async () => {
+    const canonicalCwd = await realpath(tmpDir);
+    const result = await executeToolCall(
+      'runCommand',
+      JSON.stringify({ command: 'pwd', cwd: '/tmp/evil', env: { MODEL_SECRET: 'drop' } }),
+      undefined,
+      {
+        accessRoots: [
+          {
+            modes: ['read', 'write', 'exec'],
+            rootPath: canonicalCwd,
+            scope: 'primary',
+            source: 'workspace',
+          },
+        ],
+        cwd: canonicalCwd,
+        env: { WORKSPACE_ENV: 'kept' },
+        workspaceRootPath: canonicalCwd,
+      },
+      { deviceId: 'device-1', operationId: 'op-1', toolCallId: 'call-1', topicId: 'topic-1' },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.content).toContain(canonicalCwd);
+    expect(result.state).toMatchObject({
+      scopeAudit: [expect.objectContaining({ cwdOverridden: true, scopeVerdict: 'primary' })],
+    });
+    expect(JSON.stringify(result.state)).not.toContain('/tmp/evil');
+    expect(JSON.stringify(result)).not.toContain('MODEL_SECRET');
   });
 
   it('should dispatch listFiles', async () => {

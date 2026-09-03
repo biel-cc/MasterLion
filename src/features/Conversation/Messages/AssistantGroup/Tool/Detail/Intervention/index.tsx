@@ -19,6 +19,10 @@ import {
 } from './customInteractionHandlers';
 import Fallback from './Fallback';
 import KeyValueEditor from './KeyValueEditor';
+import PathConsent, {
+  parseStructuredPathConsentRequest,
+  WORKSPACE_PATH_CONSENT_METADATA_KEY,
+} from './PathConsent';
 import SecurityBlacklistWarning from './SecurityBlacklistWarning';
 
 export type { ApprovalMode } from '@/store/user/slices/settings/selectors';
@@ -96,7 +100,16 @@ const Intervention = memo<InterventionProps>(
 
     const isCustomInteraction = isCustomInteractionIdentifier(identifier, apiName);
 
-    const topicId = useConversationStore((s) => dataSelectors.getDbMessageById(id)(s)?.topicId);
+    const toolMessage = useConversationStore(dataSelectors.getDbMessageById(id));
+    const topicId = toolMessage?.topicId;
+    const pathConsentRequest = useMemo(() => {
+      const pluginState = toolMessage?.pluginState;
+      const intervention = toolMessage?.pluginIntervention as Record<string, unknown> | undefined;
+      return parseStructuredPathConsentRequest(
+        pluginState?.[WORKSPACE_PATH_CONSENT_METADATA_KEY] ??
+          intervention?.[WORKSPACE_PATH_CONSENT_METADATA_KEY],
+      );
+    }, [toolMessage?.pluginIntervention, toolMessage?.pluginState]);
     const submitToolInteraction = useConversationStore((s) => s.submitToolInteraction);
     const skipToolInteraction = useConversationStore((s) => s.skipToolInteraction);
     const cancelToolInteraction = useConversationStore((s) => s.cancelToolInteraction);
@@ -201,7 +214,7 @@ const Intervention = memo<InterventionProps>(
         );
       }
 
-      const actions = (
+      const actions = pathConsentRequest ? null : (
         <Flexbox horizontal justify={'flex-end'}>
           <ApprovalActions
             apiName={apiName}
@@ -226,7 +239,15 @@ const Intervention = memo<InterventionProps>(
             registerBeforeApprove={registerBeforeApprove}
             onArgsChange={handleArgsChange}
           />
-          {actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions}
+          {pathConsentRequest && (
+            <PathConsent
+              actionsPortalTarget={actionsPortalTarget}
+              messageId={id}
+              request={pathConsentRequest}
+            />
+          )}
+          {!pathConsentRequest &&
+            (actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions)}
         </Flexbox>
       );
     }
@@ -238,11 +259,19 @@ const Intervention = memo<InterventionProps>(
           actionsPortalTarget={actionsPortalTarget}
           apiName={apiName}
           assistantGroupId={assistantGroupId}
+          hideActions={!!pathConsentRequest}
           id={id}
           identifier={identifier}
           requestArgs={requestArgs}
           toolCallId={toolCallId}
         />
+        {pathConsentRequest && (
+          <PathConsent
+            actionsPortalTarget={actionsPortalTarget}
+            messageId={id}
+            request={pathConsentRequest}
+          />
+        )}
       </Flexbox>
     );
   },

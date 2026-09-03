@@ -1,3 +1,10 @@
+import {
+  ExecutionBoundaryError,
+  type ExecutionBoundaryTrace,
+  prepareToolCallExecution,
+  type DeviceToolCallExecutionContext,
+} from '@lobechat/local-file-shell';
+
 import { log } from '../utils/logger';
 import { checkPlatformCapability } from './checkPlatformCapability';
 import { getAgentProfile } from './getAgentProfile';
@@ -20,6 +27,8 @@ export async function executeToolCall(
   apiName: string,
   argsStr: string,
   timeout?: number,
+  executionContext?: DeviceToolCallExecutionContext,
+  trace?: ExecutionBoundaryTrace,
 ): Promise<{
   content: string;
   error?: string;
@@ -44,14 +53,30 @@ export async function executeToolCall(
     // File/shell tools route through LocalSystemExecutionRuntime so `content` is
     // the formatted prompt text and `state` carries the structured payload for
     // client renders — matching the desktop gateway path (PR #15114).
-    const localResult = await runLocalSystemTool(apiName, finalArgs);
+    const prepared = await prepareToolCallExecution({
+      apiName,
+      args: finalArgs,
+      context: executionContext,
+      trace,
+    });
+    const localResult = await runLocalSystemTool(apiName, prepared.args);
     if (localResult) {
       const { error } = localResult;
+      const state =
+        prepared.scopeAudit.length > 0 || prepared.warnings.length > 0
+          ? {
+              ...(typeof localResult.state === 'object' && localResult.state
+                ? localResult.state
+                : { result: localResult.state }),
+              scopeAudit: prepared.scopeAudit,
+              workspaceWarnings: prepared.warnings,
+            }
+          : localResult.state;
       return {
         content: localResult.content,
         error:
           error instanceof Error ? error.message : typeof error === 'string' ? error : undefined,
-        state: localResult.state,
+        state,
         success: localResult.success,
       };
     }
@@ -67,8 +92,21 @@ export async function executeToolCall(
 
     return { content, success: true };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg =
+      error instanceof ExecutionBoundaryError
+        ? error.code
+        : error instanceof Error
+          ? error.message
+          : String(error);
     log.error(`Tool call failed: ${apiName} - ${errorMsg}`);
-    return { content: '', error: errorMsg, success: false };
+    return {
+      content: errorMsg,
+      error: errorMsg,
+      state:
+        error instanceof ExecutionBoundaryError
+          ? { code: error.code, scopeAudit: error.scopeAudit }
+          : undefined,
+      success: false,
+    };
   }
 }

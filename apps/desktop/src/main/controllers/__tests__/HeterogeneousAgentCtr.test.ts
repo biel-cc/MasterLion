@@ -231,6 +231,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'claude-code',
         command: 'claude',
+        cwd: FAKE_DESKTOP_PATH,
         ...sessionOverrides,
       });
       await ctr.sendPrompt({ operationId: 'op-test', prompt, sessionId, ...sendPromptOverrides });
@@ -280,13 +281,16 @@ describe('HeterogeneousAgentCtr', () => {
       expect(msg.message.content[0].text).toBe(prompt);
     });
 
-    it('falls back to the user Desktop when no cwd is supplied', async () => {
-      const { options } = await runSendPrompt('hello');
+    it('rejects a missing workspace before creating a session or spawning', async () => {
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+      } as any);
 
-      // When launched from Finder the Electron parent cwd is `/` — the
-      // controller must override that with the user's Desktop so CC writes
-      // land somewhere sensible.
-      expect(options.cwd).toBe(FAKE_DESKTOP_PATH);
+      await expect(
+        ctr.startSession({ agentType: 'claude-code', command: 'claude' }),
+      ).rejects.toThrow('WORKSPACE_REQUIRED');
+      expect(spawnCalls).toHaveLength(0);
     });
 
     it('respects an explicit cwd passed to startSession', async () => {
@@ -394,6 +398,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
         ...sessionOverrides,
       });
       await ctr.sendPrompt({ operationId: 'op-test', prompt, sessionId, ...sendPromptOverrides });
@@ -412,6 +417,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
       });
 
       await expect(
@@ -432,6 +438,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'claude-code',
         command: 'claude',
+        cwd: FAKE_DESKTOP_PATH,
       });
 
       await expect(
@@ -470,6 +477,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'claude-code',
         command: 'claude-alt',
+        cwd: FAKE_DESKTOP_PATH,
       });
 
       await expect(
@@ -497,6 +505,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
       });
       await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
 
@@ -520,7 +529,11 @@ describe('HeterogeneousAgentCtr', () => {
         storeManager: { get: vi.fn() },
         toolDetectorManager: { detect },
       } as any);
-      const { sessionId } = await ctr.startSession({ agentType: 'codex', command: 'codex' });
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
+      });
       await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
 
       expect(spawnCalls[0].command).toBe(resolvedPath);
@@ -554,6 +567,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: '/custom/bin/codex',
+        cwd: FAKE_DESKTOP_PATH,
       });
       await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
 
@@ -657,6 +671,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
       });
 
       await expect(
@@ -694,6 +709,7 @@ describe('HeterogeneousAgentCtr', () => {
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
         command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
       });
 
       await expect(
@@ -1006,7 +1022,11 @@ describe('HeterogeneousAgentCtr', () => {
         appStoragePath,
         storeManager: { get: vi.fn() },
       } as any);
-      const { sessionId } = await ctr.startSession({ agentType: 'codex', command: 'codex' });
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        command: 'codex',
+        cwd: FAKE_DESKTOP_PATH,
+      });
       await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
 
       const events = broadcasts.filter((b) => b.channel === 'heteroAgentEvent');
