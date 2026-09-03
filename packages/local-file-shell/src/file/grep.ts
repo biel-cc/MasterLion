@@ -26,7 +26,10 @@ export async function grepContent({
       args.push('--hidden', '--glob', '!**/.git/**');
     }
     if (filePattern) args.push('--glob', filePattern);
-    args.push(pattern);
+    // Always provide an explicit search root. Without it, a spawned `rg` sees
+    // its piped stdin and waits for input instead of traversing the authorized
+    // working directory.
+    args.push(pattern, '.');
 
     const child = spawn('rg', args, { cwd: expandTilde(cwd) || process.cwd() });
     let stdout = '';
@@ -55,7 +58,7 @@ export async function grepContent({
               return null;
             }
           })
-          .filter(Boolean);
+          .filter((event) => event?.type === 'match');
 
         resolve({
           engine: 'rg',

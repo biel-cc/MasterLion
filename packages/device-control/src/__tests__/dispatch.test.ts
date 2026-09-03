@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -33,6 +33,7 @@ const makeDeps = (): DeviceControlDeps => ({
     source: 'glob' as const,
     totalCount: 0,
   })),
+  scratchRoot: path.join(root, '.scratch-host'),
 });
 
 describe('executeDeviceRpc', () => {
@@ -52,6 +53,55 @@ describe('executeDeviceRpc', () => {
     expect(result.skills.map((s) => s.name)).toEqual(['spa-routes']);
     expect(result.instructions).toEqual([{ content: '# Agents', source: 'AGENTS.md' }]);
     expect(deps.approveProjectRoot).toHaveBeenCalledWith(root);
+  });
+
+  it('creates a stable scratch directory without allowing topic traversal', async () => {
+    const first = (await executeDeviceRpc(
+      'ensureScratchWorkspace',
+      { topicId: '../../etc' },
+      makeDeps(),
+    )) as { root: string; topicSegment: string };
+    const second = (await executeDeviceRpc(
+      'ensureScratchWorkspace',
+      { topicId: '../../etc' },
+      makeDeps(),
+    )) as { root: string; topicSegment: string };
+
+    expect(second).toEqual(first);
+    const realScratchRoot = await realpath(path.join(root, '.scratch-host'));
+    expect(first.root.startsWith(realScratchRoot + path.sep)).toBe(true);
+    expect(first.topicSegment).toMatch(/^topic-[a-f0-9]{32}$/);
+  });
+
+  it('does not create the scratch root unless ensureScratchWorkspace is called', async () => {
+    const deps = { ...makeDeps(), scratchRoot: path.join(root, '.scratch-not-called') };
+    await expect(access(deps.scratchRoot!)).rejects.toBeDefined();
+
+    await executeDeviceRpc('statPath', { path: root }, deps);
+
+    await expect(access(deps.scratchRoot!)).rejects.toBeDefined();
+  });
+
+  it('delegates the v2 heterogeneous RPC without dropping execution inputs', async () => {
+    const runHeterogeneousAgent = vi.fn(async () => ({ status: 'accepted' as const }));
+    const deps = { ...makeDeps(), runHeterogeneousAgent };
+    const params = {
+      agentType: 'codex',
+      cwd: '/approved/project',
+      env: { SAFE_NAME: 'value' },
+      imageList: [{ url: 'https://example.test/image.png' }],
+      jwt: 'secret',
+      operationId: 'op-1',
+      prompt: 'work',
+      resumeSessionId: 'session-1',
+      systemContext: 'instructions',
+      topicId: 'topic-1',
+    };
+
+    await expect(executeDeviceRpc('runHeterogeneousAgent', params, deps)).resolves.toEqual({
+      status: 'accepted',
+    });
+    expect(runHeterogeneousAgent).toHaveBeenCalledWith(params);
   });
 
   it('routes listProjectSkills to the .agents/skills source', async () => {

@@ -290,6 +290,45 @@ describe('GatewayHttpClient', () => {
       expect(body.operationId).toBe('op-1');
     });
 
+    it('should carry the frozen execution context and grant trace evidence', async () => {
+      mockFetch({
+        json: vi.fn().mockResolvedValue({ content: 'ok', success: true }),
+        ok: true,
+      });
+
+      await client.executeToolCall(
+        {
+          deviceId: 'device-1',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read'],
+                rootPath: '/approved/project',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/approved/project',
+          },
+          operationId: 'op-1',
+          toolCallId: 'call-1',
+          topicId: 'topic-1',
+          userId: 'user-1',
+        },
+        { apiName: 'readFile', arguments: '{"path":"README.md"}', identifier: 'local-system' },
+      );
+
+      const init = vi.mocked(fetch).mock.calls[0][1];
+      const body = JSON.parse((init as RequestInit).body as string);
+      expect(body).toMatchObject({
+        deviceId: 'device-1',
+        executionContext: { cwd: '/approved/project' },
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+    });
+
     it('should use default gateway timeout plus HTTP caller padding when timeout is absent', async () => {
       mockFetch({
         json: vi.fn().mockResolvedValue({ content: 'ok', success: true }),

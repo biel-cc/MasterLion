@@ -114,4 +114,64 @@ describe('LocalSystemExecutor', () => {
       });
     });
   });
+
+  describe('execution context boundary', () => {
+    it('uses the execution cwd, drops model env, and emits only a redacted warning', async () => {
+      const runtime = (localSystemExecutor as any).runtime as {
+        runCommand: (args: any) => Promise<unknown>;
+      };
+      const spy = vi.spyOn(runtime, 'runCommand').mockResolvedValue({
+        content: 'ok',
+        state: { success: true },
+        success: true,
+      });
+
+      const result = await localSystemExecutor.runCommand(
+        { command: 'pwd', cwd: '/tmp/evil', env: { MODEL_SECRET: 'drop' } },
+        { messageId: 'message-1', operationId: 'op-1', workingDirectory: '/approved/project' },
+      );
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: '/approved/project', env: undefined }),
+      );
+      expect(result.state).toMatchObject({
+        workspaceWarnings: [{ code: 'MODEL_CWD_OVERRIDDEN', overridden: true }],
+      });
+      expect(JSON.stringify(result)).not.toContain('/tmp/evil');
+      expect(JSON.stringify(result)).not.toContain('MODEL_SECRET');
+      spy.mockRestore();
+    });
+
+    it('returns WORKSPACE_REQUIRED before invoking runtime for a context-bearing call', async () => {
+      const runtime = (localSystemExecutor as any).runtime as {
+        runCommand: (args: any) => Promise<unknown>;
+      };
+      const spy = vi.spyOn(runtime, 'runCommand');
+
+      await expect(
+        localSystemExecutor.runCommand(
+          { command: 'pwd' },
+          { messageId: 'message-1', operationId: 'op-1' },
+        ),
+      ).resolves.toMatchObject({ content: 'WORKSPACE_REQUIRED', success: false });
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('rejects a parent-traversing glob before invoking runtime', async () => {
+      const runtime = (localSystemExecutor as any).runtime as {
+        globFiles: (args: any) => Promise<unknown>;
+      };
+      const spy = vi.spyOn(runtime, 'globFiles');
+
+      await expect(
+        localSystemExecutor.globFiles(
+          { pattern: '../../**/*' },
+          { messageId: 'message-1', operationId: 'op-1', workingDirectory: '/approved/project' },
+        ),
+      ).resolves.toMatchObject({ content: 'SCOPE_DENIED', success: false });
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
 });

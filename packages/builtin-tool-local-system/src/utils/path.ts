@@ -23,6 +23,16 @@ export const normalizePathForScope = (input: string): string => {
   return normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
 };
 
+/** True when a glob-like path could escape the separately authorized scope. */
+export const isEscapingPathPattern = (input: string): boolean => {
+  const normalized = input.trim().replaceAll('\\', '/');
+  return (
+    normalized.startsWith('/') ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.split('/').includes('..')
+  );
+};
+
 /**
  * Resolve a path against a scope (CWD).
  * - No path provided → use scope as default
@@ -80,12 +90,12 @@ export const isPathWithinScope = (
   });
 };
 
-export const resolveArgsWithScope = <T extends { scope?: string }>(
+export const resolveArgsWithScope = <T extends Record<string, any>>(
   args: T,
   pathField: string,
   fallbackScope?: string,
 ): T => {
-  const scope = args.scope || fallbackScope;
+  const scope = typeof args.scope === 'string' ? args.scope : fallbackScope;
   const currentPath = (args as Record<string, any>)[pathField] as string | undefined;
   const resolved = resolvePathWithScope(currentPath, scope);
   if (resolved === currentPath) return args;

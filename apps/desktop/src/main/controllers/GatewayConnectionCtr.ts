@@ -7,6 +7,7 @@ import { type DeviceControlDeps, executeDeviceRpc as runDeviceRpc } from '@lobec
 import type {
   AgentRunRequestMessage,
   GatewayMcpStdioParams,
+  GatewayToolCallExecutionContext,
 } from '@lobechat/device-gateway-client';
 import type {
   EditLocalFileParams,
@@ -25,6 +26,12 @@ import type {
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
 import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
+import {
+  ExecutionBoundaryError,
+  type ExecutionBoundaryTrace,
+  prepareToolCallExecution,
+  type PreparedToolCallExecution,
+} from '@lobechat/local-file-shell';
 
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
 import ImessageBridgeService from '@/services/imessageBridgeSrv';
@@ -196,7 +203,14 @@ export default class GatewayConnectionCtr extends ControllerModule {
     srv.setTokenRefresher(() => this.remoteServerConfigCtr.refreshAccessToken());
 
     // Wire up tool call handler
-    srv.setToolCallHandler((apiName, args) => this.executeToolCall(apiName, args));
+    srv.setToolCallHandler((apiName, args, request) =>
+      this.executeToolCall(apiName, args, request.executionContext, {
+        deviceId: request.deviceId,
+        operationId: request.operationId,
+        toolCallId: request.toolCallId ?? request.requestId,
+        topicId: request.topicId,
+      }),
+    );
 
     // Wire up MCP call handler (tunneled stdio MCP calls from the cloud server)
     srv.setMcpCallHandler((mcpCall) => this.executeMcpCall(mcpCall));
@@ -283,6 +297,9 @@ export default class GatewayConnectionCtr extends ControllerModule {
     request: AgentRunRequestMessage,
   ): Promise<{ reason?: string; status: 'accepted' | 'rejected' }> {
     try {
+      if (!request.cwd?.trim()) {
+        return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
+      }
       const serverUrl = await this.remoteServerConfigCtr.getRemoteServerUrl();
       if (!serverUrl) {
         return { reason: 'Remote server URL not configured', status: 'rejected' };
@@ -294,6 +311,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
       this.heterogeneousAgentCtr.spawnLhHeteroExec({
         agentType: request.agentType,
         cwd: request.cwd,
+        env: request.env,
         imageList: request.imageList,
         jwt: request.jwt,
         operationId: request.operationId,
@@ -363,6 +381,9 @@ export default class GatewayConnectionCtr extends ControllerModule {
       },
       getLocalFilePreview: (params) => this.localFileCtr.getLocalFilePreview(params),
       getProjectFileIndex: (params) => this.localFileCtr.getProjectFileIndex(params),
+      runHeterogeneousAgent: (request) =>
+        this.executeAgentRun({ ...request, type: 'agent_run_request' }),
+      scratchRoot: path.join(this.app.appStoragePath, 'scratch-workspaces'),
     };
   }
 
@@ -378,9 +399,44 @@ export default class GatewayConnectionCtr extends ControllerModule {
   private async executeToolCall(
     apiName: string,
     args: unknown,
+    executionContext?: GatewayToolCallExecutionContext,
+    trace?: ExecutionBoundaryTrace,
   ): Promise<BuiltinServerRuntimeOutput> {
     const runtime = this.getLocalSystemRuntime();
     const normalized = LEGACY_API_ALIASES[apiName] ?? apiName;
+    let prepared: PreparedToolCallExecution;
+    try {
+      prepared = await prepareToolCallExecution({
+        apiName: normalized,
+        args: args as Record<string, any>,
+        context: executionContext,
+        trace,
+      });
+    } catch (error) {
+      if (error instanceof ExecutionBoundaryError) {
+        return {
+          content: error.code,
+          error,
+          state: { code: error.code, scopeAudit: error.scopeAudit },
+          success: false,
+        };
+      }
+      throw error;
+    }
+    args = prepared.args;
+    const finish = (output: BuiltinServerRuntimeOutput): BuiltinServerRuntimeOutput => {
+      if (prepared.scopeAudit.length === 0 && prepared.warnings.length === 0) return output;
+      return {
+        ...output,
+        state: {
+          ...(typeof output.state === 'object' && output.state
+            ? output.state
+            : { result: output.state }),
+          scopeAudit: prepared.scopeAudit,
+          workspaceWarnings: prepared.warnings,
+        },
+      };
+    };
 
     // Each case narrows `args` to its IPC param type — the manifest guarantees
     // the gateway sends params matching the apiName. The `as never` casts on
@@ -391,57 +447,67 @@ export default class GatewayConnectionCtr extends ControllerModule {
     switch (normalized) {
       case 'listFiles': {
         const p = args as ListLocalFileParams;
-        return runtime.listFiles({
-          directoryPath: p.path,
-          limit: p.limit,
-          sortBy: p.sortBy,
-          sortOrder: p.sortOrder,
-        } as never);
+        return finish(
+          await runtime.listFiles({
+            directoryPath: p.path,
+            limit: p.limit,
+            sortBy: p.sortBy,
+            sortOrder: p.sortOrder,
+          } as never),
+        );
       }
 
       case 'readFile': {
         const p = args as LocalReadFileParams;
-        return runtime.readFile({
-          endLine: p.loc?.[1],
-          path: p.path,
-          startLine: p.loc?.[0],
-        });
+        return finish(
+          await runtime.readFile({
+            endLine: p.loc?.[1],
+            path: p.path,
+            startLine: p.loc?.[0],
+          }),
+        );
       }
 
       case 'readFiles': {
-        return runtime.readFiles(args as LocalReadFilesParams);
+        return finish(await runtime.readFiles(args as LocalReadFilesParams));
       }
 
       case 'searchFiles': {
         const resolved = resolveArgsWithScope(args as LocalSearchFilesParams, 'directory');
-        return runtime.searchFiles({
-          ...resolved,
-          directory: resolved.directory || '',
-        });
+        return finish(
+          await runtime.searchFiles({
+            ...resolved,
+            directory: resolved.directory || '',
+          }),
+        );
       }
 
       case 'moveFiles': {
         const p = args as MoveLocalFilesParams;
-        return runtime.moveFiles({
-          operations: p.items?.map((item) => ({
-            destination: item.newPath,
-            source: item.oldPath,
-          })),
-        });
+        return finish(
+          await runtime.moveFiles({
+            operations: p.items?.map((item) => ({
+              destination: item.newPath,
+              source: item.oldPath,
+            })),
+          }),
+        );
       }
 
       case 'writeFile': {
-        return runtime.writeFile(args as WriteLocalFileParams);
+        return finish(await runtime.writeFile(args as WriteLocalFileParams));
       }
 
       case 'editFile': {
         const p = args as EditLocalFileParams;
-        return runtime.editFile({
-          all: p.replace_all,
-          path: p.file_path,
-          replace: p.new_string,
-          search: p.old_string,
-        });
+        return finish(
+          await runtime.editFile({
+            all: p.replace_all,
+            path: p.file_path,
+            replace: p.new_string,
+            search: p.old_string,
+          }),
+        );
       }
 
       case 'runCommand': {
@@ -449,38 +515,46 @@ export default class GatewayConnectionCtr extends ControllerModule {
         // exposes `run_in_background`. Without this normalize the state would
         // always show foreground even for background commands.
         const p = args as RunCommandParams;
-        return runtime.runCommand({
-          ...p,
-          background: p.run_in_background,
-        } as never);
+        return finish(
+          await runtime.runCommand({
+            ...p,
+            background: p.run_in_background,
+          } as never),
+        );
       }
 
       case 'getCommandOutput': {
         const p = args as GetCommandOutputParams;
-        return runtime.getCommandOutput({
-          commandId: p.shell_id,
-          filter: p.filter,
-        } as never);
+        return finish(
+          await runtime.getCommandOutput({
+            commandId: p.shell_id,
+            filter: p.filter,
+          } as never),
+        );
       }
 
       case 'killCommand': {
         const p = args as KillCommandParams;
-        return runtime.killCommand({
-          commandId: p.shell_id,
-        });
+        return finish(
+          await runtime.killCommand({
+            commandId: p.shell_id,
+          }),
+        );
       }
 
       case 'grepContent': {
         const resolved = resolveArgsWithScope(args as GrepContentParams, 'path');
-        return runtime.grepContent(resolved as never);
+        return finish(await runtime.grepContent(resolved as never));
       }
 
       case 'globFiles': {
         const p = args as GlobFilesParams;
-        return runtime.globFiles({
-          directory: p.scope,
-          pattern: p.pattern,
-        });
+        return finish(
+          await runtime.globFiles({
+            directory: p.scope,
+            pattern: p.pattern,
+          }),
+        );
       }
 
       case 'renameLocalFile': {
@@ -489,13 +563,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
         // call the IPC handler directly and wrap the raw result into the
         // BuiltinServerRuntimeOutput shape so `state` still flows downstream.
         const raw = await this.localFileCtr.handleRenameFile(args as RenameLocalFileParams);
-        return {
+        return finish({
           content: raw.success
             ? `Renamed to ${raw.newPath}`
             : `Rename failed: ${raw.error ?? 'unknown error'}`,
           state: raw,
           success: raw.success,
-        };
+        });
       }
 
       // ─── Platform agent tools (openclaw / hermes) ───
@@ -506,12 +580,12 @@ export default class GatewayConnectionCtr extends ControllerModule {
 
       case 'checkPlatformCapability': {
         const result = await this.checkPlatformCapability(args as { platform: string });
-        return { content: JSON.stringify(result), state: result, success: true };
+        return finish({ content: JSON.stringify(result), state: result, success: true });
       }
 
       case 'getAgentProfile': {
         const result = await this.getAgentProfile(args as { agentId?: string; platform: string });
-        return { content: JSON.stringify(result), state: result, success: true };
+        return finish({ content: JSON.stringify(result), state: result, success: true });
       }
 
       case 'runHeteroTask': {
@@ -522,18 +596,19 @@ export default class GatewayConnectionCtr extends ControllerModule {
             agentId?: string;
             agentType: string;
             cwd?: string;
+            env?: Record<string, string>;
             operationId: string;
             prompt: string;
             taskId: string;
             topicId: string;
           },
         );
-        return { content: json, state: safeJsonParse(json), success: true };
+        return finish({ content: json, state: safeJsonParse(json), success: true });
       }
 
       case 'cancelHeteroTask': {
         const json = await this.cancelHeteroTask(args as { signal?: string; taskId: string });
-        return { content: json, state: safeJsonParse(json), success: true };
+        return finish({ content: json, state: safeJsonParse(json), success: true });
       }
 
       default: {
@@ -763,13 +838,15 @@ export default class GatewayConnectionCtr extends ControllerModule {
     agentId?: string;
     agentType: string;
     cwd?: string;
+    env?: Record<string, string>;
     operationId: string;
     prompt: string;
     taskId: string;
     topicId: string;
   }): Promise<string> {
-    const { agentId, agentType, cwd, operationId, prompt, taskId, topicId } = args;
-    const workDir = cwd || process.cwd();
+    const { agentId, agentType, cwd, env, operationId, prompt, taskId, topicId } = args;
+    const workDir = cwd?.trim();
+    if (!workDir) throw new Error('WORKSPACE_REQUIRED');
 
     const [serverUrl, accessToken] = await Promise.all([
       this.remoteServerConfigCtr.getRemoteServerUrl(),
@@ -779,6 +856,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
     // Inject auth into child env so `lh notify` can authenticate without CLI config.
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      ...env,
       ...(accessToken && { LOBEHUB_JWT: accessToken }),
       ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
     };

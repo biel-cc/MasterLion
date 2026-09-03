@@ -880,6 +880,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
    */
   @IpcMethod()
   async startSession(params: StartSessionParams): Promise<StartSessionResult> {
+    if (!params.cwd?.trim()) throw new Error('WORKSPACE_REQUIRED');
     const sessionId = randomUUID();
     const agentType = params.agentType || 'claude-code';
     getHeterogeneousAgentDriver(agentType);
@@ -890,7 +891,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       agentType,
       args: params.args || [],
       command: params.command,
-      cwd: params.cwd,
+      cwd: params.cwd.trim(),
       env: params.env,
       sessionId,
       resumeSessionId: params.resumeSessionId,
@@ -952,9 +953,8 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
         resumeSessionId: session.agentSessionId,
       });
 
-      // Fall back to the user's Desktop so the process never inherits
-      // the Electron parent's cwd (which is `/` when launched from Finder).
-      cwd = session.cwd || electronApp.getPath('desktop');
+      if (!session.cwd) throw new Error('WORKSPACE_REQUIRED');
+      cwd = session.cwd;
 
       // Forward the user's proxy settings to the CLI. The main-process undici
       // dispatcher doesn't reach child processes — they need env vars.
@@ -1472,6 +1472,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
   spawnLhHeteroExec(params: {
     agentType: string;
     cwd?: string;
+    env?: Record<string, string>;
     /** Image attachments (signed URLs) appended as image content blocks. */
     imageList?: HeteroExecImageRef[];
     jwt: string;
@@ -1485,6 +1486,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     const {
       agentType,
       cwd,
+      env: executionEnv,
       imageList,
       jwt,
       operationId,
@@ -1494,7 +1496,8 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       systemContext,
       topicId,
     } = params;
-    const workDir = cwd ?? process.cwd();
+    const workDir = cwd?.trim();
+    if (!workDir) throw new Error('WORKSPACE_REQUIRED');
 
     // When CLI tracing is enabled (dev builds, or the Help-menu toggle in
     // packaged builds), have `lh hetero exec` persist the agent process's RAW
@@ -1526,6 +1529,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     const env = {
       ...process.env,
       ...buildProxyEnv(this.app.storeManager.get('networkProxy')),
+      ...executionEnv,
       LOBEHUB_JWT: jwt,
       LOBEHUB_SERVER: serverUrl,
     };

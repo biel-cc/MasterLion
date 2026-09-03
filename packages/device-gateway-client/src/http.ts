@@ -2,6 +2,7 @@ import type {
   DeviceSystemInfo,
   GatewayDevice,
   GatewayMcpStdioParams,
+  GatewayToolCallExecutionContext,
   GatewayToolCallType,
 } from './types';
 
@@ -66,7 +67,15 @@ export class GatewayHttpClient {
   }
 
   async executeToolCall(
-    params: { deviceId?: string; operationId?: string; timeout?: number; userId: string },
+    params: {
+      deviceId?: string;
+      executionContext?: GatewayToolCallExecutionContext;
+      operationId?: string;
+      timeout?: number;
+      toolCallId?: string;
+      topicId?: string;
+      userId: string;
+    },
     toolCall: { apiName: string; arguments: string; identifier: string },
   ): Promise<DeviceToolCallResult> {
     return this.postToolCall(params, { ...toolCall, type: 'tool' });
@@ -95,7 +104,15 @@ export class GatewayHttpClient {
   }
 
   private async postToolCall(
-    params: { deviceId?: string; operationId?: string; timeout?: number; userId: string },
+    params: {
+      deviceId?: string;
+      executionContext?: GatewayToolCallExecutionContext;
+      operationId?: string;
+      timeout?: number;
+      toolCallId?: string;
+      topicId?: string;
+      userId: string;
+    },
     toolCall: {
       apiName: string;
       arguments: string;
@@ -112,9 +129,12 @@ export class GatewayHttpClient {
       '/api/device/tool-call',
       {
         deviceId: params.deviceId,
+        executionContext: params.executionContext,
         operationId: params.operationId,
         timeout: params.timeout,
         toolCall,
+        toolCallId: params.toolCallId,
+        topicId: params.topicId,
         userId: params.userId,
       },
       { timeout: timeout + HTTP_CALL_TIMEOUT_PADDING_MS },
@@ -184,6 +204,7 @@ export class GatewayHttpClient {
     agentType: string;
     cwd?: string;
     deviceId?: string;
+    env?: Record<string, string>;
     /** Image attachments forwarded into the `agent_run_request` message. */
     imageList?: Array<{ id?: string; url: string }>;
     jwt: string;

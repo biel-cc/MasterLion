@@ -8,6 +8,8 @@ import {
 export interface SpawnHeteroAgentRunParams {
   agentType: string;
   cwd?: string;
+  /** Server-resolved environment layered into the child process. */
+  env?: Record<string, string>;
   /** Image attachments (signed URLs) appended as image content blocks. */
   imageList?: HeteroExecImageRef[];
   jwt: string;
@@ -53,6 +55,7 @@ export function spawnHeteroAgentRun(
   const {
     agentType,
     cwd,
+    env,
     imageList,
     jwt,
     operationId,
@@ -62,7 +65,10 @@ export function spawnHeteroAgentRun(
     systemContext,
     topicId,
   } = params;
-  const workDir = cwd ?? process.cwd();
+  const workDir = cwd?.trim();
+  if (!workDir) {
+    return Promise.resolve({ reason: 'WORKSPACE_REQUIRED', status: 'rejected' });
+  }
 
   // Server-ingest mode (--topic + --operation-id): events are batch-POSTed to
   // the server, not rendered. `--input-json -` reads the prompt from stdin.
@@ -103,6 +109,7 @@ export function spawnHeteroAgentRun(
       cwd: workDir,
       env: {
         ...process.env,
+        ...env,
         LOBEHUB_JWT: jwt,
         LOBEHUB_SERVER: serverUrl,
       },

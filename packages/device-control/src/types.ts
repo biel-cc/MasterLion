@@ -57,6 +57,34 @@ export interface StatPathResult {
   repoType?: 'git' | 'github';
 }
 
+export interface EnsureScratchWorkspaceParams {
+  /** Stable topic identifier; it is encoded into one safe host path segment. */
+  topicId: string;
+}
+
+export interface EnsureScratchWorkspaceResult {
+  root: string;
+  topicSegment: string;
+}
+
+export interface HeterogeneousAgentRunParams {
+  agentType: string;
+  cwd: string;
+  env?: Record<string, string>;
+  imageList?: Array<{ id?: string; url: string }>;
+  jwt: string;
+  operationId: string;
+  prompt: string;
+  resumeSessionId?: string;
+  systemContext?: string;
+  topicId: string;
+}
+
+export interface HeterogeneousAgentRunResult {
+  reason?: string;
+  status: 'accepted' | 'rejected';
+}
+
 // ─── File preview ───
 
 export type LocalFilePreviewAccept = 'image';
@@ -145,4 +173,10 @@ export interface DeviceControlDeps extends WorkspaceScanDeps {
   getLocalFilePreview: (params: LocalFilePreviewUrlParams) => Promise<LocalFilePreviewResult>;
   /** Build the project file index. */
   getProjectFileIndex: (params: ProjectFileIndexParams) => Promise<ProjectFileIndexResult>;
+  /** Explicit host root used only by ensureScratchWorkspace. */
+  scratchRoot?: string;
+  /** Shared start/resume implementation used by the v2 RPC and legacy WS entry. */
+  runHeterogeneousAgent?: (
+    params: HeterogeneousAgentRunParams,
+  ) => Promise<HeterogeneousAgentRunResult>;
 }

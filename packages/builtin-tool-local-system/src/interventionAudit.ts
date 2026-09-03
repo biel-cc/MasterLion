@@ -3,6 +3,8 @@ import { type DynamicInterventionResolver } from '@lobechat/types';
 import { normalizePathForScope, resolvePathWithScope } from './utils/path';
 
 const SAFE_PATH_PREFIXES = ['/tmp', '/var/tmp'] as const;
+const CREDENTIAL_PATH_PATTERN =
+  /(?:^|\/)(?:\.env(?:\.[^/]+)?|\.npmrc|\.pypirc|\.aws\/credentials)$/i;
 
 interface SafePathAuditParams {
   paths: string[];
@@ -55,6 +57,12 @@ const extractPaths = (toolArgs: Record<string, any>): string[] => {
     }
   }
 
+  if (Array.isArray(toolArgs.paths)) {
+    for (const currentPath of toolArgs.paths) {
+      if (typeof currentPath === 'string') paths.push(currentPath);
+    }
+  }
+
   return paths;
 };
 
@@ -94,7 +102,23 @@ export const createPathScopeAudit = (
 
     const paths = extractPaths(toolArgs);
 
-    if (areAllPathsSafe && areAllPathsSafeCandidates(paths, effectiveScope)) {
+    const containsCredentialRead = paths.some((currentPath) => {
+      const resolvedPath = resolvePathWithScope(currentPath, effectiveScope) ?? currentPath;
+      return CREDENTIAL_PATH_PATTERN.test(normalizePathForScope(resolvedPath));
+    });
+    if (containsCredentialRead) return true;
+
+    const isLegacyMetadata =
+      metadata?.pathAccessMode === undefined && metadata?.pathSource === undefined;
+    const isStructuredDirectReadConsent =
+      metadata?.pathAccessMode === 'read' && metadata?.pathSource === 'direct-user-message';
+    if (
+      areAllPathsSafe &&
+      // Preserve context-free clients on the explicit legacy path. V2 callers
+      // provide both metadata fields and only direct, structured reads qualify.
+      (isLegacyMetadata || isStructuredDirectReadConsent) &&
+      areAllPathsSafeCandidates(paths, effectiveScope)
+    ) {
       const allSafe = await areAllPathsSafe({ paths, resolveAgainstScope: effectiveScope });
       if (allSafe) return false;
     }

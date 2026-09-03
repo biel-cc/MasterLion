@@ -53,6 +53,7 @@ export interface RunHeteroTaskParams {
   agentId?: string;
   agentType: RemoteHeterogeneousAgentType;
   cwd?: string;
+  env?: Record<string, string>;
   operationId: string;
   prompt: string;
   taskId: string;
@@ -138,8 +139,9 @@ function buildNotifyProtocol(lhPath: string, topicId: string): string {
 }
 
 export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string> {
-  const { agentId, agentType, cwd, operationId, prompt, taskId, topicId } = params;
-  const workDir = cwd || process.cwd();
+  const { agentId, agentType, cwd, env, operationId, prompt, taskId, topicId } = params;
+  const workDir = cwd?.trim();
+  if (!workDir) throw new Error('WORKSPACE_REQUIRED');
   const lhPath = resolveLhPath();
 
   if (agentType === 'openclaw') {
@@ -182,7 +184,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
       {
         cwd: workDir,
         detached: true,
-        env: { ...process.env },
+        env: { ...process.env, ...env },
         stdio: 'ignore',
       },
     );
@@ -253,7 +255,7 @@ export async function runHeteroTask(params: RunHeteroTaskParams): Promise<string
     const child = spawn('hermes', hermesArgs, {
       cwd: workDir,
       detached: true,
-      env: { ...process.env },
+      env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'ignore'],
     });
 

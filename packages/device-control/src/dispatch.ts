@@ -21,12 +21,14 @@ import {
 
 import type {
   DeviceControlDeps,
+  EnsureScratchWorkspaceParams,
+  HeterogeneousAgentRunParams,
   InitWorkspaceParams,
   ListProjectSkillsParams,
   LocalFilePreviewUrlParams,
   ProjectFileIndexParams,
 } from './types';
-import { initWorkspace, listProjectSkills, statPath } from './workspace';
+import { ensureScratchWorkspace, initWorkspace, listProjectSkills, statPath } from './workspace';
 
 /**
  * Every method name the device-control RPC dispatcher understands. Mirrors the
@@ -36,6 +38,8 @@ import { initWorkspace, listProjectSkills, statPath } from './workspace';
  */
 export const DEVICE_RPC_METHODS = [
   'initWorkspace',
+  'ensureScratchWorkspace',
+  'runHeterogeneousAgent',
   'listProjectSkills',
   'statPath',
   'getProjectFileIndex',
@@ -79,6 +83,18 @@ export const executeDeviceRpc = async (
   deps: DeviceControlDeps,
 ): Promise<unknown> => {
   switch (method) {
+    case 'ensureScratchWorkspace': {
+      return ensureScratchWorkspace(
+        params as EnsureScratchWorkspaceParams | string,
+        deps.scratchRoot,
+      );
+    }
+
+    case 'runHeterogeneousAgent': {
+      if (!deps.runHeterogeneousAgent) throw new Error('Heterogeneous agent handler unavailable');
+      return deps.runHeterogeneousAgent(params as HeterogeneousAgentRunParams);
+    }
+
     case 'initWorkspace': {
       return initWorkspace(params as InitWorkspaceParams, deps);
     }
