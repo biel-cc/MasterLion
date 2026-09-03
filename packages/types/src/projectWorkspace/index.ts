@@ -49,6 +49,23 @@ export interface ExecutionTargetByPlatform {
   web?: DeviceExecutionTarget;
 }
 
+/**
+ * One-shot client intent used only while a topic has no server-authored
+ * execution snapshot. The server validates the referenced workspace and
+ * writes the snapshot in the same topic create operation; this object is not
+ * execution authority by itself.
+ */
+export interface TopicExecutionIntent {
+  /** The real renderer platform. The server must not infer this from gateway availability. */
+  platform: 'desktop' | 'web';
+  /** Effective target selected for this topic draft / legacy-topic migration. */
+  target: DeviceExecutionTarget;
+  /** Explicit selected device, or the Electron installation's own device id for `local`. */
+  targetDeviceId?: string;
+  /** Explicit draft workspace choice. Existing topics ignore this field. */
+  workspaceId?: string;
+}
+
 export type TopicPlacement =
   | { kind: 'workspace'; workspaceId: string }
   | { kind: 'recent'; reason: 'sandbox-without-project' | 'scratch' | 'unbound' };

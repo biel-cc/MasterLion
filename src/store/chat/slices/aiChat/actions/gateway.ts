@@ -6,9 +6,7 @@ import {
 } from '@lobechat/agent-gateway-client';
 import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
 
-import { isDesktop } from '@/const/version';
 import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
-import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
 import { getAgentStoreState } from '@/store/agent';
@@ -16,49 +14,15 @@ import { chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { consumePendingTopicRepos, getPendingTopicRepos } from '@/store/chat/pendingTopicRepos';
 import { topicSelectors } from '@/store/chat/selectors';
 import type { ChatStore } from '@/store/chat/store';
+import {
+  getProjectWorkspaceStoreState,
+  resolvePendingTopicExecutionIntent,
+} from '@/store/projectWorkspace';
 import type { StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
 import { settingsSelectors } from '@/store/user/selectors';
 
 import { createGatewayEventHandler } from './gatewayEventHandler';
-
-/**
- * When the agent runs against the local machine, resolve this desktop's
- * own gateway deviceId so it can be passed as the run's `deviceId`. The server
- * then presets `activeDeviceId` and injects `lobe-local-system` into the very
- * first LLM payload — skipping the extra `activateDevice` round-trip the model
- * is otherwise forced to make whenever more than one device is online (with a
- * single device the server's heuristic already covered it).
- *
- * Gated on the effective runtime mode (`isLocalSystemEnabledById`), which
- * derives from `agencyConfig.executionTarget` — only a `local` target presets
- * the device. Resolving a device for `sandbox` / `none` / `device` targets
- * would wrongly route the run to this machine.
- *
- * Desktop-only and best-effort: any failure falls back to the server-side
- * device-resolution heuristics. We don't pre-check online status here — an
- * offline id simply fails the server's `onlineDevices` guard and stays unrouted.
- */
-const resolveLocalDeviceId = async (agentId?: string): Promise<string | undefined> => {
-  if (!isDesktop || !agentId) return undefined;
-
-  const agentState = getAgentStoreState();
-  // Chat mode means "no execution environment" — never resolve a device, even
-  // when the target is `local`. The server enforces this too (it auto-activates
-  // a single online device), but skipping the deviceId round-trip here avoids
-  // sending an id the server would only discard.
-  if (chatConfigByIdSelectors.isChatModeById(agentId)(agentState)) return undefined;
-
-  const isLocal = chatConfigByIdSelectors.isLocalSystemEnabledById(agentId)(agentState);
-  if (!isLocal) return undefined;
-
-  try {
-    const info = await gatewayConnectionService.getDeviceInfo();
-    return info?.deviceId;
-  } catch {
-    return undefined;
-  }
-};
 
 type Setter = StoreSetter<ChatStore>;
 
@@ -379,7 +343,11 @@ export class GatewayActionImpl {
       ? this.#get().getOperationAbortSignal(parentOperationId)
       : undefined;
 
-    const localDeviceId = await resolveLocalDeviceId(context.agentId);
+    const pendingExecution = await resolvePendingTopicExecutionIntent({
+      agentId: context.agentId,
+      groupId: context.groupId,
+      isNewTopic: isCreateNewTopic,
+    });
 
     const result = await aiAgentService.execAgentTask(
       {
@@ -401,8 +369,9 @@ export class GatewayActionImpl {
           taskId,
           threadId: context.threadId,
           topicId: context.topicId,
+          ...(pendingExecution && { topicExecutionIntent: pendingExecution.intent }),
         },
-        deviceId: localDeviceId,
+        deviceId: pendingExecution?.intent.targetDeviceId,
         fileIds,
         parentMessageId,
         prompt: message,
@@ -422,9 +391,12 @@ export class GatewayActionImpl {
 
     // If server created a new topic, fetch messages first then switch topic
     // (same pattern as client mode: replaceMessages before switchTopic to avoid skeleton flash)
-    if (isCreateNewTopic && result.topicId) {
+    if (isCreateNewTopic && result.success && result.topicId) {
       // Topic created successfully — now safe to clear the pending repo selection.
       if (context.agentId) consumePendingTopicRepos(context.agentId);
+      if (pendingExecution?.draftKey) {
+        getProjectWorkspaceStoreState().clearDraftIntent(pendingExecution.draftKey);
+      }
       try {
         const newContext = { ...context, topicId: result.topicId };
         const messages = await messageService.getMessages(newContext);

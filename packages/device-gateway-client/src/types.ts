@@ -148,7 +148,6 @@ export interface ToolCallRequestMessage {
   /** Operation that triggered the call, propagated by the gateway for tracing. */
   operationId?: string;
   requestId: string;
-  topicId?: string;
   /** Per-call timeout (ms) the gateway forwards; clients pass it through. */
   timeout?: number;
   toolCall: {
@@ -166,6 +165,7 @@ export interface ToolCallRequestMessage {
   };
   /** Stable id of this model tool invocation, distinct from the relay request id. */
   toolCallId?: string;
+  topicId?: string;
   type: 'tool_call_request';
 }
 
@@ -231,6 +231,8 @@ export interface AgentRunRequestMessage {
   cwd?: string;
   /** Server-resolved execution environment. Optional for legacy requests. */
   env?: Record<string, string>;
+  /** Frozen operation authority. New devices prefer this over legacy cwd/env fields. */
+  executionContext?: GatewayToolCallExecutionContext;
   /**
    * Image attachments from the user message, as URLs the device can fetch
    * (signed S3 URLs). Appended as image content blocks after the prompt so
@@ -239,9 +241,28 @@ export interface AgentRunRequestMessage {
    */
   imageList?: Array<{ id?: string; url: string }>;
   jwt: string;
+  /** Frozen chat-model reference; devices reject cross-operation reuse. */
+  modelRef?: {
+    capturedAt: string;
+    kind: string;
+    modelId: string;
+    operationId: string;
+    providerId: string;
+  };
   operationId: string;
   prompt: string;
   resumeSessionId?: string;
+  /** Workspace policy. Missing means the safe default `off`. */
+  skillPolicy?: 'off' | 'project' | 'user';
+  /** Frozen registry winners that have inline content and may be materialized for the CLI. */
+  skills?: Array<{
+    content?: string;
+    description: string;
+    identifier: string;
+    key: string;
+    name: string;
+    source: string;
+  }>;
   /**
    * Static context injected before the user prompt (workspace conventions,
    * conversation history on resume). The desktop sends it to `lh hetero exec`

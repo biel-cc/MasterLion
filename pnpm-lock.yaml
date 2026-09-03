@@ -229,6 +229,9 @@ importers:
       '@lobechat/builtin-tool-self-iteration':
         specifier: workspace:*
         version: link:packages/builtin-tool-self-iteration
+      '@lobechat/builtin-tool-skill-authoring':
+        specifier: workspace:*
+        version: link:packages/builtin-tool-skill-authoring
       '@lobechat/builtin-tool-skill-maintainer':
         specifier: workspace:*
         version: link:packages/builtin-tool-skill-maintainer
@@ -304,6 +307,9 @@ importers:
       '@lobechat/desktop-bridge':
         specifier: workspace:*
         version: link:packages/desktop-bridge
+      '@lobechat/device-control':
+        specifier: workspace:*
+        version: link:packages/device-control
       '@lobechat/device-gateway-client':
         specifier: workspace:*
         version: link:packages/device-gateway-client
@@ -2208,6 +2214,9 @@ importers:
       '@lobechat/builtin-tool-self-iteration':
         specifier: workspace:*
         version: link:../builtin-tool-self-iteration
+      '@lobechat/builtin-tool-skill-authoring':
+        specifier: workspace:*
+        version: link:../builtin-tool-skill-authoring
       '@lobechat/builtin-tool-skill-maintainer':
         specifier: workspace:*
         version: link:../builtin-tool-skill-maintainer
@@ -2552,6 +2561,9 @@ importers:
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
     devDependencies:
       vitest:
         specifier: 3.2.6

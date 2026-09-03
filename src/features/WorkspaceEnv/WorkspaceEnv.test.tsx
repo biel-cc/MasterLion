@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import WorkspaceEnv from './WorkspaceEnv';
 import type { WorkspaceEnvClient } from './types';
+import WorkspaceEnv from './WorkspaceEnv';
 
 const translations: Record<string, string> = {
   'workspaceEnv.configured': 'Configured',
@@ -160,11 +160,11 @@ describe('WorkspaceEnv', () => {
     const revoke = vi.fn(async () => {});
     render(
       <WorkspaceEnv
+        workspaceId="workspace-1"
         client={createClient({
           list: vi.fn(async () => [{ key: 'API_TOKEN', secret: true }]),
           revoke,
         })}
-        workspaceId="workspace-1"
       />,
     );
 

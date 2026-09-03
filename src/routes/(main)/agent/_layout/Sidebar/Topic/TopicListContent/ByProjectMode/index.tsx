@@ -5,4 +5,4 @@
  * The raw-path (`project:<path>`) grouping is gone: project mode now renders
  * the fixed Workspace / Recent navigation keyed by `project_workspaces` ids.
  */
-export { default } from '../WorkspaceMode';
+export { WorkspaceMode as default } from '@/features/AgentTopicSidebar';

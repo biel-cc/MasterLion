@@ -43,7 +43,7 @@ const asString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value : undefined;
 
 const dirnameForPath = (value: string): string =>
-  (/^[A-Za-z]:[\\/]/.test(value) ? path.win32 : path.posix).dirname(value);
+  (/^[A-Z]:[\\/]/i.test(value) ? path.win32 : path.posix).dirname(value);
 
 const collectToolPathRequests = (
   apiName: string,
@@ -105,7 +105,7 @@ const collectToolPathRequests = (
     case 'renameLocalFile': {
       const source = asString(args.path);
       if (!source) return [];
-      const flavor = /^[A-Za-z]:[\\/]/.test(source) ? path.win32 : path.posix;
+      const flavor = /^[A-Z]:[\\/]/i.test(source) ? path.win32 : path.posix;
       return [{ mode: 'write', value: flavor.dirname(source) }];
     }
     default: {
@@ -117,14 +117,14 @@ const collectToolPathRequests = (
 const resolveAgainstCwd = (value: string, cwd?: string): string | undefined => {
   if (value.startsWith('~/') || value.startsWith('~\\')) return;
   const flavor =
-    /^[A-Za-z]:[\\/]/.test(value) || /^[A-Za-z]:[\\/]/.test(cwd ?? '') ? path.win32 : path.posix;
+    /^[A-Z]:[\\/]/i.test(value) || /^[A-Z]:[\\/]/i.test(cwd ?? '') ? path.win32 : path.posix;
   if (flavor.isAbsolute(value)) return normalizeRootPath(flavor.normalize(value));
   if (!cwd || !flavor.isAbsolute(cwd)) return;
   return normalizeRootPath(flavor.resolve(cwd, value));
 };
 
 const isWithin = (target: string, root: string): boolean => {
-  const flavor = /^[A-Za-z]:[\\/]/.test(root) ? path.win32 : path.posix;
+  const flavor = /^[A-Z]:[\\/]/i.test(root) ? path.win32 : path.posix;
   if (!flavor.isAbsolute(root) || !flavor.isAbsolute(target)) return false;
   const relative = flavor.relative(flavor.resolve(root), flavor.resolve(target));
   return relative === '' || (!relative.startsWith('..') && !flavor.isAbsolute(relative));
@@ -190,6 +190,45 @@ const areToolPathRequestsCovered = (params: {
         rootCovers(root, target, mode, credentialRead),
       ),
     )
+  );
+};
+
+/**
+ * Decide whether an unbound local-system call genuinely needs a default cwd.
+ * Explicit absolute (or home-relative) targets use their operation/topic grant
+ * directly and must not create scratch as a side effect.
+ */
+export const requiresPrimaryCwdForTool = (params: {
+  executionContext?: ExecutionContext;
+  tool: ChatToolPayload;
+}): boolean => {
+  const { executionContext, tool } = params;
+  if (
+    tool.identifier !== LocalSystemIdentifier ||
+    !executionContext ||
+    executionContext.plan.kind !== 'device' ||
+    executionContext.cwd
+  ) {
+    return false;
+  }
+  if (tool.apiName === 'runCommand' || tool.apiName === 'runHeteroTask') return true;
+  if (!(WORKSPACE_PATH_APIS as readonly string[]).includes(tool.apiName)) return false;
+
+  let args: Record<string, unknown>;
+  try {
+    args = JSON.parse(tool.arguments || '{}');
+  } catch {
+    return false;
+  }
+  const requests = collectToolPathRequests(tool.apiName, args);
+  if (requests.length === 0) {
+    return ['globFiles', 'globLocalFiles', 'listFiles', 'listLocalFiles', 'searchFiles', 'searchLocalFiles'].includes(
+      tool.apiName,
+    );
+  }
+  return requests.some(
+    ({ value }) =>
+      !isAbsoluteFilesystemPath(value) && !value.startsWith('~/') && !value.startsWith('~\\'),
   );
 };
 

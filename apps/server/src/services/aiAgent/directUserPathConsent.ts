@@ -8,9 +8,9 @@ const INLINE_CODE = /`[^`\n]*(?:`|$)/g;
 const MARKDOWN_QUOTE_LINE = /^\s*>.*$/gm;
 const INJECTED_BLOCK =
   /<(?:attachment|file|refer_topic)\b[^>]*>[\s\S]*?<\/(?:attachment|file|refer_topic)>/gi;
-const MARKDOWN_LINK = /!?\[[^\]\n]*\]\([^\)\n]*\)/g;
+const MARKDOWN_LINK = /!?\[[^\]\n]*\]\([^)\n]*\)/g;
 const INJECTED_REFERENCE = /<(?:attachments?|files?(?:_info)?|refer_topic)\b/i;
-const NON_PLAIN_MARKDOWN = /(^\s*>|```|~~~|`|^(?: {4}|\t)\S|!?\[[^\]\n]*\]\([^\)\n]*\))/m;
+const NON_PLAIN_MARKDOWN = /^\s*>|```|~~~|`|^(?: {4}|\t)\S|!?\[[^\]\n]*\]\([^)\n]*\)/m;
 
 const trimCandidate = (value: string): string =>
   value.trim().replace(/[，。；;！？!?、）)\]}]+$/u, '');
@@ -22,11 +22,11 @@ const trimCandidate = (value: string): string =>
  */
 export const extractDirectUserAbsolutePathCandidates = (text: string): string[] => {
   const plain = text
-    .replace(MARKDOWN_FENCE, ' ')
-    .replace(MARKDOWN_QUOTE_LINE, ' ')
-    .replace(INJECTED_BLOCK, ' ')
-    .replace(MARKDOWN_LINK, ' ')
-    .replace(INLINE_CODE, ' ');
+    .replaceAll(MARKDOWN_FENCE, ' ')
+    .replaceAll(MARKDOWN_QUOTE_LINE, ' ')
+    .replaceAll(INJECTED_BLOCK, ' ')
+    .replaceAll(MARKDOWN_LINK, ' ')
+    .replaceAll(INLINE_CODE, ' ');
   const matches: Array<{ index: number; value: string }> = [];
 
   // Quoting is required for paths containing spaces. Unquoted paths stop at
@@ -35,7 +35,7 @@ export const extractDirectUserAbsolutePathCandidates = (text: string): string[] 
     matches.push({ index: match.index ?? 0, value: trimCandidate(match[2]) });
   }
   for (const match of plain.matchAll(
-    /(?:^|[\s（(：:])((?:\/(?!\/)|~[\\/]|[A-Za-z]:[\\/])[^\s，。；;！？!?、（）()\[\]{}<>"']*)/gu,
+    /(?:^|[\s（(：:])((?:\/(?!\/)|~[\\/]|[A-Za-z]:[\\/])[^\s，。；;！？!?、（）()[\]{}<>"']*)/gu,
   )) {
     matches.push({ index: match.index ?? 0, value: trimCandidate(match[1]) });
   }

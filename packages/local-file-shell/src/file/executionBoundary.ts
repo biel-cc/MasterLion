@@ -467,15 +467,14 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
 
   const requests = collectPathRequests(apiName, next, realCwd ?? '');
   if (!realCwd) {
-    const isExplicitAbsoluteRead =
+    const hasOnlyExplicitAbsoluteRequests =
       requests.length > 0 &&
       requests.every(
         (request) =>
-          request.mode === 'read' &&
           typeof request.value === 'string' &&
           path.isAbsolute(expandHome(request.value, realHomeDir)),
       );
-    if (!isExplicitAbsoluteRead) throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
+    if (!hasOnlyExplicitAbsoluteRequests) throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
   }
   const scopeAudit: ScopeAuditEntry[] = [];
   for (const request of requests) {

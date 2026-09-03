@@ -1,5 +1,5 @@
-import { acceptedRefWorkspaceRuntimeAdapter } from './acceptedRefAdapter';
 import { registerWorkspaceRuntimeAcceptance } from './acceptanceAssertions';
+import { acceptedRefWorkspaceRuntimeAdapter } from './acceptedRefAdapter';
 import { referenceWorkspaceRuntimeAdapter } from './referenceAdapter';
 
 registerWorkspaceRuntimeAcceptance(

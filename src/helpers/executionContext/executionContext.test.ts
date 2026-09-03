@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'vitest';
-
 import type { ExecutionAccessRoot, ExecutionEnv } from '@lobechat/types/src/executionContext';
 import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
+import { describe, expect, it } from 'vitest';
 
 import { buildExecutionAccessRoots } from './accessRoots';
 import {

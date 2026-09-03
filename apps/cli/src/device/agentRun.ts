@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 
 import {
+  type HeterogeneousSkillMaterializationMode,
+  type MaterializableSkill,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
+import {
   buildHeteroExecStdinPayload,
   type HeteroExecImageRef,
 } from '@lobechat/heterogeneous-agents/protocol';
@@ -17,6 +22,8 @@ export interface SpawnHeteroAgentRunParams {
   prompt: string;
   resumeSessionId?: string;
   serverUrl: string;
+  skillPolicy?: HeterogeneousSkillMaterializationMode;
+  skills?: MaterializableSkill[];
   systemContext?: string;
   topicId: string;
 }
@@ -48,7 +55,7 @@ interface SpawnHeteroAgentRunLogger {
  * `heteroFinish` — surfacing as a stuck assistant message. A rejected ack
  * instead flows back as a dispatch failure the user can see.
  */
-export function spawnHeteroAgentRun(
+export async function spawnHeteroAgentRun(
   params: SpawnHeteroAgentRunParams,
   logger?: SpawnHeteroAgentRunLogger,
 ): Promise<AgentRunAckResult> {
@@ -61,13 +68,32 @@ export function spawnHeteroAgentRun(
     operationId,
     prompt,
     resumeSessionId,
+    skills,
+    skillPolicy,
     serverUrl,
     systemContext,
     topicId,
   } = params;
   const workDir = cwd?.trim();
   if (!workDir) {
-    return Promise.resolve({ reason: 'WORKSPACE_REQUIRED', status: 'rejected' });
+    return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
+  }
+
+  if ((skillPolicy ?? 'off') !== 'off') {
+    const materialization = await materializeSkillsForCli({
+      agentType,
+      cwd: workDir,
+      policy: skillPolicy,
+      skills,
+    });
+    if (materialization.errors.length > 0) {
+      return {
+        reason: `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+          .map(({ message }) => message)
+          .join('; ')}`,
+        status: 'rejected',
+      };
+    }
   }
 
   // Server-ingest mode (--topic + --operation-id): events are batch-POSTed to

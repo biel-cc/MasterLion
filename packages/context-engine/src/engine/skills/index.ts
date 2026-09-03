@@ -1,12 +1,5 @@
 export { buildStepSkillDelta, type BuildStepSkillDeltaParams } from './buildStepSkillDelta';
 export { SkillEngine } from './SkillEngine';
-export {
-  DEFAULT_SKILL_POLICY,
-  normalizeSkillPolicy,
-  OwnerOnlySkillVisibilityPolicy,
-  SkillRegistry,
-} from './SkillRegistry';
-export { SkillResolver } from './SkillResolver';
 export type {
   SkillRegistryEntry,
   SkillRegistryEntryStatus,
@@ -15,6 +8,13 @@ export type {
   SkillRegistryResult,
   SkillRegistryTrace,
 } from './SkillRegistry';
+export {
+  DEFAULT_SKILL_POLICY,
+  normalizeSkillPolicy,
+  OwnerOnlySkillVisibilityPolicy,
+  SkillRegistry,
+} from './SkillRegistry';
+export { SkillResolver } from './SkillResolver';
 export type {
   ActivatedStepSkill,
   OperationSkillSet,

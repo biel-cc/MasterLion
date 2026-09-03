@@ -113,8 +113,8 @@ export interface DeviceToolCallExecutionContext {
 export interface ExecutionBoundaryTrace {
   deviceId?: string;
   operationId?: string;
-  topicId?: string;
   toolCallId?: string;
+  topicId?: string;
 }
 
 export type ScopeVerdict = 'denied' | 'primary' | `consent:${string}` | `grant:${string}`;

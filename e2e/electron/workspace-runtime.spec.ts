@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-import {
-  launchElectronWorkspaceRuntimeSession,
-  type ElectronAcceptanceId,
-} from '../workspace-runtime/electronHarness';
 import type { AcceptanceResultMap } from '../../test/workspace-runtime/contracts';
+import {
+  type ElectronAcceptanceId,
+  launchElectronWorkspaceRuntimeSession,
+} from '../workspace-runtime/electronHarness';
 
 const withObservation = async <Id extends ElectronAcceptanceId>(
   id: Id,

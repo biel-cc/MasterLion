@@ -349,6 +349,100 @@ describe('RuntimeExecutors', () => {
       expect(chat).not.toHaveBeenCalled();
     });
 
+    it('persists final-preflight auto compression before sending the reduced payload', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('summary-or-answer');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'auto-group',
+        messagesToSummarize: [
+          { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+        ],
+        success: true,
+      });
+      mockFinalizeCompression.mockResolvedValue({
+        messages: [
+          { content: 'summary-or-answer', id: 'auto-group', role: 'compressedGroup' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+          { content: '', id: 'msg-123', role: 'assistant' },
+        ],
+        success: true,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const messages = [
+        { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_llm!(
+        {
+          payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+          type: 'call_llm' as const,
+        },
+        state,
+      );
+
+      expect(mockCreateCompressionGroup).toHaveBeenCalledWith(
+        'topic-123',
+        ['old-history'],
+        expect.any(Object),
+      );
+      expect(mockFinalizeCompression).toHaveBeenCalledWith(
+        'auto-group',
+        'summary-or-answer',
+        expect.any(Object),
+      );
+      const providerPayload = chat.mock.calls.at(-1)?.[0];
+      expect(providerPayload.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ content: expect.stringContaining('[Conversation summary]') }),
+        ]),
+      );
+      expect(result.newState.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'auto-group', role: 'compressedGroup' }),
+          expect.objectContaining({ id: 'latest-user', role: 'user' }),
+          expect.objectContaining({ id: 'msg-123', role: 'assistant' }),
+        ]),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ groupId: 'auto-group', type: 'compression_complete' }),
+        ]),
+      );
+    });
+
     it('passes workspaceId to model runtime initialization', async () => {
       const workspaceCtx = { ...ctx, workspaceId: 'ws-1' };
       const executors = createRuntimeExecutors(workspaceCtx);
@@ -1131,7 +1225,7 @@ describe('RuntimeExecutors', () => {
       });
     });
 
-    it('should skip compress_context when compression model config is missing', async () => {
+    it('should report failed compression when compression model config is missing', async () => {
       mockMessageModel.query.mockResolvedValue([
         { content: 'history', id: 'msg-history', role: 'user' },
         { content: 'loading', id: 'assistant-existing', role: 'assistant' },
@@ -1150,9 +1244,10 @@ describe('RuntimeExecutors', () => {
       expect(mockCreateCompressionGroup).toHaveBeenCalledTimes(1);
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
       expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
         compressedMessages: [{ content: 'history', role: 'user' }],
+        outcome: 'failed',
         parentMessageId: 'assistant-existing',
-        skipped: true,
       });
     });
 
@@ -1172,7 +1267,10 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(result.nextContext?.phase).toBe('compression_result');
-      expect((result.nextContext?.payload as any).skipped).toBe(true);
+      expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
+        outcome: 'failed',
+      });
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({ type: 'compression_error' });
@@ -1303,7 +1401,7 @@ describe('RuntimeExecutors', () => {
       ]);
     });
 
-    it('should continue with skipped compression when the compression model reports a summary error', async () => {
+    it('should report failed compression when the compression model reports a summary error', async () => {
       const mockChat = vi.fn().mockImplementation(async (_payload, options) => {
         await options?.callback?.onError?.({ message: 'summary failed' });
         return new Response('done');
@@ -1330,7 +1428,10 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
-      expect((result.nextContext?.payload as any).skipped).toBe(true);
+      expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
+        outcome: 'failed',
+      });
       expect(result.events).toContainEqual(
         expect.objectContaining({
           type: 'compression_error',
@@ -2434,6 +2535,138 @@ describe('RuntimeExecutors', () => {
       );
     });
 
+    it('creates and binds scratch only when an unbound tool first needs cwd', async () => {
+      const ensureScratchWorkspace = vi.fn().mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'scratch-workspace',
+          workspaceKind: 'scratch',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'scratch-workspace',
+          kind: 'scratch',
+          rootPath: '/tmp/masterino/topic-123',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-scratch',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          executionContext: expect.objectContaining({
+            cwd: '/tmp/masterino/topic-123',
+            workspace: expect.objectContaining({ kind: 'scratch' }),
+          }),
+        }),
+      );
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rootPath: '/tmp/masterino/topic-123',
+          toolSucceeded: true,
+          topicId: 'topic-123',
+        }),
+      );
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/tmp/masterino/topic-123',
+        snapshot: { workspaceId: 'scratch-workspace' },
+        workspace: { id: 'scratch-workspace', kind: 'scratch' },
+      });
+    });
+
+    it('does not create scratch for an explicit absolute-path operation', async () => {
+      const ensureScratchWorkspace = vi.fn();
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                deviceId: 'device-a',
+                modes: ['read'],
+                operationId: 'op-123',
+                rootPath: '/outside/docs',
+                scope: 'operation',
+                source: 'user-approval',
+              },
+            ],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs/report.md"}',
+              id: 'tool-call-absolute',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).not.toHaveBeenCalled();
+    });
+
     it('parks a device-authored path intervention instead of feeding it back to the LLM', async () => {
       mockToolExecutionService.executeTool.mockResolvedValue({
         content: 'INTERVENTION_REQUIRED',
@@ -3314,6 +3547,156 @@ describe('RuntimeExecutors', () => {
           role: 'tool',
           tool_call_id: 'tool-call-2',
         }),
+      );
+    });
+
+    it('shares one scratch creation and one bind across concurrent cwd-dependent tools', async () => {
+      const ensureScratchWorkspace = vi.fn().mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'scratch-workspace',
+          workspaceKind: 'scratch',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'scratch-workspace',
+          kind: 'scratch',
+          rootPath: '/tmp/masterino/topic-123',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'listFiles',
+                arguments: '{}',
+                id: 'tool-call-scratch-1',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+              {
+                apiName: 'searchFiles',
+                arguments: '{"query":"TODO"}',
+                id: 'tool-call-scratch-2',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).toHaveBeenCalledOnce();
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledTimes(2);
+      for (const [, executionOptions] of mockToolExecutionService.executeTool.mock.calls) {
+        expect(executionOptions.executionContext.cwd).toBe('/tmp/masterino/topic-123');
+      }
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/tmp/masterino/topic-123',
+        workspace: { id: 'scratch-workspace', kind: 'scratch' },
+      });
+    });
+
+    it('parks a device-authored path intervention from a batch instead of returning it to the LLM', async () => {
+      mockToolExecutionService.executeTool.mockResolvedValue({
+        content: 'INTERVENTION_REQUIRED',
+        error: { kind: 'stop', message: 'INTERVENTION_REQUIRED' },
+        executionTime: 10,
+        state: {
+          code: 'INTERVENTION_REQUIRED',
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-123',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/real-target',
+            topicId: 'topic-123',
+            version: 1,
+          },
+        },
+        success: false,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        userInterventionConfig: { approvalMode: 'manual' },
+      });
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'readFile',
+                arguments: '{"path":"/outside/link"}',
+                id: 'tool-call-path',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '',
+          pluginIntervention: { status: 'pending' },
+          pluginState: expect.objectContaining({
+            workspacePathConsent: expect.objectContaining({
+              requestedPath: '/outside/real-target',
+            }),
+          }),
+          tool_call_id: 'tool-call-path',
+        }),
+      );
+      expect(result.newState.status).toBe('waiting_for_human');
+      expect(result.newState.pendingToolsCalling).toEqual([
+        expect.objectContaining({ id: 'tool-call-path' }),
+      ]);
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'human_approve_required' })]),
       );
     });
 

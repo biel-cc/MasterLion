@@ -238,6 +238,34 @@ describe('prepareToolCallExecution', () => {
     });
   });
 
+  it('allows an explicit absolute write without primary cwd only when user approval covers it', async () => {
+    const outside = path.join(homeDir, 'approved-unbound-write');
+    await mkdir(outside);
+    const target = path.join(outside, 'new.txt');
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'writeFile',
+        args: { content: 'approved', path: target },
+        context: {
+          accessRoots: [
+            {
+              modes: ['write'],
+              operationId: 'op-write',
+              rootPath: outside,
+              scope: 'operation',
+              source: 'user-approval',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-write' },
+      }),
+    ).resolves.toMatchObject({
+      scopeAudit: [expect.objectContaining({ mode: 'write', scopeVerdict: 'consent:op-write' })],
+    });
+  });
+
   it('fails closed when an operation root is missing its operation tuple', async () => {
     const outside = path.join(homeDir, 'stale-operation-root');
     await mkdir(outside);

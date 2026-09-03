@@ -1,10 +1,9 @@
-import { describe, expect, it } from 'vitest';
-
 import type { LobeAgentAgencyConfig } from '@lobechat/types/src/agent/agencyConfig';
 import type {
   ExecutionTargetByPlatform,
   TopicExecutionSnapshot,
 } from '@lobechat/types/src/projectWorkspace';
+import { describe, expect, it } from 'vitest';
 
 import {
   executionTargetToRuntimeMode,

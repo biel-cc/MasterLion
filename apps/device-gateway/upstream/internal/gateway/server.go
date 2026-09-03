@@ -308,6 +308,45 @@ func (s *Server) handleMessageAPI(w http.ResponseWriter, _ *http.Request, body d
 	}
 }
 
+func buildAgentRunRequest(body deviceHTTPBody) map[string]any {
+	msg := map[string]any{
+		"agentType":   body.AgentType,
+		"jwt":         body.JWT,
+		"operationId": body.OperationID,
+		"prompt":      body.Prompt,
+		"topicId":     body.TopicID,
+		"type":        "agent_run_request",
+	}
+	if body.CWD != "" {
+		msg["cwd"] = body.CWD
+	}
+	if len(body.Env) > 0 {
+		msg["env"] = body.Env
+	}
+	if len(body.ExecutionContext) > 0 {
+		msg["executionContext"] = body.ExecutionContext
+	}
+	if len(body.ImageList) > 0 {
+		msg["imageList"] = body.ImageList
+	}
+	if len(body.ModelRef) > 0 {
+		msg["modelRef"] = body.ModelRef
+	}
+	if body.ResumeSessionID != "" {
+		msg["resumeSessionId"] = body.ResumeSessionID
+	}
+	if body.SystemContext != "" {
+		msg["systemContext"] = body.SystemContext
+	}
+	if body.SkillPolicy != "" {
+		msg["skillPolicy"] = body.SkillPolicy
+	}
+	if len(body.Skills) > 0 {
+		msg["skills"] = body.Skills
+	}
+	return msg
+}
+
 func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
 	if strings.TrimSpace(body.OperationID) == "" {
 		writeText(w, http.StatusBadRequest, "Missing operationId")
@@ -325,24 +364,7 @@ func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body dev
 	}
 	timeout := timeoutOrDefault(body.Timeout, defaultAgentRunTimeout)
 	key := body.OperationID
-
-	msg := map[string]any{
-		"agentType":   body.AgentType,
-		"jwt":         body.JWT,
-		"operationId": body.OperationID,
-		"prompt":      body.Prompt,
-		"topicId":     body.TopicID,
-		"type":        "agent_run_request",
-	}
-	if body.CWD != "" {
-		msg["cwd"] = body.CWD
-	}
-	if body.ResumeSessionID != "" {
-		msg["resumeSessionId"] = body.ResumeSessionID
-	}
-	if body.SystemContext != "" {
-		msg["systemContext"] = body.SystemContext
-	}
+	msg := buildAgentRunRequest(body)
 
 	result, status := h.dispatch(target, key, timeout, msg)
 	switch status {

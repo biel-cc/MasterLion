@@ -14,6 +14,15 @@ class HeterogeneousAgentService {
     command: string;
     cwd?: string;
     env?: Record<string, string>;
+    skills?: Array<{
+      content?: string;
+      description: string;
+      identifier: string;
+      key: string;
+      name: string;
+      source: string;
+    }>;
+    skillPolicy?: 'off' | 'project' | 'user';
     resumeSessionId?: string;
   }) {
     return this.ipc.heterogeneousAgent.startSession(params);

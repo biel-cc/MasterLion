@@ -6,14 +6,18 @@ import path from 'node:path';
 import { detectRepoType } from '@lobechat/local-file-shell';
 
 import type {
-  InitWorkspaceParams,
-  InitWorkspaceResult,
   EnsureScratchWorkspaceParams,
   EnsureScratchWorkspaceResult,
+  InitWorkspaceParams,
+  InitWorkspaceResult,
   ListProjectSkillsParams,
   ListProjectSkillsResult,
   ProjectSkillItem,
+  ResolveRealPathParams,
+  ResolveRealPathResult,
   StatPathResult,
+  VerifySkillPathsParams,
+  VerifySkillPathsResult,
   WorkspaceInstructionsItem,
   WorkspaceScanDeps,
 } from './types';
@@ -28,7 +32,7 @@ const SKILL_SOURCES = ['.agents/skills', '.claude/skills'] as const;
 const toSafeTopicSegment = (topicId: string): string => {
   const trimmed = topicId.trim();
   if (!trimmed) throw new Error('topicId is required');
-  if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(trimmed) && trimmed !== '.' && trimmed !== '..') {
+  if (/^[A-Z0-9][\w.-]{0,127}$/i.test(trimmed) && trimmed !== '.' && trimmed !== '..') {
     return trimmed;
   }
   return `topic-${createHash('sha256').update(trimmed).digest('hex').slice(0, 32)}`;
@@ -229,6 +233,42 @@ export const statPath = async (params: { path: string }): Promise<StatPathResult
   } catch {
     return { exists: false, isDirectory: false };
   }
+};
+
+/** Canonicalize an existing absolute path on the target device. */
+export const resolveRealPath = async (
+  params: ResolveRealPathParams,
+): Promise<ResolveRealPathResult> => {
+  if (!path.isAbsolute(params.path)) throw new Error('ABSOLUTE_PATH_REQUIRED');
+  return { path: await realpath(params.path) };
+};
+
+/**
+ * Resolve the operation workspace and a selected project skill on the device,
+ * then prove the skill remains inside that workspace after symlink expansion.
+ * The server cannot perform this check because device paths are not mounted on
+ * the server host.
+ */
+export const verifySkillPaths = async (
+  params: VerifySkillPathsParams,
+): Promise<VerifySkillPathsResult> => {
+  if (!path.isAbsolute(params.workspaceRoot) || !path.isAbsolute(params.skillDir)) {
+    throw new Error('WORKSPACE_REQUIRED');
+  }
+
+  const [workspaceRoot, skillDir] = await Promise.all([
+    realpath(params.workspaceRoot),
+    realpath(params.skillDir),
+  ]);
+  const relative = path.relative(workspaceRoot, skillDir);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  const skillStat = await stat(skillDir);
+  if (!skillStat.isDirectory()) throw new Error('SKILL_DIRECTORY_REQUIRED');
+
+  return { skillDir, workspaceRoot };
 };
 
 /**

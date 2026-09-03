@@ -67,10 +67,16 @@ export const parseExecutionEnvFile = (
     const line = sourceLine.trim();
     if (!line || line.startsWith('#')) continue;
 
-    const match = /^(?:export\s+)?([^=\s]+)\s*=\s*(.*)$/.exec(line);
-    if (!match) throw invalidLine(lineNumber);
+    const assignment =
+      line.startsWith('export') && /\s/u.test(line['export'.length] ?? '')
+        ? line.slice('export'.length).trimStart()
+        : line;
+    const separatorIndex = assignment.indexOf('=');
+    if (separatorIndex <= 0) throw invalidLine(lineNumber);
 
-    const [, key, rawValue] = match;
+    const key = assignment.slice(0, separatorIndex).trimEnd();
+    if (!key || /\s/u.test(key)) throw invalidLine(lineNumber);
+    const rawValue = assignment.slice(separatorIndex + 1).trimStart();
     try {
       assertConfigurableExecutionEnvKey(key);
     } catch (error) {

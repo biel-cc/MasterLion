@@ -32,6 +32,10 @@ import {
   type ExecVirtualSubAgentParams,
   type UIChatMessage,
 } from '@lobechat/types';
+import type {
+  TopicExecutionSnapshot,
+  WorkspaceRef,
+} from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 import urlJoin from 'url-join';
 
@@ -165,6 +169,27 @@ const toAgentSignalSnapshotEvents = (
  * top-level option. One named home for the whole upward-call surface.
  */
 export interface AgentRuntimeDelegate {
+  /**
+   * Bind a device-created scratch workspace after (and only after) the first
+   * cwd-dependent tool succeeds. The owning service persists the topic's
+   * bind-once snapshot and returns the authoritative identity.
+   */
+  bindScratchAfterToolSuccess?: (params: {
+    deviceId: string;
+    rootPath: string;
+    target?: 'device' | 'local';
+    toolSucceeded: true;
+    topicId: string;
+  }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
+  /**
+   * Ask the selected device to create/realpath its deterministic topic scratch
+   * directory. This is intentionally separate from persistence so pure chat
+   * and failed tools never bind a workspace.
+   */
+  ensureScratchWorkspace?: (params: {
+    deviceId: string;
+    topicId: string;
+  }) => Promise<{ root: string }>;
   /**
    * Fork a group member ("call agent member") under a `lobe-group-management`
    * tool call. Handles both in-group (non-isolated, shared group session) and
@@ -2425,6 +2450,8 @@ export class AgentRuntimeService {
       execSubAgent: this.delegate.execSubAgent,
       execVirtualSubAgent: this.delegate.execVirtualSubAgent,
       execGroupMember: this.delegate.execGroupMember,
+      bindScratchAfterToolSuccess: this.delegate.bindScratchAfterToolSuccess,
+      ensureScratchWorkspace: this.delegate.ensureScratchWorkspace,
       hookDispatcher,
       loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,

@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => {
   return {
     checkHash: vi.fn(),
     createSandboxService: vi.fn(() => sandboxService),
+    deviceExecuteToolCall: vi.fn(),
+    deviceVerifySkillPaths: vi.fn(),
     fileService: {
       getFullFileUrl: vi.fn(),
     },
@@ -61,6 +63,13 @@ vi.mock('@/database/models/user', () => ({
 
 vi.mock('@/helpers/skillFilters', () => ({
   filterBuiltinSkills: vi.fn((skills: unknown) => skills),
+}));
+
+vi.mock('@/server/services/deviceGateway', () => ({
+  deviceGateway: {
+    executeToolCall: mocks.deviceExecuteToolCall,
+    verifySkillPaths: mocks.deviceVerifySkillPaths,
+  },
 }));
 
 vi.mock('@/server/services/agentDocuments', () => ({
@@ -114,6 +123,15 @@ describe('skillsRuntime', () => {
     });
     mocks.getAgentSkills.mockResolvedValue([]);
     mocks.getUserSettings.mockResolvedValue({ market: { accessToken: 'market-token' } });
+    mocks.deviceVerifySkillPaths.mockImplementation(async ({ skillDir, workspaceRoot }) => ({
+      skillDir,
+      workspaceRoot,
+    }));
+    mocks.deviceExecuteToolCall.mockResolvedValue({
+      content: 'ok',
+      state: { exitCode: 0, output: 'device ok', success: true },
+      success: true,
+    });
     mocks.sandboxService.callTool.mockResolvedValue({
       result: {
         exitCode: 0,
@@ -160,4 +178,119 @@ describe('skillsRuntime', () => {
       }),
     );
   }, 15_000);
+
+  it('injects the frozen device context, verifies paths, and never creates a sandbox', async () => {
+    const { skillsRuntime } = await import('../skills');
+    const runtime = await skillsRuntime.factory({
+      activeDeviceId: 'device-1',
+      executionContext: {
+        cwd: '/repo',
+        env: { secretKeys: [], sources: {}, values: { TOKEN: 'value' } },
+        plan: { deviceId: 'device-1', kind: 'device', target: 'device' },
+        version: 1,
+        workspace: {
+          deviceId: 'device-1',
+          id: 'workspace-1',
+          kind: 'device',
+          rootPath: '/repo',
+        },
+      },
+      operationId: 'operation-1',
+      projectSkills: [{ location: '/repo/.agents/skills/deploy/SKILL.md', name: 'deploy' }],
+      serverDB: {} as never,
+      skillRegistryResult: {
+        entries: [],
+        errors: [],
+        policy: {
+          includeAgentSkills: true,
+          includeProjectSkills: true,
+          includeUserSkills: true,
+          materializeForHeteroCli: 'off',
+          pinned: [],
+        },
+        precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+        skills: [
+          {
+            description: 'Deploy',
+            identifier: 'project:deploy',
+            key: 'project:project:deploy',
+            location: '/repo/.agents/skills/deploy/SKILL.md',
+            name: 'deploy',
+            scope: 'project',
+            source: 'project',
+          },
+        ],
+      },
+      toolCallId: 'tool-call-1',
+      toolManifestMap: {},
+      topicId: 'topic-1',
+      userId: 'user-1',
+    });
+
+    const result = await runtime.execScript({
+      activatedSkills: [{ id: 'project:deploy', name: 'deploy' }],
+      command: './scripts/deploy.sh',
+      description: 'Deploy',
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(mocks.deviceVerifySkillPaths).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      skillDir: '/repo/.agents/skills/deploy',
+      userId: 'user-1',
+      workspaceRoot: '/repo',
+    });
+    expect(mocks.deviceExecuteToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        executionContext: expect.objectContaining({
+          cwd: '/repo/.agents/skills/deploy',
+          env: {
+            SKILL_DIR: '/repo/.agents/skills/deploy',
+            TOKEN: 'value',
+            WORKSPACE_DIR: '/repo',
+          },
+          workspaceRootPath: '/repo/.agents/skills/deploy',
+        }),
+        operationId: 'operation-1',
+        toolCallId: 'tool-call-1',
+      }),
+      expect.objectContaining({ apiName: 'runCommand', identifier: 'lobe-local-system' }),
+      undefined,
+    );
+    expect(mocks.createSandboxService).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when device path verification is unavailable', async () => {
+    mocks.deviceVerifySkillPaths.mockResolvedValue(undefined);
+    const { skillsRuntime } = await import('../skills');
+    const runtime = await skillsRuntime.factory({
+      activeDeviceId: 'device-1',
+      executionContext: {
+        cwd: '/repo',
+        plan: { deviceId: 'device-1', kind: 'device', target: 'device' },
+        version: 1,
+        workspace: {
+          deviceId: 'device-1',
+          id: 'workspace-1',
+          kind: 'device',
+          rootPath: '/repo',
+        },
+      },
+      projectSkills: [{ location: '/repo/.agents/skills/deploy/SKILL.md', name: 'deploy' }],
+      serverDB: {} as never,
+      toolManifestMap: {},
+      userId: 'user-1',
+    });
+
+    const result = await runtime.execScript({
+      activatedSkills: [{ id: 'project:deploy', name: 'deploy' }],
+      command: './scripts/deploy.sh',
+      description: 'Deploy',
+    });
+
+    expect(result).toMatchObject({ state: { errorCode: 'WORKSPACE_REQUIRED' }, success: false });
+    expect(mocks.deviceExecuteToolCall).not.toHaveBeenCalled();
+    expect(mocks.createSandboxService).not.toHaveBeenCalled();
+  });
 });

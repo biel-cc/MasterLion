@@ -4,7 +4,6 @@ import type {
 } from '@lobechat/types/src/agent/agencyConfig';
 import type { RuntimeEnvMode } from '@lobechat/types/src/agent/agentConfig';
 import type { LobeAgentChatConfig } from '@lobechat/types/src/agent/chatConfig';
-
 import type { ExecutionPlan } from '@lobechat/types/src/executionContext';
 import type {
   ExecutionTargetByPlatform,

@@ -581,8 +581,8 @@ export interface EnabledAiModel {
   providerId: string;
   releasedAt?: string;
   settings?: AiModelSettings;
-  source?: AiModelSourceType;
   sort?: number;
+  source?: AiModelSourceType;
   type: AiModelType;
   visible?: boolean;
 }

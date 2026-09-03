@@ -306,6 +306,7 @@ export class ConversationControlActionImpl {
             ? {
                 deviceId: pathDecision.deviceId,
                 modes: [...pathDecision.modes],
+                requestedPath: pathDecision.requestedPath,
                 rootPath: pathDecision.rootPath,
                 scope: 'operation' as const,
                 sourceOperationId: pathDecision.operationId,

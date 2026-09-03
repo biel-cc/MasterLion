@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { access, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -290,6 +290,38 @@ describe('HeterogeneousAgentCtr', () => {
       await expect(
         ctr.startSession({ agentType: 'claude-code', command: 'claude' }),
       ).rejects.toThrow('WORKSPACE_REQUIRED');
+      expect(spawnCalls).toHaveLength(0);
+    });
+
+    it('materializes enabled skills before creating the local CLI session', async () => {
+      const workspace = path.join(appStoragePath, 'workspace');
+      await mkdir(path.join(workspace, '.git', 'info'), { recursive: true });
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+      } as any);
+
+      await expect(
+        ctr.startSession({
+          agentType: 'claude-code',
+          command: 'claude',
+          cwd: workspace,
+          skillPolicy: 'project',
+          skills: [
+            {
+              content: '# Deploy\n\nDeploy safely.',
+              description: 'Deploy safely',
+              identifier: 'deploy',
+              key: 'builtin:deploy',
+              name: 'deploy',
+              source: 'builtin',
+            },
+          ],
+        }),
+      ).resolves.toEqual({ sessionId: expect.any(String) });
+      await expect(
+        readFile(path.join(workspace, '.claude', 'skills', 'masterino-deploy', 'SKILL.md'), 'utf8'),
+      ).resolves.toContain('Deploy safely');
       expect(spawnCalls).toHaveLength(0);
     });
 
@@ -639,7 +671,7 @@ describe('HeterogeneousAgentCtr', () => {
 
     it('sniffs image bytes when MIME and URL do not expose a usable extension', async () => {
       const pngBytes = Buffer.concat([
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
         Buffer.from('PNG_TEST'),
       ]);
       const imageList = [

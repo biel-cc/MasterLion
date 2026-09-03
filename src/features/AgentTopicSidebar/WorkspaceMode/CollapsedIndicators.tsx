@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import RingLoadingIcon from '@/components/RingLoading';
 
-import { type ProjectTopicStatusCounts } from '../ByProjectMode/statusCounts';
+import { type ProjectTopicStatusCounts } from './statusCounts';
 
 const rippleAnim = keyframes`
   0% {

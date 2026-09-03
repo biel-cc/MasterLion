@@ -19,10 +19,7 @@ import type {
   RunCommandOptions,
   RunCommandParams,
 } from '../types';
-import {
-  type DeviceSkillPathVerifier,
-  resolveSkillScriptExecutionRoute,
-} from './skillScriptRoute';
+import { type DeviceSkillPathVerifier, resolveSkillScriptExecutionRoute } from './skillScriptRoute';
 
 /**
  * Unified skill service interface for dependency injection.
@@ -281,6 +278,52 @@ export class SkillsExecutionRuntime {
   async runCommand(args: RunCommandParams): Promise<BuiltinServerRuntimeOutput> {
     const { command } = args;
 
+    if (this.executionContext) {
+      const { plan } = this.executionContext;
+      if (plan.kind === 'none') {
+        return {
+          content: 'A workspace is required to run a skill command.',
+          state: { errorCode: 'WORKSPACE_REQUIRED' },
+          success: false,
+        };
+      }
+      if (plan.kind === 'device-unrouted') {
+        return {
+          content: 'The selected device is unavailable for skill command execution.',
+          state: { errorCode: 'DEVICE_UNROUTED' },
+          success: false,
+        };
+      }
+      if (plan.kind === 'device') {
+        const cwd = this.executionContext.workspace?.rootPath ?? this.executionContext.cwd;
+        if (!cwd || !this.deviceScriptRunner) {
+          return {
+            content: 'Device skill command execution is not wired in this environment.',
+            state: { errorCode: 'WORKSPACE_REQUIRED' },
+            success: false,
+          };
+        }
+        try {
+          const result = await this.deviceScriptRunner(command, {
+            cwd,
+            description: args.description ?? 'Run skill command',
+            deviceId: plan.deviceId,
+            env: {
+              ...this.executionContext.env?.values,
+              WORKSPACE_DIR: cwd,
+            },
+          });
+          return this.formatCommandOutput(command, result);
+        } catch (error) {
+          return {
+            content: `Failed to execute command: ${(error as Error).message}`,
+            success: false,
+          };
+        }
+      }
+      // Sandbox intentionally keeps using its provider-owned service below.
+    }
+
     if (!this.service.runCommand) {
       return {
         content: 'Command execution is not available in this environment.',
@@ -301,6 +344,29 @@ export class SkillsExecutionRuntime {
 
   async exportFile(args: ExportFileParams): Promise<BuiltinServerRuntimeOutput> {
     const { path, filename } = args;
+
+    if (this.executionContext) {
+      const { plan } = this.executionContext;
+      if (plan.kind === 'device') {
+        return {
+          content: `The file is already on the device at ${path}`,
+          state: { filename, path },
+          success: true,
+        };
+      }
+      if (plan.kind !== 'sandbox') {
+        return {
+          content:
+            plan.kind === 'device-unrouted'
+              ? 'The selected device is unavailable for file export.'
+              : 'A workspace is required to export a skill file.',
+          state: {
+            errorCode: plan.kind === 'device-unrouted' ? 'DEVICE_UNROUTED' : 'WORKSPACE_REQUIRED',
+          },
+          success: false,
+        };
+      }
+    }
 
     if (!this.service.exportFile) {
       return {

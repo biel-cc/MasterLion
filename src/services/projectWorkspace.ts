@@ -107,6 +107,7 @@ export interface ProjectWorkspaceClient {
   list: (input?: { deviceId?: string; kind?: WorkspaceKind }) => Promise<ProjectWorkspaceItem[]>;
   listEnv: (input: { workspaceId: string }) => Promise<WorkspaceEnvEntrySummary[]>;
   listGrants: (input: { deviceId: string; topicId: string }) => Promise<WorkspaceAccessGrant[]>;
+  resolveRealPath?: (input: { deviceId: string; path: string }) => Promise<{ path: string }>;
   revoke: (input: TopicGrantRefInput) => Promise<WorkspaceAccessGrant>;
   revokeEnv: (input: { key: string; workspaceId: string }) => Promise<void>;
   saveEnv: (input: SaveWorkspaceEnvEntryInput & { workspaceId: string }) => Promise<void>;
@@ -174,6 +175,7 @@ interface RawProjectWorkspaceRouter {
   >;
   listEnv: RawProcedure<{ workspaceId: string }, WorkspaceEnvEntrySummary[]>;
   listGrants: RawProcedure<{ deviceId: string; topicId: string }, WorkspaceAccessGrant[]>;
+  resolveRealPath: RawProcedure<{ deviceId: string; path: string }, { path: string }>;
   revoke: RawProcedure<TopicGrantRefInput, WorkspaceAccessGrant>;
   revokeEnv: RawProcedure<{ key: string; workspaceId: string }, void>;
   saveEnv: RawProcedure<SaveWorkspaceEnvEntryInput & { workspaceId: string }, void>;
@@ -198,6 +200,7 @@ const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
     listGrants: (input) => router.listGrants.query(input),
     revoke: (input) => router.revoke.mutate(input),
     revokeEnv: (input) => router.revokeEnv.mutate(input),
+    resolveRealPath: (input) => router.resolveRealPath.query(input),
     saveEnv: (input) => router.saveEnv.mutate(input),
     update: (input) => router.update.mutate(input),
   };
@@ -269,6 +272,13 @@ export class ProjectWorkspaceService {
 
   revoke(input: TopicGrantRefInput) {
     return this.client().revoke(input);
+  }
+
+  /** Device-authoritative canonicalization for remote path-consent decisions. */
+  resolveRealPath(input: { deviceId: string; path: string }) {
+    const resolveRealPath = this.client().resolveRealPath;
+    if (!resolveRealPath) throw new ProjectWorkspaceSeamUnavailableError();
+    return resolveRealPath(input);
   }
 
   saveEnv(workspaceId: string, entry: SaveWorkspaceEnvEntryInput) {

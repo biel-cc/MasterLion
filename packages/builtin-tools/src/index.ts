@@ -23,6 +23,7 @@ import { MessageManifest } from '@lobechat/builtin-tool-message';
 import { PageAgentManifest } from '@lobechat/builtin-tool-page-agent';
 import { RemoteDeviceManifest } from '@lobechat/builtin-tool-remote-device';
 import { selfFeedbackIntentManifest } from '@lobechat/builtin-tool-self-iteration';
+import { SkillAuthoringManifest } from '@lobechat/builtin-tool-skill-authoring';
 import { SkillMaintainerManifest } from '@lobechat/builtin-tool-skill-maintainer';
 import { SkillStoreManifest } from '@lobechat/builtin-tool-skill-store';
 import { SkillsManifest } from '@lobechat/builtin-tool-skills';
@@ -43,6 +44,7 @@ export const defaultToolIds = [
   LobeActivatorManifest.identifier,
   SkillsManifest.identifier,
   SkillStoreManifest.identifier,
+  SkillAuthoringManifest.identifier,
   WebBrowsingManifest.identifier,
   KnowledgeBaseManifest.identifier,
   MemoryManifest.identifier,
@@ -161,6 +163,13 @@ export const builtinTools: LobeBuiltinTool[] = [
     hidden: true,
     identifier: SkillMaintainerManifest.identifier,
     manifest: SkillMaintainerManifest,
+    type: 'builtin',
+  },
+  {
+    discoverable: false,
+    hidden: true,
+    identifier: SkillAuthoringManifest.identifier,
+    manifest: SkillAuthoringManifest,
     type: 'builtin',
   },
   {

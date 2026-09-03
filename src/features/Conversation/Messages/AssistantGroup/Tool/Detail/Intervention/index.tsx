@@ -6,6 +6,7 @@ import { memo, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { localFileService } from '@/services/electron/localFileService';
+import { projectWorkspaceService } from '@/services/projectWorkspace';
 import { useChatStore } from '@/store/chat';
 import { useElectronStore } from '@/store/electron';
 import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
@@ -138,17 +139,22 @@ const Intervention = memo<InterventionProps>(
           return decision;
         }
 
-        // The current production realpath bridge is the trusted Electron main
-        // process. Never canonicalize a remote-device path on this machine.
-        if (!isDesktop || !currentDeviceId || currentDeviceId !== decision.deviceId) {
-          throw new Error('Trusted realpath is unavailable for the selected device');
-        }
-        const resolved = await localFileService.resolveRealPath({ path: decision.rootPath });
-        if (!resolved.success || !resolved.path) {
-          throw new Error(resolved.error || 'Unable to resolve the selected path');
+        let canonicalPath: string;
+        if (isDesktop && currentDeviceId === decision.deviceId) {
+          const resolved = await localFileService.resolveRealPath({ path: decision.rootPath });
+          if (!resolved.success || !resolved.path) {
+            throw new Error(resolved.error || 'Unable to resolve the selected path');
+          }
+          canonicalPath = resolved.path;
+        } else {
+          const resolved = await projectWorkspaceService.resolveRealPath({
+            deviceId: decision.deviceId,
+            path: decision.rootPath,
+          });
+          canonicalPath = resolved.path;
         }
 
-        const canonicalDecision = { ...decision, rootPath: resolved.path };
+        const canonicalDecision = { ...decision, rootPath: canonicalPath };
         if (decision.scope === 'topic') {
           const granted = await grantTopicAccess({
             deviceId: decision.deviceId,
@@ -158,7 +164,7 @@ const Intervention = memo<InterventionProps>(
               reason: 'workspace-path-consent',
               toolCallId,
             },
-            rootPath: resolved.path,
+            rootPath: canonicalPath,
             topicId: decision.topicId,
           });
           if (!granted.ok) throw new Error(granted.message || granted.code);

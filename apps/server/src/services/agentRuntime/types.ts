@@ -362,6 +362,8 @@ export interface OperationCreationParams {
     maxSteps: number;
     maxTotalTokens: number;
   };
+  /** Immutable operation-scoped workspace/cwd/access/env authority. */
+  executionContext?: ExecutionContext;
   /**
    * Resolved execution plan for the run (see `resolveExecutionPlan`).
    * Forwarded into `state.metadata.executionPlan` so step-level layers (the
@@ -369,8 +371,6 @@ export interface OperationCreationParams {
    * device capability from raw config.
    */
   executionPlan?: ExecutionPlan;
-  /** Immutable operation-scoped workspace/cwd/access/env authority. */
-  executionContext?: ExecutionContext;
   /**
    * External lifecycle hooks
    * Registered once, auto-adapt to local (in-memory) or production (webhook) mode
@@ -381,14 +381,12 @@ export interface OperationCreationParams {
   /** Initial step count offset for resumed operations (accumulated from previous runs) */
   initialStepCount?: number;
   maxSteps?: number;
-  modelRuntimeConfig?: any;
   /** Model evidence frozen together with this operation. */
   modelCatalogSnapshot?: ModelCatalogSnapshot;
+  modelRuntimeConfig?: any;
   operationId: string;
   /** Operation-level skill set for SkillResolver */
   operationSkillSet?: OperationSkillSet;
-  /** Full registry decision/trace frozen at operation creation. */
-  skillRegistryResult?: SkillRegistryResult;
   /**
    * Operation ID of the parent run when this operation is a sub-agent
    * invocation (e.g. spawned via `execSubAgent`). Persisted to
@@ -400,6 +398,8 @@ export interface OperationCreationParams {
   queueRetryDelay?: string;
   /** Abort startup before the first step is scheduled */
   signal?: AbortSignal;
+  /** Full registry decision/trace frozen at operation creation. */
+  skillRegistryResult?: SkillRegistryResult;
   /**
    * Whether the LLM call should use streaming.
    * Defaults to true. Set to false for non-streaming scenarios (e.g., bot integrations).

@@ -849,6 +849,7 @@ describe('ConversationControl actions', () => {
               pathConsent: {
                 deviceId: 'device-1',
                 modes: ['read'],
+                requestedPath: '/workspace/shared',
                 rootPath: '/workspace/shared',
                 scope: 'operation',
                 sourceOperationId: 'source-op-1',

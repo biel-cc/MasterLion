@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { acceptanceMatrix, frozenArgv } from './acceptanceMatrix';
 import { registeredAcceptanceIds } from './acceptanceAssertions';
+import { acceptanceMatrix, frozenArgv } from './acceptanceMatrix';
 import { acceptanceIds } from './contracts';
 
 describe('workspace runtime acceptance inventory', () => {

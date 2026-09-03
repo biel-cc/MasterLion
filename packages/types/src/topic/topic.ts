@@ -1,5 +1,9 @@
 import type { BaseDataModel } from '../meta';
-import type { TopicExecutionSnapshot, WorkspaceKind } from '../projectWorkspace';
+import type {
+  TopicExecutionIntent,
+  TopicExecutionSnapshot,
+  WorkspaceKind,
+} from '../projectWorkspace';
 
 // Type definitions
 export type ShareVisibility = 'private' | 'link';
@@ -109,9 +113,9 @@ export interface OnboardingSessionSnapshot {
 export interface ChatTopicMetadata {
   bot?: ChatTopicBotContext;
   boundDeviceId?: string;
+  cronJobId?: string;
   /** Immutable execution authority captured and written by the server. */
   executionSnapshot?: TopicExecutionSnapshot;
-  cronJobId?: string;
   /**
    * Scoped pointer to the currently active assistant message for a running
    * heterogeneous agent operation. Includes `operationId` so cold-start
@@ -175,10 +179,6 @@ export interface ChatTopicMetadata {
   } | null;
   userMemoryExtractRunState?: TopicUserMemoryExtractRunState;
   userMemoryExtractStatus?: 'pending' | 'completed' | 'failed';
-  /** Server-authored workspace identity; clients may only submit workspace intent. */
-  workspaceId?: string;
-  /** Compatibility projection of the persisted workspace row kind. */
-  workspaceKind?: WorkspaceKind;
   /**
    * Topic-level working directory.
    * On desktop: local filesystem path for the CC session cwd.
@@ -189,6 +189,10 @@ export interface ChatTopicMetadata {
    * For sidebar grouping, topics are bucketed by this field (byProject mode).
    */
   workingDirectory?: string;
+  /** Server-authored workspace identity; clients may only submit workspace intent. */
+  workspaceId?: string;
+  /** Compatibility projection of the persisted workspace row kind. */
+  workspaceKind?: WorkspaceKind;
 }
 
 export interface ChatTopicSummary {
@@ -264,6 +268,8 @@ export interface RecentTopic {
 }
 
 export interface CreateTopicParams {
+  /** One-shot target/workspace intent consumed by the server during topic creation. */
+  executionIntent?: TopicExecutionIntent;
   favorite?: boolean;
   groupId?: string | null;
   messages?: string[];

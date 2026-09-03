@@ -28,6 +28,7 @@ import type {
   UIChatMessage,
 } from '@lobechat/types';
 import { AgentRuntimeErrorType, ThreadStatus, ThreadType } from '@lobechat/types';
+import type { ProjectWorkspaceSkillPolicy, SkillRef } from '@lobechat/types/src/projectWorkspace';
 import { createNanoId } from '@lobechat/utils';
 import { t } from 'i18next';
 
@@ -219,6 +220,12 @@ export interface HeterogeneousAgentExecutorParams {
   operationId: string;
   /** CC session ID from previous execution in this topic (for --resume) */
   resumeSessionId?: string;
+  /** Frozen workspace materialization policy for this operation. */
+  skillPolicy?: ProjectWorkspaceSkillPolicy['materializeForHeteroCli'];
+  /** Registry winners whose complete bodies are available for CLI discovery. */
+  skills?: Array<
+    Pick<SkillRef, 'content' | 'description' | 'identifier' | 'key' | 'name' | 'source'>
+  >;
   workingDirectory?: string;
 }
 
@@ -369,6 +376,8 @@ export const executeHeterogeneousAgent = async (
     message,
     operationId,
     resumeSessionId,
+    skillPolicy,
+    skills,
     workingDirectory,
   } = params;
 
@@ -1066,6 +1075,8 @@ export const executeHeterogeneousAgent = async (
       cwd: workingDirectory,
       env: heterogeneousProvider.env,
       resumeSessionId,
+      skillPolicy,
+      skills,
     });
     agentSessionId = result.sessionId;
     if (!agentSessionId) throw new Error('Agent session returned no sessionId');

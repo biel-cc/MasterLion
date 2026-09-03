@@ -1,28 +1,14 @@
-export { SkillRegistryService, type SkillRegistryServiceOptions } from './SkillRegistryService';
 export {
   createSkillAuthoringRuntimeService,
   type SkillAuthoringRuntimeServiceAdapter,
 } from './createSkillAuthoringRuntimeService';
 export {
-  HeterogeneousSkillMaterializer,
   type HeterogeneousSkillCli,
+  HeterogeneousSkillMaterializer,
   type SkillMaterializationFsAdapter,
   type SkillMaterializationOptions,
   type SkillMaterializationResult,
 } from './HeterogeneousSkillMaterializer';
-export {
-  MAX_PROJECT_SKILL_FILE_BYTES,
-  MAX_PROJECT_SKILL_FILES,
-  MAX_PROJECT_SKILL_TOTAL_BYTES,
-  ProjectSkillService,
-  ProjectSkillValidationError,
-  type CreateProjectSkillInput,
-  type ProjectSkillFsAdapter,
-  type ProjectSkillFsStat,
-  type ProjectSkillValidationResult,
-  type PromoteProjectSkillAdapter,
-  type UpdateProjectSkillInput,
-} from './ProjectSkillService';
 export {
   assertSafeSkillName,
   normalizeRelativeSkillPath,
@@ -30,9 +16,23 @@ export {
   resolveWithin,
 } from './pathSafety';
 export {
+  type CreateProjectSkillInput,
+  MAX_PROJECT_SKILL_FILE_BYTES,
+  MAX_PROJECT_SKILL_FILES,
+  MAX_PROJECT_SKILL_TOTAL_BYTES,
+  type ProjectSkillFsAdapter,
+  type ProjectSkillFsStat,
+  ProjectSkillService,
+  ProjectSkillValidationError,
+  type ProjectSkillValidationResult,
+  type PromoteProjectSkillAdapter,
+  type UpdateProjectSkillInput,
+} from './ProjectSkillService';
+export {
   createAgentSkillProvider,
   createBuiltinSkillProvider,
   createProjectSkillProvider,
   createUserSkillProvider,
   type RegistrySourceSkill,
 } from './providers';
+export { SkillRegistryService, type SkillRegistryServiceOptions } from './SkillRegistryService';

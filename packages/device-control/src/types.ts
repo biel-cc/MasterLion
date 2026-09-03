@@ -1,3 +1,5 @@
+import type { HeterogeneousSkillMaterializationMode, MaterializableSkill } from './cliSkills';
+
 /**
  * Types for the device-control RPC surface. These mirror the shapes in
  * `@lobechat/electron-client-ipc` (desktop) and `@lobechat/types` (server), but
@@ -57,6 +59,14 @@ export interface StatPathResult {
   repoType?: 'git' | 'github';
 }
 
+export interface ResolveRealPathParams {
+  path: string;
+}
+
+export interface ResolveRealPathResult {
+  path: string;
+}
+
 export interface EnsureScratchWorkspaceParams {
   /** Stable topic identifier; it is encoded into one safe host path segment. */
   topicId: string;
@@ -65,6 +75,16 @@ export interface EnsureScratchWorkspaceParams {
 export interface EnsureScratchWorkspaceResult {
   root: string;
   topicSegment: string;
+}
+
+export interface VerifySkillPathsParams {
+  skillDir: string;
+  workspaceRoot: string;
+}
+
+export interface VerifySkillPathsResult {
+  skillDir: string;
+  workspaceRoot: string;
 }
 
 export interface HeterogeneousAgentRunParams {
@@ -76,6 +96,8 @@ export interface HeterogeneousAgentRunParams {
   operationId: string;
   prompt: string;
   resumeSessionId?: string;
+  skillPolicy?: HeterogeneousSkillMaterializationMode;
+  skills?: MaterializableSkill[];
   systemContext?: string;
   topicId: string;
 }
@@ -173,10 +195,10 @@ export interface DeviceControlDeps extends WorkspaceScanDeps {
   getLocalFilePreview: (params: LocalFilePreviewUrlParams) => Promise<LocalFilePreviewResult>;
   /** Build the project file index. */
   getProjectFileIndex: (params: ProjectFileIndexParams) => Promise<ProjectFileIndexResult>;
-  /** Explicit host root used only by ensureScratchWorkspace. */
-  scratchRoot?: string;
   /** Shared start/resume implementation used by the v2 RPC and legacy WS entry. */
   runHeterogeneousAgent?: (
     params: HeterogeneousAgentRunParams,
   ) => Promise<HeterogeneousAgentRunResult>;
+  /** Explicit host root used only by ensureScratchWorkspace. */
+  scratchRoot?: string;
 }

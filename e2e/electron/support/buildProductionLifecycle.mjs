@@ -10,6 +10,37 @@ const electronRoot = path.resolve(supportDirectory, '..');
 const repositoryRoot = path.resolve(electronRoot, '../..');
 const artifactDirectory = path.resolve(electronRoot, '.artifacts');
 
+// Keep the production harness aligned with the repository's ordered tsconfig
+// path fallbacks. Vite aliases do not support fallback arrays, so the two
+// source-only utility modules must precede the package-level utility alias.
+const projectAliases = [
+  {
+    find: '@/const/locale',
+    replacement: path.resolve(repositoryRoot, 'src/const/locale.ts'),
+  },
+  {
+    find: '@/utils/agentDocumentContextMapping',
+    replacement: path.resolve(repositoryRoot, 'src/utils/agentDocumentContextMapping.ts'),
+  },
+  {
+    find: '@/utils/electron/ipc',
+    replacement: path.resolve(repositoryRoot, 'src/utils/electron/ipc.ts'),
+  },
+  { find: '@/const', replacement: path.resolve(repositoryRoot, 'packages/const/src') },
+  { find: '@/utils', replacement: path.resolve(repositoryRoot, 'packages/utils/src') },
+  { find: '@/types', replacement: path.resolve(repositoryRoot, 'packages/types/src') },
+  { find: '@/envs', replacement: path.resolve(repositoryRoot, 'packages/env/src') },
+  { find: '@/libs/trpc', replacement: path.resolve(repositoryRoot, 'packages/trpc/src') },
+  { find: '@/config', replacement: path.resolve(repositoryRoot, 'packages/app-config/src') },
+  { find: '@/locales', replacement: path.resolve(repositoryRoot, 'packages/locales/src') },
+  {
+    find: '@/business/server',
+    replacement: path.resolve(repositoryRoot, 'packages/business-server/src'),
+  },
+  { find: '@/server', replacement: path.resolve(repositoryRoot, 'apps/server/src') },
+  { find: '@', replacement: path.resolve(repositoryRoot, 'src') },
+];
+
 const transpile = async ({ outputName, sourcePath }) => {
   const source = await readFile(sourcePath, 'utf8');
   const output = ts.transpileModule(source, {
@@ -89,8 +120,7 @@ export const buildProductionLifecycle = async () => {
           find: '@/store/chat',
           replacement: path.resolve(electronRoot, 'production-app/chatStore.ts'),
         },
-        { find: '@/utils', replacement: path.resolve(repositoryRoot, 'packages/utils/src') },
-        { find: '@', replacement: path.resolve(repositoryRoot, 'src') },
+        ...projectAliases,
       ],
       dedupe: ['react', 'react-dom'],
       tsconfigPaths: true,
@@ -132,8 +162,7 @@ export const buildProductionLifecycle = async () => {
           find: '@/database',
           replacement: path.resolve(repositoryRoot, 'packages/database/src'),
         },
-        { find: '@/utils', replacement: path.resolve(repositoryRoot, 'packages/utils/src') },
-        { find: '@', replacement: path.resolve(repositoryRoot, 'src') },
+        ...projectAliases,
       ],
       tsconfigPaths: true,
     },

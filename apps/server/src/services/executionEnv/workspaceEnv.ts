@@ -58,7 +58,7 @@ export class WorkspaceEnvService {
     const row = await this.getRow(workspaceId);
     const encryptedValue = await this.gateKeeper.encrypt(value);
     const env: ProjectWorkspaceEnvRecord = {
-      ...(row.env ?? {}),
+      ...row.env,
       [key]: { secret, value: encryptedValue },
     };
     await this.workspaceModel.updateEnvironment(workspaceId, { env });
@@ -67,7 +67,7 @@ export class WorkspaceEnvService {
   revoke = async (workspaceId: string, key: string): Promise<void> => {
     requireConfigurableKey(key);
     const row = await this.getRow(workspaceId);
-    const env = { ...(row.env ?? {}) };
+    const env = { ...row.env };
     delete env[key];
     await this.workspaceModel.updateEnvironment(workspaceId, {
       env: Object.keys(env).length > 0 ? env : null,

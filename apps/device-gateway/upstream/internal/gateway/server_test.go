@@ -151,6 +151,42 @@ func TestServiceTokenStillRequiresUserID(t *testing.T) {
 	}
 }
 
+func TestBuildAgentRunRequestForwardsFrozenAuthority(t *testing.T) {
+	body := deviceHTTPBody{
+		AgentType:        "codex",
+		CWD:              "/workspace",
+		Env:              map[string]string{"TOKEN": "secret"},
+		ExecutionContext: json.RawMessage(`{"cwd":"/workspace","operationId":"op-1"}`),
+		ImageList:        json.RawMessage(`[{"url":"https://example.test/image.png"}]`),
+		JWT:              "jwt",
+		ModelRef:         json.RawMessage(`{"modelId":"gpt","operationId":"op-1"}`),
+		OperationID:      "op-1",
+		Prompt:           "run",
+		SkillPolicy:      "user",
+		Skills:           json.RawMessage(`[{"key":"user:test","content":"body"}]`),
+		TopicID:          "topic-1",
+	}
+
+	payload, err := json.Marshal(buildAgentRunRequest(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(payload, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"cwd", "env", "executionContext", "imageList", "modelRef", "skills", "skillPolicy"} {
+		if _, ok := forwarded[key]; !ok {
+			t.Fatalf("frozen authority field %q was dropped: %#v", key, forwarded)
+		}
+	}
+	executionContext := forwarded["executionContext"].(map[string]any)
+	if executionContext["operationId"] != "op-1" {
+		t.Fatalf("wrong execution context: %#v", executionContext)
+	}
+}
+
 func TestUnauthenticatedConnectionCannotReplaceAuthenticatedConnection(t *testing.T) {
 	srv, privateKey := newTestServer(t)
 	httpServer := httptest.NewServer(srv.Routes())

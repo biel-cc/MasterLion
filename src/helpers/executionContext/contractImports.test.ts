@@ -1,6 +1,4 @@
-import { describe, expect, it } from 'vitest';
-
-import { decideContextBudget, type ContextBudgetDecision } from '@lobechat/types/src/contextBudget';
+import { type ContextBudgetDecision,decideContextBudget } from '@lobechat/types/src/contextBudget';
 import type { ExecutionContext, ExecutionEnvAdapter } from '@lobechat/types/src/executionContext';
 import {
   getChatInputModalityConclusion,
@@ -11,6 +9,7 @@ import type {
   TopicExecutionSnapshot,
   TopicPlacement,
 } from '@lobechat/types/src/projectWorkspace';
+import { describe, expect, it } from 'vitest';
 
 describe('workspace runtime package subpath contracts', () => {
   it('supports representative A-F compile and runtime consumers without the root barrel', async () => {

@@ -7,8 +7,8 @@ import {
   type DeviceSystemInfo,
   type DeviceToolCallResult,
   GatewayHttpClient,
-  type GatewayToolCallExecutionContext,
   type GatewayMcpStdioParams,
+  type GatewayToolCallExecutionContext,
 } from '@lobechat/device-gateway-client';
 import type { HeterogeneousAgentType } from '@lobechat/heterogeneous-agents';
 import type {
@@ -188,6 +188,33 @@ export class DeviceGateway {
       };
     } catch (error) {
       log('initWorkspace: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Lazily create the topic-scoped scratch directory on the selected device. */
+  async ensureScratchWorkspace(params: {
+    deviceId: string;
+    timeout?: number;
+    topicId: string;
+    userId: string;
+  }): Promise<{ root: string } | undefined> {
+    const { userId, deviceId, topicId, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ root: string }>(
+        { deviceId, timeout, userId },
+        { method: 'ensureScratchWorkspace', params: { topicId } },
+      );
+      if (!result.success || !result.data?.root) {
+        log('ensureScratchWorkspace: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return { root: result.data.root };
+    } catch (error) {
+      log('ensureScratchWorkspace: error for deviceId=%s — %O', deviceId, error);
       return undefined;
     }
   }
@@ -864,12 +891,113 @@ export class DeviceGateway {
     }
   }
 
+  /** Resolve an existing absolute path on the selected device. Fail closed when unreachable. */
+  async resolveRealPath(params: {
+    deviceId: string;
+    path: string;
+    timeout?: number;
+    userId: string;
+  }): Promise<string | undefined> {
+    const { userId, deviceId, path, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ path: string }>(
+        { deviceId, timeout, userId },
+        { method: 'resolveRealPath', params: { path } },
+      );
+      if (!result.success || !result.data?.path) {
+        log('resolveRealPath: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data.path;
+    } catch (error) {
+      log('resolveRealPath: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Device-authoritative realpath proof for project skill script execution. */
+  async verifySkillPaths(params: {
+    deviceId: string;
+    skillDir: string;
+    timeout?: number;
+    userId: string;
+    workspaceRoot: string;
+  }): Promise<{ skillDir: string; workspaceRoot: string } | undefined> {
+    const { userId, deviceId, skillDir, workspaceRoot, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ skillDir: string; workspaceRoot: string }>(
+        { deviceId, timeout, userId },
+        { method: 'verifySkillPaths', params: { skillDir, workspaceRoot } },
+      );
+      if (!result.success || !result.data) {
+        log('verifySkillPaths: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data;
+    } catch (error) {
+      log('verifySkillPaths: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Invoke one of the device-owned project skill authoring operations. */
+  async executeProjectSkillRpc<T>(params: {
+    deviceId: string;
+    input: Record<string, unknown>;
+    method:
+      | 'createProjectSkill'
+      | 'deleteProjectSkill'
+      | 'packProjectSkill'
+      | 'renameProjectSkill'
+      | 'updateProjectSkill'
+      | 'validateProjectSkill';
+    timeout?: number;
+    userId: string;
+  }): Promise<T> {
+    const { userId, deviceId, input, method, timeout = 30_000 } = params;
+    const client = this.getClient();
+    if (!client) throw new Error('GATEWAY_NOT_CONFIGURED');
+
+    const result = await client.invokeRpc<T>(
+      { deviceId, timeout, userId },
+      { method, params: input },
+    );
+    if (!result.success || result.data === undefined) {
+      throw new Error(result.error || `${method} failed`);
+    }
+    return result.data;
+  }
+
   async dispatchAgentRun(params: {
     agentType: HeterogeneousAgentType;
     cwd?: string;
     deviceId?: string;
+    env?: Record<string, string>;
+    executionContext?: GatewayToolCallExecutionContext;
     /** Image attachments forwarded to the device as fetchable (signed) URLs. */
     imageList?: Array<{ id?: string; url: string }>;
+    modelRef?: {
+      capturedAt: string;
+      kind: string;
+      modelId: string;
+      operationId: string;
+      providerId: string;
+    };
+    skills?: Array<{
+      content?: string;
+      description: string;
+      identifier: string;
+      key: string;
+      name: string;
+      source: string;
+    }>;
+    skillPolicy?: 'off' | 'project' | 'user';
     jwt: string;
     operationId: string;
     prompt: string;

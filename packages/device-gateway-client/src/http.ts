@@ -221,8 +221,25 @@ export class GatewayHttpClient {
     cwd?: string;
     deviceId?: string;
     env?: Record<string, string>;
+    executionContext?: GatewayToolCallExecutionContext;
     /** Image attachments forwarded into the `agent_run_request` message. */
     imageList?: Array<{ id?: string; url: string }>;
+    modelRef?: {
+      capturedAt: string;
+      kind: string;
+      modelId: string;
+      operationId: string;
+      providerId: string;
+    };
+    skills?: Array<{
+      content?: string;
+      description: string;
+      identifier: string;
+      key: string;
+      name: string;
+      source: string;
+    }>;
+    skillPolicy?: 'off' | 'project' | 'user';
     jwt: string;
     operationId: string;
     prompt: string;

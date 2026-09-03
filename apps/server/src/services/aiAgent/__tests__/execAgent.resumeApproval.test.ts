@@ -10,6 +10,8 @@ const {
   mockFindMessagePlugin,
   mockMessageCreate,
   mockMessageQuery,
+  mockGetWorkspaceState,
+  mockBindScratch,
   mockUpdateMessagePlugin,
   mockUpdateToolMessage,
 } = vi.hoisted(() => ({
@@ -18,6 +20,8 @@ const {
   mockFindMessagePlugin: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockMessageQuery: vi.fn(),
+  mockGetWorkspaceState: vi.fn(),
+  mockBindScratch: vi.fn(),
   mockUpdateMessagePlugin: vi.fn(),
   mockUpdateToolMessage: vi.fn(),
 }));
@@ -25,8 +29,10 @@ const {
 const { mockDeviceProxy } = vi.hoisted(() => ({
   mockDeviceProxy: {
     isConfigured: false,
+    ensureScratchWorkspace: vi.fn(),
     queryDeviceList: vi.fn().mockResolvedValue([]),
     queryDeviceSystemInfo: vi.fn().mockResolvedValue(undefined),
+    resolveRealPath: vi.fn().mockResolvedValue('/outside/docs'),
   },
 }));
 
@@ -68,6 +74,12 @@ vi.mock('@/server/services/agent', () => ({
 
 vi.mock('@/database/models/plugin', () => ({
   PluginModel: vi.fn().mockImplementation(() => ({ query: vi.fn().mockResolvedValue([]) })),
+}));
+
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
+    findById: vi.fn().mockResolvedValue({ env: {}, id: 'workspace-a' }),
+  })),
 }));
 
 vi.mock('@/database/models/topic', () => ({
@@ -132,7 +144,19 @@ vi.mock('@/server/services/deviceGateway', () => ({
 
 vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
   DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
-    getState: vi.fn().mockResolvedValue(undefined),
+    getState: mockGetWorkspaceState,
+  })),
+}));
+
+vi.mock('@/server/services/projectWorkspace', () => ({
+  ProjectWorkspaceService: vi.fn().mockImplementation(() => ({
+    bindScratchAfterToolSuccess: mockBindScratch,
+  })),
+}));
+
+vi.mock('@/server/services/workspaceAccessGrant', () => ({
+  WorkspaceAccessGrantService: vi.fn().mockImplementation(() => ({
+    buildAccessRoots: vi.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -187,6 +211,13 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     mockFindMessagePlugin.mockResolvedValue(pendingToolPlugin);
     mockMessageQuery.mockResolvedValue([{ content: 'hi', id: 'history-1', role: 'user' }]);
     mockMessageCreate.mockResolvedValue({ id: 'assistant-msg-new' });
+    mockGetWorkspaceState.mockResolvedValue({
+      snapshot: {
+        target: 'none',
+        targetCapturedAt: '2026-09-04T00:00:00.000Z',
+        version: 1,
+      },
+    });
     mockUpdateMessagePlugin.mockResolvedValue(undefined);
     mockUpdateToolMessage.mockResolvedValue(undefined);
     mockDeviceProxy.isConfigured = false;
@@ -204,6 +235,38 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     parentMessageId: 'tool-msg-1',
     prompt: '',
   };
+
+  describe('scratch runtime delegate seams', () => {
+    it('accepts only a device-authored absolute scratch root and does not bind it yet', async () => {
+      mockDeviceProxy.ensureScratchWorkspace.mockResolvedValue({ root: '/scratch/topic-1' });
+
+      await expect(
+        service.ensureScratchWorkspace({ deviceId: 'device-a', topicId: 'topic-1' }),
+      ).resolves.toEqual({ root: '/scratch/topic-1' });
+      expect(mockBindScratch).not.toHaveBeenCalled();
+    });
+
+    it('binds scratch only through the explicit successful-tool callback', async () => {
+      mockBindScratch.mockResolvedValue({ id: 'workspace-scratch' });
+
+      await service.bindScratchAfterToolSuccess({
+        deviceId: 'device-a',
+        rootPath: '/scratch/topic-1',
+        target: 'local',
+        toolSucceeded: true,
+        topicId: 'topic-1',
+      });
+
+      expect(mockBindScratch).toHaveBeenCalledWith({
+        deviceId: 'device-a',
+        rootPath: '/scratch/topic-1',
+        target: 'local',
+        toolSucceeded: true,
+        topicId: 'topic-1',
+        workspaceId: undefined,
+      });
+    });
+  });
 
   describe('decision=approved', () => {
     it('persists intervention=approved and seeds initialContext for human_approved_tool', async () => {
@@ -252,6 +315,14 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
           platform: 'darwin',
         },
       ]);
+      mockGetWorkspaceState.mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+        },
+      });
       mockFindMessagePlugin.mockResolvedValue({
         ...pendingToolPlugin,
         state: {
@@ -276,6 +347,7 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
           pathConsent: {
             deviceId: 'device-a',
             modes: ['read'],
+            requestedPath: '/outside/docs',
             rootPath: '/outside/docs',
             scope: 'operation',
             sourceOperationId: 'op-old',
@@ -297,6 +369,11 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
         topicId: 'topic-1',
       });
       expect(createOpArgs.operationId).not.toBe('op-old');
+      expect(mockDeviceProxy.resolveRealPath).toHaveBeenCalledWith({
+        deviceId: 'device-a',
+        path: '/outside/docs',
+        userId: 'user-1',
+      });
       expect(mockUpdateMessagePlugin).toHaveBeenCalledWith('tool-msg-1', {
         intervention: { status: 'approved' },
       });
@@ -386,6 +463,7 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
             pathConsent: {
               deviceId: 'device-a',
               modes: ['read'],
+              requestedPath: '/outside/docs',
               rootPath: '/outside/docs',
               scope: 'operation',
               sourceOperationId: 'op-replayed',

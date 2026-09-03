@@ -954,6 +954,43 @@ describe('DeviceGateway', () => {
     });
   });
 
+  describe('resolveRealPath', () => {
+    it('returns the device-authored canonical path', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({
+        data: { path: '/canonical/project' },
+        success: true,
+      });
+
+      const result = await new DeviceGateway().resolveRealPath({
+        deviceId: 'dev-1',
+        path: '/project-link',
+        userId: 'user-1',
+      });
+
+      expect(result).toBe('/canonical/project');
+      expect(mockClient.invokeRpc).toHaveBeenCalledWith(
+        { deviceId: 'dev-1', timeout: 8000, userId: 'user-1' },
+        { method: 'resolveRealPath', params: { path: '/project-link' } },
+      );
+    });
+
+    it('fails closed when the device cannot prove the path', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({ error: 'offline', success: false });
+
+      await expect(
+        new DeviceGateway().resolveRealPath({
+          deviceId: 'dev-1',
+          path: '/project-link',
+          userId: 'user-1',
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('getClient (lazy initialization)', () => {
     it('should return null when URL is missing', async () => {
       mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';

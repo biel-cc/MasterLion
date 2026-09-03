@@ -19,6 +19,14 @@ import {
   writeLocalFile,
 } from '@lobechat/local-file-shell';
 
+import {
+  createProjectSkillOnDevice,
+  deleteProjectSkillOnDevice,
+  packProjectSkillOnDevice,
+  renameProjectSkillOnDevice,
+  updateProjectSkillOnDevice,
+  validateProjectSkillOnDevice,
+} from './projectSkillAuthoring';
 import type {
   DeviceControlDeps,
   EnsureScratchWorkspaceParams,
@@ -27,8 +35,17 @@ import type {
   ListProjectSkillsParams,
   LocalFilePreviewUrlParams,
   ProjectFileIndexParams,
+  ResolveRealPathParams,
+  VerifySkillPathsParams,
 } from './types';
-import { ensureScratchWorkspace, initWorkspace, listProjectSkills, statPath } from './workspace';
+import {
+  ensureScratchWorkspace,
+  initWorkspace,
+  listProjectSkills,
+  resolveRealPath,
+  statPath,
+  verifySkillPaths,
+} from './workspace';
 
 /**
  * Every method name the device-control RPC dispatcher understands. Mirrors the
@@ -42,6 +59,14 @@ export const DEVICE_RPC_METHODS = [
   'runHeterogeneousAgent',
   'listProjectSkills',
   'statPath',
+  'resolveRealPath',
+  'verifySkillPaths',
+  'createProjectSkill',
+  'updateProjectSkill',
+  'renameProjectSkill',
+  'deleteProjectSkill',
+  'validateProjectSkill',
+  'packProjectSkill',
   'getProjectFileIndex',
   'getLocalFilePreview',
   'moveLocalFiles',
@@ -105,6 +130,38 @@ export const executeDeviceRpc = async (
 
     case 'statPath': {
       return statPath(params as { path: string });
+    }
+
+    case 'resolveRealPath': {
+      return resolveRealPath(params as ResolveRealPathParams);
+    }
+
+    case 'verifySkillPaths': {
+      return verifySkillPaths(params as VerifySkillPathsParams);
+    }
+
+    case 'createProjectSkill': {
+      return createProjectSkillOnDevice(params as never);
+    }
+
+    case 'updateProjectSkill': {
+      return updateProjectSkillOnDevice(params as never);
+    }
+
+    case 'renameProjectSkill': {
+      return renameProjectSkillOnDevice(params as never);
+    }
+
+    case 'deleteProjectSkill': {
+      return deleteProjectSkillOnDevice(params as never);
+    }
+
+    case 'validateProjectSkill': {
+      return validateProjectSkillOnDevice(params as never);
+    }
+
+    case 'packProjectSkill': {
+      return packProjectSkillOnDevice(params as never);
     }
 
     case 'getProjectFileIndex': {

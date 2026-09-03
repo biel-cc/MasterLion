@@ -1,6 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { _electron as electron } from '@playwright/test';
@@ -40,7 +40,7 @@ export const launchElectronTestApp = async (options = {}) => {
     env: {
       ...process.env,
       MASTERINO_ELECTRON_E2E: '1',
-      ...(options.env ?? {}),
+      ...options.env,
     },
     executablePath: resolveElectronExecutable(),
   });

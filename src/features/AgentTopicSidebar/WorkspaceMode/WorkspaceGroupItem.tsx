@@ -5,6 +5,7 @@ import { FolderClosedIcon, FolderOpenIcon, PlusIcon } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import TopicItem from '@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
 import { useElectronStore } from '@/store/electron';
@@ -14,12 +15,8 @@ import {
   useProjectWorkspaceStore,
 } from '@/store/projectWorkspace';
 
-import TopicItem from '../../List/Item';
-import {
-  getProjectTopicStatusCounts,
-  hasProjectTopicStatusCounts,
-} from '../ByProjectMode/statusCounts';
 import { CollapsedStatusBadges, CollapsedUnreadDot } from './CollapsedIndicators';
+import { getProjectTopicStatusCounts, hasProjectTopicStatusCounts } from './statusCounts';
 
 const styles = createStaticStyles(({ css }) => ({
   addTopicAction: css`

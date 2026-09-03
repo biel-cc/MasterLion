@@ -8,6 +8,11 @@ import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { finished as streamFinished } from 'node:stream/promises';
 
+import {
+  type HeterogeneousSkillMaterializationMode,
+  type MaterializableSkill,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
 import type { HeterogeneousAgentSessionError } from '@lobechat/electron-client-ipc';
 import {
   CLAUDE_CODE_CLI_INSTALL_COMMANDS,
@@ -119,6 +124,10 @@ interface StartSessionParams {
   env?: Record<string, string>;
   /** Session ID to resume (for multi-turn) */
   resumeSessionId?: string;
+  /** Missing means the safe default `off`. */
+  skillPolicy?: HeterogeneousSkillMaterializationMode;
+  /** Frozen registry winners with inline bodies. */
+  skills?: MaterializableSkill[];
 }
 
 interface StartSessionResult {
@@ -881,9 +890,22 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
   @IpcMethod()
   async startSession(params: StartSessionParams): Promise<StartSessionResult> {
     if (!params.cwd?.trim()) throw new Error('WORKSPACE_REQUIRED');
-    const sessionId = randomUUID();
     const agentType = params.agentType || 'claude-code';
     getHeterogeneousAgentDriver(agentType);
+    const materialization = await materializeSkillsForCli({
+      agentType,
+      cwd: params.cwd.trim(),
+      policy: params.skillPolicy,
+      skills: params.skills,
+    });
+    if (materialization.errors.length > 0) {
+      throw new Error(
+        `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+          .map(({ message }) => message)
+          .join('; ')}`,
+      );
+    }
+    const sessionId = randomUUID();
 
     this.sessions.set(sessionId, {
       // If resuming, pre-set the agent session ID so sendPrompt adds --resume

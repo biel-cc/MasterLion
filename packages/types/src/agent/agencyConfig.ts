@@ -1,3 +1,5 @@
+import type { ExecutionTargetByPlatform } from '../projectWorkspace';
+
 /**
  * Heterogeneous agent provider configuration.
  * When set, the assistant delegates execution to an external agent runtime
@@ -64,6 +66,8 @@ export interface LobeAgentAgencyConfig {
    * remote hetero providers).
    */
   executionTarget?: DeviceExecutionTarget;
+  /** Platform-isolated defaults used only while a new topic has no snapshot. */
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
   heterogeneousProvider?: HeterogeneousProviderConfig;
   /**
    * Ad-hoc verify criteria mounted directly on this agent, in addition to any

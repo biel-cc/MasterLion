@@ -21,6 +21,8 @@ export interface WorkspacePathConsentRequest {
 export interface OperationPathConsentApproval {
   deviceId: string;
   modes: PathAccessMode[];
+  /** Runtime-authored lexical path, used to bind this decision to the pending request. */
+  requestedPath: string;
   /** Device-canonical root returned by the consent coordinator. */
   rootPath: string;
   scope: 'operation';
@@ -39,10 +41,10 @@ export interface WorkspaceAccessGrant {
   modes: PathAccessMode[];
   requestedVia: { messageId?: string; reason?: string; toolCallId?: string };
   revokedAt?: string;
-  /** Persisted grants are topic-scoped; operation consent is never stored here. */
-  scope: 'topic';
   /** Device-realpathed, normalized absolute path. */
   rootPath: string;
+  /** Persisted grants are topic-scoped; operation consent is never stored here. */
+  scope: 'topic';
   topicId: string;
   userId: string;
 }

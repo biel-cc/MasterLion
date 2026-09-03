@@ -1,5 +1,4 @@
 import type { WorkspaceInitResult } from '../device';
-
 import type { WorkspaceRef } from './index';
 
 export type SkillSourceKind = 'agent' | 'builtin' | 'project' | 'user' | 'workspace';
@@ -11,13 +10,13 @@ export type SkillSourceKind = 'agent' | 'builtin' | 'project' | 'user' | 'worksp
 export type SkillScope = 'builtin' | 'company' | 'personal' | 'project' | 'team';
 
 export interface SkillRef {
-  /** Stable registry key: `<source>:<identifier>`. */
-  key: string;
   /** Inline content when the provider can supply it cheaply. */
   content?: string;
   description: string;
   /** Existing public identifier. Workspace Runtime must not rewrite it. */
   identifier: string;
+  /** Stable registry key: `<source>:<identifier>`. */
+  key: string;
   /** Absolute SKILL.md path for filesystem-backed project skills. */
   location?: string;
   /** activateSkill lookup key; precedence resolves collisions. */

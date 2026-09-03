@@ -54,6 +54,42 @@ describe('formatErrorForState', () => {
       });
     });
 
+    it('preserves a typed context-budget decision attached to a provider error', () => {
+      const result = formatErrorForState({
+        contextBudget: {
+          decision: {
+            actions: ['switch_model'],
+            code: 'RETRY_EXHAUSTED',
+            kind: 'fail',
+            offending: [],
+          },
+          trace: {
+            attempt: 1,
+            effectiveWindowSource: 'observed',
+            effectiveWindowTokens: 32_000,
+            estimatedPromptTokens: 40_000,
+            modelId: 'chat-model',
+            operationId: 'op-1',
+            payloadFingerprint: 'fingerprint',
+            providerId: 'provider',
+          },
+        },
+        contextBudgetAttemptState: { compressionAttempt: 1 },
+        error: { type: 'context_exceeded_pre_flight' },
+        errorType: AgentRuntimeErrorType.ExceededContextWindow,
+        message: 'context too large',
+      });
+
+      expect(result.body).toMatchObject({
+        contextBudget: {
+          decision: { code: 'RETRY_EXHAUSTED', kind: 'fail' },
+          trace: { operationId: 'op-1' },
+        },
+        contextBudgetAttemptState: { compressionAttempt: 1 },
+        type: 'context_exceeded_pre_flight',
+      });
+    });
+
     it('falls back to AgentRuntimeError for unknown thrown values', () => {
       const result = formatErrorForState('plain string failure');
 

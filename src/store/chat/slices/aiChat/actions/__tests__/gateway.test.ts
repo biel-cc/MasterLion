@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
+import { buildDraftConversationKey } from '@/store/projectWorkspace/draftKey';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace/store';
 
 import type { GatewayConnection } from '../gateway';
 import { GatewayActionImpl } from '../gateway';
@@ -75,7 +77,19 @@ vi.mock('@/services/electron/gatewayConnection', () => ({
 vi.mock('@/store/agent', () => ({ getAgentStoreState: () => mockAgentStore.state }));
 
 vi.mock('@/store/agent/selectors', () => ({
-  agentSelectors: { currentAgentWorkingDirectory: () => () => undefined },
+  agentSelectors: {
+    currentAgentWorkingDirectory: () => () => undefined,
+    getAgentConfigById: (agentId: string) => (state: any) =>
+      state.agentMap?.[agentId] ?? {
+        agencyConfig: {
+          executionTargetByPlatform: {
+            desktop: mockRuntime.isLocal ? 'local' : 'none',
+            web: mockRuntime.isLocal ? 'local' : 'none',
+          },
+        },
+        chatConfig: { enableAgentMode: !mockRuntime.isChatMode },
+      },
+  },
   chatConfigByIdSelectors: {
     getChatConfigById: (agentId: string) => (state: any) =>
       state.agentMap?.[agentId]?.chatConfig ?? {},
@@ -513,6 +527,7 @@ describe('GatewayActionImpl', () => {
         internal_dispatchTopic: vi.fn(),
         internal_updateTopicLoading: vi.fn(),
         onOperationCancel: vi.fn(),
+        refreshTopic: vi.fn().mockResolvedValue(undefined),
         replaceMessages: vi.fn(),
         startOperation: vi.fn(() => ({ operationId: 'gw-op-1' })),
         switchTopic: vi.fn(),
@@ -707,6 +722,60 @@ describe('GatewayActionImpl', () => {
         }),
         expect.anything(),
       );
+    });
+
+    it('sends the draft target intent on first send and consumes it only after success', async () => {
+      const { action } = createExecuteTestAction();
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      getProjectWorkspaceStoreState().setDraftTargetIntent(draftKey, { target: 'sandbox' });
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-1',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: 'test-token',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+
+      await action.executeGatewayAgent({
+        context: { agentId: 'agent-1', scope: 'main', threadId: null },
+        message: 'start',
+      });
+
+      expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appContext: expect.objectContaining({
+            topicExecutionIntent: { platform: 'web', target: 'sandbox' },
+          }),
+        }),
+        expect.anything(),
+      );
+      expect(getProjectWorkspaceStoreState().draftByConversationKey[draftKey]).toBeUndefined();
+    });
+
+    it('preserves the draft target intent when first send fails', async () => {
+      const { action } = createExecuteTestAction();
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      getProjectWorkspaceStoreState().setDraftTargetIntent(draftKey, { target: 'sandbox' });
+      vi.mocked(aiAgentService.execAgentTask).mockRejectedValue(new Error('network failed'));
+
+      await expect(
+        action.executeGatewayAgent({
+          context: { agentId: 'agent-1', scope: 'main', threadId: null },
+          message: 'start',
+        }),
+      ).rejects.toThrow('network failed');
+
+      expect(getProjectWorkspaceStoreState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'sandbox',
+      });
+      getProjectWorkspaceStoreState().clearDraftIntent(draftKey);
     });
 
     it('forwards the parent abort signal to execAgentTask and bails out (with server interrupt) when cancel arrives after the request resolved', async () => {

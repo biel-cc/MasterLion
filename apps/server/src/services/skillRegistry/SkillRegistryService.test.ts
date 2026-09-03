@@ -2,12 +2,12 @@
 import type { SkillProviderContext } from '@lobechat/types/src/projectWorkspace';
 import { describe, expect, it } from 'vitest';
 
-import { SkillRegistryService } from './SkillRegistryService';
 import {
   createBuiltinSkillProvider,
   createProjectSkillProvider,
   createUserSkillProvider,
 } from './providers';
+import { SkillRegistryService } from './SkillRegistryService';
 
 const context: SkillProviderContext = {
   agentId: 'agent-1',

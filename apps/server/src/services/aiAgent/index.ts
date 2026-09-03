@@ -49,9 +49,12 @@ import type {
   UserInterventionConfig,
   WorkspaceInitResult,
 } from '@lobechat/types';
-import type { ExecutionContext, ExecutionEnv } from '@lobechat/types/src/executionContext';
-import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { RequestTrigger, ThreadStatus, ThreadType } from '@lobechat/types';
+import type {
+  ExecutionContext,
+  ExecutionEnv,
+} from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { nanoid } from '@lobechat/utils';
 import debug from 'debug';
 
@@ -65,21 +68,26 @@ import { DeviceModel } from '@/database/models/device';
 import { FileModel } from '@/database/models/file';
 import { MessageModel } from '@/database/models/message';
 import { PluginModel } from '@/database/models/plugin';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TaskModel } from '@/database/models/task';
 import { ThreadModel } from '@/database/models/thread';
 import { TopicModel } from '@/database/models/topic';
-import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
-import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGrant';
 import { UserModel } from '@/database/models/user';
 import { UserPersonaModel } from '@/database/models/userMemory/persona';
+import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGrant';
 import { toolsEnv } from '@/envs/tools';
+import {
+  assertExecutionContextReady,
+  isAbsoluteFilesystemPath,
+  resolveExecutionContext,
+  type ResolveExecutionContextInput,
+  toToolCallExecutionContext,
+} from '@/helpers/executionContext';
 import {
   type ExecutionPlan,
   executionTargetToRuntimeMode,
   isDeviceCapablePlan,
-  resolveExecutionPlan,
 } from '@/helpers/executionTarget';
-import { resolveExecutionContext } from '@/helpers/executionContext';
 import { shouldEnableBuiltinSkill } from '@/helpers/skillFilters';
 import { buildConnectorManifests } from '@/libs/mcp/buildConnectorManifests';
 import { signOperationJwt, signUserJWT } from '@/libs/trpc/utils/internalJwt';
@@ -124,6 +132,7 @@ import { resolveAttachmentsByFileIds } from '@/server/services/file/resolveAttac
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
 import type { ConversationHistoryEntry } from '@/server/services/heterogeneousAgent/cloudHeteroContext';
 import { MarketService } from '@/server/services/market';
+import { ProjectWorkspaceService } from '@/server/services/projectWorkspace';
 import { DatabaseTopicWorkspaceBindingStore } from '@/server/services/projectWorkspace/bindingStore';
 import {
   createAgentSkillProvider,
@@ -141,6 +150,7 @@ import { buildDirectUserMessageAccessRoots } from './directUserPathConsent';
 import { ingestAttachment } from './ingestAttachment';
 import { getRuntimePathConsentRequest, validateOperationPathConsent } from './pathConsent';
 import { resolveDeviceWorkingDirectory } from './resolveDeviceWorkingDirectory';
+import { resolveTopicCreationExecutionMetadata } from './topicExecutionIntent';
 import { isWorkspaceCacheFresh, upsertWorkspaceScan } from './workspaceInitCache';
 
 const log = debug('lobe-server:ai-agent-service');
@@ -343,6 +353,8 @@ export class AiAgentService {
       //
       // Arrow fields are auto-bound, so no `.bind(this)`.
       delegate: {
+        bindScratchAfterToolSuccess: this.bindScratchAfterToolSuccess,
+        ensureScratchWorkspace: this.ensureScratchWorkspace,
         execSubAgent: this.execSubAgent,
         execVirtualSubAgent: this.execVirtualSubAgent,
         execGroupMember: this.execGroupMember,
@@ -527,6 +539,210 @@ export class AiAgentService {
   }
 
   /**
+   * Load the canonical topic binding and environment exactly once for an
+   * operation. Native runtime and every heterogeneous dispatch both feed this
+   * same pure resolver input; no branch may re-read agent cwd/default-device
+   * metadata after this boundary.
+   */
+  private async resolveFrozenExecutionContextInput(params: {
+    agentConfig: NonNullable<Awaited<ReturnType<AgentService['getAgentConfig']>>>;
+    canUseDevice: boolean;
+    isDesktop: boolean;
+    isHetero: boolean;
+    onlineDeviceIds?: string[];
+    operationId: string;
+    preservedTarget?: ExecutionPlan['target'];
+    requestedDeviceId?: string;
+    topicId: string;
+  }): Promise<{
+    input: ResolveExecutionContextInput;
+    runtimeConfig: Awaited<ReturnType<AiAgentService['resolveWorkspaceRuntimeConfig']>>;
+  }> {
+    const topicWorkspaceState = await new DatabaseTopicWorkspaceBindingStore(
+      this.db,
+      this.userId,
+      this.workspaceId,
+    ).getState(params.topicId);
+    if (!topicWorkspaceState) throw new Error(`Topic not found: ${params.topicId}`);
+
+    const runtimeConfig = await this.resolveWorkspaceRuntimeConfig({
+      agentEnv: params.agentConfig.agencyConfig?.heterogeneousProvider?.env,
+      agentId: params.agentConfig.id,
+      operationId: params.operationId,
+      topicId: params.topicId,
+      workspaceId: topicWorkspaceState.workspace?.id,
+    });
+    const workspaces = topicWorkspaceState.workspace?.id
+      ? { [topicWorkspaceState.workspace.id]: topicWorkspaceState.workspace }
+      : undefined;
+    const legacyTopic =
+      !topicWorkspaceState.snapshot && topicWorkspaceState.workspace
+        ? {
+            boundDeviceId: topicWorkspaceState.workspace.deviceId,
+            workingDirectory: topicWorkspaceState.workspace.rootPath,
+            workspaceId: topicWorkspaceState.workspace.id,
+          }
+        : undefined;
+
+    return {
+      input: {
+        agencyConfig: params.agentConfig.agencyConfig,
+        canUseDevice: params.canUseDevice,
+        chatConfig: params.agentConfig.chatConfig ?? undefined,
+        env: runtimeConfig.env,
+        executionTargetByPlatform: params.preservedTarget
+          ? {
+              desktop: params.preservedTarget,
+              web: params.preservedTarget,
+            }
+          : undefined,
+        isDesktop: params.isDesktop,
+        isHetero: params.isHetero,
+        onlineDeviceIds: params.onlineDeviceIds,
+        operationId: params.operationId,
+        requestedDeviceId: topicWorkspaceState.snapshot
+          ? undefined
+          : params.requestedDeviceId,
+        snapshot: topicWorkspaceState.snapshot,
+        topic: legacyTopic,
+        workspaces,
+      },
+      runtimeConfig,
+    };
+  }
+
+  /** Freeze the registry winners at the same operation boundary as cwd/env. */
+  private async resolveFrozenSkillRegistry(params: {
+    activeDeviceId?: string;
+    agentConfig: NonNullable<Awaited<ReturnType<AgentService['getAgentConfig']>>>;
+    agentId: string;
+    executionContext: ExecutionContext;
+    skillPolicy: SkillRegistryResult['policy'];
+    topicId: string;
+  }): Promise<SkillRegistryResult> {
+    const fallback: SkillRegistryResult = {
+      entries: [],
+      errors: [],
+      policy: params.skillPolicy,
+      precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+      skills: [],
+    };
+
+    try {
+      const skillModel = new AgentSkillModel(this.db, this.userId, this.workspaceId);
+      const [{ data: dbSkills }, agentSkills, workspaceInit] = await Promise.all([
+        skillModel.findAll(),
+        this.agentDocumentsService.getAgentSkills(params.agentId),
+        this.resolveWorkspaceInit({
+          activeDeviceId: params.activeDeviceId,
+          agencyConfig: params.agentConfig.agencyConfig ?? undefined,
+          topicId: params.topicId,
+          workspaceRoot: params.executionContext.cwd,
+        }),
+      ]);
+
+      if (workspaceInit.instructions.length > 0) {
+        const block = workspaceInit.instructions
+          .map(
+            ({ content, source }) =>
+              `<project_instructions source="${source}">\n${content}\n</project_instructions>`,
+          )
+          .join('\n\n');
+        params.agentConfig.systemRole = params.agentConfig.systemRole
+          ? `${params.agentConfig.systemRole}\n\n${block}`
+          : block;
+      }
+
+      const registry = new SkillRegistryService({
+        providers: [
+          createBuiltinSkillProvider(
+            builtinSkills.filter((skill) => shouldEnableBuiltinSkill(skill.identifier)),
+          ),
+          createAgentSkillProvider(async () => agentSkills),
+          createUserSkillProvider(async () => dbSkills),
+          createProjectSkillProvider(),
+        ],
+      });
+      return await registry.resolve(
+        {
+          agentId: params.agentId,
+          skillPolicy: params.skillPolicy,
+          userId: this.userId,
+          workspace: params.executionContext.workspace,
+          workspaceInit,
+        },
+        { userId: this.userId, workspaceId: this.workspaceId },
+      );
+    } catch (error) {
+      log('execAgent: failed to freeze skill registry: %O', error);
+      fallback.errors.push({
+        message: 'Skill registry resolution failed during operation creation.',
+        source: 'visibility',
+      });
+      return fallback;
+    }
+  }
+
+  /** Freeze chat-model eligibility and modality evidence once per operation. */
+  private async resolveFrozenModelCatalog(params: {
+    builtinModels: Array<{
+      abilities?: any;
+      contextWindowTokens?: number;
+      id: string;
+      providerId?: string;
+    }>;
+    model: string;
+    operationId: string;
+    provider: string;
+  }): Promise<ModelCatalogSnapshot> {
+    const { builtinModels, model, operationId, provider } = params;
+    try {
+      const persistedModel = await new AiModelModel(this.db, this.userId).findByIdAndProvider(
+        model,
+        provider,
+      );
+      const persistedCatalog = getModelCatalogFromSettings(persistedModel?.settings);
+      const exactPersistedEntry =
+        persistedCatalog?.entry.modelId === model && persistedCatalog.entry.providerId === provider
+          ? persistedCatalog.entry
+          : undefined;
+      const modelCard =
+        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
+        builtinModels.find((item) => item.id === model);
+      const entry =
+        exactPersistedEntry ??
+        mergeModelCatalogEntry({
+          catalog: {
+            abilities: persistedModel?.abilities ?? modelCard?.abilities,
+            contextWindowTokens:
+              persistedModel?.contextWindowTokens ?? modelCard?.contextWindowTokens,
+            kind: persistedModel?.type ?? 'chat',
+          },
+          modelId: model,
+          providerId: provider,
+        }).entry;
+      return createModelCatalogSnapshot(entry, operationId);
+    } catch (error) {
+      log('execAgent: model catalog persistence unavailable, freezing builtin evidence: %O', error);
+      const modelCard =
+        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
+        builtinModels.find((item) => item.id === model);
+      return createModelCatalogSnapshot(
+        mergeModelCatalogEntry({
+          catalog: {
+            abilities: modelCard?.abilities,
+            contextWindowTokens: modelCard?.contextWindowTokens,
+            kind: 'chat',
+          },
+          modelId: model,
+          providerId: provider,
+        }).entry,
+        operationId,
+      );
+    }
+  }
+
+  /**
    * Execute a single agent step against this service's runtime.
    *
    * Delegates to the internal AgentRuntimeService, which is already wired with
@@ -538,6 +754,52 @@ export class AiAgentService {
   executeStep(params: AgentExecutionParams): Promise<AgentExecutionResult> {
     return this.agentRuntimeService.executeStep(params);
   }
+
+  /**
+   * Runtime delegate seam for lazy scratch creation. The caller must supply the
+   * device-authored canonical root only after a cwd-dependent tool succeeded.
+   * ProjectWorkspaceService then enforces topic/device identity and bind-once;
+   * retries for the same root are idempotent, while every conflicting bind
+   * fails closed.
+   */
+  bindScratchAfterToolSuccess = async (params: {
+    deviceId: string;
+    rootPath: string;
+    target?: 'device' | 'local';
+    toolSucceeded: true;
+    topicId: string;
+  }) => {
+    const workspaceModel = new ProjectWorkspaceModel(this.db, this.userId);
+    const service = new ProjectWorkspaceService({
+      bindingStore: new DatabaseTopicWorkspaceBindingStore(
+        this.db,
+        this.userId,
+        this.workspaceId,
+      ),
+      workspaceModel,
+    });
+    return service.bindScratchAfterToolSuccess({
+      ...params,
+      workspaceId: this.workspaceId,
+    });
+  };
+
+  /**
+   * Runtime delegate seam for the scratch pre-dispatch phase. The device owns
+   * creation and canonicalization; the server never manufactures a root. This
+   * method deliberately does not bind the topic — binding is permitted only by
+   * `bindScratchAfterToolSuccess` after the cwd-dependent tool succeeds.
+   */
+  ensureScratchWorkspace = async (params: { deviceId: string; topicId: string }) => {
+    const result = await deviceGateway.ensureScratchWorkspace({
+      ...params,
+      userId: this.userId,
+    });
+    if (!result?.root || !isAbsoluteFilesystemPath(result.root)) {
+      throw new Error('The selected device could not create a canonical scratch workspace');
+    }
+    return result;
+  };
 
   /**
    * Run the sub-agent completion bridge against this service's runtime.
@@ -1109,7 +1371,6 @@ export class AiAgentService {
 
     // 3. Handle topic creation: if no topicId provided, create a new topic; otherwise reuse existing
     let topicId = appContext?.topicId;
-    const isNewTopic = !topicId;
     const topicBoundDeviceId = requestedDeviceId;
     if (!topicId) {
       if (resume) {
@@ -1119,7 +1380,7 @@ export class AiAgentService {
       // Prepare metadata with cronJobId, taskId, botContext, bound device, and any
       // client-supplied initial metadata (e.g. repos selected before first message).
       const initialTopicMeta = appContext?.initialTopicMetadata;
-      const metadata =
+      const legacyMetadata =
         cronJobId || operationTaskId || botContext || requestedDeviceId || initialTopicMeta
           ? {
               bot: botContext,
@@ -1132,6 +1393,12 @@ export class AiAgentService {
               }),
             }
           : undefined;
+      const metadata = await resolveTopicCreationExecutionMetadata({
+        intent: appContext?.topicExecutionIntent,
+        metadata: legacyMetadata,
+        organizationWorkspaceId: this.workspaceId,
+        workspaceModel: new ProjectWorkspaceModel(this.db, this.userId),
+      });
 
       const fallbackTitleSource = markdownToTxt(prompt);
       const newTopic = await this.topicModel.create({
@@ -1152,6 +1419,26 @@ export class AiAgentService {
       );
     } else {
       log('execAgent: reusing existing topic %s', topicId);
+
+      // A legacy topic has no authoritative snapshot. Capture the current
+      // renderer's explicit platform intent exactly once; existing snapshots
+      // always win and a browser-supplied workspace id is ignored here.
+      if (appContext?.topicExecutionIntent) {
+        const bindingStore = new DatabaseTopicWorkspaceBindingStore(
+          this.db,
+          this.userId,
+          this.workspaceId,
+        );
+        const current = await bindingStore.getState(topicId);
+        if (!current) throw new Error(`Topic not found: ${topicId}`);
+        if (!current.snapshot) {
+          await bindingStore.captureTarget({
+            boundDeviceId: appContext.topicExecutionIntent.targetDeviceId,
+            target: appContext.topicExecutionIntent.target,
+            topicId,
+          });
+        }
+      }
     }
 
     await throwIfExecutionAborted('topic setup');
@@ -1254,6 +1541,156 @@ export class AiAgentService {
     assistantMessageRef.current = assistantMessageRecord.id;
     log('execAgent: created assistant message %s', assistantMessageRecord.id);
 
+    // Every channel shares one operation identity before it freezes cwd/env/
+    // access authority. Heterogeneous runs no longer create an unrelated id in
+    // their early-exit branch.
+    const operationId = `op_${Date.now()}_${resolvedAgentId}_${topicId}_${nanoid(8)}`;
+    const isBotConversation = !!(botContext || discordContext);
+    // Native device availability is part of the operation-frozen routing
+    // evidence. Resolve it before the context exactly once; otherwise an
+    // unbound local topic would freeze as unrouted and a later tool-discovery
+    // query could silently choose a different cwd/device. Heterogeneous runs
+    // deliberately trust their explicit/snapshot binding and let the gateway
+    // report an offline device rather than auto-selecting another machine.
+    let operationOnlineDevices: DeviceAttachment[] = [];
+    if (!isHeteroAgent && canUseDevice && deviceGateway.isConfigured) {
+      try {
+        operationOnlineDevices = await deviceGateway.queryDeviceList(this.userId);
+      } catch (error) {
+        log('execAgent: failed to freeze online device list: %O', error);
+      }
+    }
+    const frozen = await this.resolveFrozenExecutionContextInput({
+      agentConfig,
+      canUseDevice,
+      isDesktop:
+        appContext?.topicExecutionIntent?.platform === 'desktop' ||
+        (!appContext?.topicExecutionIntent && deviceGateway.isConfigured),
+      isHetero: isHeteroAgent,
+      onlineDeviceIds: isHeteroAgent
+        ? undefined
+        : operationOnlineDevices.map((device) => device.deviceId),
+      operationId,
+      requestedDeviceId,
+      topicId,
+    });
+    const workspaceRuntimeConfig = frozen.runtimeConfig;
+    const executionEnv = workspaceRuntimeConfig.env;
+    const preliminaryExecutionContext = resolveExecutionContext(frozen.input);
+    const planDeviceId =
+      preliminaryExecutionContext.plan.kind === 'device'
+        ? preliminaryExecutionContext.plan.deviceId
+        : undefined;
+    const accessRoots: NonNullable<ExecutionContext['accessRoots']> = planDeviceId
+      ? await new WorkspaceAccessGrantService({
+          grantModel: new WorkspaceAccessGrantModel(this.db, this.userId),
+          topicModel: this.topicModel,
+        }).buildAccessRoots({ deviceId: planDeviceId, topicId })
+      : [];
+    if (planDeviceId) {
+      accessRoots.push(
+        ...buildDirectUserMessageAccessRoots({
+          appScope: appContext?.scope,
+          automationMode: appContext?.automationMode,
+          botConversation: isBotConversation,
+          cronJobId,
+          ephemeralUserMessage,
+          evalRun: !!evalContext,
+          hasAttachments:
+            (runAttachments.fileIds?.length ?? 0) > 0 ||
+            (runAttachments.imageList?.length ?? 0) > 0 ||
+            (runAttachments.videoList?.length ?? 0) > 0 ||
+            (runAttachments.fileList?.length ?? 0) > 0,
+          headless: userInterventionConfig.approvalMode === 'headless',
+          operationId,
+          prompt,
+          suppressUserMessage: runFromHistory,
+          taskId: operationTaskId,
+          topicId,
+          trigger,
+        }).map((root) => ({ ...root, deviceId: planDeviceId })),
+      );
+    }
+    if (pendingOperationPathConsent) {
+      if (!planDeviceId) {
+        throw new Error('Path consent cannot be resumed without the originally selected device');
+      }
+      const canonicalRootPath = await deviceGateway.resolveRealPath({
+        deviceId: planDeviceId,
+        path: pendingOperationPathConsent.request.requestedPath,
+        userId: this.userId,
+      });
+      if (!canonicalRootPath) {
+        throw new Error('The selected device could not verify the approved path');
+      }
+      const operationRoot = validateOperationPathConsent({
+        ...pendingOperationPathConsent,
+        canonicalRootPath,
+        currentDeviceId: planDeviceId,
+        currentOperationId: operationId,
+        currentTopicId: topicId,
+      });
+      accessRoots.push(operationRoot);
+      await this.messageModel.updateMessagePlugin(resumeApproval!.parentMessageId, {
+        intervention: { status: 'approved' },
+      });
+    }
+    const executionContext: ExecutionContext = resolveExecutionContext({
+      ...frozen.input,
+      accessRoots,
+    });
+    executionContext.envSummary = {
+      keys: Object.keys(executionEnv.values).sort(),
+      secretKeys: [...executionEnv.secretKeys].sort(),
+    };
+
+    // Freeze model and skill authority before the heterogeneous/native fork.
+    // Both branches below consume these exact values; neither may query a
+    // mutable agent/workspace registry after this point.
+    let agentPlugins: string[] = [...(agentConfig?.plugins ?? []), ...(additionalPluginIds || [])];
+    const { loadModels } = await import('@/business/client/model-bank/loadModels');
+    const builtinModels = await loadModels();
+    const modelCatalogSnapshot = await this.resolveFrozenModelCatalog({
+      builtinModels,
+      model,
+      operationId,
+      provider,
+    });
+    const skillRegistryResult = await this.resolveFrozenSkillRegistry({
+      activeDeviceId: planDeviceId,
+      agentConfig,
+      agentId: resolvedAgentId,
+      executionContext,
+      skillPolicy: workspaceRuntimeConfig.skillPolicy,
+      topicId,
+    });
+    const heterogeneousSkills = skillRegistryResult.skills
+      .filter(({ content, source }) => !!content && source !== 'project')
+      .map(
+      ({ content, description, identifier, key, name, source }) => ({
+        content,
+        description,
+        identifier,
+        key,
+        name,
+        source,
+      }),
+    );
+    const heterogeneousAuthorityContext = [
+      '<frozen_execution_authority>',
+      JSON.stringify({
+        model: modelCatalogSnapshot.entry,
+        skills: skillRegistryResult.skills.map(({ identifier, key, location, name, source }) => ({
+          identifier,
+          key,
+          location,
+          name,
+          source,
+        })),
+      }),
+      '</frozen_execution_authority>',
+    ].join('\n');
+
     // Agent Signal is a governance side-channel (feedback / self-iteration). It
     // only applies to the server-side LLM pipeline, so it is intentionally NOT
     // enqueued for hetero runs (which hand off to an external CLI). Skip when this
@@ -1287,7 +1724,32 @@ export class AiAgentService {
 
     if (isHeteroAgent) {
       const isRemoteHetero = isRemoteHeterogeneousType(heteroType);
-      const operationId = nanoid();
+      const readiness = assertExecutionContextReady(executionContext, { requireWorkspace: true });
+      if (readiness || !executionContext.cwd) {
+        const detail = readiness?.message ?? 'A workspace is required for this operation.';
+        await this.messageModel.update(assistantMessageRecord.id, {
+          content: '',
+          error: {
+            body: { code: readiness?.code ?? 'WORKSPACE_REQUIRED', detail },
+            message: detail,
+            type: 'ServerAgentRuntimeError',
+          },
+        });
+        return {
+          agentId: resolvedAgentId,
+          assistantMessageId: assistantMessageRecord.id,
+          autoStarted: false,
+          createdAt: new Date().toISOString(),
+          error: readiness?.code ?? 'WORKSPACE_REQUIRED',
+          message: detail,
+          operationId,
+          status: 'error',
+          success: false,
+          timestamp: new Date().toISOString(),
+          topicId,
+          userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
+        };
+      }
 
       // Read resume session id for next-turn continuity.
       const heteroService = new HeterogeneousAgentService(this.db, this.userId, {
@@ -1358,12 +1820,12 @@ export class AiAgentService {
       // Build cloud-specific system context (repo list + workspace info + optional agent-level static context).
       const { buildCloudHeteroContext } =
         await import('@/server/services/heterogeneousAgent/cloudHeteroContext');
-      const systemContext = buildCloudHeteroContext({
+      const systemContext = `${heterogeneousAuthorityContext}\n\n${buildCloudHeteroContext({
         agentSystemContext: agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
         conversationHistory,
         githubToken,
         repos: topicRepos,
-      });
+      })}`;
 
       // Feed the resolved images (signed URLs) to the dispatched CLI for vision —
       // mirrors the local-mode path, where the client feeds the persisted
@@ -1377,6 +1839,8 @@ export class AiAgentService {
       const heteroParams = {
         agentType: heteroType,
         assistantMessageId: assistantMessageRecord.id,
+        cwd: executionContext.cwd,
+        env: executionContext.env?.values,
         githubToken,
         imageList: heteroImageList,
         jwt: operationJwt,
@@ -1384,13 +1848,15 @@ export class AiAgentService {
         prompt,
         repos: topicRepos,
         resumeSessionId,
+        skills: heterogeneousSkills,
+        skillPolicy: workspaceRuntimeConfig.skillPolicy.materializeForHeteroCli,
         systemContext,
         topicId,
         userId: this.userId,
       };
 
       const remoteDeviceId =
-        requestedDeviceId || agentConfig.agencyConfig?.boundDeviceId || undefined;
+        executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
 
       // Seed topic.metadata.runningOperation so heteroIngest can validate the operation.
       // completionWebhook is stored so heteroFinish can call back to the IM bot-callback
@@ -1489,15 +1955,37 @@ export class AiAgentService {
         // lh connect only handles tool_call_request (not agent_run_request),
         // so we use executeToolCall with the runHeteroTask tool instead of dispatchAgentRun.
         const result = await deviceGateway.executeToolCall(
-          { deviceId: remoteDeviceId, userId: this.userId },
+          {
+            deviceId: remoteDeviceId,
+            executionContext: toToolCallExecutionContext(executionContext, {
+              includeEnvValues: true,
+            }),
+            operationId,
+            topicId,
+            userId: this.userId,
+          },
           {
             apiName: 'runHeteroTask',
             arguments: JSON.stringify({
               agentId: resolvedAgentId,
               agentType: heteroType,
-              cwd: undefined,
+              cwd: executionContext.cwd,
+              env: executionContext.env?.values,
+              modelRef: {
+                capturedAt: modelCatalogSnapshot.capturedAt,
+                kind: modelCatalogSnapshot.entry.kind,
+                modelId: modelCatalogSnapshot.entry.modelId,
+                operationId: modelCatalogSnapshot.operationId,
+                providerId: modelCatalogSnapshot.entry.providerId,
+              },
               operationId,
               prompt,
+              skillRefs: heterogeneousSkills.map(({ identifier, key, name, source }) => ({
+                identifier,
+                key,
+                name,
+                source,
+              })),
               taskId: operationId,
               topicId,
             }),
@@ -1554,13 +2042,7 @@ export class AiAgentService {
         // `canUseDevice` degrades device-capable targets to the sandbox for
         // denied senders (e.g. external bot users) — without it a synced
         // local/device binding would let them run on the owner's machine.
-        const heteroPlan = resolveExecutionPlan({
-          agencyConfig: agentConfig.agencyConfig,
-          canUseDevice,
-          isDesktop: false,
-          isHetero: true,
-          requestedDeviceId,
-        });
+        const heteroPlan = executionContext.plan;
 
         if (heteroPlan.kind !== 'sandbox') {
           const dispatchDeviceId = heteroPlan.kind === 'device' ? heteroPlan.deviceId : undefined;
@@ -1592,47 +2074,31 @@ export class AiAgentService {
               userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
             };
           }
-          // Resolve the working directory for the run: a topic-level override
-          // wins, else the device's user-configured defaultCwd. The device row
-          // lives in the DB (the gateway only knows live connections), so read
-          // it directly rather than via deviceGateway.
-          const boundDevice = await new DeviceModel(this.db, this.userId).findByDeviceId(
-            dispatchDeviceId,
-          );
-          // Resolve via the shared precedence helper so dispatch, workspace-init,
-          // and the new-topic backfill below all agree on the cwd.
-          const deviceCwd = resolveDeviceWorkingDirectory({
-            deviceDefaultCwd: boundDevice?.defaultCwd,
-            deviceId: dispatchDeviceId,
-            initialWorkingDirectory: appContext?.initialTopicMetadata?.workingDirectory,
-            topicWorkingDirectory: topic?.metadata?.workingDirectory,
-            workingDirByDevice: agentConfig.agencyConfig?.workingDirByDevice,
-          });
-
-          // A brand-new topic has no pinned cwd yet: the directory was only
-          // recorded at agent level (`workingDirByDevice`) when no topic existed.
-          // Persist the resolved cwd onto the topic so the sidebar groups it
-          // under the right project and the next turn reuses the same directory.
-          if (isNewTopic && deviceCwd && deviceCwd !== topic?.metadata?.workingDirectory) {
-            await this.topicModel.updateMetadata(topicId, { workingDirectory: deviceCwd });
-          }
-
           // A device is the user's own persistent machine — build a
           // device-specific context instead of reusing the cloud-sandbox one
           // (which describes an ephemeral /workspace + pre-cloned repos and
           // would mislead the agent).
           const { buildRemoteDeviceHeteroContext } =
             await import('@/server/services/heterogeneousAgent/remoteDeviceHeteroContext');
-          const deviceSystemContext = buildRemoteDeviceHeteroContext({
+          const deviceSystemContext = `${heterogeneousAuthorityContext}\n\n${buildRemoteDeviceHeteroContext({
             agentSystemContext: agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
             conversationHistory,
-            cwd: deviceCwd,
-          });
+            cwd: executionContext.cwd,
+          })}`;
 
           const result = await deviceGateway.dispatchAgentRun({
             ...heteroParams,
-            cwd: deviceCwd,
+            executionContext: toToolCallExecutionContext(executionContext, {
+              includeEnvValues: true,
+            }),
             deviceId: dispatchDeviceId,
+            modelRef: {
+              capturedAt: modelCatalogSnapshot.capturedAt,
+              kind: modelCatalogSnapshot.entry.kind,
+              modelId: modelCatalogSnapshot.entry.modelId,
+              operationId: modelCatalogSnapshot.operationId,
+              providerId: modelCatalogSnapshot.entry.providerId,
+            },
             systemContext: deviceSystemContext,
           });
           if (!result.success) {
@@ -1735,12 +2201,12 @@ export class AiAgentService {
     const toolManifestMap: Record<string, any> = {};
     const toolSourceMap: Record<string, ToolSource> = {};
     const toolExecutorMap: Record<string, ToolExecutor> = {};
-    let onlineDevices: DeviceAttachment[] = [];
-    let activeDeviceId: string | undefined;
-    let executionPlan: ExecutionPlan | undefined;
+    const onlineDevices: DeviceAttachment[] = operationOnlineDevices;
+    let activeDeviceId =
+      executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
+    let executionPlan: ExecutionPlan | undefined = executionContext.plan;
     let hasAgentDocuments = false;
     let hasEnabledKnowledgeBases = false;
-    const isBotConversation = !!(botContext || discordContext);
 
     // Device-tool access (`canUseDevice` / `deviceAccessReason`) was resolved
     // once before the hetero early exit above; the decision flows into the
@@ -1751,11 +2217,7 @@ export class AiAgentService {
     let lobehubSkillManifests: LobeToolManifest[] = [];
     let composioManifests: LobeToolManifest[] = [];
     let connectorManifests: ReturnType<typeof buildConnectorManifests> = [];
-    let agentPlugins: string[] = [...(agentConfig?.plugins ?? []), ...(additionalPluginIds || [])];
-
-    // Model metadata is needed both for tool support checks and agent-management context.
-    const { loadModels } = await import('@/business/client/model-bank/loadModels');
-    const builtinModels = await loadModels();
+    // Model metadata and initial plugins were frozen before the execution-mode fork.
     // Resolve file URLs before visual tool activation checks and context build.
     const fileService = new FileService(this.db, this.userId, this.workspaceId);
     const postProcessUrl = (path: string | null, file: { id?: string | null }) =>
@@ -1960,14 +2422,7 @@ export class AiAgentService {
       const gatewayConfigured = deviceGateway.isConfigured;
       const agentBoundDeviceId = agentConfig.agencyConfig?.boundDeviceId;
       const boundDeviceId = topicBoundDeviceId || agentBoundDeviceId;
-      if (gatewayConfigured) {
-        try {
-          onlineDevices = await deviceGateway.queryDeviceList(this.userId);
-          log('execAgent: found %d online device(s)', onlineDevices.length);
-        } catch (error) {
-          log('execAgent: failed to query device list: %O', error);
-        }
-      }
+      log('execAgent: froze %d online device(s)', onlineDevices.length);
       const deviceOnline = onlineDevices.length > 0;
 
       const toolsContext: ServerAgentToolsContext = {
@@ -2035,14 +2490,9 @@ export class AiAgentService {
       // Pass `chatConfig` so the plan degrades to `none` in chat mode — the
       // chat-mode derivation lives in `resolveExecutionPlan` (`resolveToolMode`),
       // the same source of truth the tools engine uses.
-      executionPlan = resolveExecutionPlan({
-        agencyConfig: agentConfig.agencyConfig,
-        canUseDevice,
-        chatConfig: agentConfig.chatConfig ?? undefined,
-        isDesktop: gatewayConfigured,
-        onlineDeviceIds: onlineDevices.map((device) => device.deviceId),
-        requestedDeviceId,
-      });
+      // Execution authority was frozen before the heterogeneous/native fork.
+      // Device discovery below is observational only and cannot re-route it.
+      executionPlan = executionContext.plan;
       // Device tools (local-system / remote-device proxy) only exist in a
       // device-capable session — `none` and `sandbox` sessions must never see
       // them, not even the proxy that could activate a device mid-run.
@@ -2574,175 +3024,6 @@ export class AiAgentService {
 
     await throwIfExecutionAborted('operation preparation');
 
-    // 15. Generate operation ID: agt_{timestamp}_{agentId}_{topicId}_{random}
-    const timestamp = Date.now();
-    const operationId = `op_${timestamp}_${resolvedAgentId}_${topicId}_${nanoid(8)}`;
-
-    // Freeze the execution authority exactly once. Topic metadata remains a
-    // compatibility projection; only the server-authored binding store is
-    // admitted here. Mutable agent defaults and browser-written cwd mirrors
-    // are intentionally not consulted after this point.
-    // Binding authority must fail closed. Treating a storage outage as an
-    // unbound topic could silently switch an already-bound conversation to a
-    // scratch directory and reintroduce cwd drift.
-    const topicWorkspaceState = await new DatabaseTopicWorkspaceBindingStore(
-      this.db,
-      this.userId,
-      this.workspaceId,
-    ).getState(topicId);
-
-    // A configured workspace env is execution input, not optional decoration.
-    // Loading/authentication failures abort operation creation rather than
-    // running commands with silently missing credentials or configuration.
-    const workspaceRuntimeConfig = await this.resolveWorkspaceRuntimeConfig({
-      agentEnv: agentConfig.agencyConfig?.heterogeneousProvider?.env,
-      agentId: resolvedAgentId,
-      operationId,
-      topicId,
-      workspaceId: topicWorkspaceState?.workspace?.id,
-    });
-    const executionEnv = workspaceRuntimeConfig.env;
-
-    const workspaces = topicWorkspaceState?.workspace?.id
-      ? { [topicWorkspaceState.workspace.id]: topicWorkspaceState.workspace }
-      : undefined;
-
-    // If the earlier server-side plan was already resolved, preserve its
-    // platform target unless a canonical topic snapshot supersedes it. This
-    // prevents a second resolution from drifting after config/default changes
-    // during a long operation setup.
-    const preservedPlanTarget = topicWorkspaceState?.snapshot ? undefined : executionPlan?.target;
-    const preservedDeviceId =
-      topicWorkspaceState?.snapshot || executionPlan?.kind !== 'device'
-        ? requestedDeviceId
-        : executionPlan.deviceId;
-    const executionContextInput = {
-      agencyConfig: agentConfig.agencyConfig,
-      canUseDevice,
-      chatConfig: agentConfig.chatConfig ?? undefined,
-      env: executionEnv,
-      executionTargetByPlatform: preservedPlanTarget
-        ? { desktop: preservedPlanTarget, web: preservedPlanTarget }
-        : undefined,
-      isDesktop: deviceGateway.isConfigured,
-      onlineDeviceIds: onlineDevices.map((device) => device.deviceId),
-      operationId,
-      requestedDeviceId: preservedDeviceId,
-      snapshot: topicWorkspaceState?.snapshot,
-      workspaces,
-    };
-    const preliminaryExecutionContext = resolveExecutionContext(executionContextInput);
-    const planDeviceId =
-      preliminaryExecutionContext.plan.kind === 'device'
-        ? preliminaryExecutionContext.plan.deviceId
-        : undefined;
-    let accessRoots: NonNullable<ExecutionContext['accessRoots']> = [];
-    if (planDeviceId) {
-      try {
-        accessRoots = await new WorkspaceAccessGrantService({
-          grantModel: new WorkspaceAccessGrantModel(this.db, this.userId),
-          topicModel: this.topicModel,
-        }).buildAccessRoots({ deviceId: planDeviceId, topicId });
-      } catch (error) {
-        log('execAgent: failed to resolve topic access grants: %O', error);
-      }
-    }
-
-    const directUserRoots = planDeviceId
-      ? buildDirectUserMessageAccessRoots({
-          appScope: appContext?.scope,
-          automationMode: appContext?.automationMode,
-          botConversation: isBotConversation,
-          cronJobId,
-          ephemeralUserMessage,
-          evalRun: !!evalContext,
-          hasAttachments:
-            (runAttachments.fileIds?.length ?? 0) > 0 ||
-            (runAttachments.imageList?.length ?? 0) > 0 ||
-            (runAttachments.videoList?.length ?? 0) > 0 ||
-            (runAttachments.fileList?.length ?? 0) > 0,
-          headless: userInterventionConfig.approvalMode === 'headless',
-          operationId,
-          prompt,
-          suppressUserMessage: runFromHistory,
-          taskId: operationTaskId,
-          topicId,
-          trigger,
-        }).map((root) => ({ ...root, deviceId: planDeviceId }))
-      : [];
-    accessRoots.push(...directUserRoots);
-
-    if (pendingOperationPathConsent) {
-      const operationRoot = validateOperationPathConsent({
-        ...pendingOperationPathConsent,
-        currentDeviceId: planDeviceId,
-        currentOperationId: operationId,
-        currentTopicId: topicId,
-      });
-      accessRoots.push(operationRoot);
-      await this.messageModel.updateMessagePlugin(resumeApproval!.parentMessageId, {
-        intervention: { status: 'approved' },
-      });
-    }
-
-    const executionContext: ExecutionContext = resolveExecutionContext({
-      ...executionContextInput,
-      accessRoots,
-    });
-    executionContext.envSummary = {
-      keys: Object.keys(executionEnv.values).sort(),
-      secretKeys: [...executionEnv.secretKeys].sort(),
-    };
-    executionPlan = executionContext.plan;
-    activeDeviceId =
-      executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
-
-    let modelCatalogSnapshot: ModelCatalogSnapshot;
-    try {
-      const persistedModel = await new AiModelModel(this.db, this.userId).findByIdAndProvider(
-        model,
-        provider,
-      );
-      const persistedCatalog = getModelCatalogFromSettings(persistedModel?.settings);
-      const exactPersistedEntry =
-        persistedCatalog?.entry.modelId === model && persistedCatalog.entry.providerId === provider
-          ? persistedCatalog.entry
-          : undefined;
-      const modelCard =
-        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
-        builtinModels.find((item) => item.id === model);
-      const entry =
-        exactPersistedEntry ??
-        mergeModelCatalogEntry({
-          catalog: {
-            abilities: persistedModel?.abilities ?? modelCard?.abilities,
-            contextWindowTokens:
-              persistedModel?.contextWindowTokens ?? modelCard?.contextWindowTokens,
-            kind: persistedModel?.type ?? 'chat',
-          },
-          modelId: model,
-          providerId: provider,
-        }).entry;
-      modelCatalogSnapshot = createModelCatalogSnapshot(entry, operationId);
-    } catch (error) {
-      log('execAgent: model catalog persistence unavailable, freezing builtin evidence: %O', error);
-      const modelCard =
-        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
-        builtinModels.find((item) => item.id === model);
-      modelCatalogSnapshot = createModelCatalogSnapshot(
-        mergeModelCatalogEntry({
-          catalog: {
-            abilities: modelCard?.abilities,
-            contextWindowTokens: modelCard?.contextWindowTokens,
-            kind: 'chat',
-          },
-          modelId: model,
-          providerId: provider,
-        }).entry,
-        operationId,
-      );
-    }
-
     // 16. Create initial context
     let initialContext: AgentRuntimeContext = {
       payload: {
@@ -2887,91 +3168,7 @@ export class AiAgentService {
     // filters by platform via enableChecker, and pairs with agent's enabled
     // plugin IDs for downstream SkillResolver consumption.
     let operationSkillSet;
-    let skillRegistryResult: SkillRegistryResult = {
-      entries: [],
-      errors: [],
-      policy: workspaceRuntimeConfig.skillPolicy,
-      precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
-      skills: [],
-    };
     try {
-      const skillModel = new AgentSkillModel(this.db, this.userId, this.workspaceId);
-      const { data: dbSkills } = await skillModel.findAll();
-
-      // Agent-document skill bundles surfaced as runtime skills via the shared
-      // `getAgentSkills` source of truth (prefix + index-child resolution lives
-      // there; see `AgentDocumentsService.getAgentSkills`). Identifier is
-      // prefixed (`agent-skills:<filename>`) so it can't collide with builtin
-      // / DB skill names, and we re-use it as `name` so the prompt's
-      // `<skill name="...">` line and the model's `activateSkill(name)` call
-      // carry the same value.
-      const agentSkills = await this.agentDocumentsService.getAgentSkills(resolvedAgentId);
-
-      // Project skills + the root AGENTS.md are discovered server-side by
-      // scanning the device's bound project directory ("workspace init"), cached
-      // on `devices.workingDirs` and reused within the TTL. Skills surface in
-      // `<available_skills>` (metadata only — SKILL.md bodies are read lazily at
-      // activation via `local-system` readFile, which `serverRuntimes/skills.ts`
-      // re-gates on `activeDeviceId`). Only `location` (the absolute SKILL.md
-      // path) flows through; the directory tree is enumerated lazily, keeping the
-      // op-param payload small.
-      const workspaceInit = await this.resolveWorkspaceInit({
-        activeDeviceId,
-        agencyConfig: agentConfig.agencyConfig ?? undefined,
-        topicId,
-        workspaceRoot: executionContext.cwd,
-      });
-
-      if (workspaceInit.skills.length) {
-        log(
-          'execAgent: workspace skills merged: %d (activeDeviceId=%s)',
-          workspaceInit.skills.length,
-          activeDeviceId ?? 'none',
-        );
-      }
-
-      // Inject the project-root agent instructions (AGENTS.md / CLAUDE.md) as
-      // trailing blocks on the system role — after the agent's persona and any
-      // page/task/additional instructions. `agentConfig` is read by
-      // `createOperation` below, so appending here still reaches the LLM.
-      if (workspaceInit.instructions.length) {
-        const block = workspaceInit.instructions
-          .map(
-            ({ content, source }) =>
-              `<project_instructions source="${source}">\n${content}\n</project_instructions>`,
-          )
-          .join('\n\n');
-        agentConfig.systemRole = agentConfig.systemRole
-          ? `${agentConfig.systemRole}\n\n${block}`
-          : block;
-        log(
-          'execAgent: injected %d project instruction file(s): %s',
-          workspaceInit.instructions.length,
-          workspaceInit.instructions.map((i) => i.source).join(', '),
-        );
-      }
-
-      const registry = new SkillRegistryService({
-        providers: [
-          createBuiltinSkillProvider(
-            builtinSkills.filter((skill) => shouldEnableBuiltinSkill(skill.identifier)),
-          ),
-          createAgentSkillProvider(async () => agentSkills),
-          createUserSkillProvider(async () => dbSkills),
-          createProjectSkillProvider(),
-        ],
-      });
-      skillRegistryResult = await registry.resolve(
-        {
-          agentId: resolvedAgentId,
-          skillPolicy: workspaceRuntimeConfig.skillPolicy,
-          userId: this.userId,
-          workspace: executionContext.workspace,
-          workspaceInit,
-        },
-        { userId: this.userId, workspaceId: this.workspaceId },
-      );
-
       const skillEngine = new SkillEngine({
         registry: skillRegistryResult,
         skills: skillRegistryResult.skills,
@@ -2979,10 +3176,6 @@ export class AiAgentService {
       operationSkillSet = skillEngine.generate(agentPlugins ?? []);
     } catch (error) {
       log('execAgent: failed to build operationSkillSet: %O', error);
-      skillRegistryResult.errors.push({
-        message: 'Skill registry resolution failed during operation creation.',
-        source: 'visibility',
-      });
     }
 
     // 19. Create operation using AgentRuntimeService

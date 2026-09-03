@@ -11,6 +11,7 @@ import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
+import { DeviceGateway } from '@/server/services/deviceGateway';
 import { WorkspaceEnvService } from '@/server/services/executionEnv';
 import {
   DatabaseTopicWorkspaceBindingStore,
@@ -150,7 +151,21 @@ export const projectWorkspaceRouter = router({
         topicId: z.string().min(1),
       }),
     )
-    .mutation(({ ctx, input }) => ctx.grantService.grant(input)),
+    .mutation(async ({ ctx, input }) => {
+      requireAbsolutePath(input.rootPath);
+      const rootPath = await new DeviceGateway().resolveRealPath({
+        deviceId: input.deviceId,
+        path: input.rootPath,
+        userId: ctx.userId,
+      });
+      if (!rootPath) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'The selected device could not prove the requested real path',
+        });
+      }
+      return ctx.grantService.grant({ ...input, rootPath });
+    }),
 
   list: projectWorkspaceProcedure
     .input(
@@ -166,6 +181,25 @@ export const projectWorkspaceRouter = router({
   listGrants: projectWorkspaceProcedure
     .input(z.object({ deviceId: z.string().min(1), topicId: z.string().min(1) }))
     .query(({ ctx, input }) => ctx.grantService.listActive(input)),
+
+  resolveRealPath: projectWorkspaceProcedure
+    .input(z.object({ deviceId: z.string().min(1), path: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      requireAbsolutePath(input.path);
+      const resolved = await new DeviceGateway().resolveRealPath({
+        deviceId: input.deviceId,
+        path: input.path,
+        userId: ctx.userId,
+      });
+      if (!resolved) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Trusted realpath is unavailable for the selected device',
+        });
+      }
+      requireAbsolutePath(resolved);
+      return { path: resolved };
+    }),
 
   revoke: projectWorkspaceWriteProcedure
     .input(

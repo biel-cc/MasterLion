@@ -1,4 +1,4 @@
-const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_KEY_PATTERN = /^[A-Z_]\w*$/i;
 
 export const RUNTIME_PROTECTED_ENV_KEYS = new Set([
   'BASH_ENV',

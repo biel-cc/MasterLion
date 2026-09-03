@@ -10,8 +10,8 @@ export interface NewApiClientOptions {
 }
 
 export interface NewApiUserSelf {
-  email?: string;
   display_name?: string;
+  email?: string;
   group?: string;
   id: number;
   quota?: number;
@@ -62,8 +62,8 @@ export interface NewApiToken {
   remain_quota?: number;
   status?: number;
   unlimited_quota?: boolean;
-  user_id?: number;
   used_quota?: number;
+  user_id?: number;
 }
 
 export interface NewApiTokenUsageResponse {

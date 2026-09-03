@@ -23,7 +23,6 @@ import type { LobeChatDatabase } from '@/database/type';
 import { filterBuiltinSkills } from '@/helpers/skillFilters';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { deviceGateway } from '@/server/services/deviceGateway';
-import { toGatewayExecutionContext } from '@/server/services/toolExecution/executionContext';
 import { FileService } from '@/server/services/file';
 import { MarketService } from '@/server/services/market';
 import {
@@ -32,11 +31,40 @@ import {
   normalizeSandboxCommandResult,
 } from '@/server/services/sandbox';
 import { SkillResourceService } from '@/server/services/skill/resource';
+import { toGatewayExecutionContext } from '@/server/services/toolExecution/executionContext';
 import { preprocessLhCommand } from '@/server/services/toolExecution/preprocessLhCommand';
 
 import { type ServerRuntimeRegistration } from './types';
 
 const log = debug('lobe-server:skills-runtime');
+
+interface DeviceRunCommandState {
+  error?: string;
+  exitCode?: number;
+  output?: string;
+  stderr?: string;
+  stdout?: string;
+  success?: boolean;
+}
+
+const toDeviceCommandResult = (result: {
+  content: string;
+  error?: string;
+  state?: unknown;
+  success: boolean;
+}): CommandResult => {
+  const state =
+    result.state && typeof result.state === 'object'
+      ? (result.state as DeviceRunCommandState)
+      : undefined;
+  const exitCode = state?.exitCode ?? (result.success ? 0 : 1);
+  return {
+    exitCode,
+    output: state?.output ?? state?.stdout ?? result.content,
+    stderr: state?.stderr ?? state?.error ?? result.error,
+    success: result.success && state?.success !== false && exitCode === 0,
+  };
+};
 
 interface UserSettingsWithMarketToken {
   market?: {
@@ -350,14 +378,19 @@ export const skillsRuntime: ServerRuntimeRegistration = {
     //     the raw string. The discovery payload no longer carries the file
     //     tree (see commit 8e8f3aed14), so we enumerate live at read time.
     const { activeDeviceId, projectSkills } = context;
+    const frozenDeviceId =
+      context.executionContext?.plan.kind === 'device'
+        ? context.executionContext.plan.deviceId
+        : undefined;
+    const operationDeviceId = frozenDeviceId ?? activeDeviceId;
     let deviceFileAccess: DeviceFileAccess | undefined;
-    if (activeDeviceId && context.userId) {
+    if (operationDeviceId && context.userId) {
       const userId = context.userId;
       deviceFileAccess = {
         listFiles: async (dir: string) => {
           const result = await deviceGateway.executeToolCall(
             {
-              deviceId: activeDeviceId,
+              deviceId: operationDeviceId,
               executionContext: toGatewayExecutionContext(context),
               operationId: context.operationId,
               topicId: context.topicId,
@@ -392,7 +425,7 @@ export const skillsRuntime: ServerRuntimeRegistration = {
         readFile: async (filePath: string) => {
           const result = await deviceGateway.executeToolCall(
             {
-              deviceId: activeDeviceId,
+              deviceId: operationDeviceId,
               executionContext: toGatewayExecutionContext(context),
               operationId: context.operationId,
               topicId: context.topicId,
@@ -413,10 +446,87 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       };
     }
 
+    const deviceSkillPathVerifier =
+      frozenDeviceId && context.executionContext
+        ? async (input: { deviceId: string; skillDir: string; workspaceRoot: string }) => {
+            if (input.deviceId !== frozenDeviceId) return undefined;
+            return deviceGateway.verifySkillPaths({
+              ...input,
+              userId: context.userId!,
+            });
+          }
+        : undefined;
+
+    const deviceScriptRunner =
+      frozenDeviceId && context.executionContext
+        ? async (
+            command: string,
+            options: {
+              cwd: string;
+              description: string;
+              deviceId: string;
+              env: Record<string, string>;
+            },
+          ): Promise<CommandResult> => {
+            if (options.deviceId !== frozenDeviceId) {
+              throw new Error('The skill execution device does not match the frozen operation.');
+            }
+            const skillCwd = options.env.SKILL_DIR ?? options.cwd;
+            if (!skillCwd) throw new Error('WORKSPACE_REQUIRED');
+            const gatewayContext = toGatewayExecutionContext(context);
+            if (!gatewayContext) throw new Error('WORKSPACE_REQUIRED');
+
+            // runCommand deliberately ignores a model-authored cwd. For a
+            // runtime-selected skill directory, narrow the device boundary to
+            // that already-realpathed directory before dispatching the command.
+            const skillExecutionContext: NonNullable<ReturnType<typeof toGatewayExecutionContext>> =
+              {
+                ...gatewayContext,
+                accessRoots: [
+                  {
+                    modes: ['exec', 'read', 'write'],
+                    rootPath: skillCwd,
+                    scope: 'primary' as const,
+                    source: 'workspace' as const,
+                  },
+                ],
+                cwd: skillCwd,
+                env: options.env,
+                workspaceRootPath: skillCwd,
+              };
+            const result = await deviceGateway.executeToolCall(
+              {
+                deviceId: frozenDeviceId,
+                executionContext: skillExecutionContext,
+                operationId: context.operationId,
+                toolCallId: context.toolCallId,
+                topicId: context.topicId,
+                userId: context.userId!,
+              },
+              {
+                apiName: LocalSystemApiName.runCommand,
+                arguments: JSON.stringify({
+                  command,
+                  cwd: skillCwd,
+                  description: options.description,
+                  env: options.env,
+                }),
+                identifier: LocalSystemIdentifier,
+              },
+              context.executionTimeoutMs,
+            );
+            return toDeviceCommandResult(result);
+          }
+        : undefined;
+
     return new SkillsExecutionRuntime({
       builtinSkills: [...filterBuiltinSkills(builtinSkills), ...agentSkillBuiltins],
       deviceFileAccess,
+      deviceScriptRunner,
+      deviceSkillPathVerifier,
+      executionContext: context.executionContext,
       projectSkills,
+      registryResult: context.skillRegistryResult,
       service,
     });
   },

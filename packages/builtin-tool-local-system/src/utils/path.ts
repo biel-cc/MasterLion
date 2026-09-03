@@ -28,7 +28,7 @@ export const isEscapingPathPattern = (input: string): boolean => {
   const normalized = input.trim().replaceAll('\\', '/');
   return (
     normalized.startsWith('/') ||
-    /^[A-Za-z]:\//.test(normalized) ||
+    /^[A-Z]:\//i.test(normalized) ||
     normalized.split('/').includes('..')
   );
 };

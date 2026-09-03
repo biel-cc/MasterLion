@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { TRPCClientError } from '@trpc/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { message as antdMessage } from '@/components/AntdStaticMethods';
 import { agentService } from '@/services/agent';
 import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
@@ -20,6 +21,10 @@ import { resetTestEnvironment, setupMockSelectors, spyOnMessageService } from '.
 
 // Keep zustand mock as it's needed globally
 vi.mock('zustand/traditional');
+
+vi.mock('@/components/AntdStaticMethods', () => ({
+  message: { info: vi.fn() },
+}));
 
 const executeHeterogeneousAgentMock = vi.hoisted(() => vi.fn());
 const mockConstEnv = vi.hoisted(() => ({ isDesktop: false }));
@@ -229,6 +234,45 @@ describe('ConversationLifecycle actions', () => {
           messageIds: ['user-1', 'assistant-1'],
           topicId,
         });
+      });
+
+      it('should show a visible no-candidates outcome for /compact', async () => {
+        const { result } = renderHook(() => useChatStore());
+        const topicId = TEST_IDS.TOPIC_ID;
+        const agentId = TEST_IDS.SESSION_ID;
+        const infoSpy = vi.spyOn(antdMessage, 'info').mockImplementation(vi.fn());
+
+        await act(async () => {
+          useChatStore.setState({
+            activeAgentId: agentId,
+            activeTopicId: topicId,
+            dbMessagesMap: { [messageMapKey({ agentId, topicId })]: [] },
+          });
+          await result.current.sendMessage({
+            context: { agentId, threadId: null, topicId },
+            editorData: {
+              root: {
+                children: [
+                  {
+                    children: [
+                      {
+                        actionCategory: 'command',
+                        actionLabel: 'Compact context',
+                        actionType: 'compact',
+                        type: 'action-tag',
+                      },
+                    ],
+                    type: 'paragraph',
+                  },
+                ],
+                type: 'root',
+              },
+            } as any,
+            message: '',
+          });
+        });
+
+        expect(infoSpy).toHaveBeenCalledWith('Nothing left to compress');
       });
 
       it('should not process AI when onlyAddUserMessage is true', async () => {

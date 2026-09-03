@@ -106,8 +106,8 @@ vi.mock('../TopicListContent/FlatMode', () => ({
   default: () => <div data-testid="flat-mode" />,
 }));
 
-vi.mock('../TopicListContent/WorkspaceMode', () => ({
-  default: () => <div data-testid="workspace-mode" />,
+vi.mock('@/features/AgentTopicSidebar', () => ({
+  WorkspaceMode: () => <div data-testid="workspace-mode" />,
 }));
 
 vi.mock('@lobehub/ui', () => ({

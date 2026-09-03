@@ -51,7 +51,11 @@ export const parseWorkspacePathConsentRequest = (
     modes,
     operationId: request.operationId,
     primaryCwd: request.primaryCwd,
-    requestedPath: normalizeRootPath(request.requestedPath),
+    // Keep the device-runtime-authored lexical value intact. The approval is
+    // bound to this exact request before the server asks that same device for
+    // the canonical realpath; normalizing here would make `/a/../b` and `/b`
+    // indistinguishable before the device proof exists.
+    requestedPath: request.requestedPath,
     topicId: request.topicId,
     version: 1,
   };
@@ -75,12 +79,21 @@ export const getRuntimePathConsentRequest = (plugin: {
  */
 export const validateOperationPathConsent = (params: {
   approval: OperationPathConsentApproval;
+  /** Device-authored realpath. Omit only for the pre-RPC tuple validation. */
+  canonicalRootPath?: string;
   currentOperationId: string;
   currentTopicId: string;
   currentDeviceId?: string;
   request: WorkspacePathConsentRequest | undefined;
 }): ExecutionAccessRoot => {
-  const { approval, currentDeviceId, currentOperationId, currentTopicId, request } = params;
+  const {
+    approval,
+    canonicalRootPath,
+    currentDeviceId,
+    currentOperationId,
+    currentTopicId,
+    request,
+  } = params;
   if (!request) throw new Error('Path consent is missing runtime-authored intervention evidence');
   if (approval.version !== 1 || approval.scope !== 'operation') {
     throw new Error('Path consent has an unsupported scope or version');
@@ -100,7 +113,7 @@ export const validateOperationPathConsent = (params: {
   const rootPath = normalizeRootPath(approval.rootPath);
   if (
     !isAbsoluteFilesystemPath(approval.rootPath) ||
-    rootPath !== request.requestedPath ||
+    approval.requestedPath !== request.requestedPath ||
     approval.sourceOperationId !== request.operationId ||
     approval.topicId !== request.topicId ||
     approval.topicId !== currentTopicId ||
@@ -108,6 +121,13 @@ export const validateOperationPathConsent = (params: {
     approval.deviceId !== currentDeviceId
   ) {
     throw new Error('Path consent does not match the pending operation, topic, device, and root');
+  }
+
+  if (
+    canonicalRootPath !== undefined &&
+    (!isAbsoluteFilesystemPath(canonicalRootPath) || approval.rootPath !== canonicalRootPath)
+  ) {
+    throw new Error('Path consent canonical root does not match the selected device realpath');
   }
 
   return {

@@ -30,6 +30,7 @@ import { notebookRuntime } from './notebook';
 import { pageAgentRuntime } from './pageAgent';
 import { remoteDeviceRuntime } from './remoteDevice';
 import { selfFeedbackIntentRuntime } from './selfFeedbackIntent';
+import { skillAuthoringRuntime } from './skillAuthoring';
 import { skillManagementRuntime } from './skillManagement';
 import { skillsRuntime } from './skills';
 import { skillStoreRuntime } from './skillStore';
@@ -64,6 +65,7 @@ registerRuntimes([
   agentDocumentsRuntime,
   agentManagementRuntime,
   skillManagementRuntime,
+  skillAuthoringRuntime,
   notebookRuntime,
   skillStoreRuntime,
   skillsRuntime,

@@ -49,19 +49,25 @@ type rpcEnvelope struct {
 }
 
 type deviceHTTPBody struct {
-	AgentType       string          `json:"agentType,omitempty"`
-	API             json.RawMessage `json:"api,omitempty"`
-	CWD             string          `json:"cwd,omitempty"`
-	DeviceID        string          `json:"deviceId,omitempty"`
-	JWT             string          `json:"jwt,omitempty"`
-	Method          string          `json:"method,omitempty"`
-	OperationID     string          `json:"operationId,omitempty"`
-	Params          json.RawMessage `json:"params,omitempty"`
-	Prompt          string          `json:"prompt,omitempty"`
-	ResumeSessionID string          `json:"resumeSessionId,omitempty"`
-	SystemContext   string          `json:"systemContext,omitempty"`
-	Timeout         int             `json:"timeout,omitempty"`
-	ToolCall        json.RawMessage `json:"toolCall,omitempty"`
-	TopicID         string          `json:"topicId,omitempty"`
-	UserID          string          `json:"userId"`
+	AgentType        string            `json:"agentType,omitempty"`
+	API              json.RawMessage   `json:"api,omitempty"`
+	CWD              string            `json:"cwd,omitempty"`
+	DeviceID         string            `json:"deviceId,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
+	ExecutionContext json.RawMessage   `json:"executionContext,omitempty"`
+	ImageList        json.RawMessage   `json:"imageList,omitempty"`
+	JWT              string            `json:"jwt,omitempty"`
+	Method           string            `json:"method,omitempty"`
+	ModelRef         json.RawMessage   `json:"modelRef,omitempty"`
+	OperationID      string            `json:"operationId,omitempty"`
+	Params           json.RawMessage   `json:"params,omitempty"`
+	Prompt           string            `json:"prompt,omitempty"`
+	ResumeSessionID  string            `json:"resumeSessionId,omitempty"`
+	SkillPolicy      string            `json:"skillPolicy,omitempty"`
+	Skills           json.RawMessage   `json:"skills,omitempty"`
+	SystemContext    string            `json:"systemContext,omitempty"`
+	Timeout          int               `json:"timeout,omitempty"`
+	ToolCall         json.RawMessage   `json:"toolCall,omitempty"`
+	TopicID          string            `json:"topicId,omitempty"`
+	UserID           string            `json:"userId"`
 }

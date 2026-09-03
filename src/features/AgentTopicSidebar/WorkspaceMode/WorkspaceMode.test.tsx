@@ -24,7 +24,11 @@ const mocks = vi.hoisted(() => ({
   updateSystemStatus: vi.fn(),
 }));
 
-vi.mock('@lobechat/const', () => ({ isDesktop: true }));
+vi.mock('@lobechat/const', async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+
+  return { ...original, isDesktop: true };
+});
 vi.mock('@lobehub/ui', () => ({
   Accordion: ({ children }: { children?: ReactNode }) => (
     <div data-testid="accordion">{children}</div>
@@ -79,7 +83,7 @@ vi.mock('url-join', () => ({ default: (...parts: string[]) => parts.join('/') })
 vi.mock('@/components/RingLoading', () => ({ default: () => null }));
 vi.mock('@/features/NavPanel/components/NavItem', () => ({ default: () => null }));
 vi.mock('@/features/NavPanel/components/SkeletonList', () => ({ default: () => null }));
-vi.mock('../../List/Item', () => ({
+vi.mock('@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item', () => ({
   default: (props: Record<string, unknown>) => {
     mocks.topicItems.push(props);
     return (

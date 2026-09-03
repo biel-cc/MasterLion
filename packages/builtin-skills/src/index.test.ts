@@ -24,6 +24,6 @@ describe('SkillCreatorSkill', () => {
     expect(skill?.content).toContain('lobe-skill-authoring');
     expect(skill?.content).toContain('validateProjectSkill');
     expect(skill?.content).toContain('promoteProjectSkill');
-    expect(skill?.content).not.toMatch(/[\u4e00-\u9fff]/);
+    expect(skill?.content).not.toMatch(/[\u4E00-\u9FFF]/);
   });
 });

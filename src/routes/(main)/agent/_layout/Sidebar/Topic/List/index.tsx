@@ -5,6 +5,7 @@ import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import urlJoin from 'url-join';
 
+import { WorkspaceMode } from '@/features/AgentTopicSidebar';
 import EmptyNavItem from '@/features/NavPanel/components/EmptyNavItem';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
 import { useFetchChatTopics } from '@/hooks/useFetchChatTopics';
@@ -18,7 +19,6 @@ import { useAgentTopicGroupMode } from '../hooks/useAgentTopicGroupMode';
 import ByProjectMode from '../TopicListContent/ByProjectMode';
 import ByTimeMode from '../TopicListContent/ByTimeMode';
 import FlatMode from '../TopicListContent/FlatMode';
-import WorkspaceMode from '../TopicListContent/WorkspaceMode';
 
 const TopicList = memo(() => {
   const { t } = useTranslation('topic');

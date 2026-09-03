@@ -10,5 +10,9 @@ export type {
 } from './initialState';
 export * from './selectors';
 export * from './store';
+export {
+  type PendingTopicExecutionIntent,
+  resolvePendingTopicExecutionIntent,
+} from './topicExecutionIntent';
 export * from './topicNavigation';
 export * from './workspaceExtensions';

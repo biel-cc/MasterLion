@@ -1,7 +1,6 @@
-import debug from 'debug';
-
-import type { ExecutionEnv } from '@lobechat/types/src/executionContext';
 import { composeChildProcessEnv } from '@lobechat/local-file-shell/src/env';
+import type { ExecutionEnv } from '@lobechat/types/src/executionContext';
+import debug from 'debug';
 
 import { appEnv } from '@/envs/app';
 import { signUserJWT } from '@/libs/trpc/utils/internalJwt';

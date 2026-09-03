@@ -1,12 +1,18 @@
 import { EventEmitter } from 'node:events';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { spawnHeteroAgentRun } from './agentRun';
 
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+const { materializeSkillsForCliMock, spawnMock } = vi.hoisted(() => ({
+  materializeSkillsForCliMock: vi.fn(),
+  spawnMock: vi.fn(),
+}));
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
+vi.mock('@lobechat/device-control', () => ({
+  materializeSkillsForCli: materializeSkillsForCliMock,
+}));
 
 const makeFakeChild = () => {
   const child = new EventEmitter() as EventEmitter & {
@@ -27,6 +33,10 @@ const baseParams = {
 };
 
 describe('spawnHeteroAgentRun', () => {
+  beforeEach(() => {
+    materializeSkillsForCliMock.mockResolvedValue({ errors: [] });
+  });
+
   afterEach(() => {
     spawnMock.mockReset();
   });
@@ -36,6 +46,36 @@ describe('spawnHeteroAgentRun', () => {
       reason: 'WORKSPACE_REQUIRED',
       status: 'rejected',
     });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('materializes enabled skills before spawning and fails closed on an error', async () => {
+    materializeSkillsForCliMock.mockResolvedValue({
+      errors: [{ key: 'builtin:test', message: 'foreign skill directory' }],
+    });
+
+    await expect(
+      spawnHeteroAgentRun({
+        ...baseParams,
+        skillPolicy: 'project',
+        skills: [
+          {
+            content: '# Test',
+            description: 'Test',
+            identifier: 'test',
+            key: 'builtin:test',
+            name: 'test',
+            source: 'builtin',
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      reason: 'SKILL_MATERIALIZATION_FAILED: foreign skill directory',
+      status: 'rejected',
+    });
+    expect(materializeSkillsForCliMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/work/dir', policy: 'project' }),
+    );
     expect(spawnMock).not.toHaveBeenCalled();
   });
 

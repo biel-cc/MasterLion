@@ -19,6 +19,10 @@ import { useAgentStore } from '@/store/agent';
 import { type ChatStore } from '@/store/chat';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useGlobalStore } from '@/store/global';
+import {
+  getProjectWorkspaceStoreState,
+  resolvePendingTopicExecutionIntent,
+} from '@/store/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
 import { systemAgentSelectors, userGeneralSettingsSelectors } from '@/store/user/selectors';
@@ -1004,7 +1008,20 @@ export class ChatTopicActionImpl {
     );
 
     this.#get().internal_updateTopicLoading(tmpId, true);
-    const topicId = await topicService.createTopic(params);
+    const pendingExecution = params.executionIntent
+      ? undefined
+      : await resolvePendingTopicExecutionIntent({
+          agentId: this.#get().activeAgentId,
+          groupId: params.groupId ?? this.#get().activeGroupId,
+          isNewTopic: true,
+        });
+    const topicId = await topicService.createTopic({
+      ...params,
+      executionIntent: params.executionIntent ?? pendingExecution?.intent,
+    });
+    if (pendingExecution?.draftKey) {
+      getProjectWorkspaceStoreState().clearDraftIntent(pendingExecution.draftKey);
+    }
     this.#get().internal_updateTopicLoading(tmpId, false);
 
     this.#get().internal_updateTopicLoading(topicId, true);

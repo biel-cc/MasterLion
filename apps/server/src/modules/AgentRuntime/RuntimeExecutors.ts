@@ -1,5 +1,4 @@
 import {
-  compressContextHierarchically,
   type AgentEvent,
   type AgentInstruction,
   type AgentInstructionCompressContext,
@@ -8,6 +7,7 @@ import {
   type AgentRuntimeContext,
   type AgentState,
   type CallLLMPayload,
+  compressContextHierarchically,
   type ContextBudgetEvaluation,
   type GeneralAgentCallLLMResultPayload,
   type GeneralAgentCompressionResultPayload,
@@ -75,11 +75,16 @@ import {
   TraceNameMap,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { ContextCompressionOutcome } from '@lobechat/types/src/contextBudget';
 import type {
   ExecutionContext,
   ToolCallExecutionContext,
 } from '@lobechat/types/src/executionContext';
 import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
+import type {
+  TopicExecutionSnapshot,
+  WorkspaceRef,
+} from '@lobechat/types/src/projectWorkspace';
 import {
   isLocalOrPrivateUrl,
   sanitizeToolCallArguments,
@@ -95,6 +100,7 @@ import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
 import { type LobeChatDatabase } from '@/database/type';
 import { fileEnv } from '@/envs/file';
+import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { type ExecutionPlan, isDeviceCapablePlan } from '@/helpers/executionTarget';
 import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering';
 import { type EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
@@ -139,6 +145,7 @@ import { type IStreamEventManager } from './types';
 import {
   buildPendingWorkspacePathConsent,
   getPostDispatchWorkspacePathConsent,
+  requiresPrimaryCwdForTool,
 } from './workspacePathConsent';
 
 const log = debug('lobe-server:agent-runtime:streaming-executors');
@@ -910,9 +917,20 @@ const buildToolDiscoveryConfig = (operationToolSet: OperationToolSet, enabledToo
 
 export interface RuntimeExecutorContext {
   agentConfig?: any;
+  bindScratchAfterToolSuccess?: (params: {
+    deviceId: string;
+    rootPath: string;
+    target?: 'device' | 'local';
+    toolSucceeded: true;
+    topicId: string;
+  }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
   botContext?: unknown;
   botPlatformContext?: BotPlatformContext;
   discordContext?: any;
+  ensureScratchWorkspace?: (params: {
+    deviceId: string;
+    topicId: string;
+  }) => Promise<{ root: string }>;
   evalContext?: EvalContext;
   /**
    * Callback to fork a group member ("call agent member") under a
@@ -968,11 +986,94 @@ export interface RuntimeExecutorContext {
 const getFrozenExecutionContext = (state: AgentState): ExecutionContext | undefined =>
   state.metadata?.executionContext as ExecutionContext | undefined;
 
+interface PreparedToolExecutionContext {
+  executionContext?: ExecutionContext;
+  scratchRoot?: string;
+}
+
+const withPrimaryScratchRoot = (
+  executionContext: ExecutionContext,
+  deviceId: string,
+  rootPath: string,
+): ExecutionContext => ({
+  ...executionContext,
+  accessRoots: [
+    ...(executionContext.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+    {
+      deviceId,
+      modes: ['exec', 'read', 'write'],
+      rootPath,
+      scope: 'primary',
+      source: 'workspace',
+    },
+  ],
+  cwd: rootPath,
+  unresolvedReason: undefined,
+  workspace: { deviceId, kind: 'scratch', rootPath },
+});
+
+/**
+ * Lazily materialize a deterministic topic scratch root only for a tool that
+ * actually needs a default cwd. Explicit absolute-path operations use their
+ * grants directly and pure chat never reaches this seam.
+ */
+const prepareToolExecutionContext = async (
+  ctx: RuntimeExecutorContext,
+  state: AgentState,
+  tool: ChatToolPayload,
+): Promise<PreparedToolExecutionContext> => {
+  const executionContext = getFrozenExecutionContext(state);
+  if (!requiresPrimaryCwdForTool({ executionContext, tool })) return { executionContext };
+  if (!executionContext) throw new Error('WORKSPACE_REQUIRED');
+
+  const topicId = ctx.topicId ?? state.metadata?.topicId;
+  const deviceId =
+    executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
+  if (!topicId || !deviceId || !ctx.ensureScratchWorkspace) throw new Error('WORKSPACE_REQUIRED');
+
+  const { root } = await ctx.ensureScratchWorkspace({ deviceId, topicId });
+  if (!root || !isAbsoluteFilesystemPath(root)) throw new Error('WORKSPACE_REQUIRED');
+
+  return {
+    executionContext: withPrimaryScratchRoot(executionContext, deviceId, root),
+    scratchRoot: root,
+  };
+};
+
+const bindPreparedScratchContext = async (
+  ctx: RuntimeExecutorContext,
+  state: AgentState,
+  prepared: PreparedToolExecutionContext,
+): Promise<ExecutionContext | undefined> => {
+  if (!prepared.scratchRoot || !prepared.executionContext) return prepared.executionContext;
+
+  const topicId = ctx.topicId ?? state.metadata?.topicId;
+  const plan = prepared.executionContext.plan;
+  const deviceId = plan.kind === 'device' ? plan.deviceId : undefined;
+  if (!topicId || !deviceId || !ctx.bindScratchAfterToolSuccess) {
+    throw new Error('WORKSPACE_REQUIRED');
+  }
+
+  const bound = await ctx.bindScratchAfterToolSuccess({
+    deviceId,
+    rootPath: prepared.scratchRoot,
+    target: plan.target === 'local' ? 'local' : 'device',
+    toolSucceeded: true,
+    topicId,
+  });
+  return {
+    ...withPrimaryScratchRoot(prepared.executionContext, deviceId, bound.workspace.rootPath),
+    snapshot: bound.snapshot,
+    workspace: bound.workspace,
+  };
+};
+
 /** Never send resolved environment values to a renderer-facing gateway event. */
 const projectExecutionContextForClient = (
   state: AgentState,
+  override?: ExecutionContext,
 ): ToolCallExecutionContext | undefined => {
-  const frozen = getFrozenExecutionContext(state);
+  const frozen = override ?? getFrozenExecutionContext(state);
   if (!frozen) return;
 
   return {
@@ -1839,10 +1940,53 @@ export const createRuntimeExecutors = (
           });
       };
 
+      let persistedAutoCompression:
+        | {
+            inputFingerprint: string;
+            outcome: ContextCompressionOutcome;
+            providerMessages: UIChatMessage[];
+            stateMessages: UIChatMessage[];
+          }
+        | undefined;
+
       const compressFinalPayload = async (
         payload: BudgetedChatStreamPayload,
         evaluation: ContextBudgetEvaluation,
       ) => {
+        if (persistedAutoCompression?.inputFingerprint === evaluation.payloadFingerprint) {
+          return {
+            outcome: persistedAutoCompression.outcome,
+            payload: { ...payload, messages: persistedAutoCompression.providerMessages },
+          };
+        }
+
+        const topicId = state.metadata?.topicId ?? ctx.topicId;
+        if (!topicId || !ctx.userId) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+
+        const stateMessageIds = new Set(
+          state.messages.map((message) => message.id).filter((id): id is string => Boolean(id)),
+        );
+        const persistedCandidateIds = evaluation.partition.candidateIds.filter((id) =>
+          stateMessageIds.has(id),
+        );
+        if (persistedCandidateIds.length === 0) {
+          throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+        }
+
+        const messageService = new MessageService(
+          ctx.serverDB,
+          ctx.userId,
+          state.metadata?.workspaceId ?? ctx.workspaceId,
+        );
+        const compressionGroup = await messageService.createCompressionGroup(
+          topicId,
+          persistedCandidateIds,
+          {
+            agentId: state.metadata?.agentId,
+            threadId: state.metadata?.threadId,
+            topicId,
+          },
+        );
         const compressionModel = state.modelRuntimeConfig?.compressionModel ?? {
           model,
           provider,
@@ -1863,6 +2007,7 @@ export const createRuntimeExecutors = (
           ) - 1024,
         );
 
+        let finalSummary = '';
         const result = await compressContextHierarchically<
           UIChatMessage,
           Partial<ChatStreamPayload>
@@ -1881,8 +2026,9 @@ export const createRuntimeExecutors = (
               ),
             ),
           candidateIds: evaluation.partition.candidateIds,
-          createSummaryMessage: (summary, candidateIds, groupId) =>
-            ({
+          createSummaryMessage: (summary, candidateIds, groupId) => {
+            finalSummary = summary;
+            return {
               content: `[Conversation summary]\n${summary}`,
               createdAt: Date.now(),
               id: groupId,
@@ -1891,9 +2037,10 @@ export const createRuntimeExecutors = (
               // provider-valid role instead of the UI-only compressedGroup.
               role: 'user',
               updatedAt: Date.now(),
-            }) as UIChatMessage,
+            } as UIChatMessage;
+          },
           getMessageId: (message, index) => message.id || `payload-message-${index}`,
-          groupId: `auto-${operationId}-${stepIndex}-${nanoid(6)}`,
+          groupId: compressionGroup.messageGroupId,
           measurePayload: (messages) => {
             const accounting = countContextTokens({ messages: [...messages], tools });
             return {
@@ -1939,6 +2086,34 @@ export const createRuntimeExecutors = (
               ? evaluation.decision.trigger
               : 'final-preflight',
         });
+
+        if (result.outcome.outcome !== 'compressed' || !finalSummary) {
+          throw new Error(
+            ('code' in result.outcome && result.outcome.code) || 'SUMMARY_FAILED',
+          );
+        }
+
+        const finalized = await messageService.finalizeCompression(
+          compressionGroup.messageGroupId,
+          finalSummary,
+          {
+            agentId: state.metadata?.agentId,
+            threadId: state.metadata?.threadId,
+            topicId,
+          },
+        );
+        if (!Array.isArray(finalized.messages)) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+
+        const stateMessages = (finalized.messages as UIChatMessage[]).filter(
+          (message) => message.id !== assistantMessageItem.id,
+        );
+        persistedAutoCompression = {
+          inputFingerprint: evaluation.payloadFingerprint,
+          outcome: result.outcome,
+          providerMessages: result.messages,
+          stateMessages,
+        };
+        events.push({ groupId: compressionGroup.messageGroupId, type: 'compression_complete' });
 
         return {
           outcome: result.outcome,
@@ -2425,6 +2600,9 @@ export const createRuntimeExecutors = (
 
               // ===== 2. Then accumulate to AgentState =====
               const newState = structuredClone(state);
+              if (persistedAutoCompression) {
+                newState.messages = structuredClone(persistedAutoCompression.stateMessages);
+              }
               newState.metadata = {
                 ...newState.metadata,
                 contextBudget: {
@@ -2648,6 +2826,15 @@ export const createRuntimeExecutors = (
   compress_context: async (instruction, state) => {
     const { payload } = instruction as AgentInstructionCompressContext;
     const { messages, currentTokenCount } = payload;
+    const budgetPayload = payload as AgentInstructionCompressContext['payload'] & {
+      catalogSnapshot?: ModelCatalogSnapshot;
+      observedWindowTokens?: number;
+      outputReserveTokens?: number;
+      payloadFingerprint?: string;
+      providerMedia?: unknown[];
+      sentPayloadFingerprints?: readonly string[];
+      trigger?: 'final-preflight' | 'manual' | 'provider-error' | 'threshold';
+    };
     const { operationId, stepIndex } = ctx;
     const operationLogId = `${operationId}:${stepIndex}`;
     const stagePrefix = `[${operationLogId}][compress_context]`;
@@ -2662,6 +2849,52 @@ export const createRuntimeExecutors = (
     );
     const messagesToCompress = preservedMessages.length > 0 ? messages.slice(0, -1) : messages;
     const compressedMessagesFallback = [...messagesToCompress, ...preservedMessages];
+    const inputMeasurement = countContextTokens({ messages, tools: state.tools });
+    const payloadFingerprint =
+      budgetPayload.payloadFingerprint || inputMeasurement.payloadFingerprint;
+    const compressionTrigger = budgetPayload.trigger ?? 'threshold';
+    const forwardedBudgetContext = {
+      catalogSnapshot: budgetPayload.catalogSnapshot,
+      observedWindowTokens: budgetPayload.observedWindowTokens,
+      outputReserveTokens: budgetPayload.outputReserveTokens,
+      providerMedia: budgetPayload.providerMedia,
+      sentPayloadFingerprints: budgetPayload.sentPayloadFingerprints,
+    };
+    const skippedCompressionPayload = (params: {
+      compressedMessages: unknown[];
+      groupId?: string;
+      parentMessageId?: string;
+    }) => ({
+      ...forwardedBudgetContext,
+      afterTokens: currentTokenCount,
+      attempt: 1 as const,
+      beforeTokens: currentTokenCount,
+      code: 'NO_CANDIDATES' as const,
+      compressedMessages: params.compressedMessages,
+      groupId: params.groupId ?? '',
+      outcome: 'skipped' as const,
+      parentMessageId: params.parentMessageId,
+      payloadFingerprint,
+      skipped: true,
+      trigger: compressionTrigger,
+    });
+    const failedCompressionPayload = (params: {
+      compressedMessages: unknown[];
+      groupId?: string;
+      parentMessageId?: string;
+    }) => ({
+      ...forwardedBudgetContext,
+      afterTokens: currentTokenCount,
+      attempt: 1 as const,
+      beforeTokens: currentTokenCount,
+      code: 'SUMMARY_FAILED' as const,
+      compressedMessages: params.compressedMessages,
+      groupId: params.groupId ?? '',
+      outcome: 'failed' as const,
+      parentMessageId: params.parentMessageId,
+      payloadFingerprint,
+      trigger: compressionTrigger,
+    });
 
     if (!topicId || !ctx.userId) {
       return {
@@ -2669,10 +2902,7 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
-            compressedMessages: compressedMessagesFallback,
-            groupId: '',
-            parentMessageId: undefined,
-            skipped: true,
+            ...skippedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -2727,10 +2957,7 @@ export const createRuntimeExecutors = (
           newState,
           nextContext: {
             payload: {
-              compressedMessages: compressedMessagesFallback,
-              groupId: '',
-              parentMessageId: undefined,
-              skipped: true,
+              ...skippedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
             } as GeneralAgentCompressionResultPayload,
             phase: 'compression_result',
             session: {
@@ -2764,10 +2991,11 @@ export const createRuntimeExecutors = (
           newState,
           nextContext: {
             payload: {
-              compressedMessages: compressedMessagesFallback,
-              groupId: '',
-              parentMessageId: latestAssistantMessage?.id,
-              skipped: true,
+              ...failedCompressionPayload({
+                compressedMessages: compressedMessagesFallback,
+                groupId: compressionResult.messageGroupId,
+                parentMessageId: latestAssistantMessage?.id,
+              }),
             } as GeneralAgentCompressionResultPayload,
             phase: 'compression_result',
             session: {
@@ -2780,7 +3008,6 @@ export const createRuntimeExecutors = (
         };
       }
 
-      const compressionPayload = chainCompressContext(compressionResult.messagesToSummarize);
       const compressionRuntime = await initModelRuntimeFromDB(
         ctx.serverDB,
         ctx.userId,
@@ -2789,38 +3016,96 @@ export const createRuntimeExecutors = (
       );
 
       let summaryContent = '';
-      let summaryUsage: any;
-      let summaryError: any;
-
-      const compressionResponse = await compressionRuntime.chat(
-        {
-          messages: compressionPayload.messages!,
-          model: compressionModel.model,
-          stream: true,
+      const summaryUsages: any[] = [];
+      const summaryWindow = Math.max(2048, 32_000 - 1024);
+      const hierarchy = await compressContextHierarchically<
+        UIChatMessage,
+        Partial<ChatStreamPayload>
+      >({
+        buildRequest: (items) =>
+          chainCompressContext(
+            items.map(
+              (item, index) =>
+                ({
+                  content: item.text,
+                  createdAt: Date.now(),
+                  id: `summary-input-${index}`,
+                  role: 'user',
+                  updatedAt: Date.now(),
+                }) as UIChatMessage,
+            ),
+          ),
+        candidateIds: messageIds,
+        createSummaryMessage: (summary) => {
+          summaryContent = summary;
+          return {
+            content: summary,
+            createdAt: Date.now(),
+            id: compressionResult.messageGroupId,
+            role: 'user',
+            updatedAt: Date.now(),
+          } as UIChatMessage;
         },
-        {
-          callback: {
-            onCompletion: async (data) => {
-              if (data.usage) summaryUsage = data.usage;
-            },
-            onError: async (errorData) => {
-              summaryError = errorData;
-            },
-            onText: async (text) => {
-              summaryContent += text;
-            },
-          },
-          user: ctx.userId,
+        getMessageId: (message, index) => message.id || `compression-message-${index}`,
+        groupId: compressionResult.messageGroupId,
+        measurePayload: (payloadMessages) => {
+          const measurement = countContextTokens({ messages: [...payloadMessages] });
+          return {
+            payloadFingerprint: measurement.payloadFingerprint,
+            tokens: measurement.adjustedTotal,
+          };
         },
-      );
-
-      await consumeStreamUntilDone(compressionResponse);
-
-      if (summaryError) {
+        measureRequest: (request) =>
+          countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
+            .adjustedTotal,
+        messages: compressionResult.messagesToSummarize as UIChatMessage[],
+        renderMessage: (message) =>
+          `${message.role}: ${
+            typeof message.content === 'string'
+              ? message.content
+              : JSON.stringify(message.content)
+          }`,
+        summarize: async (request) => {
+          let chunkSummary = '';
+          let summaryError: any;
+          const compressionResponse = await compressionRuntime.chat(
+            {
+              ...request,
+              messages: request.messages ?? [],
+              model: compressionModel.model,
+              stream: true,
+            },
+            {
+              callback: {
+                onCompletion: async (data) => {
+                  if (data.usage) summaryUsages.push(data.usage);
+                },
+                onError: async (errorData) => {
+                  summaryError = errorData;
+                },
+                onText: async (text) => {
+                  chunkSummary += text;
+                },
+              },
+              user: ctx.userId,
+            },
+          );
+          await consumeStreamUntilDone(compressionResponse);
+          if (summaryError) {
+            throw new Error(
+              typeof summaryError.message === 'string'
+                ? summaryError.message
+                : JSON.stringify(summaryError),
+            );
+          }
+          return chunkSummary;
+        },
+        summaryModelBudgetTokens: summaryWindow,
+        trigger: compressionTrigger,
+      });
+      if (hierarchy.outcome.outcome !== 'compressed' || !summaryContent) {
         throw new Error(
-          typeof summaryError.message === 'string'
-            ? summaryError.message
-            : JSON.stringify(summaryError),
+          ('code' in hierarchy.outcome && hierarchy.outcome.code) || 'SUMMARY_FAILED',
         );
       }
 
@@ -2854,7 +3139,7 @@ export const createRuntimeExecutors = (
 
       newState.messages = compressedMessages;
 
-      if (summaryUsage) {
+      for (const summaryUsage of summaryUsages) {
         const { usage, cost } = UsageCounter.accumulateLLM({
           cost: newState.cost,
           model: compressionModel.model,
@@ -2897,9 +3182,17 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
+            ...forwardedBudgetContext,
+            afterTokens: countContextTokens({ messages: compressedMessages, tools: state.tools })
+              .adjustedTotal,
+            attempt: 1,
+            beforeTokens: currentTokenCount,
             compressedMessages,
             groupId: compressionResult.messageGroupId,
+            outcome: 'compressed',
             parentMessageId: latestAssistantMessage?.id,
+            payloadFingerprint,
+            trigger: compressionTrigger,
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -2941,10 +3234,7 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
-            compressedMessages: compressedMessagesFallback,
-            groupId: '',
-            parentMessageId: undefined,
-            skipped: true,
+            ...failedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -3102,6 +3392,9 @@ export const createRuntimeExecutors = (
           : null;
 
         let execution: { result: ToolExecutionResultResponse; attempts: number };
+        let preparedExecutionContext: PreparedToolExecutionContext = {
+          executionContext: getFrozenExecutionContext(state),
+        };
         if (isDeviceToolIdentifier(chatToolPayload.identifier) && !hookResult?.isMocked) {
           // Per-call audit for device tools (local-system / remote-device).
           // Emitted before dispatch so the record exists even if dispatch
@@ -3132,6 +3425,7 @@ export const createRuntimeExecutors = (
             result: { content: hookResult.content, executionTime: 0, success: true },
           };
         } else if (canDispatchToClient) {
+          preparedExecutionContext = await prepareToolExecutionContext(ctx, state, chatToolPayload);
           log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
           const timeoutMs = clampToolTimeoutToExecutionBudget(
             state,
@@ -3142,13 +3436,17 @@ export const createRuntimeExecutors = (
             }),
           );
           const dispatchResult = await dispatchClientTool(chatToolPayload, {
-            executionContext: projectExecutionContextForClient(state),
+            executionContext: projectExecutionContextForClient(
+              state,
+              preparedExecutionContext.executionContext,
+            ),
             operationId,
             streamManager,
             timeoutMs,
           });
           execution = { attempts: 1, result: dispatchResult };
         } else {
+          preparedExecutionContext = await prepareToolExecutionContext(ctx, state, chatToolPayload);
           // Inject source from sourceMap so BuiltinToolsExecutor can route
           // lobehubSkill / composio tools correctly (LLM responses don't carry source)
           if (toolSource && !chatToolPayload.source) {
@@ -3179,7 +3477,7 @@ export const createRuntimeExecutors = (
                 documentId: state.metadata?.documentId,
                 editingAgentId: state.metadata?.editingAgentId,
                 execSubAgent: ctx.execSubAgent,
-                executionContext: getFrozenExecutionContext(state),
+                executionContext: preparedExecutionContext.executionContext,
                 executionTimeoutMs: timeoutMs,
                 groupId: state.metadata?.groupId,
                 isSubAgent: state.metadata?.isSubAgent === true,
@@ -3264,6 +3562,10 @@ export const createRuntimeExecutors = (
           };
         }
 
+        const resultingExecutionContext = execution.result.success
+          ? await bindPreparedScratchContext(ctx, state, preparedExecutionContext)
+          : preparedExecutionContext.executionContext;
+
         const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
           activeDeviceId: state.metadata?.activeDeviceId,
           operationId,
@@ -3322,6 +3624,13 @@ export const createRuntimeExecutors = (
             buildExecuteToolResultAttributes({ attempts: execution.attempts, success: false }),
           );
           const newState = structuredClone(state);
+          if (resultingExecutionContext) {
+            newState.metadata = {
+              ...newState.metadata,
+              executionContext: resultingExecutionContext,
+              executionPlan: resultingExecutionContext.plan,
+            };
+          }
           newState.lastModified = new Date().toISOString();
           newState.pendingToolsCalling = [chatToolPayload];
           newState.status = 'waiting_for_human';
@@ -3450,8 +3759,17 @@ export const createRuntimeExecutors = (
 
         const newState = structuredClone(state);
 
+        if (resultingExecutionContext) {
+          newState.metadata = {
+            ...newState.metadata,
+            executionContext: resultingExecutionContext,
+            executionPlan: resultingExecutionContext.plan,
+          };
+        }
+
         newState.messages.push({
           content: executionResult.content,
+          id: toolMessageId,
           role: 'tool',
           tool_call_id: chatToolPayload.id,
         });
@@ -3714,6 +4032,22 @@ export const createRuntimeExecutors = (
     // Deferred (async) tools whose result is delivered out-of-band later;
     // collected here so the batch parks for them after server tools finish.
     const deferredTools: ChatToolPayload[] = [];
+    // A path may pass the lexical pre-dispatch audit and still resolve outside
+    // the frozen roots on the device (for example through a symlink). Keep
+    // those device-authored interventions out of the LLM result stream and
+    // park the whole batch on the same approval UI used by call_tool.
+    const pathConsentTools: ChatToolPayload[] = [];
+    const pathConsentToolMessageIds: Record<string, string> = {};
+    let scratchPreparedPromise: Promise<PreparedToolExecutionContext> | undefined;
+    let scratchBindPromise: Promise<ExecutionContext | undefined> | undefined;
+    let boundScratchExecutionContext: ExecutionContext | undefined;
+    const prepareBatchExecutionContext = (tool: ChatToolPayload) => {
+      if (!requiresPrimaryCwdForTool({ executionContext: getFrozenExecutionContext(state), tool })) {
+        return Promise.resolve({ executionContext: getFrozenExecutionContext(state) });
+      }
+      scratchPreparedPromise ??= prepareToolExecutionContext(ctx, state, tool);
+      return scratchPreparedPromise;
+    };
 
     // Execute server tools concurrently (skip client tools in mixed batch)
     const toolsToExecute = serverTools.length > 0 ? serverTools : toolsCalling;
@@ -3824,6 +4158,9 @@ export const createRuntimeExecutors = (
             }
 
             let execution: { result: ToolExecutionResultResponse; attempts: number };
+            let preparedExecutionContext: PreparedToolExecutionContext = {
+              executionContext: getFrozenExecutionContext(state),
+            };
             if (batchHookResult?.isMocked) {
               log(`[${operationLogId}] Tool ${toolName} mocked by beforeToolCall hook`);
               batchToolCallMocked = true;
@@ -3832,6 +4169,7 @@ export const createRuntimeExecutors = (
                 result: { content: batchHookResult.content, executionTime: 0, success: true },
               };
             } else if (canDispatchToClient) {
+              preparedExecutionContext = await prepareBatchExecutionContext(chatToolPayload);
               log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
               const timeoutMs = clampToolTimeoutToExecutionBudget(
                 state,
@@ -3842,13 +4180,17 @@ export const createRuntimeExecutors = (
                 }),
               );
               const dispatchResult = await dispatchClientTool(chatToolPayload, {
-                executionContext: projectExecutionContextForClient(state),
+                executionContext: projectExecutionContextForClient(
+                  state,
+                  preparedExecutionContext.executionContext,
+                ),
                 operationId,
                 streamManager,
                 timeoutMs,
               });
               execution = { attempts: 1, result: dispatchResult };
             } else {
+              preparedExecutionContext = await prepareBatchExecutionContext(chatToolPayload);
               // Inject source from sourceMap so BuiltinToolsExecutor can route
               // lobehubSkill / composio tools correctly (LLM responses don't carry source)
               const batchToolSource =
@@ -3880,7 +4222,7 @@ export const createRuntimeExecutors = (
                     ),
                     documentId: state.metadata?.documentId,
                     execSubAgent: ctx.execSubAgent,
-                    executionContext: getFrozenExecutionContext(state),
+                    executionContext: preparedExecutionContext.executionContext,
                     executionTimeoutMs: timeoutMs,
                     groupId: state.metadata?.groupId,
                     isSubAgent: state.metadata?.isSubAgent === true,
@@ -3937,6 +4279,48 @@ export const createRuntimeExecutors = (
               deferredTools.push(chatToolPayload);
               batchExecuteToolSpan.setAttributes(
                 buildExecuteToolResultAttributes({ attempts: execution.attempts, success: true }),
+              );
+              return;
+            }
+
+            if (execution.result.success && preparedExecutionContext.scratchRoot) {
+              scratchBindPromise ??= bindPreparedScratchContext(ctx, state, preparedExecutionContext);
+              boundScratchExecutionContext = await scratchBindPromise;
+            }
+
+            const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
+              activeDeviceId: state.metadata?.activeDeviceId,
+              operationId,
+              result: execution.result,
+              topicId: ctx.topicId ?? state.metadata?.topicId,
+            });
+            if (
+              postDispatchPathConsent &&
+              state.userInterventionConfig?.approvalMode !== 'headless'
+            ) {
+              const pendingState = {
+                ...(execution.result.state && typeof execution.result.state === 'object'
+                  ? execution.result.state
+                  : {}),
+                workspacePathConsent: postDispatchPathConsent,
+              };
+              const toolMessage = await ctx.messageModel.create({
+                agentId: state.metadata!.agentId!,
+                content: '',
+                parentId: parentMessageId,
+                plugin: chatToolPayload as any,
+                pluginIntervention: { status: 'pending' },
+                pluginState: pendingState,
+                role: 'tool',
+                threadId: state.metadata?.threadId,
+                tool_call_id: chatToolPayload.id,
+                topicId: state.metadata?.topicId,
+              });
+              pathConsentTools.push(chatToolPayload);
+              pathConsentToolMessageIds[chatToolPayload.id] = toolMessage.id;
+              toolMessageIds.push(toolMessage.id);
+              batchExecuteToolSpan.setAttributes(
+                buildExecuteToolResultAttributes({ attempts: execution.attempts, success: false }),
               );
               return;
             }
@@ -4121,6 +4505,13 @@ export const createRuntimeExecutors = (
 
     // Accumulate tool usage sequentially after all tools have finished
     const newState = structuredClone(state);
+    if (boundScratchExecutionContext) {
+      newState.metadata = {
+        ...newState.metadata,
+        executionContext: boundScratchExecutionContext,
+        executionPlan: boundScratchExecutionContext.plan,
+      };
+    }
     for (const result of toolResults) {
       if (result.usageParams) {
         const { usage, cost } = UsageCounter.accumulateTool({
@@ -4195,6 +4586,35 @@ export const createRuntimeExecutors = (
 
     // Get the last tool message ID as parentMessageId for next LLM call
     const lastToolMessageId = toolMessageIds.at(-1);
+
+    if (pathConsentTools.length > 0) {
+      await streamManager.publishStreamEvent(operationId, {
+        data: {
+          pendingToolsCalling: pathConsentTools,
+          phase: 'human_approval',
+          requiresApproval: true,
+        },
+        stepIndex,
+        type: 'step_start',
+      });
+      await streamManager.publishStreamChunk(operationId, stepIndex, {
+        chunkType: 'tools_calling',
+        toolMessageIds: pathConsentToolMessageIds,
+        toolsCalling: pathConsentTools as any,
+      } as any);
+
+      newState.lastModified = new Date().toISOString();
+      newState.pendingToolsCalling = pathConsentTools;
+      newState.status = 'waiting_for_human';
+      return {
+        events: [
+          ...events,
+          { operationId, pendingToolsCalling: pathConsentTools, type: 'human_approve_required' },
+          { toolCalls: pathConsentTools as any, type: 'tool_pending' },
+        ],
+        newState,
+      };
+    }
 
     // Park if any tools still owe an out-of-band result: client tools (run on
     // the client) and/or deferred async tools (e.g. sub-agents). The operation

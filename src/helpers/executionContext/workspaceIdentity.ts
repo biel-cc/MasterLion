@@ -9,7 +9,7 @@ import type {
 /** Lexical filesystem-path check only; device-side realpath remains the security boundary. */
 export const isAbsoluteFilesystemPath = (value: string): boolean => {
   const normalized = value.trim().replaceAll('\\', '/');
-  return normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized);
+  return normalized.startsWith('/') || /^[A-Z]:\//i.test(normalized);
 };
 
 /**
@@ -18,7 +18,7 @@ export const isAbsoluteFilesystemPath = (value: string): boolean => {
  */
 export const normalizeRootPath = (value: string): string => {
   const withSlashes = value.trim().replaceAll('\\', '/');
-  const collapsed = withSlashes.replace(/\/{2,}/g, '/');
+  const collapsed = withSlashes.replaceAll(/\/{2,}/g, '/');
   const driveNormalized = collapsed.replace(
     /^([A-Z]):\//,
     (_, drive: string) => `${drive.toLowerCase()}:/`,
@@ -64,16 +64,14 @@ export const decideWorkspaceBind = (
     return { allowed: true, reason: 'first-bind' };
   }
 
-  if (boundWorkspaceId) {
-    if (
+  if (boundWorkspaceId && (
       !current.workspace ||
       current.workspace.id !== boundWorkspaceId ||
       next.id !== boundWorkspaceId ||
       (current.snapshot?.workspaceKind && current.workspace.kind !== current.snapshot.workspaceKind)
-    ) {
+    )) {
       return { allowed: false, reason: 'already-bound' };
     }
-  }
 
   if (current.workspace && isSameWorkspace(current.workspace, next)) {
     return { allowed: true, reason: 'same-workspace' };

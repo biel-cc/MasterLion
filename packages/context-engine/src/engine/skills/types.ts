@@ -13,10 +13,10 @@ export type SkillEnableChecker = (skill: SkillMeta) => boolean;
 export interface SkillEngineOptions {
   /** Optional checker to filter skills by environment/platform */
   enableChecker?: SkillEnableChecker;
-  /** All raw skills from all sources (builtin, DB, etc.) */
-  skills: SkillMeta[];
   /** Registry evidence used to produce this immutable operation set. */
   registry?: SkillRegistryTrace;
+  /** All raw skills from all sources (builtin, DB, etc.) */
+  skills: SkillMeta[];
 }
 
 /**

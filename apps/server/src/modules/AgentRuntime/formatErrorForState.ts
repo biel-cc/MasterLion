@@ -80,14 +80,25 @@ const enrichWithSpec = (formatted: ChatMessageError): ChatMessageError => {
 export const formatErrorForState = (error: unknown): ChatMessageError => {
   if (error && typeof error === 'object' && 'errorType' in error) {
     const payload = error as {
+      contextBudget?: unknown;
+      contextBudgetAttemptState?: unknown;
       error?: unknown;
       errorType: ChatMessageError['type'];
       message?: string;
       retryAfterMs?: number;
       retryable?: boolean;
     };
+    const baseBody: Record<string, unknown> =
+      payload.error && typeof payload.error === 'object' && !Array.isArray(payload.error)
+        ? (payload.error as Record<string, unknown>)
+        : { error: payload.error };
+    const body = { ...baseBody };
+    if (payload.contextBudget !== undefined) body.contextBudget = payload.contextBudget;
+    if (payload.contextBudgetAttemptState !== undefined) {
+      body.contextBudgetAttemptState = payload.contextBudgetAttemptState;
+    }
     return enrichWithSpec({
-      body: payload.error || error,
+      body,
       message: payload.message || String(payload.errorType),
       retryAfterMs: payload.retryAfterMs,
       retryable: payload.retryable,

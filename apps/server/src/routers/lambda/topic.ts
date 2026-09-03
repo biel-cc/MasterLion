@@ -14,6 +14,7 @@ import { AgentModel } from '@/database/models/agent';
 import { AgentOperationModel } from '@/database/models/agentOperation';
 import { ChatGroupModel } from '@/database/models/chatGroup';
 import { MessageModel } from '@/database/models/message';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TopicModel } from '@/database/models/topic';
 import { TopicShareModel } from '@/database/models/topicShare';
 import { AgentMigrationRepo } from '@/database/repositories/agentMigration';
@@ -21,6 +22,7 @@ import { TopicImporterRepo } from '@/database/repositories/topicImporter';
 import { chatGroups } from '@/database/schemas';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { resolveTopicCreationExecutionMetadata } from '@/server/services/aiAgent/topicExecutionIntent';
 import { type BatchTaskResult } from '@/types/service';
 
 import {
@@ -46,6 +48,15 @@ const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
     },
   });
 });
+
+const topicExecutionIntentSchema = z
+  .object({
+    platform: z.enum(['desktop', 'web']),
+    target: z.enum(['local', 'device', 'sandbox', 'none']),
+    targetDeviceId: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const topicRouter = router({
   getTopicDetail: topicProcedure
@@ -208,6 +219,7 @@ export const topicRouter = router({
     .input(
       z
         .object({
+          executionIntent: topicExecutionIntentSchema.optional(),
           favorite: z.boolean().optional(),
           groupId: z.string().nullable().optional(),
           messages: z.array(z.string()).optional(),
@@ -217,7 +229,7 @@ export const topicRouter = router({
         .extend(basicContextSchema.shape),
     )
     .mutation(async ({ input, ctx }) => {
-      const { agentId, ...rest } = input;
+      const { agentId, executionIntent, ...rest } = input;
       const resolved = await resolveContext(
         { agentId, sessionId: rest.sessionId },
         ctx.serverDB,
@@ -225,7 +237,17 @@ export const topicRouter = router({
         ctx.workspaceId ?? undefined,
       );
 
-      const data = await ctx.topicModel.create({ ...rest, sessionId: resolved.sessionId });
+      const metadata = await resolveTopicCreationExecutionMetadata({
+        intent: executionIntent,
+        organizationWorkspaceId: ctx.workspaceId ?? undefined,
+        workspaceModel: new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
+      });
+
+      const data = await ctx.topicModel.create({
+        ...rest,
+        metadata,
+        sessionId: resolved.sessionId,
+      });
 
       return data.id;
     }),

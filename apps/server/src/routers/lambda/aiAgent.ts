@@ -148,6 +148,15 @@ const ExecAgentSchema = z
             workingDirectory: z.string().optional(),
           })
           .optional(),
+        topicExecutionIntent: z
+          .object({
+            platform: z.enum(['desktop', 'web']),
+            target: z.enum(['local', 'device', 'sandbox', 'none']),
+            targetDeviceId: z.string().min(1).optional(),
+            workspaceId: z.string().min(1).optional(),
+          })
+          .strict()
+          .optional(),
         scope: z.string().optional().nullable(),
         sessionId: z.string().optional(),
         taskId: z.string().optional().nullable(),
@@ -181,6 +190,7 @@ const ExecAgentSchema = z
           .object({
             deviceId: z.string().min(1),
             modes: z.array(z.enum(['exec', 'read', 'write'])).min(1),
+            requestedPath: z.string().min(1),
             rootPath: z.string().min(1),
             scope: z.literal('operation'),
             sourceOperationId: z.string().min(1),

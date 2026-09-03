@@ -1404,6 +1404,7 @@ describe('topic action', () => {
       });
 
       expect(createTopicSpy).toHaveBeenCalledWith({
+        executionIntent: { platform: 'web', target: 'none' },
         sessionId: activeAgentId,
         messages: messages.map((m) => m.id),
         title: 'defaultTitle',

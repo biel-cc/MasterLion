@@ -1333,7 +1333,15 @@ export class ConversationLifecycleActionImpl {
     const dbMessages = dbMessageSelectors.getDbMessagesByKey(contextKey)(this.#get()) || [];
     const messageIds = getCompressionCandidateMessageIds(dbMessages);
 
-    if (messageIds.length === 0) return;
+    if (messageIds.length === 0) {
+          antdMessage.info(
+            t('contextBudget.title.NO_CANDIDATES', {
+              defaultValue: 'Nothing left to compress',
+              ns: 'error',
+            }),
+          );
+      return;
+    }
 
     const tempId = 'tmp_compress_' + nanoid();
     const { abortController, operationId } = this.#get().startOperation({

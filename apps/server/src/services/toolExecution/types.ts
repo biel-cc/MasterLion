@@ -122,10 +122,10 @@ export interface ToolExecutionContext {
    * flows; `lobe-agent.callSubAgent` uses the per-call `subAgent` runner below.
    */
   execSubAgent?: (params: ExecSubAgentParams) => Promise<unknown>;
-  /** Per-call execution timeout resolved by the agent runtime. */
-  executionTimeoutMs?: number;
   /** Immutable operation authority projected into every server/device tool call. */
   executionContext?: ExecutionContext;
+  /** Per-call execution timeout resolved by the agent runtime. */
+  executionTimeoutMs?: number;
   /** Current group ID for group chat context */
   groupId?: string | null;
   /** Whether this tool call is executing inside an isolated sub-agent run. */
@@ -134,6 +134,8 @@ export interface ToolExecutionContext {
   memoryToolPermission?: 'read-only' | 'read-write';
   /** Source user message ID used by Agent Signal procedure suppression. */
   messageId?: string;
+  /** Frozen model evidence for audit/debug parity with call_llm. */
+  modelCatalogSnapshot?: ModelCatalogSnapshot;
   /** Agent runtime operation ID for structured tool outcome identity. */
   operationId?: string;
   /**
@@ -142,16 +144,14 @@ export interface ToolExecutionContext {
    * the device gateway. Derived from the operation's skill set.
    */
   projectSkills?: { location: string; name: string }[];
-  /** Frozen model evidence for audit/debug parity with call_llm. */
-  modelCatalogSnapshot?: ModelCatalogSnapshot;
   /** Conversation scope captured when the operation was created */
   scope?: string | null;
   /** Server database for LobeHub Skills execution */
   serverDB?: LobeChatDatabase;
-  /** Skip low-level result truncation so the AgentRuntime boundary can archive full content first. */
-  skipResultTruncation?: boolean;
   /** Frozen registry result; never re-enumerate mutable skill sources mid-operation. */
   skillRegistryResult?: SkillRegistryResult;
+  /** Skip low-level result truncation so the AgentRuntime boundary can archive full content first. */
+  skipResultTruncation?: boolean;
   /**
    * Server-side sub-agent runner, injected per tool call by the agent runtime
    * (closes over the current tool payload + parent message). The `callSubAgent`

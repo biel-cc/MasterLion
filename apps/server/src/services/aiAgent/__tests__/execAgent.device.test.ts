@@ -96,6 +96,12 @@ vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
   })),
 }));
 
+vi.mock('@/server/services/workspaceAccessGrant', () => ({
+  WorkspaceAccessGrantService: vi.fn().mockImplementation(() => ({
+    buildAccessRoots: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
 const topicMock = {
   create: vi.fn().mockResolvedValue({ id: 'topic-1', metadata: undefined }),
   findById: vi.fn().mockResolvedValue(undefined),
@@ -180,7 +186,10 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     // Reset device proxy state
     mockDeviceProxy.isConfigured = false;
     mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
-    mockBindingGetState.mockResolvedValue(undefined);
+    // Production binding storage returns an empty state for an existing,
+    // intentionally-unbound topic. `undefined` means the topic row itself is
+    // missing and must fail closed under the authoritative snapshot contract.
+    mockBindingGetState.mockResolvedValue({});
     mockFindWorkspaceById.mockResolvedValue(undefined);
     mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
       plaintext: value.replace(/^enc:/, ''),

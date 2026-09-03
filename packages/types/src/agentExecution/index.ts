@@ -1,6 +1,7 @@
-import type { TaskDetail, UIChatMessage } from '../message';
-import type { ChatTopic } from '../topic';
 import type { OperationPathConsentApproval } from '../executionContext';
+import type { TaskDetail, UIChatMessage } from '../message';
+import type { TopicExecutionIntent } from '../projectWorkspace';
+import type { ChatTopic } from '../topic';
 
 export type AgentSignalOperationKind =
   | 'memory'
@@ -105,6 +106,11 @@ export interface ExecAgentAppContext {
   taskId?: string | null;
   /** Thread ID for threaded conversations */
   threadId?: string | null;
+  /**
+   * One-shot topic target/workspace intent. The server accepts it only while
+   * the topic has no authoritative execution snapshot.
+   */
+  topicExecutionIntent?: TopicExecutionIntent;
   /** Topic ID */
   topicId?: string | null;
 }

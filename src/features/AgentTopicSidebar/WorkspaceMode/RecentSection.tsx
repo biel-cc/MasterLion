@@ -3,9 +3,8 @@ import { cssVar } from 'antd-style';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import TopicItem from '@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item';
 import { type TopicNavigationRecentEntry } from '@/store/projectWorkspace';
-
-import TopicItem from '../../List/Item';
 
 export interface RecentSectionProps {
   activeThreadId?: string;

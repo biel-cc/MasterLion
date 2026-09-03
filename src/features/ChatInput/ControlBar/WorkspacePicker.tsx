@@ -1,7 +1,15 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
-import { Flexbox, Icon, Popover, Tag, Tooltip } from '@lobehub/ui';
+import { Flexbox, Icon, Tag, Tooltip } from '@lobehub/ui';
+import {
+  PopoverPopup,
+  PopoverPortal,
+  PopoverPositioner,
+  PopoverRoot,
+  PopoverTriggerElement,
+  PopoverViewport,
+} from '@lobehub/ui/base-ui';
 import { createStaticStyles, cssVar, cx } from 'antd-style';
 import {
   ChevronDownIcon,
@@ -325,18 +333,15 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
       { key: 'recent', title: tw('workspaceRuntime.picker.recentDirs') },
     ];
 
+    const pickerTitle =
+      mode === 'reference'
+        ? tw('workspaceRuntime.picker.referenceTitle')
+        : tw('workspaceRuntime.picker.title');
+
     const content = (
-      <Flexbox
-        aria-label={tw('workspaceRuntime.picker.title')}
-        data-testid="workspace-picker"
-        gap={4}
-        role="dialog"
-        style={{ minWidth: 300 }}
-      >
+      <Flexbox data-testid="workspace-picker" gap={4} style={{ minWidth: 300 }}>
         <div className={styles.sectionTitle}>
-          {mode === 'reference'
-            ? tw('workspaceRuntime.picker.referenceTitle')
-            : tw('workspaceRuntime.picker.title')}
+          {pickerTitle}
         </div>
         {!seamAvailable && (
           <div className={styles.note}>{tw('workspaceRuntime.picker.seamUnavailable')}</div>
@@ -441,17 +446,24 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
     );
 
     return (
-      <Popover
-        content={content}
-        open={open}
-        placement="topLeft"
-        trigger="click"
-        onOpenChange={setOpen}
-      >
-        {trigger ?? (
-          <Tooltip title={tw('workspaceRuntime.picker.unboundTooltip')}>{defaultTrigger}</Tooltip>
-        )}
-      </Popover>
+      <PopoverRoot open={open} onOpenChange={setOpen}>
+        <PopoverTriggerElement
+          aria-hidden={trigger ? true : undefined}
+          nativeButton={trigger ? false : undefined}
+          tabIndex={trigger ? -1 : undefined}
+        >
+          {trigger ?? (
+            <Tooltip title={tw('workspaceRuntime.picker.unboundTooltip')}>{defaultTrigger}</Tooltip>
+          )}
+        </PopoverTriggerElement>
+        <PopoverPortal>
+          <PopoverPositioner placement="topLeft">
+            <PopoverPopup aria-label={pickerTitle}>
+              <PopoverViewport>{content}</PopoverViewport>
+            </PopoverPopup>
+          </PopoverPositioner>
+        </PopoverPortal>
+      </PopoverRoot>
     );
   },
 );

@@ -50,13 +50,13 @@ class MemorySkillFs implements ProjectSkillFsAdapter {
   };
 
   remove = async (entryPath: string) => {
-    for (const key of [...this.entries.keys()]) {
+    for (const key of this.entries.keys()) {
       if (key === entryPath || key.startsWith(entryPath + '/')) this.entries.delete(key);
     }
   };
 
   rename = async (from: string, to: string) => {
-    for (const [key, value] of [...this.entries.entries()]) {
+    for (const [key, value] of this.entries.entries()) {
       if (key === from || key.startsWith(from + '/')) {
         this.entries.delete(key);
         this.entries.set(to + key.slice(from.length), value);

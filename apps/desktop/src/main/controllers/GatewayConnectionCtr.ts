@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { type DeviceControlDeps, executeDeviceRpc as runDeviceRpc } from '@lobechat/device-control';
+import {
+  type DeviceControlDeps,
+  executeDeviceRpc as runDeviceRpc,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
 import type {
   AgentRunRequestMessage,
   GatewayMcpStdioParams,
@@ -297,8 +301,27 @@ export default class GatewayConnectionCtr extends ControllerModule {
     request: AgentRunRequestMessage,
   ): Promise<{ reason?: string; status: 'accepted' | 'rejected' }> {
     try {
-      if (!request.cwd?.trim()) {
+      const cwd = request.executionContext?.cwd ?? request.cwd;
+      const env = request.executionContext?.env ?? request.env;
+      if (!cwd?.trim()) {
         return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
+      }
+      if (request.modelRef && request.modelRef.operationId !== request.operationId) {
+        return { reason: 'MODEL_REFERENCE_OPERATION_MISMATCH', status: 'rejected' };
+      }
+      const materialization = await materializeSkillsForCli({
+        agentType: request.agentType,
+        cwd,
+        policy: request.skillPolicy,
+        skills: request.skills,
+      });
+      if (materialization.errors.length > 0) {
+        return {
+          reason: `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+            .map(({ message }) => message)
+            .join('; ')}`,
+          status: 'rejected',
+        };
       }
       const serverUrl = await this.remoteServerConfigCtr.getRemoteServerUrl();
       if (!serverUrl) {
@@ -310,15 +333,17 @@ export default class GatewayConnectionCtr extends ControllerModule {
       // Same command as spawnHeteroSandbox() on the server side.
       this.heterogeneousAgentCtr.spawnLhHeteroExec({
         agentType: request.agentType,
-        cwd: request.cwd,
-        env: request.env,
+        cwd,
+        env,
         imageList: request.imageList,
         jwt: request.jwt,
         operationId: request.operationId,
         prompt: request.prompt,
         resumeSessionId: request.resumeSessionId,
         serverUrl,
-        systemContext: request.systemContext,
+        systemContext: request.modelRef
+          ? `<frozen_model_ref>${JSON.stringify(request.modelRef)}</frozen_model_ref>\n\n${request.systemContext ?? ''}`
+          : request.systemContext,
         topicId: request.topicId,
       });
 

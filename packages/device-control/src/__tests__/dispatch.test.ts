@@ -1,4 +1,13 @@
-import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -82,6 +91,18 @@ describe('executeDeviceRpc', () => {
     await expect(access(deps.scratchRoot!)).rejects.toBeDefined();
   });
 
+  it('canonicalizes an existing path on the device and rejects relative input', async () => {
+    const linked = path.join(root, 'canonical-link');
+    await symlink(path.join(root, '.agents'), linked);
+
+    await expect(
+      executeDeviceRpc('resolveRealPath', { path: linked }, makeDeps()),
+    ).resolves.toEqual({ path: await realpath(path.join(root, '.agents')) });
+    await expect(
+      executeDeviceRpc('resolveRealPath', { path: 'relative/path' }, makeDeps()),
+    ).rejects.toThrow('ABSOLUTE_PATH_REQUIRED');
+  });
+
   it('delegates the v2 heterogeneous RPC without dropping execution inputs', async () => {
     const runHeterogeneousAgent = vi.fn(async () => ({ status: 'accepted' as const }));
     const deps = { ...makeDeps(), runHeterogeneousAgent };
@@ -118,6 +139,31 @@ describe('executeDeviceRpc', () => {
     };
     expect(result.exists).toBe(true);
     expect(result.isDirectory).toBe(true);
+  });
+
+  it('returns device-realpathed skill paths only when the skill stays in the workspace', async () => {
+    const skillDir = path.join(root, '.agents', 'skills', 'spa-routes');
+    const result = (await executeDeviceRpc(
+      'verifySkillPaths',
+      { skillDir, workspaceRoot: root },
+      makeDeps(),
+    )) as { skillDir: string; workspaceRoot: string };
+
+    expect(result).toEqual({
+      skillDir: await realpath(skillDir),
+      workspaceRoot: await realpath(root),
+    });
+  });
+
+  it('rejects a skill directory whose symlink resolves outside the workspace', async () => {
+    const outside = await mkdtemp(path.join(tmpdir(), 'device-control-outside-'));
+    const link = path.join(root, '.agents', 'skills', 'escaped');
+    await symlink(outside, link);
+
+    await expect(
+      executeDeviceRpc('verifySkillPaths', { skillDir: link, workspaceRoot: root }, makeDeps()),
+    ).rejects.toThrow('SCOPE_DENIED');
+    await rm(outside, { force: true, recursive: true });
   });
 
   it('delegates getProjectFileIndex and getLocalFilePreview to injected deps', async () => {
