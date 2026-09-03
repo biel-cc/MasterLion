@@ -11,7 +11,7 @@ import {
   type TabsProps,
 } from '@lobehub/ui';
 import { confirmModal } from '@lobehub/ui/base-ui';
-import { createStaticStyles, cx } from 'antd-style';
+import { createStaticStyles } from 'antd-style';
 import isEqual from 'fast-deep-equal';
 import { ChevronDown, ChevronUp, History, Sparkles, Undo2 } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
@@ -20,10 +20,10 @@ import { useTranslation } from 'react-i18next';
 import StreamingMarkdown from '@/components/StreamingMarkdown';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
-import { shinyTextStyles } from '@/styles/loading';
 
 import { dataSelectors, useConversationStore } from '../../store';
 import CompressedMessageItem from './CompressedMessageItem';
+import CompressionProgress from './CompressionProgress';
 import { isCompressionSummaryGenerating, shouldShowCompressedGroupPanel } from './logic';
 
 const STORAGE_KEY_PREFIX = 'compressed-group-tab:';
@@ -140,12 +140,8 @@ const CompressedGroupMessage = memo<CompressedGroupMessageProps>(({ id }) => {
     <Flexbox className={styles.container} gap={8}>
       {isGeneratingSummary ? (
         <>
-          <Flexbox horizontal>
-            {/*<Icon icon={FolderArchive} size={14} />*/}
-            <span className={cx(isGeneratingSummary ? shinyTextStyles.shinyText : '')}>
-              {t('compressedHistory')}
-            </span>
-          </Flexbox>
+          {/* Non-blocking progress only: no terminal error is rendered while compression runs. */}
+          <CompressionProgress showHint={false} />
           <StreamingMarkdown>{content}</StreamingMarkdown>
         </>
       ) : (

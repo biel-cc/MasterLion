@@ -20,6 +20,7 @@ import type { UIChatMessage } from '@lobechat/types';
  *                         (function schema + description)
  */
 export type TokenSourceType =
+  | 'attachment'
   | 'content'
   | 'toolCalls'
   | 'thoughtSignature'
@@ -51,6 +52,21 @@ export interface ToolDefinitionTokenBreakdown {
   total: number;
 }
 
+/** Provider-specific media/attachment estimate for the exact outgoing payload. */
+export interface ProviderMediaTokenEstimate {
+  /** Estimated provider input tokens for this item. */
+  estimatedTokens: number;
+  /** Stable attachment identifier. Used only when fingerprinting the payload. */
+  id?: string;
+  /** Message that owns the item, when the provider payload retains that relationship. */
+  messageId?: string;
+}
+
+/** Redacted per-attachment accounting. No URL, filename, or attachment content is retained. */
+export interface ProviderMediaTokenBreakdown extends ProviderMediaTokenEstimate {
+  index: number;
+}
+
 /**
  * Result of {@link countContextTokens}. Provides both a per-source aggregate
  * (for "show me input by type" UI) and per-item breakdowns (for "show me which
@@ -60,12 +76,16 @@ export interface ToolDefinitionTokenBreakdown {
 export interface ContextTokenAccounting {
   /** Drift-adjusted total — equals `Math.ceil(rawTotal * driftMultiplier)` */
   adjustedTotal: number;
+  /** Provider-specific media estimates included in the outgoing request. */
+  attachments: ProviderMediaTokenBreakdown[];
   /** Token totals grouped by source (always present, zero when nothing of that source) */
   bySource: Record<TokenSourceType, number>;
   /** The drift multiplier actually applied */
   driftMultiplier: number;
   /** Per-message breakdown (length = messages.length) */
   messages: MessageTokenBreakdown[];
+  /** Stable fingerprint of provider-visible messages, tools, and attachment estimates. */
+  payloadFingerprint: string;
   /** Sum of all raw token counts before drift adjustment */
   rawTotal: number;
   /** Per-tool-definition breakdown (length = tools.length) */
@@ -93,6 +113,11 @@ export interface CountContextTokensParams {
      */
     driftMultiplier?: number;
   };
+  /**
+   * Provider-specific attachment/media estimates for the exact outgoing payload.
+   * File prompt text already injected into `messages` must not be repeated here.
+   */
+  providerMedia?: ProviderMediaTokenEstimate[];
   /**
    * Top-level tool definitions sent to the provider in the same request. Pass
    * an empty array (or omit) when the call has no tools. The shape is

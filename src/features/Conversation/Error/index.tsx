@@ -14,6 +14,7 @@ import useBusinessErrorContent from '@/business/client/hooks/useBusinessErrorCon
 import useRenderBusinessChatErrorMessageExtra from '@/business/client/hooks/useRenderBusinessChatErrorMessageExtra';
 import ErrorContent from '@/features/Conversation/ChatItem/components/ErrorContent';
 import { useConversationStore } from '@/features/Conversation/store';
+import { getContextBudgetFailureFromErrorBody } from '@/features/Conversation/utils/contextBudgetView';
 import HeterogeneousAgentStatusGuide from '@/features/Electron/HeterogeneousAgent/StatusGuide';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
@@ -23,6 +24,7 @@ import { serverConfigSelectors, useServerConfigStore } from '@/store/serverConfi
 import { getRuntimeErrorMessage } from '@/utils/locale/runtimeErrorMessage';
 
 import ChatInvalidAPIKey from './ChatInvalidApiKey';
+import ContextBudgetError from './ContextBudgetError';
 
 interface ErrorMessageData {
   error?: ChatMessageError | null;
@@ -283,6 +285,13 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data, onRe
   }
 
   if (enableBusinessFeatures && businessChatErrorMessageExtra) return businessChatErrorMessageExtra;
+
+  // Only a typed context-budget decision enters the actionable recovery card; errors without it
+  // (including plain ExceededContextWindow) keep the legacy compact fallback below.
+  const contextBudgetFailure = getContextBudgetFailureFromErrorBody(error?.body);
+  if (contextBudgetFailure) {
+    return <ContextBudgetError failure={contextBudgetFailure} id={data.id} />;
+  }
 
   switch (error?.type) {
     // Lightweight fallbacks for cloud billing errors, used in builds without a

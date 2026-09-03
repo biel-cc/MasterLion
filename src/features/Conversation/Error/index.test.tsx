@@ -121,9 +121,107 @@ vi.mock('@/features/Conversation/store', () => ({
     }),
 }));
 
+vi.mock('./ContextBudgetError', () => ({
+  default: ({ failure }: { failure: { decision: { code: string } } }) => (
+    <div>{`context-budget:${failure.decision.code}`}</div>
+  ),
+}));
+
+const typedContextBudgetBody = (code: string) => ({
+  contextBudget: {
+    decision: {
+      actions: ['switch_model', 'fork_topic'],
+      code,
+      kind: 'fail',
+      offending: [{ estimatedTokens: 200_000, source: 'attachment' }],
+    },
+    trace: { attempt: 1, modelId: 'gpt-4o-mini', providerId: 'aihub' },
+  },
+});
+
 describe('ErrorMessageExtra', () => {
   beforeEach(() => {
     serverConfigMock.enableBusinessFeatures = false;
+  });
+
+  describe('context budget routing', () => {
+    it('keeps the legacy compact fallback for ExceededContextWindow without a typed decision', () => {
+      render(
+        <ErrorMessageExtra
+          error={{ message: 'response.ExceededContextWindow' }}
+          data={{
+            error: {
+              body: { provider: 'openai' },
+              type: AgentRuntimeErrorType.ExceededContextWindow,
+            } as any,
+            id: 'msg-legacy-exceeded',
+          }}
+        />,
+      );
+
+      // Legacy card is a dynamic import (rendered as "dynamic" by the mock), not the new card.
+      expect(screen.getByText('dynamic')).toBeInTheDocument();
+      expect(screen.queryByText(/context-budget:/)).toBeNull();
+    });
+
+    it('routes ExceededContextWindow with a typed fail decision to the recovery card', () => {
+      render(
+        <ErrorMessageExtra
+          error={{ message: 'response.ExceededContextWindow' }}
+          data={{
+            error: {
+              body: typedContextBudgetBody('TAIL_TOO_LARGE'),
+              type: AgentRuntimeErrorType.ExceededContextWindow,
+            } as any,
+            id: 'msg-typed-exceeded',
+          }}
+        />,
+      );
+
+      expect(screen.getByText('context-budget:TAIL_TOO_LARGE')).toBeInTheDocument();
+      expect(screen.queryByText('dynamic')).toBeNull();
+      expect(screen.queryByText('response.ExceededContextWindow')).toBeNull();
+    });
+
+    it('routes any error carrying a typed fail decision to the recovery card, not generic copy', () => {
+      render(
+        <ErrorMessageExtra
+          error={{ message: 'response.ServerAgentRuntimeError' }}
+          data={{
+            error: {
+              body: { ...typedContextBudgetBody('RETRY_EXHAUSTED'), traceId: 'trace-ctx' },
+              type: 'ServerAgentRuntimeError',
+            } as any,
+            id: 'msg-typed-runtime',
+          }}
+        />,
+      );
+
+      expect(screen.getByText('context-budget:RETRY_EXHAUSTED')).toBeInTheDocument();
+      expect(screen.queryByText('response.ServerAgentRuntimeError')).toBeNull();
+    });
+
+    it('ignores malformed decisions and falls back to the legacy card', () => {
+      render(
+        <ErrorMessageExtra
+          error={{ message: 'response.ExceededContextWindow' }}
+          data={{
+            error: {
+              body: {
+                contextBudget: {
+                  decision: { attempt: 1, candidateIds: [], kind: 'compress', preservedIds: [] },
+                },
+              },
+              type: AgentRuntimeErrorType.ExceededContextWindow,
+            } as any,
+            id: 'msg-malformed',
+          }}
+        />,
+      );
+
+      expect(screen.getByText('dynamic')).toBeInTheDocument();
+      expect(screen.queryByText(/context-budget:/)).toBeNull();
+    });
   });
 
   it('keeps the localized message for known error types even when a traceId exists', () => {
