@@ -32,6 +32,7 @@ export interface GetOrCreateProjectWorkspaceParams {
 
 export interface UpdateProjectWorkspaceParams {
   displayName?: string | null;
+  envFiles?: string[];
   repoType?: 'git' | 'github' | null;
   scan?: WorkspaceInitResult | null;
   scannedAt?: Date | null;

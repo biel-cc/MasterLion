@@ -17,9 +17,9 @@ interface HeteroAgentCloudConfig {
 export const useHeteroAgentCloudConfig = (agentId: string): HeteroAgentCloudConfig => {
   const router = useQueryRoute();
 
-  const heterogeneousProvider = useAgentStore(
-    (s) => agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider,
-  );
+  const agencyConfig = useAgentStore((s) => agentByIdSelectors.getAgencyConfigById(agentId)(s));
+  const heterogeneousProvider = agencyConfig?.heterogeneousProvider;
+  const agentEnv = agencyConfig?.env ?? heterogeneousProvider?.env;
 
   // Only claude-code agents require a cloud credential — codex and other providers do not use this key
   const isClaudeCode = heterogeneousProvider?.type === 'claude-code';
@@ -42,10 +42,7 @@ export const useHeteroAgentCloudConfig = (agentId: string): HeteroAgentCloudConf
   //    "not configured" alert that immediately disappears once the query resolves
   const hasCredInVault = (credsData?.data ?? []).some((c) => c.key === CLAUDE_TOKEN_CRED_KEY);
   const isConfigured =
-    !needsCredCheck ||
-    !!heterogeneousProvider?.env?.CLAUDE_CODE_CRED_KEY ||
-    hasCredInVault ||
-    isCredsLoading;
+    !needsCredCheck || !!agentEnv?.CLAUDE_CODE_CRED_KEY || hasCredInVault || isCredsLoading;
 
   const goToConfig = () => {
     if (agentId) {

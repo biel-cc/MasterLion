@@ -71,8 +71,8 @@ const ModelLabel = memo(() => {
 
   const trigger = (
     <Center
-      horizontal
       data-chat-model-switcher-trigger
+      horizontal
       className={cx(styles.trigger, !canCreateContent && styles.triggerDisabled)}
       height={28}
       paddingInline={6}

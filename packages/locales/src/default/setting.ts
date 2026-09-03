@@ -230,7 +230,32 @@ export default {
   'heterogeneousStatus.unavailable': '{{name}} CLI not found. Please install or configure it.',
 
   // Heterogeneous agent — Cloud tab (web environment config)
+  'heterogeneousStatus.cloud.agentEnv.add': 'Add',
+  'heterogeneousStatus.cloud.agentEnv.description':
+    'Non-secret values passed to every run of this agent. Never store tokens, passwords, or other secrets here; use workspace or personal environment variables instead.',
+  'heterogeneousStatus.cloud.agentEnv.empty': 'No custom non-secret values',
+  'heterogeneousStatus.cloud.agentEnv.formLabel': 'Add or update an agent environment value',
+  'heterogeneousStatus.cloud.agentEnv.invalidKey':
+    'Use uppercase letters, numbers, and underscores; start with a letter or underscore.',
+  'heterogeneousStatus.cloud.agentEnv.keyLabel': 'Name',
+  'heterogeneousStatus.cloud.agentEnv.keyPlaceholder': 'MODE',
+  'heterogeneousStatus.cloud.agentEnv.listLabel': 'Custom agent environment values',
+  'heterogeneousStatus.cloud.agentEnv.managedKey': '{{key}} is managed elsewhere in this panel.',
+  'heterogeneousStatus.cloud.agentEnv.remove': 'Remove',
+  'heterogeneousStatus.cloud.agentEnv.removeLabel': 'Remove {{key}}',
+  'heterogeneousStatus.cloud.agentEnv.removeSuccess': '{{key}} removed.',
+  'heterogeneousStatus.cloud.agentEnv.reservedKey': '{{key}} is reserved by the runtime.',
+  'heterogeneousStatus.cloud.agentEnv.saveError': 'Could not save the agent environment change.',
+  'heterogeneousStatus.cloud.agentEnv.saveSuccess': '{{key}} saved.',
+  'heterogeneousStatus.cloud.agentEnv.sensitiveKey':
+    '{{key}} looks security-sensitive. Store it in workspace or personal environment variables.',
+  'heterogeneousStatus.cloud.agentEnv.title': 'Agent environment',
+  'heterogeneousStatus.cloud.agentEnv.update': 'Update',
+  'heterogeneousStatus.cloud.agentEnv.valueLabel': 'Value',
+  'heterogeneousStatus.cloud.agentEnv.valuePlaceholder': 'development',
   'heterogeneousStatus.cloud.tabLabel': 'Cloud',
+  'heterogeneousStatus.cloud.envScopeHint':
+    'Store secrets in workspace-level or personal environment variables. Agent-level values are for non-secret configuration only. Names use uppercase letters, numbers, and underscores; PATH, HOME, LOBEHUB_JWT, and LOBEHUB_SERVER are reserved.',
   'heterogeneousStatus.cloud.tokenLabel': 'Claude Code Token',
   'heterogeneousStatus.cloud.tokenDesc':
     'Your Claude Code OAuth token. Saved securely to Credentials once submitted. Run `claude setup-token` in your terminal to generate one.',
@@ -2479,6 +2504,9 @@ When I am ___, I need ___
   'tools.tabs.all': 'All',
   'tools.tabs.installed': 'Enabled',
   'tools.title': 'Skills',
+  'userEnv.description':
+    'These variables are inherited by agent commands in every workspace. Saved secrets stay masked.',
+  'userEnv.title': 'Personal environment',
   'workspaceEnv.configured': 'Configured',
   'workspaceEnv.configuredList': 'Configured environment variables',
   'workspaceEnv.configuredValueLabel': '{{key}} is configured',
@@ -2487,7 +2515,7 @@ When I am ___, I need ___
   'workspaceEnv.empty': 'No environment variables yet',
   'workspaceEnv.formLabel': 'Add or replace an environment variable',
   'workspaceEnv.invalidKey':
-    'Start with a letter or underscore, then use only letters, numbers, and underscores.',
+    'Use uppercase letters, numbers, and underscores; start with a letter or underscore.',
   'workspaceEnv.keyLabel': 'Name',
   'workspaceEnv.keyPlaceholder': 'EXAMPLE_VARIABLE',
   'workspaceEnv.loadError': 'Could not load environment variables.',
@@ -2508,6 +2536,18 @@ When I am ___, I need ___
   'workspaceEnv.title': 'Workspace environment',
   'workspaceEnv.valueLabel': 'Value',
   'workspaceEnv.valuePlaceholder': 'Enter a value',
+  'workspaceEnvFiles.count': '{{count}}/{{max}} files',
+  'workspaceEnvFiles.description':
+    'Load additional environment files when this workspace runs. Enter one workspace-relative path per line; later files override earlier ones.',
+  'workspaceEnvFiles.invalidPath':
+    '{{path}} must be a workspace-relative path without parent-directory traversal.',
+  'workspaceEnvFiles.label': 'Environment file paths',
+  'workspaceEnvFiles.placeholder': '.env\n.env.local',
+  'workspaceEnvFiles.save': 'Save files',
+  'workspaceEnvFiles.saveError': 'Could not save environment file paths.',
+  'workspaceEnvFiles.saveSuccess': 'Environment file paths saved.',
+  'workspaceEnvFiles.title': 'Environment files',
+  'workspaceEnvFiles.tooMany': 'Add no more than {{max}} environment files.',
   'workspaceSkills.description':
     'Choose which skill sources are available when an agent runs in this workspace.',
   'workspaceSkills.discovered': 'Project skills found in this directory',

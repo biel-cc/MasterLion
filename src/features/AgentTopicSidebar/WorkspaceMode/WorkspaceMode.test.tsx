@@ -250,9 +250,9 @@ describe('WorkspaceMode sidebar', () => {
     render(
       <WorkspaceGroupItem
         expanded
+        TopicItemComponent={TopicItemStub as any}
         activeTopicId="t-1"
         group={{ topics: [topic('bound')], workspace, workspaceId: 'ws-app' }}
-        TopicItemComponent={TopicItemStub as any}
       />,
     );
 
@@ -274,9 +274,9 @@ describe('WorkspaceMode sidebar', () => {
   it('RecentSection passes scratch root only for scratch placements', () => {
     render(
       <RecentSection
+        TopicItemComponent={TopicItemStub as any}
         activeTopicId="t-1"
         entries={mocks.navigation.recent}
-        TopicItemComponent={TopicItemStub as any}
       />,
     );
 

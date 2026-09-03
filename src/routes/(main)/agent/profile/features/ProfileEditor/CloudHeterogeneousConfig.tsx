@@ -1,6 +1,6 @@
 'use client';
 
-import { type HeterogeneousProviderConfig, type UserCredSummary } from '@lobechat/types';
+import { type UserCredSummary } from '@lobechat/types';
 import { Github } from '@lobehub/icons';
 import { Flexbox } from '@lobehub/ui';
 import { Avatar, Button, Input, Select, Spin, Tag, Typography } from 'antd';
@@ -12,6 +12,8 @@ import { useTranslation } from 'react-i18next';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
 import { lambdaClient, lambdaQuery } from '@/libs/trpc/client';
+
+import { AgentEnvironmentEditor } from './AgentEnvironmentEditor';
 
 // Fixed cred key for Claude Code OAuth token — never changes
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -109,8 +111,8 @@ const styles = createStaticStyles(({ css }) => ({
 }));
 
 interface CloudHeterogeneousConfigProps {
+  env: Record<string, string>;
   onEnvChange: (env: Record<string, string>) => Promise<void> | void;
-  provider: HeterogeneousProviderConfig;
 }
 
 // ── Claude Code Token section ──────────────────────────────────────────────
@@ -286,12 +288,12 @@ const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) =>
 
 // ── Main component ─────────────────────────────────────────────────────────
 const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
-  ({ provider, onEnvChange }) => {
+  ({ env, onEnvChange }) => {
     const { t } = useTranslation('setting');
     const navigate = useWorkspaceAwareNavigate();
     const { allowed: canEdit } = usePermission('edit_own_content');
 
-    const currentEnv = provider.env ?? {};
+    const currentEnv = env;
     const storedGithubCredKey = currentEnv.GITHUB_CRED_KEY ?? '';
     const repos: string[] = (() => {
       try {
@@ -334,6 +336,10 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
     return (
       <div className={styles.card}>
         <Flexbox gap={16}>
+          <span className={styles.sectionDesc} role="note">
+            {t('heterogeneousStatus.cloud.envScopeHint')}
+          </span>
+
           {/* ── Claude Code OAuth Token ── */}
           <TokenSection
             existingCred={claudeTokenCred}
@@ -397,6 +403,15 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
 
           {/* ── Repository list ── */}
           <RepoListSection repos={repos} onReposChange={handleReposChange} />
+
+          <div className={styles.sectionDivider} />
+
+          {/* Product-managed keys stay hidden; this editor owns non-secret user entries only. */}
+          <AgentEnvironmentEditor
+            disabled={!canEdit}
+            env={currentEnv}
+            onEnvChange={onEnvChange}
+          />
         </Flexbox>
       </div>
     );

@@ -106,19 +106,10 @@ export class ToolExecutionService {
     const startTime = Date.now();
     try {
       const typeStr = type as string;
-      let data: ToolExecutionResult;
-      switch (typeStr) {
-        case 'mcp': {
-          data = await this.executeMCPTool(payload, context);
-          break;
-        }
-
-        case 'builtin':
-        default: {
-          data = await this.builtinToolsExecutor.execute(payload, context);
-          break;
-        }
-      }
+      const data: ToolExecutionResult =
+        typeStr === 'mcp'
+          ? await this.executeMCPTool(payload, context)
+          : await this.builtinToolsExecutor.execute(payload, context);
 
       const executionTime = Date.now() - startTime;
 

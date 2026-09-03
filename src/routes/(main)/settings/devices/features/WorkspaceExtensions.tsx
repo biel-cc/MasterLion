@@ -6,6 +6,7 @@ import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { WorkspaceEnv, type WorkspaceEnvClient } from '@/features/WorkspaceEnv';
+import { WorkspaceEnvFiles } from '@/features/WorkspaceEnvFiles';
 import { WorkspaceSkillsSettings } from '@/features/WorkspaceSkillsSettings';
 import type { ProjectWorkspaceItem } from '@/services/projectWorkspace';
 import { projectWorkspaceService } from '@/services/projectWorkspace';
@@ -67,6 +68,24 @@ const WorkspaceExtensions = memo<WorkspaceExtensionsProps>(({ deviceId, workspac
         <div className={styles.body}>
           {expandedKeys.includes('environment') && (
             <WorkspaceEnv client={workspaceEnvClient} workspaceId={workspace.id} />
+          )}
+        </div>
+      </details>
+      <details
+        className={styles.section}
+        onToggle={(event) => {
+          const { open } = event.currentTarget;
+          setExpandedKeys((keys) =>
+            open
+              ? [...new Set([...keys, 'environment-files'])]
+              : keys.filter((key) => key !== 'environment-files'),
+          );
+        }}
+      >
+        <summary className={styles.summary}>{t('workspaceEnvFiles.title')}</summary>
+        <div className={styles.body}>
+          {expandedKeys.includes('environment-files') && (
+            <WorkspaceEnvFiles workspace={workspace} />
           )}
         </div>
       </details>

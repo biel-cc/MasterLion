@@ -35,6 +35,7 @@ export interface ResolveExecutionContextInput {
   canUseDevice?: boolean;
   chatConfig?: LobeAgentChatConfig;
   env?: ExecutionEnv;
+  envFiles?: string[];
   executionTargetByPlatform?: ExecutionTargetByPlatform;
   initialTopicMetadata?: { workingDirectory?: string; workspaceId?: string };
   isDesktop: boolean;
@@ -175,6 +176,7 @@ export const resolveExecutionContext = (input: ResolveExecutionContextInput): Ex
   });
   const common = {
     env: input.env,
+    envFiles: input.envFiles,
     operationId: input.operationId,
     plan,
     snapshot: input.snapshot,
@@ -253,6 +255,7 @@ export const toToolCallExecutionContext = (
   accessRoots: context.accessRoots,
   cwd: context.cwd,
   env: options.includeEnvValues ? context.env?.values : undefined,
+  envFiles: context.envFiles,
   envRef: options.envRef,
   workspaceKind: context.workspace?.kind,
   workspaceRootPath: context.workspace?.rootPath,

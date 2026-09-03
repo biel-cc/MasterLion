@@ -60,6 +60,8 @@ export interface LobeAgentAgencyConfig {
    * hetero agents `openclaw` / `hermes`).
    */
   boundDeviceId?: string;
+  /** Non-secret environment applied to every run. Secrets belong in user/workspace env. */
+  env?: Record<string, string>;
   /**
    * Execution target for the hetero agent. When omitted, resolves to a
    * platform default: `'local'` on desktop, `'none'` on web (or `'device'` for

@@ -840,7 +840,7 @@ export class ChatTopicActionImpl {
     }
 
     this.#set(
-      { activeTopicId: !id ? (null as any) : id, activeThreadId: undefined },
+      { activeTopicId: id || (null as any), activeThreadId: undefined },
       false,
       n('toggleTopic'),
     );

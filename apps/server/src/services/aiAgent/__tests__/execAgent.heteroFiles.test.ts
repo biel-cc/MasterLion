@@ -8,6 +8,7 @@ const {
   mockDeviceProxy,
   mockDispatchAgentRun,
   mockFindWorkspaceById,
+  mockGetUserSettings,
   mockMessageCreate,
   mockResolveAttachmentsByFileIds,
   mockSpawnHeteroSandbox,
@@ -22,6 +23,7 @@ const {
   },
   mockDispatchAgentRun: vi.fn(),
   mockFindWorkspaceById: vi.fn(),
+  mockGetUserSettings: vi.fn(),
   mockIngestAttachment: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockResolveAttachmentsByFileIds: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock('@/database/models/message', () => ({
 
 const heteroAgentConfig = {
   agencyConfig: {
+    env: { AGENT_ONLY: 'agent', SHARED: 'agent' },
     executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
     heterogeneousProvider: { type: 'claude-code' },
   },
@@ -100,6 +103,12 @@ vi.mock('@/database/models/plugin', () => ({
 vi.mock('@/database/models/projectWorkspace', () => ({
   ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
     findById: mockFindWorkspaceById,
+  })),
+}));
+
+vi.mock('@/database/models/user', () => ({
+  UserModel: vi.fn().mockImplementation(() => ({
+    getUserSettings: mockGetUserSettings,
   })),
 }));
 
@@ -210,6 +219,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     mockIngestAttachment.mockReset();
     mockBindingGetState.mockResolvedValue({});
     mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockGetUserSettings.mockResolvedValue({});
     mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
       plaintext: value.replace(/^enc:/, ''),
       wasAuthentic: true,
@@ -251,9 +261,17 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     mockFindWorkspaceById.mockResolvedValue({
       env: {
         PUBLIC_FLAG: { secret: false, value: 'enc:enabled' },
+        SHARED: { secret: false, value: 'enc:workspace' },
         TOKEN: { secret: true, value: 'enc:resolved-secret' },
       },
+      envFiles: ['.env'],
       id: 'workspace-1',
+    });
+    mockGetUserSettings.mockResolvedValue({
+      executionEnv: {
+        SHARED: { secret: false, value: 'enc:user' },
+        USER_TOKEN: { secret: true, value: 'enc:user-secret' },
+      },
     });
 
     await service.execAgent({
@@ -270,13 +288,22 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
       prompt: 'Use the managed project environment',
     });
 
-    expect(mockDecryptWorkspaceEnv).toHaveBeenCalledTimes(2);
+    // Losing user/workspace SHARED values are never decrypted; only the three
+    // winning persisted values cross the decryption boundary.
+    expect(mockDecryptWorkspaceEnv).toHaveBeenCalledTimes(3);
     expect(mockDispatchAgentRun).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-workspace-1',
         executionContext: expect.objectContaining({
           cwd: '/approved/project',
-          env: { PUBLIC_FLAG: 'enabled', TOKEN: 'resolved-secret' },
+          env: {
+            AGENT_ONLY: 'agent',
+            PUBLIC_FLAG: 'enabled',
+            SHARED: 'agent',
+            TOKEN: 'resolved-secret',
+            USER_TOKEN: 'user-secret',
+          },
+          envFiles: ['.env'],
           workspaceKind: 'device',
           workspaceRootPath: '/approved/project',
         }),
@@ -375,6 +402,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
 
       expect(mockSpawnHeteroSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
+          env: { AGENT_ONLY: 'agent', SHARED: 'agent' },
           imageList: [{ id: 'file-1', url: 'https://signed/file-1.png' }],
         }),
       );

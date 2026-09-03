@@ -21,11 +21,13 @@ const { mockDeviceProxy } = vi.hoisted(() => ({
   },
 }));
 
-const { mockBindingGetState, mockDecryptWorkspaceEnv, mockFindWorkspaceById } = vi.hoisted(() => ({
-  mockBindingGetState: vi.fn(),
-  mockDecryptWorkspaceEnv: vi.fn(),
-  mockFindWorkspaceById: vi.fn(),
-}));
+const { mockBindingGetState, mockDecryptWorkspaceEnv, mockFindWorkspaceById, mockGetUserSettings } =
+  vi.hoisted(() => ({
+    mockBindingGetState: vi.fn(),
+    mockDecryptWorkspaceEnv: vi.fn(),
+    mockFindWorkspaceById: vi.fn(),
+    mockGetUserSettings: vi.fn(),
+  }));
 
 vi.mock('@/libs/trusted-client', () => ({
   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
@@ -81,6 +83,12 @@ vi.mock('@/database/models/plugin', () => ({
 vi.mock('@/database/models/projectWorkspace', () => ({
   ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
     findById: mockFindWorkspaceById,
+  })),
+}));
+
+vi.mock('@/database/models/user', () => ({
+  UserModel: vi.fn().mockImplementation(() => ({
+    getUserSettings: mockGetUserSettings,
   })),
 }));
 
@@ -192,6 +200,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     // missing and must fail closed under the authoritative snapshot contract.
     mockBindingGetState.mockResolvedValue({});
     mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockGetUserSettings.mockResolvedValue({});
     mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
       plaintext: value.replace(/^enc:/, ''),
       wasAuthentic: true,
@@ -297,7 +306,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
 
       await expect(
         service.execAgent({ agentId: 'agent-1', prompt: 'Use the project environment' }),
-      ).rejects.toThrow(/Unable to load the execution environment/);
+      ).rejects.toThrow(/Unable to decrypt execution environment/);
       expect(mockCreateOperation).not.toHaveBeenCalled();
     });
 

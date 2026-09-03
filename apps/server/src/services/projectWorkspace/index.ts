@@ -55,6 +55,7 @@ export class ProjectWorkspaceService {
     id: string,
     value: {
       displayName?: string | null;
+      envFiles?: string[];
       repoType?: 'git' | 'github' | null;
       skillPolicy?: ProjectWorkspaceSkillPolicy | null;
     },

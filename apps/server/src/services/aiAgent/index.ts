@@ -123,7 +123,7 @@ import { shouldSuppressSignal } from '@/server/services/agentSignal/suppressSign
 import { ComposioService } from '@/server/services/composio';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { DocumentService } from '@/server/services/document';
-import { createExecutionEnvAdapter } from '@/server/services/executionEnv';
+import { StoredExecutionEnvService } from '@/server/services/executionEnv';
 import { FileService } from '@/server/services/file';
 import { resolveAttachmentsByFileIds } from '@/server/services/file/resolveAttachments';
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
@@ -455,16 +455,17 @@ export class AiAgentService {
    * entries; plaintext remains only in the server/device execution snapshot.
    */
   private async resolveWorkspaceRuntimeConfig(params: {
-    agentEnv?: Record<string, string>;
+    agencyConfig?: LobeAgentAgencyConfig | null;
     agentId: string;
     operationId: string;
     topicId: string;
     workspaceId?: string;
   }): Promise<{
     env: ExecutionEnv;
+    envFiles: string[];
     skillPolicy: SkillRegistryResult['policy'];
   }> {
-    const { agentEnv, agentId, operationId, topicId, workspaceId } = params;
+    const { agencyConfig, agentId, operationId, topicId, workspaceId } = params;
     const defaultSkillPolicy: SkillRegistryResult['policy'] = {
       ...DEFAULT_SKILL_POLICY,
       pinned: [...DEFAULT_SKILL_POLICY.pinned],
@@ -473,58 +474,27 @@ export class AiAgentService {
       ? await new ProjectWorkspaceModel(this.db, this.userId).findById(workspaceId)
       : undefined;
     if (workspaceId && !row) throw new Error('Unable to load the bound workspace environment');
-    const entries = row?.env ?? {};
     const skillPolicy: SkillRegistryResult['policy'] = {
       ...defaultSkillPolicy,
       ...row?.skillPolicy,
       pinned: [...(row?.skillPolicy?.pinned ?? defaultSkillPolicy.pinned)],
     };
     let gateKeeperPromise: ReturnType<typeof KeyVaultsGateKeeper.initWithEnvKey> | undefined;
-    const decryptWorkspaceValue = async (encryptedValue: string): Promise<string> => {
+    const decryptStoredValue = async (encryptedValue: string): Promise<string> => {
       gateKeeperPromise ??= KeyVaultsGateKeeper.initWithEnvKey();
       const decrypted = await (await gateKeeperPromise).decrypt(encryptedValue);
       if (!decrypted.wasAuthentic) throw new Error('Workspace environment authentication failed');
       return decrypted.plaintext;
     };
 
-    const adapter = createExecutionEnvAdapter({
-      decryptSecret: async ({ encryptedValue, layer }) => {
-        // Existing heterogeneous agent env is already stored as plaintext.
-        // Treat every key as secret for browser/trace projection, but do not
-        // pass it through the workspace cipher.
-        if (layer === 'agent') return encryptedValue;
-        if (layer === 'workspace') return decryptWorkspaceValue(encryptedValue);
-        throw new Error('No production decryptor exists for this environment layer');
-      },
-      loadLayer: async (layer) => {
-        if (layer === 'workspace' && workspaceId) {
-          // Workspace values are all encrypted at rest, including entries
-          // whose UI classification is non-secret. Pre-decrypt that class;
-          // secret entries are decrypted by the adapter's winning-entry pass.
-          return Object.fromEntries(
-            await Promise.all(
-              Object.entries(entries).map(async ([key, entry]) => [
-                key,
-                {
-                  ...entry,
-                  value: entry.secret ? entry.value : await decryptWorkspaceValue(entry.value),
-                },
-              ]),
-            ),
-          );
-        }
-        if (layer === 'agent' && agentEnv) {
-          return Object.fromEntries(
-            Object.entries(agentEnv).map(([key, value]) => [key, { secret: true, value }]),
-          );
-        }
-        // There is currently no persisted user/topic/call env schema. Host
-        // process identity remains device-owned and must not be copied from
-        // this server to a remote machine.
-        return;
-      },
+    const userModel = new UserModel(this.db, this.userId);
+    const service = new StoredExecutionEnvService({
+      decrypt: decryptStoredValue,
+      loadUserEnv: async () => (await userModel.getUserSettings())?.executionEnv ?? undefined,
+      loadWorkspaceEnv: async (id) => (id === row?.id ? (row.env ?? undefined) : undefined),
     });
-    const env = await adapter.resolve({
+    const env = await service.resolveAgencyConfig({
+      agencyConfig,
       agentId,
       operationId,
       topicId,
@@ -532,7 +502,7 @@ export class AiAgentService {
       workspaceId,
     });
 
-    return { env, skillPolicy };
+    return { env, envFiles: row?.envFiles ?? [], skillPolicy };
   }
 
   /**
@@ -563,7 +533,7 @@ export class AiAgentService {
     if (!topicWorkspaceState) throw new Error(`Topic not found: ${params.topicId}`);
 
     const runtimeConfig = await this.resolveWorkspaceRuntimeConfig({
-      agentEnv: params.agentConfig.agencyConfig?.heterogeneousProvider?.env,
+      agencyConfig: params.agentConfig.agencyConfig,
       agentId: params.agentConfig.id,
       operationId: params.operationId,
       topicId: params.topicId,
@@ -587,6 +557,7 @@ export class AiAgentService {
         canUseDevice: params.canUseDevice,
         chatConfig: params.agentConfig.chatConfig ?? undefined,
         env: runtimeConfig.env,
+        envFiles: runtimeConfig.envFiles,
         executionTargetByPlatform: params.preservedTarget
           ? {
               desktop: params.preservedTarget,
@@ -1773,7 +1744,9 @@ export class AiAgentService {
       // override via GITHUB_CRED_KEY.
       let githubToken: string | undefined;
       const githubCredKey =
-        agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ?? 'github';
+        agentConfig.agencyConfig?.env?.GITHUB_CRED_KEY ??
+        agentConfig.agencyConfig?.heterogeneousProvider?.env?.GITHUB_CRED_KEY ??
+        'github';
       try {
         const list = await this.marketService.market.creds.list();
         const cred = list.data?.find((c: { key: string }) => c.key === githubCredKey);

@@ -9,12 +9,18 @@ import {
   buildHeteroExecStdinPayload,
   type HeteroExecImageRef,
 } from '@lobechat/heterogeneous-agents/protocol';
+import {
+  composeChildProcessEnv,
+  loadWorkspaceEnvFiles,
+  resolveLoginShellPath,
+} from '@lobechat/local-file-shell';
 
 export interface SpawnHeteroAgentRunParams {
   agentType: string;
   cwd?: string;
   /** Server-resolved environment layered into the child process. */
   env?: Record<string, string>;
+  envFiles?: string[];
   /** Image attachments (signed URLs) appended as image content blocks. */
   imageList?: HeteroExecImageRef[];
   jwt: string;
@@ -63,6 +69,7 @@ export async function spawnHeteroAgentRun(
     agentType,
     cwd,
     env,
+    envFiles,
     imageList,
     jwt,
     operationId,
@@ -122,6 +129,13 @@ export async function spawnHeteroAgentRun(
   // the desktop path. `lh hetero exec` coerces both shapes via
   // coerceJsonPrompt.
   const stdinPayload = buildHeteroExecStdinPayload({ imageList, prompt, systemContext });
+  const fileEnv = await loadWorkspaceEnvFiles({ envFiles, workspaceRootPath: workDir });
+  const childEnv = composeChildProcessEnv({
+    hostEnv: process.env,
+    loginShellPath: await resolveLoginShellPath(),
+    resolvedEnv: { ...fileEnv, ...env },
+    runtimeEnv: { LOBEHUB_JWT: jwt, LOBEHUB_SERVER: serverUrl },
+  });
 
   return new Promise<AgentRunAckResult>((resolve) => {
     let settled = false;
@@ -133,12 +147,7 @@ export async function spawnHeteroAgentRun(
 
     const child = spawn(process.execPath, [...process.execArgv, ...cliArgs], {
       cwd: workDir,
-      env: {
-        ...process.env,
-        ...env,
-        LOBEHUB_JWT: jwt,
-        LOBEHUB_SERVER: serverUrl,
-      },
+      env: childEnv,
       stdio: ['pipe', 'inherit', 'inherit'],
     });
 

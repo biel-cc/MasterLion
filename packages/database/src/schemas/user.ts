@@ -1,5 +1,9 @@
 import { DEFAULT_PREFERENCE } from '@lobechat/const';
-import type { UserAgentOnboarding, UserOnboarding } from '@lobechat/types';
+import type {
+  ProjectWorkspaceEnvRecord,
+  UserAgentOnboarding,
+  UserOnboarding,
+} from '@lobechat/types';
 import { sql } from 'drizzle-orm';
 import { boolean, index, jsonb, pgTable, text, varchar } from 'drizzle-orm/pg-core';
 
@@ -83,5 +87,7 @@ export const userSettings = pgTable('user_settings', {
   tool: jsonb('tool'),
   image: jsonb('image'),
   notification: jsonb('notification'),
+  /** Server-encrypted execution environment. Never selected by getUserState. */
+  executionEnv: jsonb('execution_env').$type<ProjectWorkspaceEnvRecord>(),
 });
 export type UserSettingsItem = typeof userSettings.$inferSelect;

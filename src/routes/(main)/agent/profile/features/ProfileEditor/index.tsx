@@ -15,6 +15,7 @@ import { agentSelectors } from '@/store/agent/selectors';
 
 import AgentSettings from '../AgentSettings';
 import EditorCanvas from '../EditorCanvas';
+import { sanitizeAgentEnv } from './agentEnvPolicy';
 import AgentHeader from './AgentHeader';
 import AgentTool from './AgentTool';
 import CloudHeterogeneousConfig from './CloudHeterogeneousConfig';
@@ -44,7 +45,7 @@ const ProfileEditor = memo(() => {
     if (!heterogeneousProvider) return;
     await updateConfig({
       agencyConfig: {
-        heterogeneousProvider: { ...heterogeneousProvider, env },
+        env: sanitizeAgentEnv(env),
       },
     });
   };
@@ -87,7 +88,7 @@ const ProfileEditor = memo(() => {
                 label: t('heterogeneousStatus.cloud.tabLabel'),
                 children: (
                   <CloudHeterogeneousConfig
-                    provider={heterogeneousProvider}
+                    env={config.agencyConfig?.env ?? heterogeneousProvider.env ?? {}}
                     onEnvChange={updateHeterogeneousEnv}
                   />
                 ),

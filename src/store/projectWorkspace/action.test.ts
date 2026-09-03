@@ -28,14 +28,18 @@ const createClient = (): { [K in keyof ProjectWorkspaceClient]: ReturnType<typeo
   bindTopic: vi.fn(),
   captureTarget: vi.fn(),
   getOrCreate: vi.fn(),
+  getManagedEnvSummary: vi.fn(),
   getTopicState: vi.fn(),
   grant: vi.fn(),
   list: vi.fn(),
   listEnv: vi.fn(),
+  listUserEnv: vi.fn(),
   listGrants: vi.fn(),
   revoke: vi.fn(),
   revokeEnv: vi.fn(),
+  revokeUserEnv: vi.fn(),
   saveEnv: vi.fn(),
+  saveUserEnv: vi.fn(),
   update: vi.fn(),
 });
 

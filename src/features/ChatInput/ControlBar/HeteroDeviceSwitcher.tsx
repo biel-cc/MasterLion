@@ -275,13 +275,13 @@ const OptionRow = memo<OptionRowProps>(({ active, desc, disabled, icon, label, o
   return (
     <button
       aria-pressed={active}
+      disabled={disabled}
+      type="button"
       className={cx(
         styles.option,
         active && styles.optionActive,
         disabled && styles.optionDisabled,
       )}
-      disabled={disabled}
-      type="button"
       onClick={onClick}
     >
       <div className={styles.optionIcon}>{icon}</div>

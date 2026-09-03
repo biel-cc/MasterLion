@@ -30,10 +30,13 @@ import type {
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
 import {
+  composeChildProcessEnv,
   ExecutionBoundaryError,
   type ExecutionBoundaryTrace,
+  loadWorkspaceEnvFiles,
   type PreparedToolCallExecution,
   prepareToolCallExecution,
+  resolveLoginShellPath,
 } from '@lobechat/local-file-shell';
 import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 
@@ -318,7 +321,14 @@ export default class GatewayConnectionCtr extends ControllerModule {
   ): Promise<{ reason?: string; status: 'accepted' | 'rejected' }> {
     try {
       const cwd = request.executionContext?.cwd ?? request.cwd;
-      const env = request.executionContext?.env ?? request.env;
+      const fileEnv = await loadWorkspaceEnvFiles({
+        envFiles: request.executionContext?.envFiles,
+        workspaceRootPath: request.executionContext?.workspaceRootPath ?? cwd,
+      });
+      const env = {
+        ...fileEnv,
+        ...(request.executionContext?.env ?? request.env),
+      };
       if (!cwd?.trim()) {
         return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
       }
@@ -347,7 +357,7 @@ export default class GatewayConnectionCtr extends ControllerModule {
       // Fire-and-forget: lh hetero exec handles spawn -> adapt ->
       // BatchIngester -> heteroIngest/heteroFinish -> server -> Gateway -> clients.
       // Same command as spawnHeteroSandbox() on the server side.
-      this.heterogeneousAgentCtr.spawnLhHeteroExec({
+      await this.heterogeneousAgentCtr.spawnLhHeteroExec({
         agentType: request.agentType,
         cwd,
         env,
@@ -917,12 +927,15 @@ export default class GatewayConnectionCtr extends ControllerModule {
     ]);
 
     // Inject auth into child env so `lh notify` can authenticate without CLI config.
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...env,
-      ...(accessToken && { LOBEHUB_JWT: accessToken }),
-      ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
-    };
+    const childEnv: NodeJS.ProcessEnv = composeChildProcessEnv({
+      hostEnv: process.env,
+      loginShellPath: await resolveLoginShellPath(),
+      resolvedEnv: env,
+      runtimeEnv: {
+        ...(accessToken && { LOBEHUB_JWT: accessToken }),
+        ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
+      },
+    });
 
     if (agentType === 'openclaw') {
       const lhPath = this.resolveLhPath();

@@ -12,6 +12,16 @@ describe('composeChildProcessEnv', () => {
     ).toEqual({ API_MODE: 'workspace', PATH: '/runtime/bin', WORKSPACE_ONLY: 'enabled' });
   });
 
+  it('strips implicit host Anthropic credentials but permits an explicit resolved value', () => {
+    expect(
+      composeChildProcessEnv({
+        hostEnv: { ANTHROPIC_API_KEY: 'host-secret', PATH: '/thin/bin' },
+        loginShellPath: '/login/bin',
+        resolvedEnv: { ANTHROPIC_API_KEY: 'workspace-secret' },
+      }),
+    ).toEqual({ ANTHROPIC_API_KEY: 'workspace-secret', PATH: '/login/bin' });
+  });
+
   it('does not let resolved values replace runtime or security variables', () => {
     const result = composeChildProcessEnv({
       hostEnv: {
@@ -56,6 +66,12 @@ describe('composeChildProcessEnv', () => {
     expect(() =>
       composeChildProcessEnv({ hostEnv: {}, resolvedEnv: { 'BAD-KEY': 'value' } }),
     ).toThrow(/Invalid environment variable name/);
+    expect(() =>
+      composeChildProcessEnv({ hostEnv: {}, resolvedEnv: { lowercase: 'value' } }),
+    ).toThrow(/Invalid environment variable name/);
+    expect(
+      composeChildProcessEnv({ hostEnv: {}, resolvedEnv: { UPPER_KEY: 'value' } }),
+    ).toEqual({ UPPER_KEY: 'value' });
   });
 
   it('does not mutate any source object', () => {

@@ -38,6 +38,7 @@ import {
   resolveCliSpawnPlan,
   resolveCodexInitialModel,
 } from '@lobechat/heterogeneous-agents/spawn';
+import { composeChildProcessEnv, resolveLoginShellPath } from '@lobechat/local-file-shell';
 import { app as electronApp, BrowserWindow } from 'electron';
 
 import { HETERO_AGENT_FILES_DIR, HETERO_AGENT_TRACING_DIR } from '@/const/heteroAgent';
@@ -54,32 +55,6 @@ import { ControllerModule, IpcMethod } from './index';
 
 const logger = createLogger('controllers:HeterogeneousAgentCtr');
 
-// Anthropic auth env vars that must NOT be inherited from the desktop process
-// when spawning a local CLI agent. A developer with `ANTHROPIC_API_KEY` (or an
-// auth token / base url) exported in their shell would otherwise have it
-// forwarded to `claude`, which then switches from its own subscription login to
-// that key — an expired / wrong key surfaces as a baffling "Invalid API key"
-// and the run exits non-zero. Agents that genuinely want an API key still set
-// it through `session.env`, which is spread AFTER the inherited env below and
-// therefore wins.
-const STRIPPED_INHERITED_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_BASE_URL',
-] as const;
-
-/**
- * Inherited `process.env` with the Anthropic auth vars removed. Keep this pure
- * and exported so the "never leak host Anthropic creds into the CLI" invariant
- * can be unit-tested directly.
- */
-export const buildInheritedSpawnEnv = (
-  sourceEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv => {
-  const env = { ...sourceEnv };
-  for (const key of STRIPPED_INHERITED_ENV_KEYS) delete env[key];
-  return env;
-};
 const CODEX_RESUME_THREAD_NOT_FOUND_PATTERNS = [
   /no conversation found/i,
   /thread .*not found/i,
@@ -980,12 +955,14 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       // Forward the user's proxy settings to the CLI. The main-process undici
       // dispatcher doesn't reach child processes — they need env vars.
       const proxyEnv = buildProxyEnv(this.app.storeManager.get('networkProxy'));
-      const inheritedEnv = buildInheritedSpawnEnv();
-      // When preflight resolved the CLI via the login-shell PATH, spawn with
-      // that PATH (a superset of the inherited one) so a `#!/usr/bin/env node`
-      // shim finds its interpreter. `session.env` still wins if it sets PATH.
-      if (session.resolvedCommandSearchPath) inheritedEnv.PATH = session.resolvedCommandSearchPath;
-      spawnEnv = { ...inheritedEnv, ...proxyEnv, ...session.env };
+      spawnEnv = composeChildProcessEnv({
+        hostEnv: process.env,
+        // When preflight resolved the CLI via the login-shell PATH, carry that
+        // PATH into the child so a `#!/usr/bin/env node` shim finds node.
+        loginShellPath: session.resolvedCommandSearchPath,
+        resolvedEnv: session.env,
+        runtimeEnv: proxyEnv,
+      });
 
       if (session.agentType === 'codex') {
         const initialModel = await resolveCodexInitialModel({
@@ -1490,7 +1467,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
    * AgentStreamPipeline or IPC broadcast needed. Mirrors
    * `spawnHeteroSandbox()` on the server side.
    */
-  spawnLhHeteroExec(params: {
+  async spawnLhHeteroExec(params: {
     agentType: string;
     cwd?: string;
     env?: Record<string, string>;
@@ -1503,7 +1480,7 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     serverUrl: string;
     systemContext?: string;
     topicId: string;
-  }): void {
+  }): Promise<void> {
     const {
       agentType,
       cwd,
@@ -1547,13 +1524,16 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       ...(rawDumpDir ? ['--raw-dump', rawDumpDir] : []),
     ];
 
-    const env = {
-      ...process.env,
-      ...buildProxyEnv(this.app.storeManager.get('networkProxy')),
-      ...executionEnv,
-      LOBEHUB_JWT: jwt,
-      LOBEHUB_SERVER: serverUrl,
-    };
+    const env = composeChildProcessEnv({
+      hostEnv: process.env,
+      loginShellPath: await resolveLoginShellPath(),
+      resolvedEnv: executionEnv,
+      runtimeEnv: {
+        ...buildProxyEnv(this.app.storeManager.get('networkProxy')),
+        LOBEHUB_JWT: jwt,
+        LOBEHUB_SERVER: serverUrl,
+      },
+    });
 
     logger.info('spawnLhHeteroExec: type=%s op=%s topic=%s', agentType, operationId, topicId);
 

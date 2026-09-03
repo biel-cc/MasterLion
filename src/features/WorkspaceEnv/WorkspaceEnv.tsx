@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { WorkspaceEnvClient, WorkspaceEnvEntrySummary } from './types';
 
-const ENV_KEY_PATTERN = /^[a-z_]\w*$/i;
+const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const MASKED_VALUE = '••••••••';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -123,13 +123,15 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
 export interface WorkspaceEnvProps {
   client: WorkspaceEnvClient;
+  description?: string;
+  title?: string;
   workspaceId: string;
 }
 
 const sortEntries = (entries: WorkspaceEnvEntrySummary[]) =>
   [...entries].sort((left, right) => left.key.localeCompare(right.key));
 
-const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
+const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, description, title, workspaceId }) => {
   const { t: translate } = useTranslation('setting');
   const t = translate as unknown as (key: string, options?: Record<string, string>) => string;
   const inputId = useId();
@@ -223,9 +225,9 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, workspaceId }) => {
       <div className={styles.header}>
         <div>
           <h2 className={styles.title} id={`${inputId}-title`}>
-            {t('workspaceEnv.title')}
+            {title ?? t('workspaceEnv.title')}
           </h2>
-          <p className={styles.description}>{t('workspaceEnv.description')}</p>
+          <p className={styles.description}>{description ?? t('workspaceEnv.description')}</p>
         </div>
       </div>
 

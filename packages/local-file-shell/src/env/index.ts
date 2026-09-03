@@ -1,4 +1,11 @@
-const ENV_KEY_PATTERN = /^[A-Z_]\w*$/i;
+const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+/** Host credentials that must never leak into an agent child implicitly. */
+export const HOST_ENV_BLOCKLIST = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+] as const;
 
 export const RUNTIME_PROTECTED_ENV_KEYS = new Set([
   'BASH_ENV',
@@ -42,6 +49,8 @@ const RUNTIME_PROTECTED_ENV_PREFIXES = ['DYLD_', 'LOBEHUB_', 'MASTERINO_'] as co
 export interface ComposeChildProcessEnvInput {
   /** Environment owned by the process host. */
   hostEnv: Readonly<Record<string, string | undefined>>;
+  /** Login-shell PATH discovered by the device. */
+  loginShellPath?: string;
   /** Resolved workspace/topic/agent/call environment. */
   resolvedEnv?: Readonly<Record<string, string>>;
   /** Trusted values authored for this operation, such as the Masterino CLI JWT. */
@@ -68,13 +77,18 @@ export const composeChildProcessEnv = ({
   hostEnv,
   resolvedEnv,
   runtimeEnv,
+  loginShellPath,
 }: ComposeChildProcessEnvInput): Record<string, string> => {
   const result: Record<string, string> = {};
+  const blockedHostKeys = new Set<string>(HOST_ENV_BLOCKLIST);
 
   for (const [key, value] of Object.entries(hostEnv)) {
     if (typeof value !== 'string') continue;
+    if (blockedHostKeys.has(key.toUpperCase())) continue;
     result[key] = value;
   }
+
+  if (loginShellPath) result.PATH = loginShellPath;
 
   for (const [key, value] of Object.entries(resolvedEnv ?? {})) {
     assertValidKey(key);
@@ -90,3 +104,6 @@ export const composeChildProcessEnv = ({
 };
 
 export const buildChildProcessEnv = composeChildProcessEnv;
+
+export * from './loginShellPath';
+export * from './workspaceEnvFiles';

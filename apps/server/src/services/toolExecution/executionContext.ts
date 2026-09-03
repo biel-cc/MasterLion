@@ -22,6 +22,7 @@ export const toGatewayExecutionContext = (
     })),
     cwd: frozen.cwd,
     env: frozen.env?.values,
+    envFiles: frozen.envFiles,
     workspaceKind: frozen.workspace?.kind,
     workspaceRootPath: frozen.workspace?.rootPath,
   };

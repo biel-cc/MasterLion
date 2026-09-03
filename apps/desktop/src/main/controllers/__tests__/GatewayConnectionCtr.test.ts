@@ -1,5 +1,6 @@
 import type { execSync as ExecSyncType } from 'node:child_process';
 
+import type * as LocalFileShell from '@lobechat/local-file-shell';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@/core/App';
@@ -171,6 +172,11 @@ vi.mock('@/utils/logger', () => ({
     verbose: vi.fn(),
     warn: vi.fn(),
   }),
+}));
+
+vi.mock('@lobechat/local-file-shell', async (importOriginal) => ({
+  ...(await importOriginal<typeof LocalFileShell>()),
+  resolveLoginShellPath: vi.fn().mockResolvedValue('/mock/login/bin'),
 }));
 
 vi.mock('electron-is', () => ({

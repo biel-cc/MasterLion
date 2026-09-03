@@ -86,6 +86,7 @@ const ModelSelect = memo<ModelSelectProps>(
               {...model.abilities}
               providerId={provider.id}
               showInfoTag={false}
+              showInputModality={showAbility}
             />
           ),
           provider: provider.id,
@@ -141,6 +142,7 @@ const ModelSelect = memo<ModelSelectProps>(
               {...(option as ModelOption).abilities}
               providerId={(option as ModelOption).provider}
               showInfoTag={false}
+              showInputModality={showAbility}
             />
           )}
           style={{

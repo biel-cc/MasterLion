@@ -121,6 +121,8 @@ export interface ExecutionContext {
   cwd?: string;
   /** Server/device-only. Never serialize values to a browser-facing response. */
   env?: ExecutionEnv;
+  /** Device-side workspace-relative dotenv files, frozen with the operation. */
+  envFiles?: string[];
   envSummary?: ExecutionEnvSummary;
   /** Correlates cwd/access/model/budget traces without copying their payloads. */
   operationId?: string;
@@ -137,6 +139,7 @@ export interface ToolCallExecutionContext {
   cwd?: string;
   /** Gateway/server channel only. Renderer-originated calls use envRef. */
   env?: Record<string, string>;
+  envFiles?: string[];
   envRef?: ExecutionEnvRef;
   workspaceKind?: WorkspaceKind;
   workspaceRootPath?: string;

@@ -6,13 +6,14 @@ import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPer
 import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceAuth';
 import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TopicModel } from '@/database/models/topic';
+import { UserModel } from '@/database/models/user';
 import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGrant';
 import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { DeviceGateway } from '@/server/services/deviceGateway';
-import { WorkspaceEnvService } from '@/server/services/executionEnv';
+import { UserEnvService, WorkspaceEnvService } from '@/server/services/executionEnv';
 import {
   DatabaseTopicWorkspaceBindingStore,
   ProjectWorkspaceService,
@@ -62,11 +63,32 @@ const getWorkspaceEnvService = async (ctx: {
     await KeyVaultsGateKeeper.initWithEnvKey(),
   );
 
+const getUserEnvService = async (ctx: {
+  serverDB: ConstructorParameters<typeof UserModel>[0];
+  userId: string;
+}) =>
+  new UserEnvService(
+    new UserModel(ctx.serverDB, ctx.userId),
+    await KeyVaultsGateKeeper.initWithEnvKey(),
+  );
+
 const requireAbsolutePath = (rootPath: string) => {
   if (!isAbsoluteFilesystemPath(rootPath)) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'rootPath must be absolute' });
   }
 };
+
+const envFilePathSchema = z.string().min(1).refine(
+  (value) => {
+    const normalized = value.replaceAll('\\', '/');
+    return (
+      !normalized.startsWith('/') &&
+      !/^[A-Z]:\//i.test(normalized) &&
+      !normalized.split('/').includes('..')
+    );
+  },
+  { message: 'envFiles entries must be workspace-relative paths without traversal' },
+);
 
 export const projectWorkspaceRouter = router({
   bindTopic: projectWorkspaceWriteProcedure
@@ -128,6 +150,43 @@ export const projectWorkspaceRouter = router({
   getTopicState: projectWorkspaceProcedure
     .input(z.object({ topicId: z.string().min(1) }))
     .query(({ ctx, input }) => ctx.workspaceService.resolveTopic(input.topicId)),
+
+  /** Value-free authority probe used before Electron chooses an in-process runtime. */
+  getManagedEnvSummary: projectWorkspaceProcedure
+    .input(
+      z.object({
+        topicId: z.string().min(1).optional(),
+        workspaceId: z.string().min(1).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const topicState = input.topicId
+        ? await ctx.workspaceService.resolveTopic(input.topicId)
+        : undefined;
+      if (input.topicId && !topicState) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Topic not found' });
+      }
+      const workspaceId = topicState?.workspace?.id ?? input.workspaceId;
+      const [userEnvKeys, workspace] = await Promise.all([
+        (await getUserEnvService(ctx)).list(),
+        workspaceId ? ctx.workspaceService.get(workspaceId) : undefined,
+      ]);
+      if (workspaceId && !workspace) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Workspace not found' });
+      }
+      const workspaceEnvKeys = workspace?.envKeys ?? [];
+      const envFiles = workspace?.envFiles ?? [];
+      return {
+        envFiles,
+        hasManagedEnv: userEnvKeys.length > 0 || workspaceEnvKeys.length > 0 || envFiles.length > 0,
+        userEnvKeys,
+        workspaceEnvKeys,
+      };
+    }),
+
+  listUserEnv: projectWorkspaceProcedure.query(async ({ ctx }) =>
+    (await getUserEnvService(ctx)).list(),
+  ),
 
   listEnv: projectWorkspaceProcedure
     .input(z.object({ workspaceId: z.string().min(1) }))
@@ -221,6 +280,10 @@ export const projectWorkspaceRouter = router({
       (await getWorkspaceEnvService(ctx)).revoke(input.workspaceId, input.key),
     ),
 
+  revokeUserEnv: projectWorkspaceWriteProcedure
+    .input(z.object({ key: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => (await getUserEnvService(ctx)).revoke(input.key)),
+
   saveEnv: projectWorkspaceWriteProcedure
     .input(
       z.object({
@@ -232,11 +295,22 @@ export const projectWorkspaceRouter = router({
     )
     .mutation(async ({ ctx, input }) => (await getWorkspaceEnvService(ctx)).save(input)),
 
+  saveUserEnv: projectWorkspaceWriteProcedure
+    .input(
+      z.object({
+        key: z.string().min(1),
+        secret: z.boolean(),
+        value: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => (await getUserEnvService(ctx)).save(input)),
+
   update: projectWorkspaceWriteProcedure
     .input(
       z
         .object({
           displayName: z.string().max(120).nullable().optional(),
+          envFiles: z.array(envFilePathSchema).max(10).optional(),
           id: z.string().min(1),
           repoType: z.enum(['git', 'github']).nullable().optional(),
           skillPolicy: skillPolicySchema.nullable().optional(),

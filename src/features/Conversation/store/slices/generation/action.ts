@@ -22,6 +22,10 @@ import {
   parseSelectedToolsFromEditorData,
 } from '@/store/chat/slices/aiChat/actions/commandBus';
 import { resolveHeteroResume } from '@/store/chat/slices/aiChat/actions/heteroResume';
+import {
+  hasConfiguredAgentEnv,
+  routeManagedEnvRuntime,
+} from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { INPUT_LOADING_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import {
@@ -322,12 +326,18 @@ export const generationSlice: StateCreator<
     }
 
     const agentConfig = agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState());
-    const runtimeType = selectRuntimeType({
-      boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
-      executionTarget: agentConfig?.agencyConfig?.executionTarget,
-      heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
-      isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
-    });
+    const runtimeType = await routeManagedEnvRuntime(
+      selectRuntimeType({
+        boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
+        executionTarget: agentConfig?.agencyConfig?.executionTarget,
+        heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
+        isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
+      }),
+      {
+        hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
+        topicId: context.topicId ?? undefined,
+      },
+    );
 
     // Hetero CLIs (CC / Codex) have no "continue a cut-off response" primitive
     // — each prompt is a fresh user turn from their perspective. Bail out
@@ -501,12 +511,18 @@ export const generationSlice: StateCreator<
 
       const agentConfig = agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState());
       const heterogeneousProvider = agentConfig?.agencyConfig?.heterogeneousProvider;
-      const runtimeType = selectRuntimeType({
-        boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
-        executionTarget: agentConfig?.agencyConfig?.executionTarget,
-        heterogeneousProvider,
-        isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
-      });
+      const runtimeType = await routeManagedEnvRuntime(
+        selectRuntimeType({
+          boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
+          executionTarget: agentConfig?.agencyConfig?.executionTarget,
+          heterogeneousProvider,
+          isGatewayMode: chatStore.isGatewayModeEnabled(context.agentId),
+        }),
+        {
+          hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
+          topicId: context.topicId ?? undefined,
+        },
+      );
 
       // ── Gateway mode: trigger server-side regeneration ──
       if (runtimeType === 'gateway') {

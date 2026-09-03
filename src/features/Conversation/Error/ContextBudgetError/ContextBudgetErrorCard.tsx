@@ -11,12 +11,6 @@ import type {
 } from '@/features/Conversation/utils/contextBudgetView';
 import { formatIntergerNumber } from '@/utils/format';
 
-/**
- * Loose `t` shape: the new `contextBudget.*` keys ship in `locales/{en-US,zh-CN}/error.json`
- * and are not yet part of the typed default resources (see integration wiring request).
- */
-type LooseT = (key: string, vars?: Record<string, unknown>) => string;
-
 const styles = createStaticStyles(({ css, cssVar }) => ({
   actions: css`
     display: flex;
@@ -148,8 +142,7 @@ const formatShare = (share: number) => `${Math.round(share * 100)}%`;
  */
 const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
   ({ loadingAction, onAction, viewModel }) => {
-    const { t } = useTranslation('error');
-    const tr = t as unknown as LooseT;
+    const { t: tr } = useTranslation('error');
     const baseId = useId();
     const titleId = `${baseId}-title`;
     const diagnosticsId = `${baseId}-diagnostics`;
@@ -190,7 +183,11 @@ const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
         )}
 
         {actions.length > 0 && (
-          <div aria-label={tr('contextBudget.actionsLabel')} className={styles.actions} role={'group'}>
+          <div
+            aria-label={tr('contextBudget.actionsLabel')}
+            className={styles.actions}
+            role={'group'}
+          >
             {actions.map((action) => (
               <Button
                 aria-describedby={action.disabledReasonKey ? reasonId : undefined}

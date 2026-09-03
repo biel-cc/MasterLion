@@ -95,7 +95,7 @@ vi.mock('../hooks/useAgentTopicGroupMode', () => ({
 }));
 
 vi.mock('../TopicListContent/ByProjectMode', () => ({
-  default: () => <div data-testid="by-project-mode" />,
+  default: () => <div data-testid="workspace-mode" />,
 }));
 
 vi.mock('../TopicListContent/ByTimeMode', () => ({

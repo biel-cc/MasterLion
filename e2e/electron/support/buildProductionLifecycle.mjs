@@ -26,6 +26,10 @@ const projectAliases = [
     find: '@/utils/electron/ipc',
     replacement: path.resolve(repositoryRoot, 'src/utils/electron/ipc.ts'),
   },
+  {
+    find: '@/utils/navigation',
+    replacement: path.resolve(repositoryRoot, 'src/utils/navigation.ts'),
+  },
   { find: '@/const', replacement: path.resolve(repositoryRoot, 'packages/const/src') },
   { find: '@/utils', replacement: path.resolve(repositoryRoot, 'packages/utils/src') },
   { find: '@/types', replacement: path.resolve(repositoryRoot, 'packages/types/src') },
@@ -141,12 +145,81 @@ export const buildProductionLifecycle = async () => {
     },
     configFile: false,
     define: {
+      '__ELECTRON__': 'true',
       'process.env': '{}',
       'process.env.NODE_ENV': JSON.stringify('test'),
     },
     logLevel: 'warn',
+    plugins: [
+      {
+        enforce: 'pre',
+        name: 'workspace-runtime-product-boundaries',
+        resolveId(source, importer) {
+          if (!importer) return;
+          const normalized = importer.split('?')[0];
+          if (
+            source === './useDropdownMenu' &&
+            (normalized.endsWith('/features/AgentTopicSidebar/TopicItem/index.tsx') ||
+              normalized.includes('/routes/(main)/agent/_layout/Sidebar/Topic/'))
+          ) {
+            return path.resolve(electronRoot, 'production-app/workspaceRuntimeDropdownMenu.ts');
+          }
+          if (
+            ['./Actions', './Editing'].includes(source) &&
+            normalized.endsWith('/features/AgentTopicSidebar/TopicItem/index.tsx')
+          ) {
+            return path.resolve(electronRoot, 'production-app/workspaceRuntimeEmptyComponent.tsx');
+          }
+          if (
+            ['./Actions', './Filter', './ToggleGroups'].includes(source) &&
+            normalized.endsWith('/routes/(main)/agent/_layout/Sidebar/Topic/index.tsx')
+          ) {
+            return path.resolve(electronRoot, 'production-app/workspaceRuntimeEmptyComponent.tsx');
+          }
+          if (
+            source === '../AllTopicsDrawer' &&
+            normalized.endsWith('/routes/(main)/agent/_layout/Sidebar/Topic/List/index.tsx')
+          ) {
+            return path.resolve(electronRoot, 'production-app/workspaceRuntimeEmptyComponent.tsx');
+          }
+          if (
+            source === '../../TopicListContent/ThreadList' &&
+            normalized.endsWith('/routes/(main)/agent/_layout/Sidebar/Topic/List/Item/index.tsx')
+          ) {
+            return path.resolve(electronRoot, 'production-app/workspaceRuntimeEmptyComponent.tsx');
+          }
+        },
+      },
+    ],
     resolve: {
-      alias: [...projectAliases],
+      alias: [
+        ...['agent', 'aiInfra', 'chat', 'electron', 'global', 'projectWorkspace', 'user'].map(
+          (store) => ({
+            find: new RegExp(`^@/store/${store}$`),
+            replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeStores.ts'),
+          }),
+        ),
+        ...['agent', 'chat', 'global', 'user'].map((store) => ({
+          find: new RegExp(`^@/store/${store}/selectors$`),
+          replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeSelectors.ts'),
+        })),
+        {
+          find: '@/hooks/useFetchChatTopics',
+          replacement: path.resolve(
+            electronRoot,
+            'production-app/workspaceRuntimeFetchChatTopics.ts',
+          ),
+        },
+        {
+          find: /^@\/libs\/swr$/,
+          replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeSWR.ts'),
+        },
+        {
+          find: /^@\/services\/task$/,
+          replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeTaskService.ts'),
+        },
+        ...projectAliases,
+      ],
       dedupe: ['react', 'react-dom'],
       tsconfigPaths: true,
     },

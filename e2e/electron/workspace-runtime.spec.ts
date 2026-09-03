@@ -18,32 +18,73 @@ test.afterAll(async () => {
 test('production renderer keeps Topic and flat Recent independent from Task UI', async () => {
   const { page } = session;
   await expect(page.getByTestId('workspace-runtime-product-ui')).toBeVisible();
-  await expect(page.getByRole('heading', { level: 1, name: 'Topic' })).toBeVisible();
+  const sidebar = page.getByTestId('production-agent-sidebar');
+  await expect(sidebar.getByText('Topics', { exact: true })).toBeVisible();
+  await expect(sidebar.getByText('Tasks', { exact: true })).toBeVisible();
 
   const recent = page.getByTestId('topic-recent-section');
   await expect(recent).toContainText('Recent');
-  await expect(recent.getByTestId('recent-topic-topic-unbound')).toContainText('Pure chat');
+  await expect(recent.getByTestId('topic-item').filter({ hasText: 'Pure chat' })).toHaveCount(1);
   await expect(recent).not.toContainText(/Task|T-\d+/i);
+
+  const order = await sidebar.evaluate((node) => {
+    const topicLabel = [...node.querySelectorAll('*')].find(
+      (element) => element.textContent === 'Topics',
+    );
+    const taskLabel = [...node.querySelectorAll('*')].find(
+      (element) => element.textContent === 'Tasks',
+    );
+    return Boolean(
+      topicLabel &&
+      taskLabel &&
+      topicLabel.compareDocumentPosition(taskLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+  expect(order).toBe(true);
 });
 
-test('production Recent keeps scratch temporary and exposes its deterministic root', async () => {
-  const scratch = session.page.getByTestId('recent-topic-topic-scratch');
+test('production Workspace groups stay above Recent and real TopicItem marks scratch', async () => {
+  const { page } = session;
+  const workspaceSection = page.getByTestId('topic-workspace-section');
+  await expect(workspaceSection.getByTestId('workspace-group')).toContainText(
+    'Masterino product workspace',
+  );
+  await expect(workspaceSection.getByTestId('topic-item')).toContainText('Workspace feature work');
+
+  const recent = page.getByTestId('topic-recent-section');
+  const scratch = recent.getByTestId('topic-item').filter({ hasText: 'Temporary work' });
   await expect(scratch).toContainText('Temporary work');
-  await expect(scratch.getByTestId('temporary-marker-topic-scratch')).toHaveText('Temporary');
-  await expect(scratch).toHaveAttribute('data-scratch-root', '/tmp/masterino/topic-scratch');
+  await expect(scratch.getByTestId('topic-scratch-tag')).toHaveText('Temporary');
+  await expect(scratch.getByTestId('topic-scratch-tag')).toHaveAttribute(
+    'aria-label',
+    /\/tmp\/masterino\/topic-scratch/,
+  );
+  await expect(recent).not.toContainText('Workspace feature work');
+
+  const sectionOrder = await page.getByTestId('production-agent-sidebar').evaluate((node) => {
+    const workspace = node.querySelector('[data-testid="topic-workspace-section"]');
+    const recentSection = node.querySelector('[data-testid="topic-recent-section"]');
+    return Boolean(
+      workspace &&
+      recentSection &&
+      workspace.compareDocumentPosition(recentSection) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+  expect(sectionOrder).toBe(true);
 });
 
-test('production model UI renders supported, text-only, and unknown capability states', async () => {
+test('production model pipeline excludes rerank and renders all capability states', async () => {
   const { page } = session;
   await expect(
-    page.getByTestId('model-capability-supported').locator('[data-input-modality="supported"]'),
+    page.getByTestId('model-row-vision-chat').locator('[data-input-modality="supported"]'),
   ).toHaveCount(1);
   await expect(
-    page.getByTestId('model-capability-text-only').locator('[data-input-modality="text-only"]'),
+    page.getByTestId('model-row-text-chat').locator('[data-input-modality="text-only"]'),
   ).toHaveCount(1);
   await expect(
-    page.getByTestId('model-capability-unknown').locator('[data-input-modality="unknown"]'),
+    page.getByTestId('model-row-unverified-chat').locator('[data-input-modality="unknown"]'),
   ).toHaveCount(1);
+  await expect(page.locator('[data-model-id="qwen3-vl-rerank"]')).toHaveCount(0);
 });
 
 test('production compression progress is visible and accessible', async () => {

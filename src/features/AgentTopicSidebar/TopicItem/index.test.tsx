@@ -136,10 +136,10 @@ describe('TopicItem active state', () => {
 
     render(
       <TopicItem
+        ThreadListComponent={ThreadListStub}
         active={false}
         id="tpc_test"
         title="Topic"
-        ThreadListComponent={ThreadListStub}
       />,
     );
 

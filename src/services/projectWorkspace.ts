@@ -82,6 +82,13 @@ export interface WorkspaceEnvEntrySummary {
   secret: boolean;
 }
 
+export interface ManagedEnvSummary {
+  envFiles: string[];
+  hasManagedEnv: boolean;
+  userEnvKeys: WorkspaceEnvEntrySummary[];
+  workspaceEnvKeys: WorkspaceEnvEntrySummary[];
+}
+
 export interface SaveWorkspaceEnvEntryInput {
   key: string;
   secret: boolean;
@@ -90,6 +97,7 @@ export interface SaveWorkspaceEnvEntryInput {
 
 export interface UpdateProjectWorkspaceInput {
   displayName?: string | null;
+  envFiles?: string[];
   repoType?: 'git' | 'github' | null;
   skillPolicy?: ProjectWorkspaceSkillPolicy | null;
 }
@@ -101,16 +109,23 @@ export interface UpdateProjectWorkspaceInput {
 export interface ProjectWorkspaceClient {
   bindTopic: (input: BindTopicWorkspaceInput) => Promise<BindTopicWorkspaceResult>;
   captureTarget: (input: CaptureTopicTargetInput) => Promise<TopicExecutionSnapshot>;
+  getManagedEnvSummary: (input: {
+    topicId?: string;
+    workspaceId?: string;
+  }) => Promise<ManagedEnvSummary>;
   getOrCreate: (input: GetOrCreateDeviceWorkspaceInput) => Promise<ProjectWorkspaceItem>;
   getTopicState: (input: { topicId: string }) => Promise<TopicWorkspaceState | undefined>;
   grant: (input: GrantTopicAccessInput) => Promise<WorkspaceAccessGrant>;
   list: (input?: { deviceId?: string; kind?: WorkspaceKind }) => Promise<ProjectWorkspaceItem[]>;
   listEnv: (input: { workspaceId: string }) => Promise<WorkspaceEnvEntrySummary[]>;
   listGrants: (input: { deviceId: string; topicId: string }) => Promise<WorkspaceAccessGrant[]>;
+  listUserEnv: (input?: undefined) => Promise<WorkspaceEnvEntrySummary[]>;
   resolveRealPath?: (input: { deviceId: string; path: string }) => Promise<{ path: string }>;
   revoke: (input: TopicGrantRefInput) => Promise<WorkspaceAccessGrant>;
   revokeEnv: (input: { key: string; workspaceId: string }) => Promise<void>;
+  revokeUserEnv: (input: { key: string }) => Promise<void>;
   saveEnv: (input: SaveWorkspaceEnvEntryInput & { workspaceId: string }) => Promise<void>;
+  saveUserEnv: (input: SaveWorkspaceEnvEntryInput) => Promise<void>;
   update: (input: UpdateProjectWorkspaceInput & { id: string }) => Promise<ProjectWorkspaceItem>;
 }
 
@@ -166,6 +181,10 @@ interface RawProcedure<TInput, TOutput> {
 interface RawProjectWorkspaceRouter {
   bindTopic: RawProcedure<BindTopicWorkspaceInput, BindTopicWorkspaceResult>;
   captureTarget: RawProcedure<CaptureTopicTargetInput, TopicExecutionSnapshot>;
+  getManagedEnvSummary: RawProcedure<
+    { topicId?: string; workspaceId?: string },
+    ManagedEnvSummary
+  >;
   getOrCreate: RawProcedure<GetOrCreateDeviceWorkspaceInput, ProjectWorkspaceItem>;
   getTopicState: RawProcedure<{ topicId: string }, TopicWorkspaceState | undefined>;
   grant: RawProcedure<GrantTopicAccessInput, WorkspaceAccessGrant>;
@@ -175,10 +194,13 @@ interface RawProjectWorkspaceRouter {
   >;
   listEnv: RawProcedure<{ workspaceId: string }, WorkspaceEnvEntrySummary[]>;
   listGrants: RawProcedure<{ deviceId: string; topicId: string }, WorkspaceAccessGrant[]>;
+  listUserEnv: RawProcedure<undefined, WorkspaceEnvEntrySummary[]>;
   resolveRealPath: RawProcedure<{ deviceId: string; path: string }, { path: string }>;
   revoke: RawProcedure<TopicGrantRefInput, WorkspaceAccessGrant>;
   revokeEnv: RawProcedure<{ key: string; workspaceId: string }, void>;
+  revokeUserEnv: RawProcedure<{ key: string }, void>;
   saveEnv: RawProcedure<SaveWorkspaceEnvEntryInput & { workspaceId: string }, void>;
+  saveUserEnv: RawProcedure<SaveWorkspaceEnvEntryInput, void>;
   update: RawProcedure<UpdateProjectWorkspaceInput & { id: string }, ProjectWorkspaceItem>;
 }
 
@@ -194,14 +216,18 @@ const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
     captureTarget: (input) => router.captureTarget.mutate(input),
     getOrCreate: (input) => router.getOrCreate.mutate(input),
     getTopicState: (input) => router.getTopicState.query(input),
+    getManagedEnvSummary: (input) => router.getManagedEnvSummary.query(input),
     grant: (input) => router.grant.mutate(input),
     list: (input) => router.list.query(input),
     listEnv: (input) => router.listEnv.query(input),
+    listUserEnv: () => router.listUserEnv.query(undefined),
     listGrants: (input) => router.listGrants.query(input),
     revoke: (input) => router.revoke.mutate(input),
     revokeEnv: (input) => router.revokeEnv.mutate(input),
+    revokeUserEnv: (input) => router.revokeUserEnv.mutate(input),
     resolveRealPath: (input) => router.resolveRealPath.query(input),
     saveEnv: (input) => router.saveEnv.mutate(input),
+    saveUserEnv: (input) => router.saveUserEnv.mutate(input),
     update: (input) => router.update.mutate(input),
   };
 };
@@ -239,6 +265,15 @@ export class ProjectWorkspaceService {
   /** Value-free browser projection: names and secret flags only. */
   listEnv(workspaceId: string) {
     return this.client().listEnv({ workspaceId });
+  }
+
+  /** Server-authoritative, value-free routing probe. Failure must be treated as managed/unknown. */
+  getManagedEnvSummary(input: { topicId?: string; workspaceId?: string }) {
+    return this.client().getManagedEnvSummary(input);
+  }
+
+  listUserEnv() {
+    return this.client().listUserEnv();
   }
 
   getTopicState(topicId: string) {
@@ -287,6 +322,14 @@ export class ProjectWorkspaceService {
 
   revokeEnv(workspaceId: string, key: string) {
     return this.client().revokeEnv({ key, workspaceId });
+  }
+
+  saveUserEnv(entry: SaveWorkspaceEnvEntryInput) {
+    return this.client().saveUserEnv(entry);
+  }
+
+  revokeUserEnv(key: string) {
+    return this.client().revokeUserEnv({ key });
   }
 
   updateWorkspace(id: string, value: UpdateProjectWorkspaceInput) {

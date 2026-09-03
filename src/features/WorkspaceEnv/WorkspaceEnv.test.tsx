@@ -11,7 +11,7 @@ const translations: Record<string, string> = {
   'workspaceEnv.description': 'Variables are added to agent commands in this workspace.',
   'workspaceEnv.empty': 'No variables yet',
   'workspaceEnv.formLabel': 'Add or replace a variable',
-  'workspaceEnv.invalidKey': 'Use letters, numbers, and underscores.',
+  'workspaceEnv.invalidKey': 'Use uppercase letters, numbers, and underscores.',
   'workspaceEnv.keyLabel': 'Name',
   'workspaceEnv.loadError': 'Could not load variables.',
   'workspaceEnv.loading': 'Loading variables',
@@ -144,16 +144,21 @@ describe('WorkspaceEnv', () => {
     expect(screen.getByText('••••••••')).toBeInTheDocument();
   });
 
-  it('validates names before saving', async () => {
+  it('accepts uppercase names and rejects lowercase names before saving', async () => {
     render(<WorkspaceEnv client={createClient()} workspaceId="workspace-1" />);
     await screen.findByText('No variables yet');
 
     const input = screen.getByRole('textbox', { name: 'Name' });
-    fireEvent.change(input, { target: { value: 'BAD-KEY' } });
+    fireEvent.change(input, { target: { value: 'lowercase' } });
 
     expect(input).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('alert')).toHaveTextContent('Use letters, numbers, and underscores.');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Use uppercase letters, numbers, and underscores.',
+    );
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: 'UPPER_KEY' } });
+    expect(input).toHaveAttribute('aria-invalid', 'false');
   });
 
   it('revokes an entry and announces completion', async () => {

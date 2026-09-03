@@ -133,7 +133,7 @@ const CompressedGroupMessage = memo<CompressedGroupMessageProps>(({ id }) => {
         label: t('compression.history'),
       },
     ],
-    [],
+    [t],
   );
 
   return (

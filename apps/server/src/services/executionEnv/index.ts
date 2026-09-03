@@ -4,6 +4,8 @@ export * from './envFile';
 export * from './errors';
 export * from './operation';
 export * from './redaction';
+export * from './storedExecutionEnv';
 export * from './types';
+export * from './userEnv';
 export * from './validation';
 export * from './workspaceEnv';

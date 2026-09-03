@@ -1,6 +1,6 @@
 'use client';
 
-import { WorkspaceMode } from '@/features/AgentTopicSidebar';
+import WorkspaceMode from '@/features/AgentTopicSidebar/WorkspaceMode';
 
 import TopicItem from '../../List/Item';
 

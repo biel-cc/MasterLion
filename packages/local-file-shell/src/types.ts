@@ -5,6 +5,7 @@ export interface RunCommandParams {
   cwd?: string;
   description?: string;
   env?: Record<string, string>;
+  envFiles?: string[];
   run_in_background?: boolean;
   /**
    * Maximum time to wait for this observation before returning.
@@ -105,6 +106,7 @@ export interface DeviceToolCallExecutionContext {
   accessRoots?: DeviceExecutionAccessRoot[];
   cwd?: string;
   env?: Record<string, string>;
+  envFiles?: string[];
   envRef?: { agentId: string; topicId?: string; workspaceId?: string };
   workspaceKind?: 'device' | 'sandbox' | 'scratch';
   workspaceRootPath?: string;

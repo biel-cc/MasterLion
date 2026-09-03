@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Icon } from '@lobehub/ui';
+import { Button, Flexbox, Icon } from '@lobehub/ui';
 import { MonitorUpIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -9,6 +9,7 @@ import SettingHeader from '@/routes/(main)/settings/features/SettingHeader';
 
 import ConnectDeviceModal from './features/ConnectDeviceModal';
 import DeviceList from './features/DeviceList';
+import UserEnvironment from './features/UserEnvironment';
 
 const Page = memo(() => {
   const { t } = useTranslation('setting');
@@ -29,7 +30,10 @@ const Page = memo(() => {
         }
       />
 
-      <DeviceList />
+      <Flexbox gap={16}>
+        <UserEnvironment />
+        <DeviceList />
+      </Flexbox>
 
       <ConnectDeviceModal open={connectModalOpen} onClose={() => setConnectModalOpen(false)} />
     </>

@@ -55,4 +55,4 @@ export const SECURITY_SENSITIVE_ENV_KEYS = new Set([
 /** These namespaces are populated by Masterino for a particular runtime or operation. */
 export const RUNTIME_RESERVED_ENV_PREFIXES = ['DYLD_', 'LOBEHUB_', 'MASTERINO_'] as const;
 
-export const ENV_KEY_PATTERN = /^[A-Z_]\w*$/i;
+export const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;

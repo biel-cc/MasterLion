@@ -207,6 +207,13 @@ describe('parseExecutionEnvFile', () => {
       expect((error as Error).message).not.toContain('private-value');
     }
   });
+
+  it('accepts uppercase keys and rejects lowercase keys', () => {
+    expect(parseExecutionEnvFile('UPPER_KEY=value')).toEqual({
+      UPPER_KEY: entry('value'),
+    });
+    expect(() => parseExecutionEnvFile('lowercase=value')).toThrow(/invalid environment variable/i);
+  });
 });
 
 describe('operation boundary and redaction', () => {

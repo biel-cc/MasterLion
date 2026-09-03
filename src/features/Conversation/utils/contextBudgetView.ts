@@ -6,6 +6,8 @@ import type {
   ContextBudgetOffendingSource,
 } from '@lobechat/types/src/contextBudget';
 
+import type defaultError from '@/locales/default/error';
+
 /**
  * Pure `ContextBudgetDecision` / trace → view model adapter for the context recovery UI.
  *
@@ -42,18 +44,23 @@ export type ContextBudgetUIAction =
   | 'retry_compression'
   | 'switch_compression_model';
 
+export type ContextBudgetTranslationKey = Extract<
+  keyof typeof defaultError,
+  `contextBudget.${string}`
+>;
+
 export interface ContextBudgetErrorActionView {
   disabled: boolean;
   /** Present only when the action is rendered disabled on purpose (e.g. no candidates). */
-  disabledReasonKey?: string;
+  disabledReasonKey?: ContextBudgetTranslationKey;
   id: ContextBudgetUIAction;
-  labelKey: string;
+  labelKey: ContextBudgetTranslationKey;
   primary: boolean;
 }
 
 export interface ContextBudgetSourceShare {
   estimatedTokens: number;
-  labelKey: string;
+  labelKey: ContextBudgetTranslationKey;
   /** Share of the aggregated offending tokens, in `[0, 1]`. */
   share: number;
   source: ContextBudgetOffendingSource;
@@ -61,7 +68,7 @@ export interface ContextBudgetSourceShare {
 
 export interface ContextBudgetLargestSource {
   estimatedTokens: number;
-  labelKey: string;
+  labelKey: ContextBudgetTranslationKey;
   source: ContextBudgetOffendingSource;
 }
 
@@ -76,7 +83,7 @@ export interface ContextBudgetDiagnosticsView {
   providerId?: string;
   windowSource?: string;
   /** Localized label for the well-known window sources; raw `windowSource` otherwise. */
-  windowSourceLabelKey?: string;
+  windowSourceLabelKey?: ContextBudgetTranslationKey;
   windowTokens?: number;
   windowUnknown: boolean;
 }
@@ -86,14 +93,14 @@ export interface ContextBudgetErrorViewModel {
   /** The UI never schedules another automatic retry; recovery is bounded by the runtime. */
   allowsAutoRetry: false;
   code: ContextBudgetFailCode;
-  descKey: string;
+  descKey: ContextBudgetTranslationKey;
   diagnostics: ContextBudgetDiagnosticsView;
-  hintKeys: string[];
+  hintKeys: ContextBudgetTranslationKey[];
   largestSource?: ContextBudgetLargestSource;
-  noteKey?: string;
+  noteKey?: ContextBudgetTranslationKey;
   /** Whether the user's original messages are guaranteed untouched by this failure. */
   originalMessagesPreserved: boolean;
-  titleKey: string;
+  titleKey: ContextBudgetTranslationKey;
 }
 
 export interface BuildContextBudgetErrorViewModelOptions {
@@ -130,7 +137,7 @@ export const WINDOW_UNKNOWN_WARNING = 'WINDOW_UNKNOWN';
 const MAX_IDENTIFIER_LENGTH = 120;
 const MAX_DOMINANT_SOURCES = 3;
 
-const SOURCE_LABEL_KEYS: Record<ContextBudgetOffendingSource, string> = {
+const SOURCE_LABEL_KEYS: Record<ContextBudgetOffendingSource, ContextBudgetTranslationKey> = {
   'attachment': 'contextBudget.source.attachment',
   'system': 'contextBudget.source.system',
   'text': 'contextBudget.source.text',
@@ -138,7 +145,7 @@ const SOURCE_LABEL_KEYS: Record<ContextBudgetOffendingSource, string> = {
   'tools': 'contextBudget.source.tools',
 };
 
-const ACTION_LABEL_KEYS: Record<ContextBudgetUIAction, string> = {
+const ACTION_LABEL_KEYS: Record<ContextBudgetUIAction, ContextBudgetTranslationKey> = {
   detach_attachments: 'contextBudget.action.detachAttachments',
   fork_topic: 'contextBudget.action.forkTopic',
   retry_compression: 'contextBudget.action.retryCompression',
@@ -156,7 +163,7 @@ const HINT_KEYS = {
   truncateToolResults: 'contextBudget.hint.truncateToolResults',
 } as const;
 
-const WINDOW_SOURCE_LABEL_KEYS: Record<string, string> = {
+const WINDOW_SOURCE_LABEL_KEYS: Record<string, ContextBudgetTranslationKey> = {
   assumed: 'contextBudget.diagnostics.windowSource.assumed',
   manual: 'contextBudget.diagnostics.windowSource.manual',
   observed: 'contextBudget.diagnostics.windowSource.observed',
@@ -174,7 +181,7 @@ const ACTION_FOR_SOURCE: Record<ContextBudgetOffendingSource, ContextBudgetActio
   'tools': 'switch_model',
 };
 
-const HINT_FOR_SOURCE: Record<ContextBudgetOffendingSource, string> = {
+const HINT_FOR_SOURCE: Record<ContextBudgetOffendingSource, ContextBudgetTranslationKey> = {
   'attachment': HINT_KEYS.detachAttachments,
   'system': HINT_KEYS.switchModel,
   'text': HINT_KEYS.shortenMessage,
@@ -350,7 +357,7 @@ const buildDiagnostics = (payload: ContextBudgetFailurePayload): ContextBudgetDi
 
 interface MatrixAction {
   disabled: boolean;
-  disabledReasonKey?: string;
+  disabledReasonKey?: ContextBudgetTranslationKey;
   id: ContextBudgetUIAction;
 }
 
@@ -411,7 +418,7 @@ const getActionMatrix = (
 const getHintKeys = (
   code: ContextBudgetFailCode,
   largestSource?: ContextBudgetOffendingSource,
-): string[] => {
+): ContextBudgetTranslationKey[] => {
   switch (code) {
     case 'TAIL_TOO_LARGE': {
       return moveToFront(
@@ -441,7 +448,7 @@ const getHintKeys = (
   }
 };
 
-const NOTE_KEYS: Partial<Record<ContextBudgetFailCode, string>> = {
+const NOTE_KEYS: Partial<Record<ContextBudgetFailCode, ContextBudgetTranslationKey>> = {
   RETRY_EXHAUSTED: 'contextBudget.note.autoRetryStopped',
   SUMMARY_FAILED: 'contextBudget.note.originalsPreserved',
 };

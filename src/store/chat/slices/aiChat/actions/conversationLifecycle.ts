@@ -84,6 +84,7 @@ import {
   processCommands,
 } from './commandBus';
 import { materializeLocalSystemToolSnapshots } from './localSystemToolSnapshots';
+import { hasConfiguredAgentEnv, routeManagedEnvRuntime } from './managedEnvRuntime';
 /**
  * Extended params for sendMessage with context
  */
@@ -508,15 +509,16 @@ export class ConversationLifecycleActionImpl {
       workspaceInit: workspaceItem?.scan,
     };
 
-    // Managed workspace env values are server-encrypted and must never be
-    // fetched into renderer state. Route both native and heterogeneous local
-    // operations through the existing server → device-gateway → Electron-main
-    // transport. AiAgentService resolves the frozen env on the server; native
-    // local-system tools and CLI agent runs then receive it over the direct
-    // device channel without exposing plaintext to this renderer.
-    if (runtimeType !== 'gateway' && (workspaceItem?.envKeys?.length ?? 0) > 0) {
-      runtimeType = 'gateway';
-    }
+    // The renderer cache is not authoritative for encrypted user/workspace env
+    // (and can be empty after a failed catalog/topic fetch). Probe the server's
+    // value-free summary before choosing an in-process Electron runtime. Any
+    // unknown/failure routes through gateway so plaintext is never silently
+    // dropped; the frozen local/device target is preserved by the intent below.
+    runtimeType = await routeManagedEnvRuntime(runtimeType, {
+      hasAgentEnv: hasConfiguredAgentEnv(agentConfig?.agencyConfig),
+      topicId: context.topicId ?? undefined,
+      workspaceId: frozenWorkspaceId,
+    });
 
     // UI normally prevents this path, but the store action is also callable by
     // commands and queue drains. Keep the workspace requirement at the actual
@@ -645,9 +647,11 @@ export class ConversationLifecycleActionImpl {
       // would silently execute under the agent's current default dir B and
       // lose resume.
       const workingDirectory = frozenWorkingDirectory;
+      const agentExecutionEnv =
+        agentConfig?.agencyConfig?.env ?? heterogeneousProvider.env;
       const frozenHeterogeneousProvider = {
         ...heterogeneousProvider,
-        ...(heterogeneousProvider.env ? { env: { ...heterogeneousProvider.env } } : {}),
+        ...(agentExecutionEnv ? { env: { ...agentExecutionEnv } } : {}),
       };
       const skillRegistry = await resolveClientSkillRegistry({
         policy: workspaceItem?.skillPolicy,
@@ -1401,12 +1405,15 @@ export class ConversationLifecycleActionImpl {
       const parentAgentConfig = context.agentId
         ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())
         : undefined;
+      const targetAgentConfig =
+        agentSelectors.getAgentConfigById(targetAgentId)(getAgentStoreState());
 
       await dispatchNonHeteroSubAgent(
         { kind: 'mention', targetAgentId, instruction, parentMessageId: toolMessage.id },
         {
           conversationContext: context,
           boundDeviceId: parentAgentConfig?.agencyConfig?.boundDeviceId,
+          hasAgentEnv: hasConfiguredAgentEnv(targetAgentConfig?.agencyConfig),
           heterogeneousProvider: parentAgentConfig?.agencyConfig?.heterogeneousProvider,
           inPortalThread,
           isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),

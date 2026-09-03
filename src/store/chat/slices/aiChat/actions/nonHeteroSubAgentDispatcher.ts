@@ -11,6 +11,7 @@ import {
   type AgentRuntimeType,
   selectRuntimeType,
 } from './agentDispatcher';
+import { routeManagedEnvRuntime } from './managedEnvRuntime';
 
 /**
  * Execution context supplied by the caller at dispatch time.
@@ -22,6 +23,8 @@ export interface NonHeteroSubAgentDispatchContext {
   boundDeviceId?: string;
   /** Conversation context of the *parent* agent (agentId = parent agent). */
   conversationContext: ConversationContext;
+  /** Whether the invoked target agent contributes browser-visible, non-secret env. */
+  hasAgentEnv?: boolean;
   /** Per-agent heterogeneous provider config used for runtime resolution. */
   heterogeneousProvider?: HeterogeneousProviderConfig;
   /**
@@ -74,12 +77,18 @@ export async function dispatchNonHeteroSubAgent(
   ctx: NonHeteroSubAgentDispatchContext,
   store: Pick<ChatStore, 'executeClientAgent' | 'executeGatewayAgent'>,
 ): Promise<void> {
-  const runtimeType = selectRuntimeType({
-    boundDeviceId: ctx.boundDeviceId,
-    heterogeneousProvider: ctx.heterogeneousProvider,
-    isGatewayMode: ctx.isGatewayMode,
-    parentRuntime: ctx.parentRuntime,
-  });
+  const runtimeType = await routeManagedEnvRuntime(
+    selectRuntimeType({
+      boundDeviceId: ctx.boundDeviceId,
+      heterogeneousProvider: ctx.heterogeneousProvider,
+      isGatewayMode: ctx.isGatewayMode,
+      parentRuntime: ctx.parentRuntime,
+    }),
+    {
+      hasAgentEnv: ctx.hasAgentEnv,
+      topicId: ctx.conversationContext.topicId ?? undefined,
+    },
+  );
 
   switch (runtimeType) {
     case 'client': {

@@ -362,6 +362,7 @@ async function runConnect(options: ConnectOptions, isDaemonChild: boolean) {
           agentType: request.agentType,
           cwd: request.executionContext?.cwd ?? request.cwd,
           env: request.executionContext?.env ?? request.env,
+          envFiles: request.executionContext?.envFiles,
           imageList: request.imageList,
           skills: request.skills,
           skillPolicy: request.skillPolicy,

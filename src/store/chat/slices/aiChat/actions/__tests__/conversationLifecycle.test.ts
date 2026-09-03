@@ -77,6 +77,12 @@ beforeEach(() => {
   const sessionStore = getSessionStoreState();
   vi.spyOn(sessionStore, 'triggerSessionUpdate').mockResolvedValue(undefined);
   vi.spyOn(agentService, 'getAgentConfigById').mockResolvedValue(createMockAgentConfig() as any);
+  vi.spyOn(projectWorkspaceService, 'getManagedEnvSummary').mockResolvedValue({
+    envFiles: [],
+    hasManagedEnv: false,
+    userEnvKeys: [],
+    workspaceEnvKeys: [],
+  });
 
   act(() => {
     useProjectWorkspaceStore.setState({
@@ -1177,6 +1183,12 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         }));
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [],
+          workspaceEnvKeys: [{ key: 'API_TOKEN', secret: true }],
+        });
         const executeGatewayAgent = vi.fn().mockResolvedValue({
           assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
           operationId: 'gateway-op',
@@ -1223,6 +1235,12 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         }));
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [],
+          workspaceEnvKeys: [{ key: 'API_TOKEN', secret: true }],
+        });
         const executeGatewayAgent = vi.fn().mockResolvedValue({
           assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
           operationId: 'gateway-op',
@@ -1249,6 +1267,65 @@ describe('ConversationLifecycle actions', () => {
         );
         expect(executeClientAgent).not.toHaveBeenCalled();
         expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+      });
+
+      it('routes user-level managed env through gateway even without a workspace cache entry', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
+        });
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [{ key: 'TOKEN', secret: true }],
+          workspaceEnvKeys: [],
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledOnce();
+        expect(executeClientAgent).not.toHaveBeenCalled();
+      });
+
+      it('fails closed to gateway when the managed env summary is unavailable', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
+        });
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockRejectedValue(
+          new Error('summary unavailable'),
+        );
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledOnce();
+        expect(executeClientAgent).not.toHaveBeenCalled();
       });
 
       it('should materialize local file mention editor data into persisted tool-result snapshots', async () => {

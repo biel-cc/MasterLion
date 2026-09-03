@@ -21,11 +21,14 @@ import { TopicShareModel } from '@/database/models/topicShare';
 import { AgentMigrationRepo } from '@/database/repositories/agentMigration';
 import { TopicImporterRepo } from '@/database/repositories/topicImporter';
 import { chatGroups } from '@/database/schemas';
-import { normalizeRootPath } from '@/helpers/executionContext';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { resolveTopicCreationExecutionMetadata } from '@/server/services/aiAgent/topicExecutionIntent';
 import { DeviceGateway } from '@/server/services/deviceGateway';
+import {
+  ScratchWorkspaceCleanupError,
+  TopicDeletionService,
+} from '@/server/services/projectWorkspace/topicDeletion';
 import { type BatchTaskResult } from '@/types/service';
 
 import {
@@ -38,6 +41,8 @@ import { basicContextSchema } from './_schema/context';
 const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
   const wsId = ctx.workspaceId ?? undefined;
+  const projectWorkspaceModel = new ProjectWorkspaceModel(ctx.serverDB, ctx.userId);
+  const topicModel = new TopicModel(ctx.serverDB, ctx.userId, wsId);
 
   return opts.next({
     ctx: {
@@ -45,13 +50,34 @@ const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
       agentModel: new AgentModel(ctx.serverDB, ctx.userId, wsId),
       agentOperationModel: new AgentOperationModel(ctx.serverDB, ctx.userId, wsId),
       chatGroupModel: new ChatGroupModel(ctx.serverDB, ctx.userId, wsId),
-      projectWorkspaceModel: new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
+      projectWorkspaceModel,
+      topicDeletionService: new TopicDeletionService({
+        deviceGateway: new DeviceGateway(),
+        projectWorkspaceModel,
+        topicModel,
+        userId: ctx.userId,
+      }),
       topicImporterRepo: new TopicImporterRepo(ctx.serverDB, ctx.userId, wsId),
-      topicModel: new TopicModel(ctx.serverDB, ctx.userId, wsId),
+      topicModel,
       topicShareModel: new TopicShareModel(ctx.serverDB, ctx.userId, wsId),
     },
   });
 });
+
+const runTopicDeletion = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ScratchWorkspaceCleanupError) {
+      throw new TRPCError({
+        cause: error,
+        code: 'PRECONDITION_FAILED',
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+};
 
 const topicExecutionIntentSchema = z
   .object({
@@ -152,14 +178,14 @@ export const topicRouter = router({
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ ids: z.array(z.string()) }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDelete(input.ids);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeByIds(input.ids));
     }),
 
   batchDeleteByAgentId: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ agentId: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDeleteByAgentId(input.agentId);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeByAgentId(input.agentId));
     }),
 
   batchDeleteBySessionId: topicProcedure
@@ -178,7 +204,7 @@ export const topicRouter = router({
         ctx.workspaceId ?? undefined,
       );
 
-      return ctx.topicModel.batchDeleteBySessionId(resolved.sessionId);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeBySessionId(resolved.sessionId));
     }),
 
   batchMoveTopics: topicProcedure
@@ -567,60 +593,14 @@ export const topicRouter = router({
   removeAllTopics: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .mutation(async ({ ctx }) => {
-      return ctx.topicModel.deleteAll();
+      return runTopicDeletion(() => ctx.topicDeletionService.removeAll());
     }),
 
   removeTopic: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const topic = await ctx.topicModel.findById(input.id);
-      if (!topic) return ctx.topicModel.delete(input.id);
-
-      const metadata = topic.metadata as {
-        boundDeviceId?: string;
-        executionSnapshot?: {
-          boundDeviceId?: string;
-          workspaceId?: string;
-          workspaceKind?: string;
-        };
-        workspaceId?: string;
-        workspaceKind?: string;
-      } | null;
-      const snapshot = metadata?.executionSnapshot;
-      const workspaceId = snapshot?.workspaceId ?? metadata?.workspaceId;
-      const workspaceKind = snapshot?.workspaceKind ?? metadata?.workspaceKind;
-      const workspace = workspaceId
-        ? await ctx.projectWorkspaceModel.findById(workspaceId)
-        : undefined;
-
-      if (workspaceKind === 'scratch' || workspace?.kind === 'scratch') {
-        const deviceId = workspace?.deviceId ?? snapshot?.boundDeviceId ?? metadata?.boundDeviceId;
-        if (!workspaceId || !workspace || workspace.kind !== 'scratch' || !deviceId) {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: 'Scratch workspace evidence is incomplete',
-          });
-        }
-
-        const cleaned = await new DeviceGateway().cleanupScratchWorkspace({
-          deviceId,
-          topicId: input.id,
-          userId: ctx.userId,
-        });
-        if (!cleaned || normalizeRootPath(cleaned.root) !== normalizeRootPath(workspace.rootPath)) {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: 'Scratch workspace could not be safely cleaned on its owning device',
-          });
-        }
-
-        const result = await ctx.topicModel.delete(input.id);
-        await ctx.projectWorkspaceModel.deleteScratch(workspaceId);
-        return result;
-      }
-
-      return ctx.topicModel.delete(input.id);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeById(input.id));
     }),
 
   searchTopics: topicProcedure

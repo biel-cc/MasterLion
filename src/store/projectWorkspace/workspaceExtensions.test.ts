@@ -23,6 +23,15 @@ vi.mock('@/features/WorkspaceEnv', async () => {
   };
 });
 
+vi.mock('@/features/WorkspaceEnvFiles', async () => {
+  const { createElement } = await import('react');
+
+  return {
+    WorkspaceEnvFiles: ({ workspace }: { workspace: { id: string } }) =>
+      createElement('span', { 'data-testid': 'workspace-env-files-panel' }, workspace.id),
+  };
+});
+
 vi.mock('@/features/WorkspaceSkillsSettings', async () => {
   const { createElement } = await import('react');
 
@@ -82,25 +91,31 @@ describe('workspace extension registry', () => {
     expect(screen.getByTestId('workspace-extensions')).toHaveTextContent('env:workspace-1');
   });
 
-  it('lazy-mounts the built-in environment and skill settings', async () => {
+  it('lazy-mounts the built-in environment, env-file, and skill settings', async () => {
     const { container } = render(
       createElement(WorkspaceExtensions, {
         deviceId: 'device-1',
         workspace: { deviceId: 'device-1', id: 'workspace-1', kind: 'device', rootPath: '/app' },
       }),
     );
-    const [environment, skills] = Array.from(container.querySelectorAll('details'));
+    const [environment, environmentFiles, skills] = Array.from(
+      container.querySelectorAll('details'),
+    );
 
     expect(screen.queryByTestId('workspace-env-panel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-env-files-panel')).not.toBeInTheDocument();
     expect(screen.queryByTestId('workspace-skills-panel')).not.toBeInTheDocument();
 
     environment.open = true;
     fireEvent(environment, new Event('toggle'));
+    environmentFiles.open = true;
+    fireEvent(environmentFiles, new Event('toggle'));
     skills.open = true;
     fireEvent(skills, new Event('toggle'));
 
     await waitFor(() => {
       expect(screen.getByTestId('workspace-env-panel')).toHaveTextContent('workspace-1');
+      expect(screen.getByTestId('workspace-env-files-panel')).toHaveTextContent('workspace-1');
       expect(screen.getByTestId('workspace-skills-panel')).toHaveTextContent('workspace-1');
     });
   });

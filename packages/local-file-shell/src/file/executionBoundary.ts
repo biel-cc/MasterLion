@@ -3,6 +3,7 @@ import { access, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { loadWorkspaceEnvFiles } from '../env/workspaceEnvFiles';
 import type {
   DeviceExecutionAccessRoot,
   DeviceToolCallExecutionContext,
@@ -459,7 +460,12 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
   }
 
   if (apiName === 'runCommand' || apiName === 'runHeteroTask') {
-    if (context.env) (next as Record<string, any>).env = { ...context.env };
+    const fileEnv = await loadWorkspaceEnvFiles({
+      envFiles: context.envFiles,
+      workspaceRootPath: context.workspaceRootPath ?? realCwd,
+    });
+    const resolvedEnv = { ...fileEnv, ...context.env };
+    if (Object.keys(resolvedEnv).length > 0) (next as Record<string, any>).env = resolvedEnv;
     else delete (next as Record<string, any>).env;
   }
 
