@@ -182,6 +182,29 @@ export const messageRouter = router({
       return ctx.messageService.createMessage({ ...input, agentId } as any);
     }),
 
+  /** Preserve a sanitized failed compression record while restoring its source messages. */
+  failCompression: messageProcedure
+    .use(withScopedPermission('message:update'))
+    .input(
+      z.object({
+        agentId: z.string(),
+        groupId: z.string().nullable().optional(),
+        messageGroupId: z.string(),
+        threadId: z.string().nullable().optional(),
+        topicId: z.string(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const { messageGroupId, agentId, groupId, threadId, topicId } = input;
+
+      return ctx.messageService.failCompression(messageGroupId, {
+        agentId,
+        groupId,
+        threadId,
+        topicId,
+      });
+    }),
+
   ensureToolMessage: messageProcedure
     .use(withScopedPermission('message:create'))
     // The prepare acknowledgement authorizes a local side effect whose result must be committed.

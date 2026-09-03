@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -9,6 +9,7 @@ import type {
 import { getChatInputModalityConclusion } from '@lobechat/types/src/modelCatalog';
 import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 
+import { buildAdditionalDirectoriesPrompt } from '../../apps/server/src/services/aiAgent/additionalDirectories';
 import { WorkspaceAccessGrantService } from '../../apps/server/src/services/workspaceAccessGrant';
 import toolLocale from '../../locales/en-US/tool.json';
 import {
@@ -24,8 +25,10 @@ import {
   filterAiProviderChatEligibleModels,
   mergeModelCatalogEntry,
 } from '../../packages/business/model-bank/src/modelCatalog';
+import { parseExecutionContextValidation } from '../../packages/device-gateway-client/src/http';
 import { prepareToolCallExecution } from '../../packages/local-file-shell/src/file/executionBoundary';
 import type { UIChatMessage } from '../../packages/types/src/message/ui/chat';
+import { detectWorkspaceBindingIntent } from '../../src/features/ChatInput/ControlBar/workspaceBindingIntent';
 import { parseStructuredPathConsentRequest } from '../../src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/PathConsent';
 import {
   buildContextBudgetErrorViewModel,
@@ -440,7 +443,14 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
     const agentDefaultBefore = '/agent/default';
     const confirmedDirectory = workspace({ id: 'workspace-confirmed', rootPath: '/confirmed' });
     const workspacePlus = workspace({ id: 'workspace-plus', rootPath: '/plus' });
-    const explicitSelections = { confirmedDirectory, workspacePlus };
+    const confirmedIntent = detectWorkspaceBindingIntent({
+      hasAttachments: false,
+      message: '接下来持续在 /confirmed 开发',
+    });
+    const explicitSelections = {
+      ...(confirmedIntent?.rootPath === confirmedDirectory.rootPath ? { confirmedDirectory } : {}),
+      workspacePlus,
+    };
     const createdTopicWorkspaceIds = Object.values(explicitSelections)
       .filter((selected) => decideWorkspaceBind({}, selected).allowed)
       .map((selected) => normalizeWorkspaceIdentity(selected).workspaceId!);
@@ -448,10 +458,25 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
       agentDefaultAfter: agentDefaultBefore,
       agentDefaultBefore,
       bindingBySource: {
-        attachment: false,
-        codeBlock: false,
-        confirmedDirectory: Boolean(confirmedDirectory.id),
-        quote: false,
+        attachment: Boolean(
+          detectWorkspaceBindingIntent({
+            hasAttachments: true,
+            message: '接下来持续在 /attachment 持续开发',
+          }),
+        ),
+        codeBlock: Boolean(
+          detectWorkspaceBindingIntent({
+            hasAttachments: false,
+            message: '接下来持续在 `/code-block` 开发',
+          }),
+        ),
+        confirmedDirectory: Boolean(confirmedIntent),
+        quote: Boolean(
+          detectWorkspaceBindingIntent({
+            hasAttachments: false,
+            message: '> 接下来持续在 /quoted 开发',
+          }),
+        ),
         workspacePlus: Boolean(workspacePlus.id),
       },
       createdTopicWorkspaceIds,
@@ -514,9 +539,11 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
       rootPath: '/outside/docs',
       topicId: TOPIC_ID,
     });
-    const reusedRoots = (
-      await fixture.service.buildAccessRoots({ deviceId: DEVICE_ID, topicId: TOPIC_ID })
-    ).map(({ rootPath }) => rootPath);
+    const rootsDuringGrant = await fixture.service.buildAccessRoots({
+      deviceId: DEVICE_ID,
+      topicId: TOPIC_ID,
+    });
+    const reusedRoots = rootsDuringGrant.map(({ rootPath }) => rootPath);
     await fixture.service.revoke({ deviceId: DEVICE_ID, id: grant.id, topicId: TOPIC_ID });
     const afterRevokeRoots = (
       await fixture.service.buildAccessRoots({ deviceId: DEVICE_ID, topicId: TOPIC_ID })
@@ -534,7 +561,7 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
     return {
       afterArchiveRoots,
       afterRevokeRoots,
-      promptDuringGrant: `Approved path: ${grant.rootPath}`,
+      promptDuringGrant: buildAdditionalDirectoriesPrompt(rootsDuringGrant) ?? '',
       reusedRoots,
     };
   },
@@ -736,6 +763,7 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
       modelId: 'chat-model',
       now: NOW,
       providerId: 'newapi',
+      providerMetadata: { endpointTypes: ['chat/completions'] },
     });
     return {
       afterNextSync: {
@@ -1082,23 +1110,81 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
       for (const client of ['new', 'old'] as const) {
         for (const server of ['new', 'old'] as const) {
           for (const device of ['new', 'old'] as const) {
-            const result = await prepareToolCallExecution({
-              apiName: 'readFile',
-              args: { path: file },
-              context:
-                device === 'new'
-                  ? { cwd: workspaceRoot, workspaceRootPath: workspaceRoot }
-                  : undefined,
-              homeDir: home,
-            });
+            // Each version changes a real stage of the request: the client may
+            // omit the envelope, the server may drop it, and the device either
+            // enforces the v2 boundary or executes through the legacy adapter.
+            const clientRequest =
+              client === 'new'
+                ? { executionContext: { cwd: workspaceRoot, workspaceRootPath: workspaceRoot } }
+                : {};
+            const serverRequest =
+              server === 'new'
+                ? clientRequest
+                : ({} as typeof clientRequest);
+            const deviceAuth =
+              device === 'new'
+                ? {
+                    capabilities: { executionContextValidation: true },
+                    protocolVersion: 2,
+                  }
+                : { capabilities: {}, protocolVersion: 1 };
+
+            let deviceExecution:
+              | { content: string; kind: 'legacy' }
+              | { code: string; kind: 'rejected' }
+              | { content: string; kind: 'validated'; primary: boolean };
+            if (device === 'old') {
+              deviceExecution = { content: await readFile(file, 'utf8'), kind: 'legacy' };
+            } else {
+              try {
+                const prepared = await prepareToolCallExecution({
+                  apiName: 'readFile',
+                  args: { path: file },
+                  context: serverRequest.executionContext,
+                  homeDir: home,
+                });
+                deviceExecution = {
+                  content: await readFile(prepared.args.path, 'utf8'),
+                  kind: 'validated',
+                  primary: prepared.scopeAudit[0]?.scopeVerdict === 'primary',
+                };
+              } catch (error) {
+                deviceExecution = {
+                  code: (error as { code?: string }).code ?? 'UNKNOWN',
+                  kind: 'rejected',
+                };
+              }
+            }
+
+            const deviceDeclaredV2Validation =
+              deviceAuth.protocolVersion === 2 &&
+              deviceAuth.capabilities.executionContextValidation === true;
+            const deviceEnforcedRequest = deviceExecution.kind === 'validated';
+            const wireAcknowledgement =
+              server === 'new' &&
+              serverRequest.executionContext &&
+              deviceDeclaredV2Validation &&
+              deviceEnforcedRequest
+                ? 'hard'
+                : undefined;
+            const negotiated =
+              client === 'new' ? parseExecutionContextValidation(wireAcknowledgement) : 'legacy';
+            const hardValidated = negotiated === 'hard';
+            const expectedHard = client === 'new' && server === 'new' && device === 'new';
+            const executionPassed =
+              deviceExecution.kind === 'legacy'
+                ? deviceExecution.content === 'ok'
+                : serverRequest.executionContext
+                  ? deviceExecution.kind === 'validated' &&
+                    deviceExecution.content === 'ok' &&
+                    deviceExecution.primary
+                  : deviceExecution.kind === 'rejected' &&
+                    deviceExecution.code === 'WORKSPACE_REQUIRED';
             matrix.push({
               client,
               device,
-              hardValidated: device === 'new' && !result.legacy,
-              passed:
-                device === 'new'
-                  ? !result.legacy && result.scopeAudit[0]?.scopeVerdict === 'primary'
-                  : result.legacy,
+              hardValidated,
+              passed: hardValidated === expectedHard && executionPassed,
               server,
             });
           }

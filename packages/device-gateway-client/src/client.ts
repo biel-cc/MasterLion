@@ -4,22 +4,24 @@ import os from 'node:os';
 
 import WebSocket from 'ws';
 
-import type {
-  AgentRunAckMessage,
-  AgentRunRequestMessage,
-  ClientMessage,
-  ConnectionStatus,
-  GatewayClientEvents,
-  GatewayConnectResult,
-  MessageApiRequestMessage,
-  MessageApiResponseMessage,
-  RpcRequestMessage,
-  RpcResponseMessage,
-  ServerMessage,
-  SystemInfoRequestMessage,
-  SystemInfoResponseMessage,
-  ToolCallRequestMessage,
-  ToolCallResponseMessage,
+import {
+  type AgentRunAckMessage,
+  type AgentRunRequestMessage,
+  type ClientMessage,
+  type ConnectionStatus,
+  CURRENT_DEVICE_GATEWAY_PROTOCOL_VERSION,
+  type DeviceGatewayCapabilities,
+  type GatewayClientEvents,
+  type GatewayConnectResult,
+  type MessageApiRequestMessage,
+  type MessageApiResponseMessage,
+  type RpcRequestMessage,
+  type RpcResponseMessage,
+  type ServerMessage,
+  type SystemInfoRequestMessage,
+  type SystemInfoResponseMessage,
+  type ToolCallRequestMessage,
+  type ToolCallResponseMessage,
 } from './types';
 
 // ─── Constants ───
@@ -50,6 +52,8 @@ const noopLogger: GatewayClientLogger = {
 export interface GatewayClientOptions {
   /** Auto-reconnect on disconnection (default: true) */
   autoReconnect?: boolean;
+  /** Explicit wire capabilities. Pass an empty object to emulate a legacy device. */
+  capabilities?: DeviceGatewayCapabilities;
   /**
    * Freeform routing label for this connection, e.g. `desktop` / `desktop-dev`
    * / `cli` / `cli-dev`. Used by the gateway for dispatch priority + UI; it does
@@ -67,6 +71,8 @@ export interface GatewayClientOptions {
   deviceId?: string;
   gatewayUrl?: string;
   logger?: GatewayClientLogger;
+  /** Defaults to the current protocol. Set to 1 for rolling-upgrade compatibility tests. */
+  protocolVersion?: number;
   serverUrl?: string;
   token: string;
   tokenType?: 'apiKey' | 'jwt' | 'serviceToken';
@@ -95,6 +101,8 @@ export class GatewayClient extends EventEmitter {
   private connectResolver: ((result: GatewayConnectResult) => void) | null = null;
   private connectTimeout: ReturnType<typeof setTimeout> | null = null;
   private authenticatedUserId?: string;
+  private capabilities: DeviceGatewayCapabilities;
+  private protocolVersion: number;
 
   constructor(options: GatewayClientOptions) {
     super();
@@ -108,6 +116,8 @@ export class GatewayClient extends EventEmitter {
     this.userId = options.userId;
     this.logger = options.logger || noopLogger;
     this.autoReconnect = options.autoReconnect ?? true;
+    this.capabilities = options.capabilities ?? { executionContextValidation: true };
+    this.protocolVersion = options.protocolVersion ?? CURRENT_DEVICE_GATEWAY_PROTOCOL_VERSION;
   }
 
   // ─── Public API ───
@@ -293,6 +303,8 @@ export class GatewayClient extends EventEmitter {
 
     // Send token as first message instead of in URL
     this.sendMessage({
+      capabilities: this.capabilities,
+      protocolVersion: this.protocolVersion,
       serverUrl: this.serverUrl,
       token: this.token,
       tokenType: this.tokenType,

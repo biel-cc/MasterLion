@@ -2,7 +2,10 @@ import { compressContextHierarchically } from '@lobechat/agent-runtime';
 import { countContextTokens } from '@lobechat/context-engine';
 import { chainCompressContext } from '@lobechat/prompts';
 import type { UIChatMessage } from '@lobechat/types';
-import type { ContextBudgetTrigger,ContextCompressionOutcome } from '@lobechat/types/src/contextBudget';
+import type {
+  ContextBudgetTrigger,
+  ContextCompressionOutcome,
+} from '@lobechat/types/src/contextBudget';
 import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 
 import { chatService, collectClientProviderMediaTokenEstimates } from '@/services/chat';
@@ -78,6 +81,7 @@ interface ClientCompressionTransactionInput {
   candidateIds: readonly string[];
   compressionModel: { model: string; provider: string };
   createGroup: () => Promise<{ messageGroupId: string }>;
+  failGroup: (messageGroupId: string) => Promise<unknown>;
   finalizeGroup: (
     messageGroupId: string,
     summary: string,
@@ -212,7 +216,14 @@ export const runClientContextCompressionTransaction = async (
     let rollbackError: unknown;
     if (groupId) {
       try {
-        await input.rollbackGroup(groupId);
+        const cancelled =
+          input.abortController?.signal.aborted ||
+          (error instanceof Error && error.name === 'AbortError');
+        if (cancelled) {
+          await input.rollbackGroup(groupId);
+        } else {
+          await input.failGroup(groupId);
+        }
       } catch (caught) {
         rollbackError = caught;
       }

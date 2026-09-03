@@ -2,21 +2,29 @@ package gateway
 
 import "encoding/json"
 
+type DeviceCapabilities struct {
+	ExecutionContextValidation bool `json:"executionContextValidation,omitempty"`
+}
+
 type DeviceAttachment struct {
-	Authenticated bool   `json:"authenticated"`
-	Channel       string `json:"channel,omitempty"`
-	ConnectedAt   int64  `json:"connectedAt"`
-	ConnectionID  string `json:"connectionId"`
-	DeviceID      string `json:"deviceId"`
-	Hostname      string `json:"hostname"`
-	LastHeartbeat int64  `json:"lastHeartbeat"`
-	Platform      string `json:"platform"`
+	Authenticated   bool               `json:"authenticated"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	Channel         string             `json:"channel,omitempty"`
+	ConnectedAt     int64              `json:"connectedAt"`
+	ConnectionID    string             `json:"connectionId"`
+	DeviceID        string             `json:"deviceId"`
+	Hostname        string             `json:"hostname"`
+	LastHeartbeat   int64              `json:"lastHeartbeat"`
+	Platform        string             `json:"platform"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
 }
 
 type DeviceConnection struct {
-	Channel      string `json:"channel,omitempty"`
-	ConnectedAt  int64  `json:"connectedAt"`
-	ConnectionID string `json:"connectionId"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	Channel         string             `json:"channel,omitempty"`
+	ConnectedAt     int64              `json:"connectedAt"`
+	ConnectionID    string             `json:"connectionId"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
 }
 
 type GatewayDevice struct {
@@ -28,10 +36,12 @@ type GatewayDevice struct {
 }
 
 type authMessage struct {
-	ServerURL string `json:"serverUrl,omitempty"`
-	Token     string `json:"token"`
-	TokenType string `json:"tokenType,omitempty"`
-	Type      string `json:"type"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
+	ServerURL       string             `json:"serverUrl,omitempty"`
+	Token           string             `json:"token"`
+	TokenType       string             `json:"tokenType,omitempty"`
+	Type            string             `json:"type"`
 }
 
 type authSuccessMessage struct {

@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
-import { resolveClientCompressionBudget } from '@/store/chat/agents/clientContextCompression';
+import {
+  resolveClientCompressionBudget,
+  runClientContextCompressionTransaction,
+} from '@/store/chat/agents/clientContextCompression';
 
 import { createAssistantMessage, createMockStore, createUserMessage } from './fixtures';
 import { createInitialState, createTestContext, executeWithMockContext } from './helpers';
@@ -20,6 +23,7 @@ vi.mock('@/services/message', () => ({
   messageService: {
     cancelCompression: vi.fn(),
     createCompressionGroup: vi.fn(),
+    failCompression: vi.fn(),
     finalizeCompression: vi.fn(),
     updateMessage: vi.fn(),
   },
@@ -52,6 +56,32 @@ describe('compress_context executor', () => {
         },
       ),
     ).toBe(1);
+  });
+
+  it('deletes a temporary group on user cancellation instead of recording a false failure', async () => {
+    const abortController = new AbortController();
+    const cancelGroup = vi.fn().mockResolvedValue(undefined);
+    const failGroup = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(chatService.getChatCompletion).mockImplementation(async () => {
+      abortController.abort();
+      return new Response();
+    });
+
+    const result = await runClientContextCompressionTransaction({
+      abortController,
+      candidateIds: ['old-user'],
+      compressionModel: { model: 'gpt-4', provider: 'openai' },
+      createGroup: vi.fn().mockResolvedValue({ messageGroupId: 'temporary-group' }),
+      failGroup,
+      finalizeGroup: vi.fn(),
+      rollbackGroup: cancelGroup,
+      sourceMessages: [createUserMessage({ content: 'old history', id: 'old-user' })],
+      trigger: 'manual',
+    });
+
+    expect(result.kind).toBe('failed');
+    expect(cancelGroup).toHaveBeenCalledWith('temporary-group');
+    expect(failGroup).not.toHaveBeenCalled();
   });
 
   it('uses bounded hierarchical requests and only replaces messages after finalize', async () => {
@@ -141,6 +171,7 @@ describe('compress_context executor', () => {
     expect(requestTokens.every((tokens) => tokens <= 2048)).toBe(true);
     expect(messageService.finalizeCompression).toHaveBeenCalledTimes(1);
     expect(messageService.cancelCompression).not.toHaveBeenCalled();
+    expect(messageService.failCompression).not.toHaveBeenCalled();
     expect(replaceMessages).toHaveBeenCalledTimes(1);
     expect(result.nextContext?.payload).toEqual(
       expect.objectContaining({

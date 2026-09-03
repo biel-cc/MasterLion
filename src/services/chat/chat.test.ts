@@ -380,6 +380,7 @@ describe('ChatService', () => {
         const onErrorHandle = vi.fn();
         const onFinish = vi.fn();
         const onAttemptState = vi.fn();
+        const onProviderAttemptDiscard = vi.fn();
         const compress = vi.fn(async (payload: any, evaluation: any) => ({
           outcome: {
             afterTokens: 10,
@@ -412,6 +413,7 @@ describe('ChatService', () => {
               catalogSnapshot,
               compress,
               onAttemptState,
+              onProviderAttemptDiscard,
               operationId: 'op-client-budget',
               outputReserveTokens: 1024,
             },
@@ -425,6 +427,9 @@ describe('ChatService', () => {
         expect(onErrorHandle).not.toHaveBeenCalled();
         expect(onFinish).toHaveBeenCalledTimes(1);
         expect(onFinish).toHaveBeenCalledWith('', expect.objectContaining({ type: 'stop' }));
+        expect(onProviderAttemptDiscard).toHaveBeenCalledWith(
+          expect.objectContaining({ attempt: 1, willRetry: true }),
+        );
         expect(onAttemptState).toHaveBeenLastCalledWith(
           expect.objectContaining({ compressionAttempt: 1 }),
         );

@@ -17,6 +17,7 @@ import { DiscoverService } from '@/server/services/discover';
 import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 
 import { type ToolExecutionContext, type ToolExecutionResult } from '../types';
+import { parseAgentMetadataUpdate } from './agentMetadata';
 import { type ServerRuntimeRegistration } from './types';
 
 const handleError = (error: unknown, message: string): ToolExecutionResult => {
@@ -370,16 +371,22 @@ export const agentManagementRuntime: ServerRuntimeRegistration = {
           }
 
           const updatedParts: string[] = [];
-
+          // Validate both payloads before the first persistence call. This is
+          // the final agent-tool write boundary, so failures must be atomic.
           if (config && Object.keys(config).length > 0) {
             assertConfigurableAgentExecutionEnv(config);
+          }
+          const finalMeta =
+            meta && Object.keys(meta).length > 0 ? parseAgentMetadataUpdate(meta) : undefined;
+
+          if (config && Object.keys(config).length > 0) {
             await agentModel.updateConfig(agentId, config as Record<string, unknown>);
             updatedParts.push(`config: ${Object.keys(config).join(', ')}`);
           }
 
-          if (meta && Object.keys(meta).length > 0) {
-            await agentModel.update(agentId, meta as Record<string, unknown>);
-            updatedParts.push(`meta: ${Object.keys(meta).join(', ')}`);
+          if (finalMeta) {
+            await agentModel.update(agentId, finalMeta);
+            updatedParts.push(`meta: ${Object.keys(finalMeta).join(', ')}`);
           }
 
           if (updatedParts.length === 0) {

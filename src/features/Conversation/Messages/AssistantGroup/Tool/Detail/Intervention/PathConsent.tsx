@@ -1,5 +1,6 @@
 import type { PathAccessMode } from '@lobechat/types/src/executionContext';
-import { Alert, Button, Flexbox, Tag, Text } from '@lobehub/ui';
+import { Alert, Flexbox, Tag, Text } from '@lobehub/ui';
+import { Button } from '@lobehub/ui/base-ui';
 import { createStaticStyles, cssVar } from 'antd-style';
 import { memo, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';

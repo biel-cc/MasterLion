@@ -1,3 +1,5 @@
+import '../_testFixtures/executionAuthority';
+
 import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

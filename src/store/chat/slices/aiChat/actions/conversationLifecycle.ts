@@ -1502,6 +1502,8 @@ export class ConversationLifecycleActionImpl {
       { operationId },
     );
 
+    let persistedCompressionGroupId: string | undefined;
+
     try {
       // 1. Create compression group on server
       const result = await messageService.createCompressionGroup({
@@ -1510,13 +1512,16 @@ export class ConversationLifecycleActionImpl {
         topicId,
       });
       const { messageGroupId, messages: serverMessages, messagesToSummarize } = result;
+      persistedCompressionGroupId = messageGroupId;
 
       // Replace local pending group with server compression group
       this.#get().replaceMessages(serverMessages, { context: context as any });
       this.#get().associateMessageWithOperation(messageGroupId, operationId);
 
       // 2. Generate summary via LLM
-      const { model, provider } = agentSelectors.getAgentConfigById(agentId)(getAgentStoreState());
+      const agentConfig = agentSelectors.getAgentConfigById(agentId)(getAgentStoreState());
+      const model = agentConfig.chatConfig?.compressionModelId ?? agentConfig.model;
+      const { provider } = agentConfig;
       const compressionPayload = chainCompressContext(messagesToSummarize);
       let summaryContent = '';
 
@@ -1551,6 +1556,14 @@ export class ConversationLifecycleActionImpl {
       this.#get().completeOperation(operationId);
     } catch (error) {
       if (isAbortError(error, abortController)) {
+        if (persistedCompressionGroupId) {
+          const { messages } = await messageService.cancelCompression({
+            agentId,
+            messageGroupId: persistedCompressionGroupId,
+            topicId,
+          });
+          this.#get().replaceMessages(messages, { context: context as any });
+        }
         this.#get().internal_dispatchMessage(
           { type: 'deleteMessages', ids: [tempId] },
           { operationId },
@@ -1559,6 +1572,18 @@ export class ConversationLifecycleActionImpl {
       }
 
       console.error('[/compact] Compression failed:', error);
+      if (persistedCompressionGroupId) {
+        try {
+          const { messages } = await messageService.failCompression({
+            agentId,
+            messageGroupId: persistedCompressionGroupId,
+            topicId,
+          });
+          this.#get().replaceMessages(messages, { context: context as any });
+        } catch (persistenceError) {
+          console.error('[/compact] Failed to retain compression audit record:', persistenceError);
+        }
+      }
       this.#get().internal_dispatchMessage(
         { type: 'deleteMessages', ids: [tempId] },
         { operationId },

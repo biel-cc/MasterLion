@@ -37,6 +37,15 @@ describe('prepareToolCallExecution', () => {
     await symlink(path.join(homeDir, '.ssh'), path.join(workspace, 'link'));
   });
 
+  it('fails closed for a context-free local-system command even without trace metadata', async () => {
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'runCommand',
+        args: { command: 'id' },
+      }),
+    ).rejects.toMatchObject({ code: 'WORKSPACE_REQUIRED' });
+  });
+
   afterEach(async () => {
     await rm(tempRoot, { force: true, recursive: true });
   });
@@ -488,9 +497,11 @@ describe('prepareToolCallExecution', () => {
     expect(JSON.stringify(result)).not.toContain('MODEL_SECRET');
   });
 
-  it('keeps context-free calls on the explicit legacy branch', async () => {
-    const args = { command: 'pwd' };
-    await expect(prepareToolCallExecution({ apiName: 'runCommand', args })).resolves.toEqual({
+  it('keeps context-free non-local-system calls on the explicit legacy branch', async () => {
+    const args = { platform: 'openclaw' };
+    await expect(
+      prepareToolCallExecution({ apiName: 'checkPlatformCapability', args }),
+    ).resolves.toEqual({
       args,
       legacy: true,
       scopeAudit: [],

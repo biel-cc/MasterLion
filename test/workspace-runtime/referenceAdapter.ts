@@ -9,7 +9,7 @@ const compatibilityMatrix = (['old', 'new'] as const).flatMap((server) =>
     (['old', 'new'] as const).map((client) => ({
       client,
       device,
-      hardValidated: device === 'new',
+      hardValidated: client === 'new' && server === 'new' && device === 'new',
       passed: true,
       server,
     })),

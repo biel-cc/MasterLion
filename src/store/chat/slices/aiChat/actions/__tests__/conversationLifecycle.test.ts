@@ -208,6 +208,13 @@ describe('ConversationLifecycle actions', () => {
 
     describe('message creation', () => {
       it('should render pending compressedGroup immediately for /compact', async () => {
+        setupMockSelectors({
+          agentConfig: {
+            chatConfig: { compressionModelId: 'summary-model' },
+            model: 'main-model',
+            provider: 'aihub',
+          },
+        });
         const { result } = renderHook(() => useChatStore());
         const topicId = TEST_IDS.TOPIC_ID;
         const agentId = TEST_IDS.SESSION_ID;
@@ -241,7 +248,9 @@ describe('ConversationLifecycle actions', () => {
             ],
             messagesToSummarize: existingMessages,
           });
-        vi.spyOn(chatService, 'fetchPresetTaskResult').mockResolvedValue(undefined);
+        const fetchSummarySpy = vi
+          .spyOn(chatService, 'fetchPresetTaskResult')
+          .mockResolvedValue(undefined);
         vi.spyOn(messageService, 'finalizeCompression').mockResolvedValue({
           messages: [
             {
@@ -303,6 +312,11 @@ describe('ConversationLifecycle actions', () => {
           messageIds: ['user-1', 'assistant-1'],
           topicId,
         });
+        expect(fetchSummarySpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            params: expect.objectContaining({ model: 'summary-model', provider: 'aihub' }),
+          }),
+        );
       });
 
       it('should show a visible no-candidates outcome for /compact', async () => {

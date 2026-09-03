@@ -147,6 +147,7 @@ import {
 
 const log = debug('lobe-server:agent-runtime:streaming-executors');
 const timing = debug('lobe-server:agent-runtime:timing');
+const isAbortError = (error: unknown) => error instanceof Error && error.name === 'AbortError';
 
 // Tool pricing configuration (USD per call)
 const TOOL_PRICING: Record<string, number> = {
@@ -2241,7 +2242,14 @@ export const createRuntimeExecutors = (
             },
           };
         } catch (error) {
-          await messageService.cancelCompression(compressionGroup.messageGroupId, compressionQuery);
+          if (isAbortError(error)) {
+            await messageService.cancelCompression(
+              compressionGroup.messageGroupId,
+              compressionQuery,
+            );
+          } else {
+            await messageService.failCompression(compressionGroup.messageGroupId, compressionQuery);
+          }
           throw error;
         }
       };
@@ -2273,16 +2281,16 @@ export const createRuntimeExecutors = (
             let toolsCalling: ChatToolPayload[] = [];
             let tool_calls: MessageToolCall[] = [];
             let thinkingContent = '';
-            const imageList: any[] = [];
+            let imageList: any[] = [];
             let grounding: any = null;
             let currentStepUsage: any = undefined;
             let currentStepSpeed: any = undefined;
             let currentStepFinishReason: string | undefined = undefined;
             let streamError: any = undefined;
-            const contentParts: ContentPart[] = [];
-            const reasoningParts: ContentPart[] = [];
-            const contentImageUploads: Promise<void>[] = [];
-            const reasoningImageUploads: Promise<void>[] = [];
+            let contentParts: ContentPart[] = [];
+            let reasoningParts: ContentPart[] = [];
+            let contentImageUploads: Promise<void>[] = [];
+            let reasoningImageUploads: Promise<void>[] = [];
             let hasContentImages = false;
             let hasReasoningImages = false;
             textBuffer = '';
@@ -2303,6 +2311,49 @@ export const createRuntimeExecutors = (
               reasoningBuffer = '';
             };
 
+            // `runContextBudgetedCall` may invoke the provider twice inside one
+            // executor retry attempt. Keep a hard boundary between those two
+            // streams: a rejected attempt must not contribute content, usage,
+            // images or executable tool calls to the compressed retry.
+            let providerAttemptEpoch = 0;
+            let providerAttemptEventStart = events.length;
+            let providerAttemptActive = false;
+
+            const discardProviderAttempt = () => {
+              providerAttemptEpoch += 1;
+              clearAttemptBuffers();
+
+              if (providerAttemptActive) {
+                events.splice(providerAttemptEventStart);
+              }
+
+              content = '';
+              toolsCalling = [];
+              tool_calls = [];
+              thinkingContent = '';
+              imageList = [];
+              grounding = null;
+              currentStepUsage = undefined;
+              currentStepSpeed = undefined;
+              currentStepFinishReason = undefined;
+              streamError = undefined;
+              contentParts = [];
+              reasoningParts = [];
+              contentImageUploads = [];
+              reasoningImageUploads = [];
+              hasContentImages = false;
+              hasReasoningImages = false;
+              providerAttemptActive = false;
+            };
+
+            const startProviderAttempt = () => {
+              if (providerAttemptActive) discardProviderAttempt();
+              providerAttemptEpoch += 1;
+              providerAttemptEventStart = events.length;
+              providerAttemptActive = true;
+              return providerAttemptEpoch;
+            };
+
             try {
               log(
                 `${stagePrefix} calling model-runtime chat (attempt %d/%d, model: %s, messages: %d, tools: %d)`,
@@ -2318,7 +2369,7 @@ export const createRuntimeExecutors = (
               // by the same bounded one-retry flow as preflight compression.
               const remainingExecutionTimeMs = getRemainingExecutionTimeMs(state);
               const callProvider = async (budgetPayload: BudgetedChatStreamPayload) => {
-                streamError = undefined;
+                const currentProviderAttemptEpoch = startProviderAttempt();
                 const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
                 const response = await modelRuntime.chat(
                   providerPayload as unknown as ChatStreamPayload,
@@ -2328,6 +2379,7 @@ export const createRuntimeExecutors = (
                       : { signal: AbortSignal.timeout(Math.max(1, remainingExecutionTimeMs)) }),
                     callback: {
                       onCompletion: async (data) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         // Capture usage (may or may not include cost)
                         if (data.usage) {
                           currentStepUsage = data.usage;
@@ -2346,6 +2398,7 @@ export const createRuntimeExecutors = (
                       },
                       onFinal: runtimeTraceOptions.callback.onFinal,
                       onGrounding: async (groundingData) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         log(`[${operationLogId}][grounding] %O`, groundingData);
                         grounding = groundingData;
 
@@ -2355,6 +2408,7 @@ export const createRuntimeExecutors = (
                         });
                       },
                       onText: async (text) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         if (firstChunkAt === undefined) {
                           firstChunkAt = Date.now() - llmStartTime;
                         }
@@ -2371,12 +2425,14 @@ export const createRuntimeExecutors = (
                         // If no timer exists, create one
                         if (!textBufferTimer) {
                           textBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                             await flushTextBuffer();
                             textBufferTimer = null;
                           }, BUFFER_INTERVAL);
                         }
                       },
                       onThinking: async (reasoning) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         if (firstChunkAt === undefined) {
                           firstChunkAt = Date.now() - llmStartTime;
                         }
@@ -2394,6 +2450,7 @@ export const createRuntimeExecutors = (
                         // If no timer exists, create one
                         if (!reasoningBufferTimer) {
                           reasoningBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                             await flushReasoningBuffer();
                             reasoningBufferTimer = null;
                           }, BUFFER_INTERVAL);
@@ -2410,6 +2467,7 @@ export const createRuntimeExecutors = (
                       // parts to object storage and serialize the multimodal content
                       // (text + image URLs, in order) — never persist raw base64.
                       onContentPart: async (part) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         if (firstChunkAt === undefined) {
                           firstChunkAt = Date.now() - llmStartTime;
                         }
@@ -2433,12 +2491,14 @@ export const createRuntimeExecutors = (
 
                         if (!textBufferTimer) {
                           textBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                             await flushTextBuffer();
                             textBufferTimer = null;
                           }, BUFFER_INTERVAL);
                         }
                       },
                       onReasoningPart: async (part) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         if (firstChunkAt === undefined) {
                           firstChunkAt = Date.now() - llmStartTime;
                         }
@@ -2462,6 +2522,7 @@ export const createRuntimeExecutors = (
 
                         if (!reasoningBufferTimer) {
                           reasoningBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                             await flushReasoningBuffer();
                             reasoningBufferTimer = null;
                           }, BUFFER_INTERVAL);
@@ -2469,6 +2530,7 @@ export const createRuntimeExecutors = (
                       },
                       onStart: runtimeTraceOptions.callback.onStart,
                       onToolsCalling: async ({ toolsCalling: raw }) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         await runtimeTraceOptions.callback.onToolsCalling?.({
                           chunk: [],
                           toolsCalling: raw,
@@ -2505,6 +2567,7 @@ export const createRuntimeExecutors = (
                         });
                       },
                       onError: async (errorData) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
                         streamError = errorData;
                         console.error(`[${operationLogId}][stream_error]`, errorData);
                       },
@@ -2546,6 +2609,22 @@ export const createRuntimeExecutors = (
                 compress: compressFinalPayload,
                 configuredWindowTokens: resolvedContextWindowTokens,
                 modelId: model,
+                onProviderAttemptDiscard: async ({ attempt: providerAttempt, willRetry }) => {
+                  discardProviderAttempt();
+                  if (!willRetry) return;
+
+                  await streamManager.publishStreamEvent(operationId, {
+                    data: {
+                      attempt: providerAttempt + 1,
+                      delayMs: 0,
+                      maxAttempts: 2,
+                      reason: 'context_window',
+                      reset: true,
+                    },
+                    stepIndex,
+                    type: 'stream_retry',
+                  });
+                },
                 operationId,
                 outputReserveTokens: 1024,
                 payload: chatPayload as unknown as BudgetedChatStreamPayload,
@@ -2571,6 +2650,7 @@ export const createRuntimeExecutors = (
               await flushTextBuffer();
               await flushReasoningBuffer();
               clearAttemptBuffers();
+              providerAttemptActive = false;
 
               // Wait for any model-generated image uploads to finish so the
               // persisted multimodal content references S3 URLs, not base64.
@@ -3031,10 +3111,14 @@ export const createRuntimeExecutors = (
           query: { agentId?: string; threadId?: string; topicId: string };
         }
       | undefined;
-    const cancelPendingCompression = async () => {
+    const settlePendingCompression = async (cancelled: boolean) => {
       if (!pendingCompression) return;
       const pending = pendingCompression;
-      await pending.messageService.cancelCompression(pending.groupId, pending.query);
+      if (cancelled) {
+        await pending.messageService.cancelCompression(pending.groupId, pending.query);
+      } else {
+        await pending.messageService.failCompression(pending.groupId, pending.query);
+      }
       pendingCompression = undefined;
     };
 
@@ -3137,7 +3221,7 @@ export const createRuntimeExecutors = (
         newState.modelRuntimeConfig?.compressionModel || newState.modelRuntimeConfig;
 
       if (!compressionModel?.model || !compressionModel?.provider) {
-        await cancelPendingCompression();
+        await settlePendingCompression(false);
         return {
           events,
           newState,
@@ -3145,6 +3229,7 @@ export const createRuntimeExecutors = (
             payload: {
               ...failedCompressionPayload({
                 compressedMessages: compressedMessagesFallback,
+                groupId: compressionResult.messageGroupId,
                 parentMessageId: latestAssistantMessage?.id,
               }),
             } as GeneralAgentCompressionResultPayload,
@@ -3365,8 +3450,9 @@ export const createRuntimeExecutors = (
         },
       };
     } catch (error) {
+      const failedGroupId = pendingCompression?.groupId;
       try {
-        await cancelPendingCompression();
+        await settlePendingCompression(isAbortError(error));
       } catch (rollbackError) {
         log(`${stagePrefix} Compression rollback failed. error=%O`, rollbackError);
       }
@@ -3400,7 +3486,10 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
-            ...failedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
+            ...failedCompressionPayload({
+              compressedMessages: compressedMessagesFallback,
+              groupId: failedGroupId,
+            }),
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {

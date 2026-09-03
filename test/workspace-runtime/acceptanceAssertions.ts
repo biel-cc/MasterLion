@@ -378,8 +378,16 @@ const cases: AcceptanceCase[] = [
       expect(observed.matrix.every(({ passed }) => passed)).toBe(true);
       expect(
         observed.matrix
-          .filter(({ device }) => device === 'old')
+          .filter(({ client, device, server }) =>
+            client === 'old' || device === 'old' || server === 'old',
+          )
           .every(({ hardValidated }) => !hardValidated),
+      ).toBe(true);
+      expect(
+        observed.matrix.find(
+          ({ client, device, server }) =>
+            client === 'new' && device === 'new' && server === 'new',
+        )?.hardValidated,
       ).toBe(true);
     },
   },

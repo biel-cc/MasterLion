@@ -1269,6 +1269,11 @@ export default {
   'workspaceRuntime.hetero.gate.unrouted.no-online-device':
     'No online device is available for this topic.',
   'workspaceRuntime.hetero.gate.unroutedTitle': 'Execution target unavailable',
+  'workspaceRuntime.intent.confirm': 'Use as workspace',
+  'workspaceRuntime.intent.confirmDescription':
+    'Bind {{path}} as this topic’s workspace? The working directory will stay fixed for this topic.',
+  'workspaceRuntime.intent.confirmTitle': 'Use this directory as the current workspace?',
+  'workspaceRuntime.intent.keepUnbound': 'Continue without binding',
   'workspaceRuntime.picker.addPath': 'Add directory path',
   'workspaceRuntime.picker.alreadyBound':
     'This topic is already bound. Create a new referenced topic to use another workspace.',

@@ -415,6 +415,28 @@ export const createAgentExecutors = (context: {
           topicId,
         },
         {
+          onAttemptReset: () => {
+            finalUsage = undefined;
+            finalToolCalls = undefined;
+            internal_dispatchMessage(
+              {
+                id: assistantMessageId,
+                type: 'updateMessage',
+                value: {
+                  content: '',
+                  imageList: undefined,
+                  metadata: {
+                    isMultimodal: undefined,
+                    tempDisplayContent: undefined,
+                  },
+                  reasoning: undefined,
+                  search: undefined,
+                  tools: undefined,
+                },
+              },
+              { operationId: context.operationId },
+            );
+          },
           onContentUpdate: (content, reasoning, contentMetadata) => {
             internal_dispatchMessage(
               {
@@ -569,6 +591,14 @@ export const createAgentExecutors = (context: {
               threadId: operation.context.threadId,
               topicId,
             }),
+          failGroup: (messageGroupId) =>
+            messageService.failCompression({
+              agentId,
+              groupId,
+              messageGroupId,
+              threadId: operation.context.threadId,
+              topicId,
+            }),
           finalizeGroup: (messageGroupId, summary) =>
             messageService.finalizeCompression({
               agentId,
@@ -636,6 +666,7 @@ export const createAgentExecutors = (context: {
           onAttemptState: (attemptState) => {
             contextBudgetAttemptState = attemptState;
           },
+          onProviderAttemptDiscard: () => handler.discardAttempt(),
           operationId: state.operationId,
           outputReserveTokens: 1024,
         },
@@ -2183,6 +2214,14 @@ export const createAgentExecutors = (context: {
               agentId,
               groupId: opContext.groupId,
               messageIds,
+              threadId: opContext.threadId,
+              topicId,
+            }),
+          failGroup: (messageGroupId) =>
+            messageService.failCompression({
+              agentId,
+              groupId: opContext.groupId,
+              messageGroupId,
               threadId: opContext.threadId,
               topicId,
             }),

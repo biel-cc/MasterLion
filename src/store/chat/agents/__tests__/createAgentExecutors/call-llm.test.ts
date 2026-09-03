@@ -37,6 +37,7 @@ vi.mock('@/services/message', () => ({
   messageService: {
     cancelCompression: vi.fn(),
     createCompressionGroup: vi.fn(),
+    failCompression: vi.fn(),
     finalizeCompression: vi.fn(),
     updateMessage: vi.fn(),
   },
@@ -174,6 +175,65 @@ describe('call_llm executor', () => {
             provider: 'openai',
           }),
         }),
+      );
+    });
+
+    it('discards partial content and stale tools before a context-compression retry', async () => {
+      const mockStore = createMockStore();
+      const context = createTestContext();
+      mockStore.dbMessagesMap[context.messageKey] = [];
+      const staleTool: MessageToolCall = {
+        function: { arguments: '{"path":"stale"}', name: 'filesystem____write' },
+        id: 'stale-tool',
+        type: 'function',
+      };
+
+      vi.mocked(chatService.createAssistantMessageStream).mockImplementation(async (params: any) => {
+        await params.onMessageHandle?.({ text: 'stale partial', type: 'text' });
+        await params.onMessageHandle?.({ text: 'stale reasoning', type: 'reasoning' });
+        await params.onMessageHandle?.({ tool_calls: [staleTool], type: 'tool_calls' });
+
+        await params.contextBudget.onProviderAttemptDiscard({
+          attempt: 1,
+          error: { type: 'ExceededContextWindow' },
+          willRetry: true,
+        });
+
+        await params.onMessageHandle?.({ text: 'final only', type: 'text' });
+        await params.onFinish?.('final only', { type: 'stop' });
+      });
+
+      const result = await executeWithMockContext({
+        context,
+        executor: 'call_llm',
+        instruction: createCallLLMInstruction({
+          messages: [createUserMessage()],
+          model: 'gpt-4',
+          provider: 'openai',
+        }),
+        mockStore,
+        state: createInitialState({ operationId: context.operationId }),
+      });
+
+      const payload = result.nextContext!.payload as GeneralAgentCallLLMResultPayload;
+      expect(payload).toMatchObject({
+        hasToolsCalling: false,
+        result: { content: 'final only', tool_calls: undefined },
+        toolsCalling: [],
+      });
+      expect(JSON.stringify(payload)).not.toContain('stale');
+      expect(mockStore.optimisticUpdateMessageContent).toHaveBeenCalledWith(
+        expect.any(String),
+        'final only',
+        expect.objectContaining({ tools: undefined }),
+        expect.anything(),
+      );
+      expect(mockStore.internal_dispatchMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'updateMessage',
+          value: expect.objectContaining({ content: '', tools: undefined }),
+        }),
+        expect.anything(),
       );
     });
 
@@ -1820,38 +1880,43 @@ describe('call_llm executor', () => {
       const summaryRequestTokens: number[] = [];
       vi.mocked(chatService.getChatCompletion).mockImplementation(async (request: any, options) => {
         summaryRequestTokens.push(countContextTokens({ messages: request.messages }).adjustedTotal);
-        await options?.onMessageHandle?.({ text: `summary-${summaryRequestTokens.length}`, type: 'text' });
+        await options?.onMessageHandle?.({
+          text: `summary-${summaryRequestTokens.length}`,
+          type: 'text',
+        });
         return new Response();
       });
       let compressionResult: any;
-      vi.mocked(chatService.createAssistantMessageStream).mockImplementation(async (params: any) => {
-        expect(params.contextBudget.catalogSnapshot).toBe(modelCatalogSnapshot);
-        compressionResult = await params.contextBudget.compress(
-          {
-            messages: [oldUser, oldAssistant, injection, latest],
-            model: 'gpt-4',
-            provider: 'openai',
-            providerMedia: [],
-            tools: [],
-          },
-          {
-            decision: {
-              attempt: 1,
-              candidateIds: ['old-user', 'old-assistant', 'memory-injection'],
-              kind: 'compress',
-              preservedIds: ['latest-user'],
-              trigger: 'final-preflight',
+      vi.mocked(chatService.createAssistantMessageStream).mockImplementation(
+        async (params: any) => {
+          expect(params.contextBudget.catalogSnapshot).toBe(modelCatalogSnapshot);
+          compressionResult = await params.contextBudget.compress(
+            {
+              messages: [oldUser, oldAssistant, injection, latest],
+              model: 'gpt-4',
+              provider: 'openai',
+              providerMedia: [],
+              tools: [],
             },
-            estimatedPromptTokens: 20_000,
-            partition: {
-              candidateIds: ['old-user', 'old-assistant', 'memory-injection'],
-              preservedIds: ['latest-user'],
+            {
+              decision: {
+                attempt: 1,
+                candidateIds: ['old-user', 'old-assistant', 'memory-injection'],
+                kind: 'compress',
+                preservedIds: ['latest-user'],
+                trigger: 'final-preflight',
+              },
+              estimatedPromptTokens: 20_000,
+              partition: {
+                candidateIds: ['old-user', 'old-assistant', 'memory-injection'],
+                preservedIds: ['latest-user'],
+              },
+              payloadFingerprint: 'original-fingerprint',
             },
-            payloadFingerprint: 'original-fingerprint',
-          },
-        );
-        await params.onFinish?.('ok', { type: 'stop' });
-      });
+          );
+          await params.onFinish?.('ok', { type: 'stop' });
+        },
+      );
 
       const result = await executeWithMockContext({
         context,
@@ -1895,7 +1960,7 @@ describe('call_llm executor', () => {
       );
     });
 
-    it('rolls back the group and preserves original messages when a chunk summary fails', async () => {
+    it('retains the failed group and preserves original messages when a chunk summary fails', async () => {
       const context = createTestContext();
       const replaceMessages = vi.fn();
       const mockStore = createMockStore({ replaceMessages } as any);
@@ -1907,7 +1972,7 @@ describe('call_llm executor', () => {
         messages: [],
         messagesToSummarize: [oldUser],
       });
-      vi.mocked(messageService.cancelCompression).mockResolvedValue({
+      vi.mocked(messageService.failCompression).mockResolvedValue({
         messages: [oldUser, latest],
       });
       vi.mocked(chatService.getChatCompletion).mockImplementation(async (_request, options) => {
@@ -1915,29 +1980,31 @@ describe('call_llm executor', () => {
         return new Response();
       });
       let compressionResult: any;
-      vi.mocked(chatService.createAssistantMessageStream).mockImplementation(async (params: any) => {
-        const originalPayload = {
-          messages: [oldUser, latest],
-          model: 'gpt-4',
-          provider: 'openai',
-          providerMedia: [],
-          tools: [],
-        };
-        compressionResult = await params.contextBudget.compress(originalPayload, {
-          decision: {
-            attempt: 1,
-            candidateIds: ['old-user'],
-            kind: 'compress',
-            preservedIds: ['latest-user'],
-            trigger: 'provider-error',
-          },
-          estimatedPromptTokens: 10_000,
-          partition: { candidateIds: ['old-user'], preservedIds: ['latest-user'] },
-          payloadFingerprint: 'original-fingerprint',
-        });
-        expect(compressionResult.payload).toBe(originalPayload);
-        await params.onFinish?.('', { type: 'error' });
-      });
+      vi.mocked(chatService.createAssistantMessageStream).mockImplementation(
+        async (params: any) => {
+          const originalPayload = {
+            messages: [oldUser, latest],
+            model: 'gpt-4',
+            provider: 'openai',
+            providerMedia: [],
+            tools: [],
+          };
+          compressionResult = await params.contextBudget.compress(originalPayload, {
+            decision: {
+              attempt: 1,
+              candidateIds: ['old-user'],
+              kind: 'compress',
+              preservedIds: ['latest-user'],
+              trigger: 'provider-error',
+            },
+            estimatedPromptTokens: 10_000,
+            partition: { candidateIds: ['old-user'], preservedIds: ['latest-user'] },
+            payloadFingerprint: 'original-fingerprint',
+          });
+          expect(compressionResult.payload).toBe(originalPayload);
+          await params.onFinish?.('', { type: 'error' });
+        },
+      );
 
       await executeWithMockContext({
         context,
@@ -1958,9 +2025,10 @@ describe('call_llm executor', () => {
       expect(compressionResult.outcome).toEqual(
         expect.objectContaining({ code: 'SUMMARY_FAILED', outcome: 'failed' }),
       );
-      expect(messageService.cancelCompression).toHaveBeenCalledWith(
+      expect(messageService.failCompression).toHaveBeenCalledWith(
         expect.objectContaining({ messageGroupId: 'compression-group' }),
       );
+      expect(messageService.cancelCompression).not.toHaveBeenCalled();
       expect(messageService.finalizeCompression).not.toHaveBeenCalled();
       expect(replaceMessages).not.toHaveBeenCalled();
       expect(mockStore.dbMessagesMap[context.messageKey]).toEqual([oldUser, latest]);

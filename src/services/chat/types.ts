@@ -31,6 +31,12 @@ export interface ClientContextBudgetOptions {
   ) => Promise<ContextBudgetCompressionResult<ClientBudgetedChatPayload>>;
   configuredWindowTokens?: number;
   onAttemptState?: (state: ContextBudgetAttemptState) => void;
+  /** Discard partial stream state from a provider attempt that exceeded context. */
+  onProviderAttemptDiscard?: (input: {
+    attempt: 1 | 2;
+    error: unknown;
+    willRetry: boolean;
+  }) => Promise<void> | void;
   operationId: string;
   outputReserveTokens?: number;
 }

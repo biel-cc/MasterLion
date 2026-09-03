@@ -39,6 +39,8 @@ export type GroundingData = GroundingSearch;
  * Streaming callbacks - for notifying external state changes
  */
 export interface StreamingCallbacks {
+  /** Clear externally rendered artifacts when the current provider attempt is discarded. */
+  onAttemptReset?: () => void;
   /** Content update */
   onContentUpdate: (
     content: string,

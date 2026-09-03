@@ -312,6 +312,18 @@ export class MessageService {
     const result = await lambdaClient.message.cancelCompression.mutate(params);
     return { messages: (result.messages || []) as unknown as UIChatMessage[] };
   };
+
+  /** Restore source messages and retain a sanitized failed compression audit record. */
+  failCompression = async (params: {
+    agentId: string;
+    groupId?: string | null;
+    messageGroupId: string;
+    threadId?: string | null;
+    topicId: string;
+  }): Promise<{ messages: UIChatMessage[] }> => {
+    const result = await lambdaClient.message.failCompression.mutate(params);
+    return { messages: (result.messages || []) as unknown as UIChatMessage[] };
+  };
 }
 
 export const messageService = new MessageService();

@@ -216,6 +216,27 @@ export class AgentActionImpl {
         break;
       }
 
+      case 'stream_retry': {
+        if (!event.data?.reset) break;
+
+        context.content = '';
+        context.reasoning = '';
+        context.toolsCalling = undefined;
+        this.#get().internal_toggleToolCallingStreaming(assistantId, undefined);
+        internal_dispatchMessage({
+          id: assistantId,
+          type: 'updateMessage',
+          value: {
+            content: '',
+            imageList: undefined,
+            reasoning: undefined,
+            search: undefined,
+            tools: undefined,
+          },
+        });
+        break;
+      }
+
       case 'stream_end': {
         // Stream ended, update final content
         const { finalContent, toolCalls, reasoning, imageList, grounding } = event.data || {};

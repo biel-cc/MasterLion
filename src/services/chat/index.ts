@@ -406,6 +406,7 @@ class ChatService {
       compress: budget.compress,
       configuredWindowTokens: budget.configuredWindowTokens,
       modelId: finalPayload.model ?? payload.model,
+      onProviderAttemptDiscard: budget.onProviderAttemptDiscard,
       operationId: budget.operationId,
       outputReserveTokens: budget.outputReserveTokens ?? 1024,
       payload: finalPayload,

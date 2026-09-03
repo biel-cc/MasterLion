@@ -449,5 +449,66 @@ describe('MessageService Integration Tests', () => {
       expect(updatedGroup).toHaveLength(1);
       expect(updatedGroup[0].content).toBe('Summary content');
     });
+
+    it('retains a failed group for audit while restoring it out of the visible trajectory', async () => {
+      const messageService = new MessageService(serverDB, userId);
+      await serverDB.insert(agents).values({ id: 'agent-failed', userId });
+      await serverDB.insert(sessions).values({ id: 'session-failed', userId });
+      await serverDB.insert(agentsToSessions).values({
+        agentId: 'agent-failed',
+        sessionId: 'session-failed',
+        userId,
+      });
+      await serverDB.insert(topics).values({
+        id: 'topic-failed',
+        sessionId: 'session-failed',
+        userId,
+      });
+      await serverDB.insert(messages).values([
+        {
+          agentId: 'agent-failed',
+          content: 'original user message',
+          id: 'failed-source-1',
+          role: 'user',
+          topicId: 'topic-failed',
+          userId,
+        },
+        {
+          agentId: 'agent-failed',
+          content: 'original assistant message',
+          id: 'failed-source-2',
+          role: 'assistant',
+          topicId: 'topic-failed',
+          userId,
+        },
+      ]);
+
+      const pending = await messageService.createCompressionGroup(
+        'topic-failed',
+        ['failed-source-1', 'failed-source-2'],
+        { agentId: 'agent-failed', topicId: 'topic-failed' },
+      );
+      const result = await messageService.failCompression(pending.messageGroupId, {
+        agentId: 'agent-failed',
+        topicId: 'topic-failed',
+      });
+
+      expect(result.messages.map((message) => message.id)).toEqual([
+        'failed-source-1',
+        'failed-source-2',
+      ]);
+      expect(result.messages.some((message) => message.role === 'compressedGroup')).toBe(false);
+
+      const [failedGroup] = await serverDB
+        .select()
+        .from(messageGroups)
+        .where(eq(messageGroups.id, pending.messageGroupId));
+      expect(JSON.parse(failedGroup.description!)).toMatchObject({
+        compressionStatus: 'failed',
+        failureCode: 'SUMMARY_FAILED',
+        originalMessageCount: 2,
+      });
+      expect(JSON.parse(failedGroup.description!).failedAt).toEqual(expect.any(String));
+    });
   });
 });

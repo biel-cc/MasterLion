@@ -27,6 +27,16 @@ export interface RunContextBudgetedCallInput<
     payload: TPayload,
     evaluation: ContextBudgetEvaluation,
   ) => Promise<ContextBudgetCompressionResult<TPayload>>;
+  /**
+   * Called after a provider attempt reports a context-window error and before
+   * the attempt is retried (or surfaced as exhausted). Streaming consumers use
+   * this boundary to discard every partial artifact produced by that attempt.
+   */
+  onProviderAttemptDiscard?: (input: {
+    attempt: 1 | 2;
+    error: unknown;
+    willRetry: boolean;
+  }) => Promise<void> | void;
   payload: TPayload;
 }
 
@@ -186,12 +196,15 @@ export const runContextBudgetedCall = async <TPayload extends FinalContextPayloa
 
     const recovery = evaluate('provider-error', providerError.observedLimitTokens);
     if (isFailure(recovery.decision)) {
+      await input.onProviderAttemptDiscard?.({ attempt: 1, error, willRetry: false });
       return fail(recovery.decision, recovery.payloadFingerprint);
     }
     if (recovery.decision.kind !== 'compress') {
+      await input.onProviderAttemptDiscard?.({ attempt: 1, error, willRetry: false });
       throw new Error('provider-error decision must compress or fail', { cause: error });
     }
 
+    await input.onProviderAttemptDiscard?.({ attempt: 1, error, willRetry: true });
     const compressed = await compressAndPreflight(recovery, providerError.observedLimitTokens);
     if ('kind' in compressed) return compressed;
     ready = compressed;
@@ -203,6 +216,7 @@ export const runContextBudgetedCall = async <TPayload extends FinalContextPayloa
     } catch (retryError) {
       const retryProviderError = parseExceededContextWindowError(retryError);
       if (!retryProviderError) throw retryError;
+      await input.onProviderAttemptDiscard?.({ attempt: 2, error: retryError, willRetry: false });
       const exhausted = evaluate(
         'provider-error',
         retryProviderError.observedLimitTokens ?? providerError.observedLimitTokens,

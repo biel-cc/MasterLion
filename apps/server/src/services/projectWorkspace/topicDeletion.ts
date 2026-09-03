@@ -28,6 +28,15 @@ export interface TopicDeletionResult {
 export interface TopicDeletionOptions {
   /** Runs after scratch cleanup succeeds but before the topic FK cascades. */
   beforeDelete?: (topic: Readonly<TopicDeletionCandidate>) => Promise<void>;
+  /**
+   * Optional owner-supplied atomic database boundary. It must delete the topic
+   * and, when provided, the scratch catalog row. Used when related counters or
+   * join rows must commit with the topic rather than before it.
+   */
+  deleteDatabaseRecords?: (
+    topic: Readonly<TopicDeletionCandidate>,
+    scratchWorkspaceId?: string,
+  ) => Promise<void>;
 }
 
 export class ScratchWorkspaceCleanupError extends Error {
@@ -84,10 +93,14 @@ export class TopicDeletionService {
     // returned to the mutation caller instead of silently leaving an orphan.
     for (const topic of topics) {
       const scratchWorkspaceId = await this.cleanupScratch(topic);
-      await options.beforeDelete?.(topic);
-      await this.deps.topicModel.delete(topic.id);
-      if (scratchWorkspaceId) {
-        await this.deps.projectWorkspaceModel.deleteScratch(scratchWorkspaceId);
+      if (options.deleteDatabaseRecords) {
+        await options.deleteDatabaseRecords(topic, scratchWorkspaceId);
+      } else {
+        await options.beforeDelete?.(topic);
+        await this.deps.topicModel.delete(topic.id);
+        if (scratchWorkspaceId) {
+          await this.deps.projectWorkspaceModel.deleteScratch(scratchWorkspaceId);
+        }
       }
       deleted += 1;
     }

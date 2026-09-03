@@ -371,6 +371,7 @@ export class MessageService {
       content: '...', // Placeholder content
       messageIds,
       metadata: {
+        compressionStatus: 'pending',
         originalMessageCount: messageIds.length,
       },
       topicId,
@@ -407,7 +408,10 @@ export class MessageService {
     const { agentId, groupId, threadId, topicId } = params;
 
     // 1. Update compression group with actual content
-    await this.compressionRepository.updateCompressionContent(messageGroupId, content);
+    await this.compressionRepository.updateCompressionContent(messageGroupId, content, {
+      compressedAt: new Date().toISOString(),
+      compressionStatus: 'completed',
+    });
 
     // 2. Query final messages
     const queryOptions = { agentId, groupId, threadId, topicId };
@@ -448,6 +452,21 @@ export class MessageService {
     await this.compressionRepository.deleteCompressionGroup(messageGroupId);
 
     // Query updated messages
+    const messages = await this.messageModel.query(context, this.getQueryOptions());
+
+    return { messages, success: true };
+  }
+
+  /**
+   * Record an unsuccessful summary attempt without leaving the source messages hidden.
+   * Unlike cancellation, the group row is retained as sanitized audit evidence.
+   */
+  async failCompression(
+    messageGroupId: string,
+    context: QueryOptions,
+  ): Promise<{ messages: UIChatMessage[]; success: boolean }> {
+    await this.compressionRepository.markCompressionFailed(messageGroupId);
+
     const messages = await this.messageModel.query(context, this.getQueryOptions());
 
     return { messages, success: true };

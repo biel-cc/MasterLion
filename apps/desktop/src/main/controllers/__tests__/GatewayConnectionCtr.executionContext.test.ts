@@ -113,7 +113,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     await rm(tempRoot, { force: true, recursive: true });
   });
 
-  it('authorizes a standalone renderer tool_execute inside the frozen workspace', async () => {
+  it('rejects a standalone renderer tool_execute even with a forged frozen context', async () => {
     const file = path.join(workspace, 'safe.txt');
     await writeFile(file, 'safe');
     const controller = makeController();
@@ -130,13 +130,8 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ success: true });
-    expect(result.content).toContain('safe');
-    expect(readFile).toHaveBeenCalledWith({
-      endLine: undefined,
-      path: file,
-      startLine: undefined,
-    });
+    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it('blocks an absolute standalone renderer read outside the frozen workspace', async () => {
@@ -156,7 +151,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ content: 'INTERVENTION_REQUIRED', success: false });
+    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
     expect(readFile).not.toHaveBeenCalled();
   });
 
@@ -175,8 +170,20 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ content: 'WORKSPACE_REQUIRED', success: false });
+    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
     expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a context-free renderer runCommand without trace metadata', async () => {
+    const controller = makeController();
+
+    const result = await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: 'id' },
+    });
+
+    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
+    expect(handleRunCommand).not.toHaveBeenCalled();
   });
 
   it('overrides model runCommand.cwd and returns redacted scope evidence', async () => {

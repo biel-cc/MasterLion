@@ -480,6 +480,32 @@ export class ConversationControlActionImpl {
         currentMessages,
       );
 
+      if (await this.#shouldUseGatewayResume(effectiveContext)) {
+        const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+        try {
+          await this.#get().executeGatewayAgent({
+            context: effectiveContext,
+            message: '',
+            metadata: requestMetadata,
+            parentMessageId: toolMessageId,
+            resumeInteraction: {
+              parentMessageId: toolMessageId,
+              phase: 'tool_result',
+            },
+          });
+          this.#completeOpsById(pausedOpIds);
+          completeOperation(operationId);
+        } catch (error) {
+          const err = error as Error;
+          console.error('[submitToolInteraction][server] Gateway resume failed:', err);
+          this.#get().failOperation(operationId, {
+            type: 'submitToolInteraction',
+            message: err.message || 'Unknown error',
+          });
+        }
+        return;
+      }
+
       const { state, context: initialContext } = this.#get().internal_createAgentState({
         messages: currentMessages,
         parentMessageId: toolMessageId,
@@ -548,6 +574,32 @@ export class ConversationControlActionImpl {
         type: 'submitToolInteraction',
         message: 'Failed to create user message',
       });
+      return;
+    }
+
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
+      const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+      try {
+        await this.#get().executeGatewayAgent({
+          context: effectiveContext,
+          message: '',
+          metadata: requestMetadata,
+          parentMessageId: userMsg.id,
+          resumeInteraction: {
+            parentMessageId: userMsg.id,
+            phase: 'user_input',
+          },
+        });
+        this.#completeOpsById(pausedOpIds);
+        completeOperation(operationId);
+      } catch (error) {
+        const err = error as Error;
+        console.error('[submitToolInteraction][server] Gateway resume failed:', err);
+        this.#get().failOperation(operationId, {
+          type: 'submitToolInteraction',
+          message: err.message || 'Unknown error',
+        });
+      }
       return;
     }
 
@@ -654,6 +706,32 @@ export class ConversationControlActionImpl {
         type: 'skipToolInteraction',
         message: 'Failed to create user message',
       });
+      return;
+    }
+
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
+      const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+      try {
+        await this.#get().executeGatewayAgent({
+          context: effectiveContext,
+          message: '',
+          metadata: requestMetadata,
+          parentMessageId: userMsg.id,
+          resumeInteraction: {
+            parentMessageId: userMsg.id,
+            phase: 'user_input',
+          },
+        });
+        this.#completeOpsById(pausedOpIds);
+        completeOperation(operationId);
+      } catch (error) {
+        const err = error as Error;
+        console.error('[skipToolInteraction][server] Gateway resume failed:', err);
+        this.#get().failOperation(operationId, {
+          type: 'skipToolInteraction',
+          message: err.message || 'Unknown error',
+        });
+      }
       return;
     }
 

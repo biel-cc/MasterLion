@@ -27,6 +27,16 @@ export interface ResumeApprovalParam {
   toolCallId: string;
 }
 
+/**
+ * Resume an interaction card from an already-persisted user/tool message.
+ * The server validates the anchor role and owns creation of the new operation,
+ * including its frozen workspace execution context.
+ */
+export interface ResumeInteractionParam {
+  parentMessageId: string;
+  phase: 'tool_result' | 'user_input';
+}
+
 export interface ExecAgentTaskParams {
   agentId?: string;
   appContext?: ExecAgentAppContext;
@@ -40,6 +50,8 @@ export interface ExecAgentTaskParams {
   prompt: string;
   /** Resume a previous op paused on `human_approve_required` instead of starting from a fresh user prompt. */
   resumeApproval?: ResumeApprovalParam;
+  /** Resume a persisted interaction result through the server coordinator. */
+  resumeInteraction?: ResumeInteractionParam;
   slug?: string;
   /**
    * Override what initiated this operation. Server defaults to `'chat'` when

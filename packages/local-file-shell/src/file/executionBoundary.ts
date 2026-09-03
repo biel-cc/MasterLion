@@ -427,7 +427,7 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
   trace = {},
 }: PrepareToolCallExecutionOptions & { args: T }): Promise<PreparedToolCallExecution<T>> => {
   if (!context) {
-    if (LOCAL_SYSTEM_APIS.has(apiName) && (trace.operationId || trace.topicId)) {
+    if (LOCAL_SYSTEM_APIS.has(apiName)) {
       throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
     }
     return { args, legacy: true, scopeAudit: [], warnings: [] };

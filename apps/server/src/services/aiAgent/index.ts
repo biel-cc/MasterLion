@@ -17,6 +17,7 @@ import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools'
 import {
   createModelCatalogSnapshot,
   getModelCatalogFromSettings,
+  isPersistedModelChatEligible,
   mergeModelCatalogEntry,
 } from '@lobechat/business-model-bank';
 import { LOADING_FLAT } from '@lobechat/const';
@@ -145,6 +146,7 @@ import {
 import { WorkspaceAccessGrantService } from '@/server/services/workspaceAccessGrant';
 import { markdownToTxt } from '@/utils/markdownToTxt';
 
+import { buildAdditionalDirectoriesPrompt } from './additionalDirectories';
 import { resolveDeviceAccessPolicy } from './deviceAccessPolicy';
 import { buildAllowedBuiltinTools, isDeviceToolIdentifier } from './deviceToolRegistry';
 import { buildDirectUserMessageAccessRoots } from './directUserPathConsent';
@@ -660,56 +662,58 @@ export class AiAgentService {
       contextWindowTokens?: number;
       id: string;
       providerId?: string;
+      type?: string;
     }>;
     model: string;
     operationId: string;
     provider: string;
+    requireChatEligibility?: boolean;
   }): Promise<ModelCatalogSnapshot> {
-    const { builtinModels, model, operationId, provider } = params;
+    const { builtinModels, model, operationId, provider, requireChatEligibility = true } = params;
+    let persistedModel: Awaited<ReturnType<AiModelModel['findByIdAndProvider']>>;
     try {
-      const persistedModel = await new AiModelModel(this.db, this.userId).findByIdAndProvider(
+      persistedModel = await new AiModelModel(this.db, this.userId).findByIdAndProvider(
         model,
         provider,
       );
-      const persistedCatalog = getModelCatalogFromSettings(persistedModel?.settings);
-      const exactPersistedEntry =
-        persistedCatalog?.entry.modelId === model && persistedCatalog.entry.providerId === provider
-          ? persistedCatalog.entry
-          : undefined;
-      const modelCard =
-        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
-        builtinModels.find((item) => item.id === model);
-      const entry =
-        exactPersistedEntry ??
-        mergeModelCatalogEntry({
-          catalog: {
-            abilities: persistedModel?.abilities ?? modelCard?.abilities,
-            contextWindowTokens:
-              persistedModel?.contextWindowTokens ?? modelCard?.contextWindowTokens,
-            kind: persistedModel?.type ?? 'chat',
-          },
-          modelId: model,
-          providerId: provider,
-        }).entry;
-      return createModelCatalogSnapshot(entry, operationId);
     } catch (error) {
-      log('execAgent: model catalog persistence unavailable, freezing builtin evidence: %O', error);
-      const modelCard =
-        builtinModels.find((item) => item.id === model && item.providerId === provider) ??
-        builtinModels.find((item) => item.id === model);
-      return createModelCatalogSnapshot(
-        mergeModelCatalogEntry({
-          catalog: {
-            abilities: modelCard?.abilities,
-            contextWindowTokens: modelCard?.contextWindowTokens,
-            kind: 'chat',
-          },
-          modelId: model,
-          providerId: provider,
-        }).entry,
-        operationId,
-      );
+      // Persistence failure is not positive model evidence. An exact builtin
+      // provider/model card may still establish eligibility below.
+      log('execAgent: model catalog persistence unavailable: %O', error);
     }
+
+    const persistedCatalog = getModelCatalogFromSettings(persistedModel?.settings);
+    const exactPersistedCatalog =
+      persistedCatalog?.entry.modelId === model && persistedCatalog.entry.providerId === provider
+        ? persistedCatalog
+        : undefined;
+    const exactBuiltinCard = builtinModels.find(
+      (item) => item.id === model && item.providerId === provider,
+    );
+    const fallbackKind =
+      persistedModel?.type && persistedModel.type !== 'chat'
+        ? persistedModel.type
+        : exactBuiltinCard
+          ? (exactBuiltinCard.type ?? 'chat')
+          : undefined;
+    const catalog =
+      exactPersistedCatalog ??
+      mergeModelCatalogEntry({
+        catalog: {
+          abilities: persistedModel?.abilities ?? exactBuiltinCard?.abilities,
+          contextWindowTokens:
+            persistedModel?.contextWindowTokens ?? exactBuiltinCard?.contextWindowTokens,
+          kind: fallbackKind,
+        },
+        modelId: model,
+        providerId: provider,
+      });
+
+    if (requireChatEligibility && !isPersistedModelChatEligible(catalog)) {
+      throw new Error(`MODEL_NOT_CHAT_ELIGIBLE: ${provider}/${model}`);
+    }
+
+    return createModelCatalogSnapshot(catalog.entry, operationId);
   }
 
   /**
@@ -1058,6 +1062,7 @@ export class AiAgentService {
       parentOperationId,
       resume,
       resumeApproval,
+      resumeInteraction,
       suppressUserMessage,
       ephemeralUserMessage,
     } = params;
@@ -1069,6 +1074,10 @@ export class AiAgentService {
 
     // Determine the identifier to use (agentId takes precedence)
     const identifier = agentId || slug!;
+
+    if (resumeApproval && resumeInteraction) {
+      throw new Error('resumeApproval and resumeInteraction are mutually exclusive');
+    }
 
     log('execAgent: identifier=%s, prompt=%s', identifier, prompt.slice(0, 50));
 
@@ -1247,12 +1256,11 @@ export class AiAgentService {
 
     let resumeParentMessage;
 
-    // `resumeApproval` implies the same "load parent message + skip user
-    // message creation" semantics as `resume`. Callers that go through the
-    // tRPC router get `resume: true` via the router, but the service-level
-    // API allows resumeApproval alone — fold both into a single effective
-    // flag so downstream resume branches don't need to know about approval.
-    const effectiveResume = resume || !!resumeApproval;
+    // Approval and interaction resumes share the same "load parent message +
+    // skip user message creation" semantics as `resume`. The router supplies
+    // `resume: true`, but service-level callers may provide either contract
+    // directly, so downstream branches consume one effective flag.
+    const effectiveResume = resume || !!resumeApproval || !!resumeInteraction;
 
     // Both resume and suppressUserMessage run the turn off existing history
     // instead of appending a new user message — share the message-construction
@@ -1292,6 +1300,18 @@ export class AiAgentService {
 
       if (resumeParentMessage.sessionId && resumeParentMessage.sessionId !== appContext.sessionId) {
         throw new Error('appContext.sessionId does not match parent message');
+      }
+
+      if (resumeInteraction) {
+        if (resumeInteraction.parentMessageId !== parentMessageId) {
+          throw new Error('resumeInteraction.parentMessageId does not match parentMessageId');
+        }
+        const expectedRole = resumeInteraction.phase === 'tool_result' ? 'tool' : 'user';
+        if (resumeParentMessage.role !== expectedRole) {
+          throw new Error(
+            `resumeInteraction phase '${resumeInteraction.phase}' requires a role='${expectedRole}' parent message`,
+          );
+        }
       }
     }
 
@@ -1657,6 +1677,14 @@ export class AiAgentService {
       keys: Object.keys(executionEnv.values).sort(),
       secretKeys: [...executionEnv.secretKeys].sort(),
     };
+    const additionalDirectoriesPrompt = buildAdditionalDirectoriesPrompt(
+      executionContext.accessRoots,
+    );
+    if (additionalDirectoriesPrompt) {
+      agentConfig.systemRole = agentConfig.systemRole
+        ? `${agentConfig.systemRole}\n\n${additionalDirectoriesPrompt}`
+        : additionalDirectoriesPrompt;
+    }
 
     // Freeze model and skill authority before the heterogeneous/native fork.
     // Both branches below consume these exact values; neither may query a
@@ -1669,6 +1697,7 @@ export class AiAgentService {
       model,
       operationId,
       provider,
+      requireChatEligibility: !isHeteroAgent,
     });
     const compressionModel = agentConfig.chatConfig?.compressionModelId
       ? { model: agentConfig.chatConfig.compressionModelId, provider }
@@ -1681,6 +1710,7 @@ export class AiAgentService {
             model: compressionModel.model,
             operationId,
             provider: compressionModel.provider,
+            requireChatEligibility: !isHeteroAgent,
           });
     const skillRegistryResult = await this.resolveFrozenSkillRegistry({
       activeDeviceId: planDeviceId,
@@ -1713,7 +1743,10 @@ export class AiAgentService {
         })),
       }),
       '</frozen_execution_authority>',
-    ].join('\n');
+      additionalDirectoriesPrompt,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     // Agent Signal is a governance side-channel (feedback / self-iteration). It
     // only applies to the server-side LLM pipeline, so it is intentionally NOT
@@ -3178,6 +3211,18 @@ export class AiAgentService {
           },
         };
       }
+    }
+
+    if (resumeInteraction?.phase === 'tool_result') {
+      initialContext = {
+        ...initialContext,
+        payload: {
+          ...(initialContext.payload as any),
+          isFirstMessage: false,
+          parentMessageId: resumeInteraction.parentMessageId,
+        },
+        phase: 'tool_result',
+      };
     }
 
     // 17. Log final operation parameters summary

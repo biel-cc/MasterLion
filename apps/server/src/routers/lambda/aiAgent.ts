@@ -206,6 +206,14 @@ const ExecAgentSchema = z
         toolCallId: z.string(),
       })
       .optional(),
+    /** Resume an already-persisted interaction result under server-owned runtime authority. */
+    resumeInteraction: z
+      .object({
+        parentMessageId: z.string().min(1),
+        phase: z.enum(['tool_result', 'user_input']),
+      })
+      .strict()
+      .optional(),
     /** The agent slug to run (either agentId or slug is required) */
     slug: z.string().optional(),
     /**
@@ -662,6 +670,7 @@ export const aiAgentRouter = router({
       fileIds,
       parentMessageId,
       resumeApproval,
+      resumeInteraction,
       trigger,
       userInterventionConfig,
     } = input;
@@ -682,6 +691,7 @@ export const aiAgentRouter = router({
         // human-approval resume — either way, skip user message creation.
         resume: !!parentMessageId,
         resumeApproval,
+        resumeInteraction,
         slug,
         trigger: trigger ?? RequestTrigger.Chat,
         userInterventionConfig,

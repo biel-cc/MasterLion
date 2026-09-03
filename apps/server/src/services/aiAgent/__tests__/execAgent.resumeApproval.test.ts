@@ -422,6 +422,91 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     });
   });
 
+  describe('resumeInteraction', () => {
+    it('seeds the explicit tool_result phase under a server-created operation', async () => {
+      await service.execAgent({
+        ...baseParams,
+        resumeInteraction: {
+          parentMessageId: 'tool-msg-1',
+          phase: 'tool_result',
+        },
+      });
+
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionContext: expect.any(Object),
+          initialContext: expect.objectContaining({
+            payload: expect.objectContaining({
+              isFirstMessage: false,
+              parentMessageId: 'tool-msg-1',
+            }),
+            phase: 'tool_result',
+          }),
+        }),
+      );
+    });
+
+    it('accepts user_input only when the persisted parent is a user message', async () => {
+      mockFindById.mockResolvedValue({
+        id: 'submitted-user-msg',
+        role: 'user',
+        sessionId: 'session-1',
+        threadId: 'thread-1',
+        topicId: 'topic-1',
+      });
+
+      await service.execAgent({
+        ...baseParams,
+        parentMessageId: 'submitted-user-msg',
+        resumeInteraction: {
+          parentMessageId: 'submitted-user-msg',
+          phase: 'user_input',
+        },
+      });
+
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionContext: expect.any(Object),
+          initialContext: expect.objectContaining({
+            payload: expect.objectContaining({ parentMessageId: 'submitted-user-msg' }),
+            phase: 'user_input',
+          }),
+        }),
+      );
+    });
+
+    it('rejects a forged phase that does not match the persisted parent role', async () => {
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeInteraction: {
+            parentMessageId: 'tool-msg-1',
+            phase: 'user_input',
+          },
+        }),
+      ).rejects.toThrow("requires a role='user' parent message");
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('rejects conflicting approval and interaction resume authority', async () => {
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeApproval: {
+            decision: 'approved',
+            parentMessageId: 'tool-msg-1',
+            toolCallId: 'call_xyz',
+          },
+          resumeInteraction: {
+            parentMessageId: 'tool-msg-1',
+            phase: 'tool_result',
+          },
+        }),
+      ).rejects.toThrow('mutually exclusive');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+  });
+
   it('falls back to the no-reason rejection string when rejectionReason is omitted', async () => {
     await service.execAgent({
       ...baseParams,

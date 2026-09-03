@@ -1310,6 +1310,113 @@ describe('ConversationControl actions', () => {
   });
 
   describe('submitToolInteraction', () => {
+    it('routes a desktop tool-result-only submit through the Gateway resume contract', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-result-only',
+        plugin: {
+          apiName: 'selectAgentTemplate',
+          arguments: '{}',
+          identifier: 'lobe-agent-marketplace',
+          type: 'default',
+        },
+        role: 'tool',
+      });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.submitToolInteraction(
+          toolMessage.id,
+          { templateId: 'template-1' },
+          undefined,
+          { createUserMessage: false, toolResultContent: 'Selected template' },
+        );
+      });
+
+      expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({ agentId, topicId }),
+          message: '',
+          parentMessageId: toolMessage.id,
+          resumeInteraction: {
+            parentMessageId: toolMessage.id,
+            phase: 'tool_result',
+          },
+        }),
+      );
+      expect(executeClientAgent).not.toHaveBeenCalled();
+    });
+
+    it('routes a desktop submit with a synthetic user message through Gateway user-input resume', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({ id: 'tool-msg-submit', role: 'tool' });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticCreateMessage').mockResolvedValue({
+        id: 'submitted-user-msg',
+        messages: [],
+      });
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.submitToolInteraction(toolMessage.id, { answer: 'yes' });
+      });
+
+      expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '',
+          parentMessageId: 'submitted-user-msg',
+          resumeInteraction: {
+            parentMessageId: 'submitted-user-msg',
+            phase: 'user_input',
+          },
+        }),
+      );
+      expect(executeClientAgent).not.toHaveBeenCalled();
+    });
+
     it('should create a user message and resume runtime from that user message', async () => {
       const { result } = renderHook(() => useChatStore());
 
@@ -1616,6 +1723,54 @@ describe('ConversationControl actions', () => {
   });
 
   describe('skipToolInteraction', () => {
+    it('routes a desktop skip through Gateway user-input resume', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({ id: 'tool-msg-skip', role: 'tool' });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticCreateMessage').mockResolvedValue({
+        id: 'skipped-user-msg',
+        messages: [],
+      });
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+
+      await act(async () => {
+        await result.current.skipToolInteraction(toolMessage.id, 'later');
+      });
+
+      expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '',
+          parentMessageId: 'skipped-user-msg',
+          resumeInteraction: {
+            parentMessageId: 'skipped-user-msg',
+            phase: 'user_input',
+          },
+        }),
+      );
+      expect(executeClientAgent).not.toHaveBeenCalled();
+    });
+
     it('should create a user message and resume runtime from that user message', async () => {
       const { result } = renderHook(() => useChatStore());
 

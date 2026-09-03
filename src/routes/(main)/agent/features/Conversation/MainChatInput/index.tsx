@@ -3,8 +3,11 @@
 import { memo, useMemo } from 'react';
 
 import { type ActionKeys } from '@/features/ChatInput';
+import { useBindWorkspaceOnce } from '@/features/ChatInput/ControlBar/useBindWorkspaceOnce';
+import { useWorkspaceBindingIntentConfirmation } from '@/features/ChatInput/ControlBar/useWorkspaceBindingIntentConfirmation';
 import { ChatInput } from '@/features/Conversation';
 import { contextSelectors, useConversationStore } from '@/features/Conversation/store';
+import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useModelSupportImageOutput } from '@/hooks/useModelSupportImageOutput';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors } from '@/store/agent/selectors';
@@ -35,6 +38,12 @@ const MainChatInput = memo(() => {
   const provider = useAgentStore(agentByIdSelectors.getAgentModelProviderById(agentId));
   const isAgentConfigLoading = useAgentStore(agentByIdSelectors.isAgentConfigLoadingById(agentId));
   const supportsImageOutput = useModelSupportImageOutput(model, provider);
+  const effectiveWorkspace = useEffectiveWorkspace(agentId);
+  const workspaceBinding = useBindWorkspaceOnce(effectiveWorkspace);
+  const confirmWorkspaceBinding = useWorkspaceBindingIntentConfirmation(
+    effectiveWorkspace,
+    workspaceBinding,
+  );
   const rightActions = supportsImageOutput
     ? promptTransformRightActions
     : contextWindowRightActions;
@@ -49,6 +58,7 @@ const MainChatInput = memo(() => {
         isConfigLoading={isAgentConfigLoading}
         leftActions={leftActions}
         rightActions={rightActions}
+        onBeforeSend={confirmWorkspaceBinding}
         {...(isDevMode
           ? { sendMenu: { items: sendMenuItems } }
           : { sendButtonProps: { shape: 'round' } })}

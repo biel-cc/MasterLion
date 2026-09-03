@@ -284,19 +284,26 @@ export default class GatewayConnectionCtr extends ControllerModule {
   }
 
   /**
-   * Execute a server-dispatched standalone Electron local-system call through
-   * the same device-authoritative boundary as the central gateway transport.
-   * The renderer is only a courier: main independently realpaths and validates
-   * every path against the frozen execution context before touching the host.
+   * Compatibility shim for older renderers. Local-system authority is issued
+   * only by the authenticated server -> central gateway channel wired in
+   * `afterAppReady`; renderer-supplied context/trace values are forgeable.
    */
   @IpcMethod()
-  async executeLocalToolCall(params: {
+  async executeLocalToolCall(_params: {
     apiName: string;
     args: Record<string, unknown>;
     executionContext?: GatewayToolCallExecutionContext;
     trace?: ExecutionBoundaryTrace;
   }): Promise<BuiltinServerRuntimeOutput> {
-    return this.executeToolCall(params.apiName, params.args, params.executionContext, params.trace);
+    return {
+      content: 'SERVER_AUTHORITY_REQUIRED',
+      error: {
+        code: 'SERVER_AUTHORITY_REQUIRED',
+        message: 'Local-system calls must be dispatched by the authenticated server gateway.',
+      },
+      state: { code: 'SERVER_AUTHORITY_REQUIRED' },
+      success: false,
+    };
   }
 
   // ─── Auto Connect ───

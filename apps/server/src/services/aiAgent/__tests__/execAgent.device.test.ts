@@ -26,8 +26,10 @@ const {
   MockWorkspaceAlreadyBoundError,
   mockBindingBind,
   mockBindingGetState,
+  mockBuildAccessRoots,
   mockDecryptWorkspaceEnv,
   mockDeleteScratch,
+  mockFindAiModel,
   mockFindWorkspaceById,
   mockGetOrCreateWorkspace,
   mockGetUserSettings,
@@ -42,8 +44,10 @@ const {
   },
   mockBindingBind: vi.fn(),
   mockBindingGetState: vi.fn(),
+  mockBuildAccessRoots: vi.fn(),
   mockDecryptWorkspaceEnv: vi.fn(),
   mockDeleteScratch: vi.fn(),
+  mockFindAiModel: vi.fn(),
   mockFindWorkspaceById: vi.fn(),
   mockGetOrCreateWorkspace: vi.fn(),
   mockGetUserSettings: vi.fn(),
@@ -60,6 +64,13 @@ vi.mock('@/database/models/message', () => ({
     create: mockMessageCreate,
     query: vi.fn().mockResolvedValue([]),
     update: vi.fn().mockResolvedValue({}),
+  })),
+}));
+
+vi.mock('@/database/models/aiModel', () => ({
+  AiModelModel: vi.fn().mockImplementation(() => ({
+    findByIdAndProvider: mockFindAiModel,
+    getAllModels: vi.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -131,7 +142,7 @@ vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
 
 vi.mock('@/server/services/workspaceAccessGrant', () => ({
   WorkspaceAccessGrantService: vi.fn().mockImplementation(() => ({
-    buildAccessRoots: vi.fn().mockResolvedValue([]),
+    buildAccessRoots: mockBuildAccessRoots,
   })),
 }));
 
@@ -216,6 +227,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       operationId: 'op-123',
       success: true,
     });
+    mockBuildAccessRoots.mockResolvedValue([]);
     // Reset device proxy state
     mockDeviceProxy.isConfigured = false;
     mockDeviceProxy.cleanupScratchWorkspace.mockResolvedValue(undefined);
@@ -227,6 +239,7 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
     mockBindingBind.mockReset();
     mockDeleteScratch.mockResolvedValue(undefined);
     mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockFindAiModel.mockResolvedValue(undefined);
     mockGetOrCreateWorkspace.mockReset();
     mockGetUserSettings.mockResolvedValue({});
     mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
@@ -535,6 +548,147 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
         source: 'direct-user-message',
         topicId: 'topic-1',
       });
+      expect(createOpArgs.agentConfig.systemRole).not.toContain('/outside/docs');
+    });
+
+    it('injects active topic grants into the agent prompt on a later operation', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([onlineDevice]);
+      mockBuildAccessRoots.mockResolvedValue([
+        {
+          deviceId: 'device-001',
+          grantId: 'grant-private-id',
+          modes: ['read', 'write'],
+          rootPath: '/approved/additional/',
+          scope: 'topic',
+          source: 'user-approval',
+          topicId: 'topic-1',
+        },
+      ]);
+
+      await service.execAgent({
+        agentId: 'agent-1',
+        prompt: 'Continue the prior work',
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.agentConfig.systemRole).toContain('<additional_directories>');
+      expect(createOpArgs.agentConfig.systemRole).toContain(
+        '<directory path="/approved/additional" modes="read,write" scope="topic" />',
+      );
+      expect(createOpArgs.agentConfig.systemRole).not.toMatch(/grant-private-id|device-001|topic-1/);
+    });
+
+    it('rejects a reranker even when an exact persisted catalog mislabeled it as chat', async () => {
+      const { AgentService } = await import('@/server/services/agent');
+      vi.mocked(AgentService).mockImplementationOnce(
+        () =>
+          ({
+            getAgentConfig: vi.fn().mockResolvedValue({
+              chatConfig: {},
+              files: [],
+              id: 'agent-1',
+              knowledgeBases: [],
+              model: 'qwen3-vl-rerank',
+              plugins: [],
+              provider: 'newapi',
+            }),
+          }) as any,
+      );
+      mockFindAiModel.mockResolvedValue({
+        settings: {
+          modelCatalog: {
+            denied: false,
+            drift: [],
+            entry: {
+              abilitySources: { text: 'catalog:chat-kind' },
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'qwen3-vl-rerank',
+              providerId: 'newapi',
+            },
+            version: 1,
+          },
+        },
+        type: 'chat',
+      });
+      service = new AiAgentService(mockDb, userId);
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'Rank these documents' }),
+      ).rejects.toThrow('MODEL_NOT_CHAT_ELIGIBLE');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('keeps exact builtin provider chat evidence eligible when catalog persistence fails', async () => {
+      mockFindAiModel.mockRejectedValueOnce(new Error('catalog database unavailable'));
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'Use the builtin chat model' }),
+      ).resolves.toMatchObject({ success: true });
+      expect(mockCreateOperation).toHaveBeenCalledOnce();
+    });
+
+    it('does not turn an unknown main model into chat when catalog persistence fails', async () => {
+      const { AgentService } = await import('@/server/services/agent');
+      vi.mocked(AgentService).mockImplementationOnce(
+        () =>
+          ({
+            getAgentConfig: vi.fn().mockResolvedValue({
+              chatConfig: {},
+              files: [],
+              id: 'agent-1',
+              knowledgeBases: [],
+              model: 'private-unknown-v9',
+              plugins: [],
+              provider: 'private-provider',
+            }),
+          }) as any,
+      );
+      mockFindAiModel.mockRejectedValueOnce(new Error('catalog database unavailable'));
+      service = new AiAgentService(mockDb, userId);
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'Continue' }),
+      ).rejects.toThrow('MODEL_NOT_CHAT_ELIGIBLE');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown compression model before operation creation', async () => {
+      const { AgentService } = await import('@/server/services/agent');
+      vi.mocked(AgentService).mockImplementationOnce(
+        () =>
+          ({
+            getAgentConfig: vi.fn().mockResolvedValue({
+              chatConfig: { compressionModelId: 'unknown-compressor' },
+              files: [],
+              id: 'agent-1',
+              knowledgeBases: [],
+              model: 'gpt-4',
+              plugins: [],
+              provider: 'openai',
+            }),
+          }) as any,
+      );
+      mockFindAiModel
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('catalog database unavailable'));
+      service = new AiAgentService(mockDb, userId);
+
+      await expect(
+        service.execAgent({ agentId: 'agent-1', prompt: 'Continue' }),
+      ).rejects.toThrow('MODEL_NOT_CHAT_ELIGIBLE');
+      expect(mockFindAiModel).toHaveBeenCalledWith('unknown-compressor', 'openai');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
     });
 
     it('freezes an Electron local intent to the same online gateway device', async () => {

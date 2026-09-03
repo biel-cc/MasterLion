@@ -365,6 +365,41 @@ describe('CompressionRepository', () => {
     });
   });
 
+  describe('markCompressionFailed', () => {
+    it('restores source messages while retaining sanitized failure evidence', async () => {
+      await serverDB.insert(messages).values([
+        { id: 'msg-failed-1', content: 'Message 1', role: 'user', topicId, userId },
+        { id: 'msg-failed-2', content: 'Message 2', role: 'assistant', topicId, userId },
+      ]);
+
+      const groupId = await compressionRepo.createCompressionGroup({
+        content: '...',
+        messageIds: ['msg-failed-1', 'msg-failed-2'],
+        metadata: { compressionStatus: 'pending', originalMessageCount: 2 },
+        topicId,
+      });
+
+      await compressionRepo.markCompressionFailed(groupId);
+
+      const groups = await compressionRepo.getCompressionGroups(topicId);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]).toMatchObject({
+        content: '',
+        id: groupId,
+        metadata: {
+          compressionStatus: 'failed',
+          failureCode: 'SUMMARY_FAILED',
+          originalMessageCount: 2,
+        },
+      });
+      expect((groups[0].metadata as any).failedAt).toEqual(expect.any(String));
+      expect(await compressionRepo.getCompressedMessages(groupId)).toHaveLength(0);
+      expect(
+        (await compressionRepo.getUncompressedMessages(topicId)).map((item) => item.id),
+      ).toEqual(expect.arrayContaining(['msg-failed-1', 'msg-failed-2']));
+    });
+  });
+
   describe('unmarkMessagesFromCompression', () => {
     it('should remove messages from compression group', async () => {
       await serverDB.insert(messages).values([

@@ -7,5 +7,5 @@ export type {
   DeviceToolCallResult,
   GatewayHttpClientOptions,
 } from './http';
-export { GatewayHttpClient } from './http';
+export { GatewayHttpClient, parseExecutionContextValidation } from './http';
 export * from './types';

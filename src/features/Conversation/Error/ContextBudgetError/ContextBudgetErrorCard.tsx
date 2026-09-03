@@ -2,7 +2,7 @@ import { Icon } from '@lobehub/ui';
 import { Button } from '@lobehub/ui/base-ui';
 import { createStaticStyles } from 'antd-style';
 import { ChevronDown, ChevronRight, TriangleAlert } from 'lucide-react';
-import { memo, useId, useState } from 'react';
+import { Fragment, memo, type ReactNode, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -139,6 +139,7 @@ export interface ContextBudgetErrorCardProps {
   /** Action currently running; its button shows a loading state and the rest stay clickable. */
   loadingAction?: ContextBudgetUIAction;
   onAction: (action: ContextBudgetUIAction) => Promise<void> | void;
+  renderAction?: (action: ContextBudgetUIAction, button: ReactNode) => ReactNode;
   viewModel: ContextBudgetErrorViewModel;
 }
 
@@ -150,7 +151,7 @@ const formatShare = (share: number) => `${Math.round(share * 100)}%`;
  * actions through `onAction`; it never touches stores or the shared executor.
  */
 const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
-  ({ actionErrorKey, loadingAction, onAction, viewModel }) => {
+  ({ actionErrorKey, loadingAction, onAction, renderAction, viewModel }) => {
     const { t: tr } = useTranslation('error');
     const baseId = useId();
     const titleId = `${baseId}-title`;
@@ -197,22 +198,29 @@ const ContextBudgetErrorCard = memo<ContextBudgetErrorCardProps>(
             className={styles.actions}
             role={'group'}
           >
-            {actions.map((action) => (
-              <Button
-                aria-describedby={action.disabledReasonKey ? reasonId : undefined}
-                disabled={action.disabled}
-                key={action.id}
-                loading={loadingAction === action.id}
-                size={'small'}
-                type={action.primary ? 'primary' : 'default'}
-                onClick={() => {
-                  if (action.disabled) return;
-                  void onAction(action.id);
-                }}
-              >
-                {tr(action.labelKey)}
-              </Button>
-            ))}
+            {actions.map((action) => {
+              const button = (
+                <Button
+                  aria-describedby={action.disabledReasonKey ? reasonId : undefined}
+                  disabled={action.disabled}
+                  loading={loadingAction === action.id}
+                  size={'small'}
+                  type={action.primary ? 'primary' : 'default'}
+                  onClick={() => {
+                    if (action.disabled) return;
+                    void onAction(action.id);
+                  }}
+                >
+                  {tr(action.labelKey)}
+                </Button>
+              );
+
+              return (
+                <Fragment key={action.id}>
+                  {renderAction ? renderAction(action.id, button) : button}
+                </Fragment>
+              );
+            })}
           </div>
         )}
 

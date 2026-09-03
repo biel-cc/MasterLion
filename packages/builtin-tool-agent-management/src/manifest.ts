@@ -109,6 +109,7 @@ export const AgentManagementManifest: BuiltinToolManifest = {
             type: 'object',
           },
           meta: {
+            additionalProperties: false,
             description: 'Partial metadata to update',
             properties: {
               title: {

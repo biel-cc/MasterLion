@@ -7,11 +7,13 @@ import type {
 
 /** A single live gateway WebSocket connection belonging to a device. */
 export interface DeviceConnection {
+  capabilities?: DeviceGatewayCapabilities;
   /** Freeform routing label, e.g. `desktop` / `desktop-dev` / `cli` / `cli-dev`. */
   channel?: string;
   connectedAt: number;
   /** Per-install random UUID — the gateway's stale-connection dedupe key. */
   connectionId: string;
+  protocolVersion?: number;
 }
 
 /**
@@ -44,8 +46,21 @@ export interface DeviceSystemInfo {
 
 // ─── WebSocket Protocol Messages (mirrors the device-gateway service's types) ───
 
+/**
+ * Optional features negotiated during authentication. Absence always means
+ * legacy/unknown; callers must not infer hard validation from a new server or
+ * from the presence of an executionContext request alone.
+ */
+export interface DeviceGatewayCapabilities {
+  executionContextValidation?: boolean;
+}
+
+export const CURRENT_DEVICE_GATEWAY_PROTOCOL_VERSION = 2;
+
 // Client → Server
 export interface AuthMessage {
+  capabilities?: DeviceGatewayCapabilities;
+  protocolVersion?: number;
   serverUrl?: string;
   token: string;
   tokenType?: 'apiKey' | 'jwt' | 'serviceToken';

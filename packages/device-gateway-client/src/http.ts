@@ -17,9 +17,43 @@ export interface DeviceStatusResult {
 export interface DeviceToolCallResult {
   content: string;
   error?: string;
+  executionContextValidation?: 'hard' | 'legacy';
   state?: unknown;
   success: boolean;
+  warning?: {
+    code: 'DEVICE_UPGRADE_RECOMMENDED';
+    message: string;
+  };
 }
+
+/** Missing/unknown rolling-upgrade metadata must never be treated as hard validation. */
+export const parseExecutionContextValidation = (value: unknown): 'hard' | 'legacy' =>
+  value === 'hard' ? 'hard' : 'legacy';
+
+const getExecutionContextValidationResult = (
+  requested: boolean,
+  toolCallType: GatewayToolCallType | undefined,
+  responseValue: unknown,
+): Pick<DeviceToolCallResult, 'executionContextValidation' | 'warning'> => {
+  if (!requested) return {};
+
+  // Protocol v2 does not define hard execution-context validation for the
+  // device MCP path. Keep this client-side check even when a buggy or newer
+  // gateway sends "hard", so an unknown combination always fails legacy.
+  const executionContextValidation =
+    toolCallType === 'mcp' ? 'legacy' : parseExecutionContextValidation(responseValue);
+  return {
+    executionContextValidation,
+    warning:
+      executionContextValidation === 'legacy'
+        ? {
+            code: 'DEVICE_UPGRADE_RECOMMENDED',
+            message:
+              'The gateway path did not confirm hard execution-context validation. Upgrade the Masterino server and Desktop or CLI before relying on workspace enforcement.',
+          }
+        : undefined,
+  };
+};
 
 export interface DeviceMessageApiResult {
   content: string;
@@ -161,6 +195,11 @@ export class GatewayHttpClient {
       return {
         content: `Device tool call failed (HTTP ${res.status})`,
         error: text || `HTTP ${res.status}`,
+        ...getExecutionContextValidationResult(
+          Boolean(params.executionContext),
+          toolCall.type,
+          undefined,
+        ),
         success: false,
       };
     }
@@ -182,6 +221,11 @@ export class GatewayHttpClient {
               ? data.error
               : '',
       error: data.error,
+      ...getExecutionContextValidationResult(
+        Boolean(params.executionContext),
+        toolCall.type,
+        data.executionContextValidation,
+      ),
       state: data.state,
       success: data.success ?? true,
     };

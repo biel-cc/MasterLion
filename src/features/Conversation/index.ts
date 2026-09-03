@@ -19,7 +19,11 @@ export type {
 } from './types';
 
 // Components
-export { default as ChatInput, type ChatInputProps } from './ChatInput';
+export {
+  type BeforeSendPayload,
+  default as ChatInput,
+  type ChatInputProps,
+} from './ChatInput';
 export { default as ChatList, type ChatListProps } from './ChatList';
 export { default as MessageItem, type MessageItemProps } from './Messages';
 export { default as TodoProgress } from './TodoProgress';

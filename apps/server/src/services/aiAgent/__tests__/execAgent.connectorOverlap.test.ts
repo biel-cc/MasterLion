@@ -1,7 +1,17 @@
+import '../_testFixtures/executionAuthority';
+
 import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AiAgentService } from '../index';
+
+vi.mock('@/database/models/user', () => {
+  const UserModel = vi.fn().mockImplementation(() => ({
+    getUserSettings: vi.fn().mockResolvedValue(undefined),
+  })) as any;
+  UserModel.getInfoForAIGeneration = vi.fn().mockResolvedValue({});
+  return { UserModel };
+});
 
 const {
   mockConnectorQueryByIdentifiers,

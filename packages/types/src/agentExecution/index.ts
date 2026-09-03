@@ -167,6 +167,13 @@ export interface ExecAgentParams {
     rejectionReason?: string;
     toolCallId: string;
   };
+  /** Resume an interaction card after its result has already been persisted. */
+  resumeInteraction?: {
+    /** Persisted message that the resumed runtime must branch from. */
+    parentMessageId: string;
+    /** Explicit runtime phase; prevents a tool result from becoming an empty user turn. */
+    phase: 'tool_result' | 'user_input';
+  };
   /** The agent slug to run (either agentId or slug is required) */
   slug?: string;
 }

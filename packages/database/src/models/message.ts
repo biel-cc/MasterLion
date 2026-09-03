@@ -9,6 +9,7 @@ import type {
   ChatVideoItem,
   CommitToolResultInput,
   CommitToolResultResult,
+  CompressionGroupMetadata,
   CreateMessageParams,
   DBMessageItem,
   EnsureToolMessageInput,
@@ -1266,7 +1267,7 @@ export class MessageModel {
       );
     }
 
-    const groups = await runTimedStage(
+    const queriedGroups = await runTimedStage(
       timing,
       'db.message.messageGroups.groups.select',
       () =>
@@ -1277,7 +1278,22 @@ export class MessageModel {
           .orderBy(asc(messageGroups.createdAt)),
       { hasTimeRange: !!timeRange, topicId },
     );
-    logTiming(timing, 'db.message.messageGroups.groups.select:rows', { rowCount: groups.length });
+    logTiming(timing, 'db.message.messageGroups.groups.select:rows', {
+      rowCount: queriedGroups.length,
+    });
+
+    // Failed compression attempts remain in message_groups for audit/retry diagnosis, but their
+    // original messages have been restored and the failed placeholder must not enter the visible
+    // conversation trajectory.
+    const groups = queriedGroups.filter((group) => {
+      if (!group.description) return true;
+      try {
+        const metadata = JSON.parse(group.description) as CompressionGroupMetadata;
+        return metadata.compressionStatus !== 'failed';
+      } catch {
+        return true;
+      }
+    });
 
     if (groups.length === 0) return [];
 

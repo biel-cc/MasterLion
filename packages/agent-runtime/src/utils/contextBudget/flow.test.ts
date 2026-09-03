@@ -120,6 +120,39 @@ describe('runContextBudgetedCall', () => {
     expect(result.evaluations.some((item) => item.window.source === 'observed')).toBe(true);
   });
 
+  it('discards each failed provider attempt before retrying or returning exhausted', async () => {
+    const lifecycle: string[] = [];
+    const callProvider = vi.fn(async () => {
+      lifecycle.push(`provider:${callProvider.mock.calls.length}`);
+      throw { code: 'ExceededContextWindow', contextWindowTokens: 32_000 };
+    });
+    const onProviderAttemptDiscard = vi.fn(
+      ({ attempt, willRetry }: { attempt: 1 | 2; willRetry: boolean }) => {
+        lifecycle.push(`discard:${attempt}:${willRetry}`);
+      },
+    );
+
+    const result = await runContextBudgetedCall({
+      ...base,
+      callProvider,
+      compress: async (payload, evaluation) => {
+        lifecycle.push('compress');
+        return { outcome: compressedOutcome(evaluation), payload: reducedPayload(payload) };
+      },
+      onProviderAttemptDiscard,
+      payload: { messages: [assistant('old', 20_000), user('latest', 'go')] },
+    });
+
+    expect(result).toMatchObject({ decision: { code: 'RETRY_EXHAUSTED' }, kind: 'fail' });
+    expect(lifecycle).toEqual([
+      'provider:1',
+      'discard:1:true',
+      'compress',
+      'provider:2',
+      'discard:2:false',
+    ]);
+  });
+
   it('does not call the provider for a 200k non-compressible attachment tail', async () => {
     const callProvider = vi.fn(async () => 'never');
     const compress = vi.fn();

@@ -2,14 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { agentBuilderRuntime } from '../agentBuilder';
 
-const { mockGetAgentConfigById, mockUpdateConfig } = vi.hoisted(() => ({
+const { mockGetAgentConfigById, mockUpdate, mockUpdateConfig } = vi.hoisted(() => ({
   mockGetAgentConfigById: vi.fn(),
+  mockUpdate: vi.fn(),
   mockUpdateConfig: vi.fn(),
 }));
 
 vi.mock('@/database/models/agent', () => ({
   AgentModel: vi.fn(() => ({
     getAgentConfigById: mockGetAgentConfigById,
+    update: mockUpdate,
     updateConfig: mockUpdateConfig,
   })),
 }));
@@ -42,6 +44,25 @@ describe('agentBuilderRuntime', () => {
 
     expect(result.success).toBe(false);
     expect(result.content).toContain('managed by the execution runtime: NODE_OPTIONS');
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+  });
+
+  it('rejects agencyConfig and unknown fields smuggled through meta', async () => {
+    const runtime = createRuntime();
+
+    const result = await runtime.updateConfig(
+      {
+        meta: {
+          agencyConfig: { env: { SAFE_NAME: 'still-not-metadata' } },
+          title: 'Allowed title',
+        },
+      } as any,
+      { agentId: 'agent-1', toolManifestMap: {} },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.content).toContain('Unsupported agent metadata fields: agencyConfig');
+    expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockUpdateConfig).not.toHaveBeenCalled();
   });
 

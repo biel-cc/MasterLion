@@ -1,5 +1,6 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, type ReactNode, useCallback, useMemo, useState } from 'react';
 
+import { useChatEligibleModelList } from '@/components/ModelSelect';
 import { useConversationStore } from '@/features/Conversation/store';
 import {
   buildContextBudgetErrorViewModel,
@@ -7,8 +8,11 @@ import {
   type ContextBudgetTranslationKey,
   type ContextBudgetUIAction,
 } from '@/features/Conversation/utils/contextBudgetView';
+import ModelSwitchPanel from '@/features/ModelSwitchPanel';
 import { usePermission } from '@/hooks/usePermission';
 import { messageService } from '@/services/message';
+import { useAgentStore } from '@/store/agent';
+import { agentByIdSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
 
 import { useRetryParentMessage } from '../useRetryParentMessage';
@@ -48,10 +52,27 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
   } = useRetryParentMessage(id);
   const [pendingAction, setPendingAction] = useState<ContextBudgetUIAction>();
   const [actionErrorKey, setActionErrorKey] = useState<ContextBudgetTranslationKey>();
+  const [compressionModelSwitcherOpen, setCompressionModelSwitcherOpen] = useState(false);
   const replaceMessages = useConversationStore((s) => s.replaceMessages);
   const updateMessageContent = useConversationStore((s) => s.updateMessageContent);
   const toolResultIds = useConversationStore((s) =>
     s.dbMessages.filter((message) => message.role === 'tool').map((message) => message.id),
+  );
+  const agentId = typeof context?.agentId === 'string' ? context.agentId : '';
+  const [compressionModelId, provider, updateAgentConfigById] = useAgentStore((s) => {
+    const config = agentByIdSelectors.getAgentConfigById(agentId)(s);
+    return [
+      config?.chatConfig?.compressionModelId ?? config?.model ?? '',
+      config?.provider ?? '',
+      s.updateAgentConfigById,
+    ] as const;
+  });
+  const chatModelList = useChatEligibleModelList();
+  // ChatConfig currently stores only a compression model id, so the picker is intentionally
+  // limited to the conversation provider. This prevents selecting an unusable cross-provider id.
+  const compressionModelList = useMemo(
+    () => chatModelList.filter((item) => item.id === provider),
+    [chatModelList, provider],
   );
 
   const canCompact = canCreate && Boolean(context?.topicId) && !retryDisabled;
@@ -67,6 +88,30 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
     trigger?.focus();
     trigger?.click();
   }, []);
+
+  const openCompressionModelSwitcher = useCallback(() => {
+    setCompressionModelSwitcherOpen(true);
+  }, []);
+
+  const updateCompressionModel = useCallback(
+    async ({ model, provider: selectedProvider }: { model: string; provider: string }) => {
+      if (!agentId || selectedProvider !== provider) return;
+
+      try {
+        await updateAgentConfigById(
+          agentId,
+          { chatConfig: { compressionModelId: model } },
+          { throwOnError: true },
+        );
+        setActionErrorKey(undefined);
+        setCompressionModelSwitcherOpen(false);
+      } catch (error) {
+        console.error('[ContextBudgetError] compression model update failed:', error);
+        setActionErrorKey('contextBudget.actionFailed');
+      }
+    },
+    [agentId, provider, updateAgentConfigById],
+  );
 
   const detachAttachmentsAndRetry = useCallback(async () => {
     if (!canCreate || !parentId) return;
@@ -97,10 +142,7 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
       detach_attachments: callbacks?.onDetachAttachments ?? detachAttachmentsAndRetry,
       fork_topic: callbacks?.onForkTopic ?? (context?.topicId ? forkTopic : undefined),
       retry_compression: callbacks?.onRetryCompression ?? compactAndRetry,
-      // Compression currently uses the conversation model. Both actions open
-      // the same model chooser until a dedicated compression-model control is
-      // introduced, so the recovery is real rather than a dead button.
-      switch_compression_model: callbacks?.onSwitchCompressionModel ?? openModelSwitcher,
+      switch_compression_model: callbacks?.onSwitchCompressionModel ?? openCompressionModelSwitcher,
       switch_model: callbacks?.onSwitchModel ?? openModelSwitcher,
       truncate_tool_results: callbacks?.onTruncateToolResults ?? truncateToolResultsAndRetry,
     }),
@@ -110,8 +152,46 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
       context?.topicId,
       detachAttachmentsAndRetry,
       forkTopic,
+      openCompressionModelSwitcher,
       openModelSwitcher,
       truncateToolResultsAndRetry,
+    ],
+  );
+
+  const renderAction = useCallback(
+    (action: ContextBudgetUIAction, button: ReactNode) => {
+      if (
+        action !== 'switch_compression_model' ||
+        callbacks?.onSwitchCompressionModel ||
+        !agentId ||
+        !provider
+      ) {
+        return button;
+      }
+
+      return (
+        <ModelSwitchPanel
+          enabledList={compressionModelList}
+          model={compressionModelId}
+          open={compressionModelSwitcherOpen}
+          openOnHover={false}
+          placement={'bottomLeft'}
+          provider={provider}
+          onModelChange={updateCompressionModel}
+          onOpenChange={setCompressionModelSwitcherOpen}
+        >
+          {button}
+        </ModelSwitchPanel>
+      );
+    },
+    [
+      agentId,
+      callbacks?.onSwitchCompressionModel,
+      compressionModelId,
+      compressionModelList,
+      compressionModelSwitcherOpen,
+      provider,
+      updateCompressionModel,
     ],
   );
 
@@ -155,6 +235,7 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
     <ContextBudgetErrorCard
       actionErrorKey={actionErrorKey}
       loadingAction={retryLoading ? 'retry_compression' : pendingAction}
+      renderAction={renderAction}
       viewModel={viewModel}
       onAction={handleAction}
     />

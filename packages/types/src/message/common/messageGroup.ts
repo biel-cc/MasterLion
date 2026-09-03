@@ -1,4 +1,3 @@
-
 /**
  * Message group type
  * - parallel: multi-model parallel conversations
@@ -17,12 +16,17 @@ export type IMessageGroupType = (typeof MessageGroupType)[keyof typeof MessageGr
 export interface CompressionGroupMetadata {
   compressedAt?: string;
   compressedTokenCount?: number;
+  /** Durable lifecycle marker used to keep failed summary attempts auditable. */
+  compressionStatus?: 'completed' | 'failed' | 'pending';
   // Compression info
   compressionStrategy?: 'summarize';
 
   endMessageId?: string;
   // UI state
   expanded?: boolean;
+  failedAt?: string;
+  /** Stable, non-sensitive failure category. Raw provider errors must never be stored here. */
+  failureCode?: 'SUMMARY_FAILED';
   originalMessageCount?: number;
 
   // Statistics

@@ -16,6 +16,7 @@ import {
 
 const mockCreateCompressionGroup = vi.fn();
 const mockCancelCompression = vi.fn();
+const mockFailCompression = vi.fn();
 const mockFinalizeCompression = vi.fn();
 const mockBuiltinModels = vi.hoisted(() => [
   {
@@ -60,6 +61,7 @@ vi.mock('@/server/services/message', () => ({
   MessageService: vi.fn().mockImplementation(() => ({
     cancelCompression: mockCancelCompression,
     createCompressionGroup: mockCreateCompressionGroup,
+    failCompression: mockFailCompression,
     finalizeCompression: mockFinalizeCompression,
   })),
 }));
@@ -137,6 +139,7 @@ describe('RuntimeExecutors', () => {
     mockUploadBase64.mockReset();
     vi.mocked(initModelRuntimeFromDB).mockReset();
     mockCancelCompression.mockReset();
+    mockFailCompression.mockReset();
     mockCreateCompressionGroup.mockReset();
     mockFinalizeCompression.mockReset();
     mockCreateCompressionGroup.mockResolvedValue({
@@ -145,6 +148,7 @@ describe('RuntimeExecutors', () => {
       success: true,
     });
     mockCancelCompression.mockResolvedValue({ messages: [], success: true });
+    mockFailCompression.mockResolvedValue({ messages: [], success: true });
     mockFinalizeCompression.mockResolvedValue({ success: true });
     vi.mocked(initModelRuntimeFromDB).mockResolvedValue({
       chat: vi.fn().mockImplementation(async (_payload: any, options: any) => {
@@ -633,7 +637,167 @@ describe('RuntimeExecutors', () => {
       expect(mockCancelCompression).not.toHaveBeenCalled();
     });
 
-    it('rolls back a pending final-preflight compression group when summarization fails', async () => {
+    it('discards a partial provider attempt before context compression retry commits final output', async () => {
+      const staleToolCall = [
+        {
+          function: { arguments: '{"path":"stale"}', name: 'filesystem____write' },
+          id: 'stale-tool',
+          type: 'function',
+        },
+      ];
+      let mainAttempt = 0;
+      const chat = vi.fn().mockImplementation(async (payload: any, options: any) => {
+        if (payload.model === 'summary-model') {
+          await options.callback.onText?.('safe summary');
+          return new Response('summary');
+        }
+
+        mainAttempt += 1;
+        if (mainAttempt === 1) {
+          await options.callback.onText?.('stale partial');
+          await options.callback.onThinking?.('stale reasoning');
+          await options.callback.onContentPart?.({
+            content: 'stale-content-image',
+            mimeType: 'image/png',
+            partType: 'image',
+          });
+          await options.callback.onReasoningPart?.({
+            content: 'stale-reasoning-image',
+            mimeType: 'image/png',
+            partType: 'image',
+          });
+          await options.callback.onGrounding?.({ query: 'stale grounding' });
+          await options.callback.onToolsCalling?.({ toolsCalling: staleToolCall });
+          await options.callback.onCompletion?.({
+            usage: { totalInputTokens: 999, totalOutputTokens: 999, totalTokens: 1998 },
+          });
+          await options.callback.onError?.({
+            contextWindowTokens: 16_000,
+            message: 'maximum context length is 16000 tokens',
+            type: 'ExceededContextWindow',
+          });
+          return new Response('rejected');
+        }
+
+        await options.callback.onText?.('final only');
+        await options.callback.onCompletion?.({
+          usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+        });
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockUploadBase64.mockResolvedValue({ url: 'https://files.example/stale.png' });
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'provider-recovery-group',
+        messagesToSummarize: [
+          { content: 'x'.repeat(40_000), id: 'old-history', role: 'user' },
+        ],
+        success: true,
+      });
+      mockFinalizeCompression.mockResolvedValue({
+        messages: [
+          { content: 'safe summary', id: 'provider-recovery-group', role: 'compressedGroup' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+          { content: '', id: 'msg-123', role: 'assistant' },
+        ],
+        success: true,
+      });
+      const messages = [
+        { content: 'x'.repeat(40_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 128_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'supported',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        modelRuntimeConfig: {
+          compressionModel: { model: 'summary-model', provider: 'openai' },
+          model: 'gpt-4',
+          provider: 'openai',
+        },
+      });
+
+      const result = await createRuntimeExecutors(ctx).call_llm!(
+        {
+          payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+          type: 'call_llm' as const,
+        },
+        state,
+      );
+
+      expect(mainAttempt).toBe(2);
+      expect(result.nextContext?.payload).toMatchObject({
+        hasToolsCalling: false,
+        result: { content: 'final only', tool_calls: [] },
+        toolsCalling: [],
+      });
+      expect(JSON.stringify(result.events)).not.toContain('stale');
+      expect(result.events).toContainEqual(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            content: 'final only',
+            reasoning: '',
+            tool_calls: [],
+            usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+          }),
+          type: 'llm_result',
+        }),
+      );
+      expect(mockMessageModel.update).toHaveBeenCalledWith(
+        'msg-123',
+        expect.objectContaining({
+          content: 'final only',
+          reasoning: undefined,
+          tools: undefined,
+        }),
+      );
+      expect(mockStreamManager.publishStreamEvent).toHaveBeenCalledWith(
+        'op-123',
+        expect.objectContaining({
+          data: expect.objectContaining({ reason: 'context_window', reset: true }),
+          type: 'stream_retry',
+        }),
+      );
+      expect(mockStreamManager.publishStreamEvent).toHaveBeenCalledWith(
+        'op-123',
+        expect.objectContaining({
+          data: expect.objectContaining({
+            finalContent: 'final only',
+            grounding: null,
+            reasoning: undefined,
+            toolsCalling: [],
+            usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+          }),
+          type: 'stream_end',
+        }),
+      );
+    });
+
+    it('retains a failed final-preflight compression group when summarization fails', async () => {
       const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
         await options?.callback?.onError?.({ message: 'summary failed' });
         return new Response('done');
@@ -690,10 +854,11 @@ describe('RuntimeExecutors', () => {
       ).rejects.toMatchObject({ name: 'FinalContextWindowError' });
 
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
-      expect(mockCancelCompression).toHaveBeenCalledWith(
+      expect(mockFailCompression).toHaveBeenCalledWith(
         'auto-failed-group',
         expect.objectContaining({ topicId: 'topic-123' }),
       );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
     });
 
     it('passes workspaceId to model runtime initialization', async () => {
@@ -1496,10 +1661,11 @@ describe('RuntimeExecutors', () => {
 
       expect(mockCreateCompressionGroup).toHaveBeenCalledTimes(1);
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
-      expect(mockCancelCompression).toHaveBeenCalledWith(
+      expect(mockFailCompression).toHaveBeenCalledWith(
         'group-123',
         expect.objectContaining({ topicId: 'topic-123' }),
       );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
       expect(result.nextContext?.payload as any).toMatchObject({
         code: 'SUMMARY_FAILED',
         compressedMessages: [{ content: 'history', role: 'user' }],
@@ -1530,6 +1696,7 @@ describe('RuntimeExecutors', () => {
       });
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
       expect(mockCancelCompression).not.toHaveBeenCalled();
+      expect(mockFailCompression).not.toHaveBeenCalled();
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({ type: 'compression_error' });
     });
@@ -1686,10 +1853,11 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
-      expect(mockCancelCompression).toHaveBeenCalledWith(
+      expect(mockFailCompression).toHaveBeenCalledWith(
         'group-123',
         expect.objectContaining({ topicId: 'topic-123' }),
       );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
       expect(result.nextContext?.payload as any).toMatchObject({
         code: 'SUMMARY_FAILED',
         outcome: 'failed',

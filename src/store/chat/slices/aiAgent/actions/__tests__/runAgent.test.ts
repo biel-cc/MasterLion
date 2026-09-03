@@ -92,6 +92,40 @@ describe('runAgent actions', () => {
   });
 
   describe('internal_handleAgentStreamEvent', () => {
+    describe('stream_retry event', () => {
+      it('clears partial content and stale tools when reset is requested', async () => {
+        const { result } = renderHook(() => useChatStore());
+        const context = createStreamingContext({
+          assistantId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          content: 'stale partial',
+          reasoning: 'stale reasoning',
+          toolsCalling: [{ id: 'stale-tool' }],
+        });
+
+        await act(async () => {
+          await result.current.internal_handleAgentStreamEvent(
+            TEST_IDS.OPERATION_ID,
+            {
+              data: { reason: 'context_window', reset: true },
+              operationId: TEST_IDS.OPERATION_ID,
+              stepIndex: 0,
+              timestamp: Date.now(),
+              type: 'stream_retry',
+            },
+            context,
+          );
+        });
+
+        expect(context).toMatchObject({ content: '', reasoning: '', toolsCalling: undefined });
+        expect(result.current.internal_dispatchMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: TEST_IDS.ASSISTANT_MESSAGE_ID,
+            value: expect.objectContaining({ content: '', tools: undefined }),
+          }),
+        );
+      });
+    });
+
     describe('stream_start event', () => {
       it('should skip message creation/deletion when assistantId is already set (Group Chat flow)', async () => {
         const { result } = renderHook(() => useChatStore());

@@ -6,7 +6,11 @@ import {
 } from '@lobechat/agent-gateway-client';
 import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
 
-import { aiAgentService, type ResumeApprovalParam } from '@/services/aiAgent';
+import {
+  aiAgentService,
+  type ResumeApprovalParam,
+  type ResumeInteractionParam,
+} from '@/services/aiAgent';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
 import { getAgentStoreState } from '@/store/agent';
@@ -295,6 +299,8 @@ export class GatewayActionImpl {
      * a fresh user prompt.
      */
     resumeApproval?: ResumeApprovalParam;
+    /** Resume a persisted interaction result under a new server-owned operation. */
+    resumeInteraction?: ResumeInteractionParam;
     /**
      * Temporary message IDs created during the initial sendMessage phase.
      * These are associated with the new gateway operation so the UI doesn't
@@ -312,6 +318,7 @@ export class GatewayActionImpl {
       parentMessageId,
       parentOperationId,
       resumeApproval,
+      resumeInteraction,
       tempMessageIds,
     } = params;
 
@@ -377,6 +384,7 @@ export class GatewayActionImpl {
         parentMessageId,
         prompt: message,
         resumeApproval,
+        resumeInteraction,
         trigger: metadata?.trigger,
       },
       { signal: abortSignal },

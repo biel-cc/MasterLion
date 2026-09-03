@@ -174,11 +174,25 @@ export class TaskService {
     }
 
     await this.topicDeletionService.removeById(topicId, {
-      // The topic FK cascades task_topics. Remove the task relation first so
-      // TaskTopicModel can decrement totalTopics, but only after device scratch
-      // cleanup has succeeded through TopicDeletionService's fail-closed gate.
-      beforeDelete: async () => {
-        await this.taskTopicModel.remove(target.taskId, topicId);
+      // Device cleanup is necessarily outside the DB transaction and is
+      // idempotent. Once it succeeds, the relation/counter, topic row and
+      // scratch catalog commit together so a topic-delete failure cannot leave
+      // an orphaned task relation state. A retry safely repeats device cleanup.
+      deleteDatabaseRecords: async (_topic, scratchWorkspaceId) => {
+        await this.db.transaction(async (transaction) => {
+          const transactionDb = transaction as LobeChatDatabase;
+          const taskTopicModel = new TaskTopicModel(
+            transactionDb,
+            this.userId,
+            this.workspaceId,
+          );
+          const topicModel = new TopicModel(transactionDb, this.userId, this.workspaceId);
+          const projectWorkspaceModel = new ProjectWorkspaceModel(transactionDb, this.userId);
+
+          await taskTopicModel.remove(target.taskId, topicId);
+          await topicModel.delete(topicId);
+          if (scratchWorkspaceId) await projectWorkspaceModel.deleteScratch(scratchWorkspaceId);
+        });
       },
     });
   }

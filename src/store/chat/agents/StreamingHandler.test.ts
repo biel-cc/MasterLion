@@ -23,6 +23,32 @@ const mockContext: StreamingContext = {
 };
 
 describe('StreamingHandler', () => {
+  describe('discardAttempt', () => {
+    it('removes partial text, reasoning and stale tools before the next attempt', async () => {
+      const callbacks = createMockCallbacks();
+      callbacks.onAttemptReset = vi.fn();
+      const handler = new StreamingHandler(mockContext, callbacks);
+      const staleToolCall = {
+        function: { arguments: '{}', name: 'stale_tool' },
+        id: 'stale-call',
+        type: 'function' as const,
+      };
+
+      handler.handleChunk({ text: 'stale text', type: 'text' });
+      handler.handleChunk({ text: 'stale reasoning', type: 'reasoning' });
+      handler.handleChunk({ tool_calls: [staleToolCall], type: 'tool_calls' });
+      handler.discardAttempt();
+      handler.handleChunk({ text: 'final only', type: 'text' });
+
+      const result = await handler.handleFinish({ type: 'stop' });
+      expect(result).toMatchObject({ content: 'final only', isFunctionCall: false });
+      expect(result.tools).toBeUndefined();
+      expect(result.metadata.reasoning).toBeUndefined();
+      expect(callbacks.onAttemptReset).toHaveBeenCalledTimes(1);
+      expect(callbacks.toggleToolCallingStreaming).toHaveBeenLastCalledWith('msg-1', undefined);
+    });
+  });
+
   describe('handleChunk - text', () => {
     it('should accumulate text output', () => {
       const callbacks = createMockCallbacks();

@@ -30,6 +30,7 @@ const switchTopicMock = vi.fn();
 const replaceMessagesMock = vi.fn();
 const regenerateUserMessageMock = vi.fn();
 const updateMessageContentMock = vi.fn();
+const updateAgentConfigByIdMock = vi.fn();
 const storeState = vi.hoisted(() => ({
   context: { agentId: 'agent-1', topicId: 'topic-1' } as Record<string, unknown>,
   dbMessages: [{ id: 'tool-1', role: 'tool' }] as Array<{ id: string; role: string }>,
@@ -49,6 +50,43 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/usePermission', () => ({
   usePermission: () => ({ allowed: true, reason: '' }),
+}));
+
+vi.mock('@/components/ModelSelect', () => ({
+  useChatEligibleModelList: () => [
+    { id: 'aihub', models: [{ id: 'main-model' }, { id: 'summary-model' }] },
+    { id: 'other-provider', models: [{ id: 'other-model' }] },
+  ],
+}));
+
+vi.mock('@/features/ModelSwitchPanel', () => ({
+  default: ({ children, enabledList, onModelChange, open }: any) => (
+    <div data-enabled-providers={enabledList.map((item: any) => item.id).join(',')}>
+      {children}
+      {open && (
+        <button
+          type={'button'}
+          onClick={() => onModelChange({ model: 'summary-model', provider: 'aihub' })}
+        >
+          choose-summary-model
+        </button>
+      )}
+    </div>
+  ),
+}));
+
+vi.mock('@/store/agent', () => ({
+  useAgentStore: (selector: (state: any) => unknown) =>
+    selector({
+      agentMap: {
+        'agent-1': {
+          chatConfig: {},
+          model: 'main-model',
+          provider: 'aihub',
+        },
+      },
+      updateAgentConfigById: updateAgentConfigByIdMock,
+    }),
 }));
 
 vi.mock('@/store/chat', () => ({
@@ -98,6 +136,7 @@ describe('<ContextBudgetError />', () => {
     replaceMessagesMock.mockReset();
     regenerateUserMessageMock.mockReset().mockResolvedValue(undefined);
     updateMessageContentMock.mockReset().mockResolvedValue(undefined);
+    updateAgentConfigByIdMock.mockReset().mockResolvedValue(undefined);
     storeState.updateMessage.mockReset().mockResolvedValue({ messages: [], success: true });
     storeState.context = { agentId: 'agent-1', topicId: 'topic-1' };
     storeState.displayMessages = [{ id: 'assistant-1', parentId: 'user-1' }];
@@ -217,6 +256,47 @@ describe('<ContextBudgetError />', () => {
     trigger.remove();
   });
 
+  it('opens an independent provider-scoped picker and persists the compression model', async () => {
+    render(<ContextBudgetError failure={failure('SUMMARY_FAILED')} id={'assistant-1'} />);
+
+    fireEvent.click(button('contextBudget.action.switchCompressionModel'));
+    expect(button('choose-summary-model')).toBeInTheDocument();
+    expect(button('choose-summary-model').parentElement).toHaveAttribute(
+      'data-enabled-providers',
+      'aihub',
+    );
+
+    await act(async () => {
+      fireEvent.click(button('choose-summary-model'));
+    });
+
+    expect(updateAgentConfigByIdMock).toHaveBeenCalledWith(
+      'agent-1',
+      { chatConfig: { compressionModelId: 'summary-model' } },
+      { throwOnError: true },
+    );
+    expect(screen.queryByRole('button', { name: 'choose-summary-model' })).toBeNull();
+  });
+
+  it('keeps the compression picker recoverable and surfaces a failed model update', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    updateAgentConfigByIdMock.mockRejectedValueOnce(new Error('save failed'));
+    render(<ContextBudgetError failure={failure('SUMMARY_FAILED')} id={'assistant-1'} />);
+
+    fireEvent.click(button('contextBudget.action.switchCompressionModel'));
+    await act(async () => {
+      fireEvent.click(button('choose-summary-model'));
+    });
+
+    expect(button('choose-summary-model')).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole('alert')
+        .some((node) => node.textContent === 'contextBudget.actionFailed'),
+    ).toBe(true);
+    consoleError.mockRestore();
+  });
+
   it('lets the integration override the default summary retry', async () => {
     const onRetryCompression = vi.fn().mockResolvedValue(undefined);
     render(
@@ -249,7 +329,9 @@ describe('<ContextBudgetError />', () => {
 
     await waitFor(() =>
       expect(
-        screen.getAllByRole('alert').some((node) => node.textContent === 'contextBudget.actionFailed'),
+        screen
+          .getAllByRole('alert')
+          .some((node) => node.textContent === 'contextBudget.actionFailed'),
       ).toBe(true),
     );
     // The failed action becomes clickable again rather than staying stuck in a loading state.
