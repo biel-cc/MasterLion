@@ -4,7 +4,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useBusinessModelListGuard } from '@/business/client/hooks/useBusinessModelListGuard';
-import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
+import { useChatEligibleModelList } from '@/components/ModelSelect';
 import type { EnabledProviderWithModels } from '@/types/aiProvider';
 
 import { FOOTER_HEIGHT, ITEM_HEIGHT, MAX_PANEL_HEIGHT, TOOLBAR_HEIGHT } from '../../const';
@@ -46,7 +46,7 @@ export const List: FC<ListProps> = ({
   const { isModelRestricted, onRestrictedModelClick } = useBusinessModelListGuard();
   const proLabel = isModelRestricted ? tCommon('pro') : undefined;
 
-  const chatEnabledList = useEnabledChatModels();
+  const chatEnabledList = useChatEligibleModelList();
   const enabledList = enabledListProp ?? chatEnabledList;
   const { model, provider } = useModelAndProvider(modelProp, providerProp);
   const { handleModelChange, handleClose } = usePanelHandlers({

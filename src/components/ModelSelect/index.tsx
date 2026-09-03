@@ -1,4 +1,5 @@
 import { type ChatModelCard } from '@lobechat/types';
+import { type ChatInputModalityConclusion } from '@lobechat/types/src/modelCatalog';
 import { type IconAvatarProps } from '@lobehub/icons';
 import { LobeHub, ModelIcon, ProviderIcon } from '@lobehub/icons';
 import { type FlexboxProps } from '@lobehub/ui';
@@ -15,12 +16,14 @@ import {
 import { type ModelAbilities } from 'model-bank';
 import numeral from 'numeral';
 import { type CSSProperties, type FC } from 'react';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { type AiProviderSourceType } from '@/types/aiProvider';
 import { formatTokenNumber } from '@/utils/format';
 
+import { useChatModelCatalog } from './hooks';
+import { InputModalityTags } from './InputModalityTags';
 import NewModelBadgeI18n, { NewModelBadge as NewModelBadgeCore } from './NewModelBadge';
 
 export const TAG_CLASSNAME = 'lobe-model-info-tags';
@@ -56,8 +59,19 @@ interface ModelInfoTagsProps extends ModelAbilities {
   contextWindowTokens?: number | null;
   directionReverse?: boolean;
   disableTooltip?: boolean;
+  /**
+   * Evidence-backed input modality conclusion from the B1 catalog. When present it
+   * replaces the legacy vision/file/video ability tags, which then derive from the
+   * same `inputModalities` evidence instead of raw ability booleans.
+   */
+  inputModality?: ChatInputModalityConclusion;
   isCustom?: boolean;
   placement?: 'top' | 'right';
+  /**
+   * Whether to render the non-modality ability tags (tool calling, image output) and
+   * the context window tag. Compact chat rows keep only the modality conclusion.
+   */
+  showAbilityTags?: boolean;
   style?: CSSProperties;
 }
 
@@ -202,7 +216,19 @@ const Context = memo(
 );
 
 export const ModelInfoTags = memo<ModelInfoTagsProps>(
-  ({ directionReverse, disableTooltip, placement = 'top', style, ...model }) => {
+  ({
+    directionReverse,
+    disableTooltip,
+    inputModality,
+    placement = 'top',
+    showAbilityTags = true,
+    style,
+    ...model
+  }) => {
+    // With catalog evidence in hand, image/audio/video/file come from `inputModalities`;
+    // the raw ability booleans only back the legacy path for callers without evidence.
+    const hasEvidence = !!inputModality;
+
     return (
       <Flexbox
         className={TAG_CLASSNAME}
@@ -211,17 +237,27 @@ export const ModelInfoTags = memo<ModelInfoTagsProps>(
         style={{ marginLeft: 'auto', ...style }}
         width={'fit-content'}
       >
-        <FeatureTags
-          disableTooltip={disableTooltip}
-          files={model.files}
-          functionCall={model.functionCall}
-          imageOutput={model.imageOutput}
-          placement={placement}
-          tagClassName={styles.tag}
-          video={model.video}
-          vision={model.vision}
-        />
-        {typeof model.contextWindowTokens === 'number' && (
+        {inputModality && (
+          <InputModalityTags
+            conclusion={inputModality}
+            disableTooltip={disableTooltip}
+            placement={placement}
+            tagClassName={styles.tag}
+          />
+        )}
+        {showAbilityTags && (
+          <FeatureTags
+            disableTooltip={disableTooltip}
+            files={hasEvidence ? undefined : model.files}
+            functionCall={model.functionCall}
+            imageOutput={model.imageOutput}
+            placement={placement}
+            tagClassName={styles.tag}
+            video={hasEvidence ? undefined : model.video}
+            vision={hasEvidence ? undefined : model.vision}
+          />
+        )}
+        {showAbilityTags && typeof model.contextWindowTokens === 'number' && (
           <Context
             contextWindowTokens={model.contextWindowTokens}
             disableTooltip={disableTooltip}
@@ -238,7 +274,14 @@ interface ModelItemRenderProps extends ChatModelCard, Partial<Omit<FlexboxProps,
   abilities?: ModelAbilities;
   newBadgeLabel?: string;
   proBadgeLabel?: string;
+  /** Provider owning this row, so the catalog lookup matches the exact provider/model pair. */
+  providerId?: string;
   showInfoTag?: boolean;
+  /**
+   * Render the B1 input modality conclusion for chat rows. Independent of `showInfoTag`
+   * and developer mode: a chat row always states supported / text-only / unverified.
+   */
+  showInputModality?: boolean;
 }
 
 export const ModelItemRender = memo<ModelItemRenderProps>(
@@ -251,6 +294,12 @@ export const ModelItemRender = memo<ModelItemRenderProps>(
     imageOutput,
     newBadgeLabel,
     proBadgeLabel,
+    providerId,
+    reasoning,
+    search,
+    settings,
+    showInputModality = true,
+    type,
     video,
     vision,
     id,
@@ -260,6 +309,19 @@ export const ModelItemRender = memo<ModelItemRenderProps>(
   }) => {
     const { mobile } = useResponsive();
     const displayNameOrId = displayName || id;
+    const rowAbilities = useMemo<ModelAbilities>(
+      () => abilities ?? { files, functionCall, imageOutput, reasoning, search, video, vision },
+      [abilities, files, functionCall, imageOutput, reasoning, search, video, vision],
+    );
+    const catalog = useChatModelCatalog({
+      abilities: rowAbilities,
+      id,
+      providerId,
+      settings,
+      type,
+    });
+    const inputModality =
+      showInputModality && catalog.chatEligible ? catalog.inputModality : undefined;
 
     return (
       <Flexbox
@@ -302,12 +364,14 @@ export const ModelItemRender = memo<ModelItemRenderProps>(
             </Tag>
           )}
         </Flexbox>
-        {showInfoTag && (
+        {(showInfoTag || inputModality) && (
           <ModelInfoTags
             contextWindowTokens={contextWindowTokens}
             files={files ?? abilities?.files}
             functionCall={functionCall ?? abilities?.functionCall}
             imageOutput={imageOutput ?? abilities?.imageOutput}
+            inputModality={inputModality}
+            showAbilityTags={showInfoTag}
             style={{ zoom: 0.9 }}
             video={video ?? abilities?.video}
             vision={vision ?? abilities?.vision}
@@ -372,3 +436,16 @@ export const LabelRenderer = memo<LabelRendererProps>(({ Icon, label }) => (
     <span>{label}</span>
   </Flexbox>
 ));
+
+export { useChatEligibleModelList, useChatModelCatalog } from './hooks';
+export { InputModalityTags, MODALITY_ICONS, useInputModalityLabels } from './InputModalityTags';
+export {
+  type ChatModelCatalogInput,
+  filterChatEligibleProviderModels,
+  getConclusionVerifiedAt,
+  NON_TEXT_INPUT_MODALITIES,
+  parseEvidenceSource,
+  resolveChatModelCatalog,
+  type ResolvedChatModelCatalog,
+  sortNonTextModalities,
+} from './modality';

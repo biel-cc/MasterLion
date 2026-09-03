@@ -96,6 +96,7 @@ export const MultipleProvidersModelItem = memo<MultipleProvidersModelItemProps>(
             {...data.model.abilities}
             newBadgeLabel={newLabel}
             proBadgeLabel={defaultProviderRestricted ? proLabel : undefined}
+            providerId={(activeProvider ?? defaultProvider)?.id}
             showInfoTag={showInfoTag}
           />
         </DropdownMenuSubmenuTrigger>
