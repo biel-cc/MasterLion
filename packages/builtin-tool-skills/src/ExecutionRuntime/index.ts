@@ -19,7 +19,10 @@ import type {
   RunCommandOptions,
   RunCommandParams,
 } from '../types';
-import { resolveSkillScriptExecutionRoute } from './skillScriptRoute';
+import {
+  type DeviceSkillPathVerifier,
+  resolveSkillScriptExecutionRoute,
+} from './skillScriptRoute';
 
 /**
  * Unified skill service interface for dependency injection.
@@ -101,6 +104,8 @@ export interface SkillsExecutionRuntimeOptions {
       env: Record<string, string>;
     },
   ) => Promise<CommandResult>;
+  /** Device-side realpath proof for workspace and skill containment. */
+  deviceSkillPathVerifier?: DeviceSkillPathVerifier;
   /** Immutable operation-scoped execution context from the workspace runtime. */
   executionContext?: ExecutionContext;
   /** Project skills discovered on the device filesystem. */
@@ -159,6 +164,7 @@ export class SkillsExecutionRuntime {
   private projectSkills: ProjectSkillRuntimeItem[];
   private registrySkills?: SkillRef[];
   private deviceFileAccess?: DeviceFileAccess;
+  private deviceSkillPathVerifier?: DeviceSkillPathVerifier;
   private deviceScriptRunner?: SkillsExecutionRuntimeOptions['deviceScriptRunner'];
   private executionContext?: ExecutionContext;
   private service: SkillRuntimeService;
@@ -178,6 +184,7 @@ export class SkillsExecutionRuntime {
       (skill, index, all) => all.findIndex(({ name }) => name === skill.name) === index,
     );
     this.deviceFileAccess = options.deviceFileAccess;
+    this.deviceSkillPathVerifier = options.deviceSkillPathVerifier;
     this.deviceScriptRunner = options.deviceScriptRunner;
     this.executionContext = options.executionContext;
     this.skillDirectoryResolver = options.skillDirectoryResolver;
@@ -194,9 +201,10 @@ export class SkillsExecutionRuntime {
       const skillDir = projectSkill
         ? getDirname(projectSkill.location)
         : await this.skillDirectoryResolver?.(activatedSkills ?? []);
-      const route = resolveSkillScriptExecutionRoute({
+      const route = await resolveSkillScriptExecutionRoute({
         context: this.executionContext,
         skillDir,
+        verifyDevicePaths: this.deviceSkillPathVerifier,
       });
 
       if (!route.ok) {

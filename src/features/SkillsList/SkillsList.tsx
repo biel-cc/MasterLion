@@ -14,14 +14,25 @@ import { createStaticStyles, cx } from 'antd-style';
 import { ChevronRightIcon, FileIcon, FolderIcon, type LucideIcon } from 'lucide-react';
 import type React from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
-import { toSkillRegistryListModel } from './registryModel';
+import {
+  skillRegistryErrorI18n,
+  type SkillRegistryI18nDescriptor,
+  skillRegistryReasonI18n,
+  skillScopeI18n,
+  skillSourceI18n,
+} from './registryI18n';
+import {
+  type SkillRegistryErrorCode,
+  type SkillRegistryReasonCode,
+  toSkillRegistryListModel,
+} from './registryModel';
 
 export interface SkillListItem {
   description?: string;
-  /** Registry policy or precedence explanation for a non-runnable row. */
-  disabledReason?: string;
-  error?: string;
+  /** Stable registry error code for a non-runnable row. */
+  errorCode?: SkillRegistryErrorCode;
   /**
    * File count shown next to the name. Omit (or pass 0) for atomic skills with
    * no embedded files — e.g. user-level skills sourced from MCP servers.
@@ -34,6 +45,8 @@ export interface SkillListItem {
   files?: string[];
   id: string;
   name: string;
+  /** Stable registry policy or precedence reason for a non-runnable row. */
+  reasonCode?: SkillRegistryReasonCode;
   scope?: SkillScope;
   source?: SkillSourceKind;
   status?: 'available' | 'disabled' | 'error' | 'shadowed';
@@ -252,6 +265,16 @@ const buildSkillTree = (paths: string[]): TreeNode[] => {
 const TREE_BASE_INSET = 24;
 const TREE_DEPTH_INDENT = 14;
 
+type SkillRegistryTranslate = (
+  key: string,
+  options: { defaultValue: string },
+) => unknown;
+
+const translateDescriptor = (
+  translate: SkillRegistryTranslate,
+  descriptor: SkillRegistryI18nDescriptor,
+): string => String(translate(descriptor.key, { defaultValue: descriptor.defaultValue }));
+
 interface TreeRowProps {
   depth: number;
   expanded: Set<string>;
@@ -345,12 +368,24 @@ const SkillRow = memo<SkillRowProps>(
     onToggle,
     reserveChevronSlot,
   }) => {
+    const { t } = useTranslation('chat');
     const files = item.files ?? EMPTY_ARRAY;
-    const isDisabled = !!item.error || item.status === 'disabled' || item.status === 'shadowed';
+    const isDisabled =
+      !!item.errorCode || item.status === 'disabled' || item.status === 'shadowed';
     const hasFiles = files.length > 0;
     const hasActions = actions.length > 0;
     const tree = useMemo(() => buildSkillTree(files), [files]);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+    const errorTitle = item.errorCode
+      ? translateDescriptor(t, skillRegistryErrorI18n[item.errorCode])
+      : undefined;
+    const reasonTitle = item.reasonCode
+      ? translateDescriptor(t, skillRegistryReasonI18n[item.reasonCode])
+      : undefined;
+    const metadata = [
+      item.source && translateDescriptor(t, skillSourceI18n[item.source]),
+      item.scope && translateDescriptor(t, skillScopeI18n[item.scope]),
+    ].filter(Boolean);
 
     const toggleFolder = useCallback((folderPath: string) => {
       setExpandedFolders((prev) => {
@@ -397,7 +432,7 @@ const SkillRow = memo<SkillRowProps>(
         className={cx(styles.item, isDisabled && styles.itemDisabled)}
         draggable={!!onDragStart && !isDisabled}
         gap={6}
-        title={item.error ?? item.disabledReason}
+        title={errorTitle ?? reasonTitle}
         onDragStart={isDisabled ? undefined : onDragStart}
       >
         {hasFiles ? (
@@ -431,9 +466,7 @@ const SkillRow = memo<SkillRowProps>(
           nameNode
         )}
         {(item.source || item.scope) && (
-          <span className={styles.itemMeta}>
-            {[item.source, item.scope].filter(Boolean).join(' · ')}
-          </span>
+          <span className={styles.itemMeta}>{metadata.join(' · ')}</span>
         )}
         {typeof item.fileCount === 'number' && item.fileCount > 0 && (
           <span className={cx('skill-row-count', styles.itemCount)}>{item.fileCount}</span>
@@ -489,6 +522,7 @@ SkillRow.displayName = 'SkillsListSkillRow';
 
 const SkillsList = memo<SkillsListProps>(
   ({ getRowActions, items: legacyItems, onOpenFile, onOpenSkill, onSkillDragStart, registryResult }) => {
+    const { t } = useTranslation('chat');
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
     const registryModel = useMemo(
       () => (registryResult ? toSkillRegistryListModel(registryResult) : undefined),
@@ -512,11 +546,21 @@ const SkillsList = memo<SkillsListProps>(
 
     return (
       <Flexbox gap={2}>
-        {registryModel?.errors.map((error) => (
-          <Text className={styles.description} key={error} title={error} type={'danger'}>
-            {error}
-          </Text>
-        ))}
+        {registryModel?.errors.map((error, index) => {
+          const errorText = translateDescriptor(t, skillRegistryErrorI18n[error.code]);
+          const sourceText = translateDescriptor(t, skillSourceI18n[error.source]);
+          const message = `${errorText} (${sourceText})`;
+          return (
+            <Text
+              className={styles.description}
+              key={`${error.code}:${error.source}:${index}`}
+              title={message}
+              type={'danger'}
+            >
+              {message}
+            </Text>
+          );
+        })}
         {items.map((item) => (
           <SkillRow
             actions={getRowActions?.(item) ?? EMPTY_ARRAY}

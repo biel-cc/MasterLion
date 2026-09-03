@@ -163,6 +163,10 @@ describe('SkillsExecutionRuntime', () => {
       });
       const runtime = new SkillsExecutionRuntime({
         deviceScriptRunner,
+        deviceSkillPathVerifier: async ({ skillDir, workspaceRoot }) => ({
+          skillDir,
+          workspaceRoot,
+        }),
         executionContext: {
           cwd: '/repo',
           plan: { deviceId: 'device-1', kind: 'device', target: 'device' },

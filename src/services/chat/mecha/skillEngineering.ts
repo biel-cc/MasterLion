@@ -3,7 +3,15 @@ import { SkillEngine } from '@lobechat/context-engine';
 
 import { isBuiltinSkillAvailableInCurrentEnv } from '@/helpers/toolAvailability';
 
-import { resolveClientSkillRegistry } from './clientSkillRegistry';
+import {
+  resolveClientSkillRegistry,
+  type ResolveClientSkillRegistryOptions,
+} from './clientSkillRegistry';
+
+export type ResolveClientSkillsOptions = Omit<
+  ResolveClientSkillRegistryOptions,
+  'contentIdentifiers'
+>;
 
 /**
  * Build a client-side OperationSkillSet via SkillEngine.
@@ -21,11 +29,15 @@ import { resolveClientSkillRegistry } from './clientSkillRegistry';
  * Uses isBuiltinSkillAvailableInCurrentEnv as the enableChecker to
  * filter platform-specific skills (e.g., agent-browser on desktop only).
  */
-export const resolveClientSkills = async (pluginIds?: string[]): Promise<OperationSkillSet> => {
+export const resolveClientSkills = async (
+  pluginIds?: string[],
+  options: ResolveClientSkillsOptions = {},
+): Promise<OperationSkillSet> => {
   const pinnedIds = new Set(pluginIds ?? []);
   const registry = await resolveClientSkillRegistry({
+    ...options,
     contentIdentifiers: pluginIds,
-    policy: { pinned: pluginIds },
+    policy: { ...options.policy, pinned: pluginIds },
   });
 
   const skillEngine = new SkillEngine({

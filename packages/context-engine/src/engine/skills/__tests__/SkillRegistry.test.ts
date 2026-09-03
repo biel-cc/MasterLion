@@ -97,6 +97,63 @@ describe('SkillRegistry', () => {
     expect(result.entries.some(({ ref }) => ref.key === 'user:deploy')).toBe(false);
   });
 
+  it('does not re-admit a hidden ref that collides with an authorized ref key and identifier', async () => {
+    const visibleRef = {
+      ...ref('user', 'deploy', 'user-1'),
+      content: 'authorized content',
+      identifier: 'shared-identifier',
+      key: 'shared-key',
+    };
+    const hiddenRef = {
+      ...ref('project', 'deploy', 'another-workspace'),
+      content: 'hidden content',
+      identifier: 'shared-identifier',
+      key: 'shared-key',
+    };
+    const registry = new SkillRegistry({
+      providers: [
+        provider('project', [hiddenRef]),
+        provider('user', [visibleRef]),
+      ],
+      visibilityPolicy: { filter: async () => [visibleRef] },
+    });
+
+    const result = await registry.resolve(context, { userId: 'user-1' });
+
+    expect(result.skills).toEqual([visibleRef]);
+    expect(result.entries).toEqual([{ ref: visibleRef, status: 'available' }]);
+    expect(result.entries.some(({ ref }) => ref.content === 'hidden content')).toBe(false);
+  });
+
+  it('rejects cloned refs returned by visibility while providers resolve concurrently', async () => {
+    const first = ref('builtin', 'artifacts');
+    const second = ref('user', 'deploy', 'user-1');
+    const registry = new SkillRegistry({
+      providers: [
+        {
+          list: async () => {
+            await Promise.resolve();
+            return [first];
+          },
+          source: 'builtin',
+        },
+        {
+          list: async () => {
+            await Promise.resolve();
+            return [second];
+          },
+          source: 'user',
+        },
+      ],
+      visibilityPolicy: { filter: async (refs) => refs.map((candidate) => ({ ...candidate })) },
+    });
+
+    const result = await registry.resolve(context, { userId: 'user-1' });
+
+    expect(result.skills).toEqual([]);
+    expect(result.entries).toEqual([]);
+  });
+
   it('isolates provider failures and records policy evidence in the operation trace', async () => {
     const failing: SkillProvider = {
       list: async () => {
@@ -111,9 +168,7 @@ describe('SkillRegistry', () => {
     const result = await registry.resolve(context, { userId: 'user-1' });
 
     expect(result.skills.map(({ key }) => key)).toEqual(['builtin:artifacts']);
-    expect(result.errors).toEqual([
-      { message: 'project device is offline', source: 'project' },
-    ]);
+    expect(result.errors).toEqual([{ message: 'project device is offline', source: 'project' }]);
     expect(result.policy.materializeForHeteroCli).toBe('off');
   });
 

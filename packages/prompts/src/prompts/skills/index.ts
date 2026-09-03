@@ -1,7 +1,12 @@
+import type {
+  SkillScope as CanonicalSkillScope,
+  SkillSourceKind,
+} from '@lobechat/types/src/projectWorkspace';
+
 export { buildResourcesTreeText, resourcesTreePrompt } from './resourcesTree';
 
-export type SkillScope = 'builtin' | 'company' | 'personal' | 'project' | 'team';
-export type SkillSource = 'agent' | 'builtin' | 'project' | 'user' | 'workspace';
+export type SkillScope = CanonicalSkillScope;
+export type SkillSource = SkillSourceKind;
 
 export interface SkillItem {
   description: string;
@@ -10,13 +15,13 @@ export interface SkillItem {
   key?: string;
   location?: string;
   name: string;
+  scope?: SkillScope;
   /**
    * Where the skill comes from. `project` skills live on the device filesystem
    * (e.g. `.agents/skills/<name>/SKILL.md`) and `location` carries their absolute
    * path so the model can load them via the readFile tool.
    */
   source?: SkillSource;
-  scope?: SkillScope;
 }
 
 const escapeXml = (value: string): string =>

@@ -10,6 +10,7 @@ import type { SkillItem, UserCredSummary } from '@lobechat/types';
 import type {
   ProjectWorkspaceSkillPolicy,
   SkillProvider,
+  SkillProviderContext,
   SkillRef,
 } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
@@ -36,8 +37,12 @@ const buildCredsContext = (userCreds?: UserCredSummary[]): UserCredsContext => (
 });
 
 export interface ResolveClientSkillRegistryOptions {
+  /** Accepted operation-scoped agent provider; callers must not synthesize its refs here. */
+  agentProvider?: SkillProvider & { source: 'agent' };
   contentIdentifiers?: string[];
   policy?: ProjectWorkspaceSkillPolicy;
+  /** Accepted workspace/skill context produced by the operation runtime. */
+  skillContext?: SkillProviderContext;
   userCreds?: UserCredSummary[];
 }
 
@@ -66,7 +71,7 @@ export const resolveClientSkillRegistry = async (
   };
 
   const userProvider: SkillProvider = {
-    list: async () => {
+    list: async (context) => {
       const listItems = [...(toolState.agentSkills || [])];
       const knownIds = new Set(listItems.map(({ identifier }) => identifier));
 
@@ -103,7 +108,7 @@ export const resolveClientSkillRegistry = async (
           identifier: item.identifier,
           key: `user:${item.identifier}`,
           name: item.name,
-          ownerId: 'client-user',
+          ownerId: context.userId,
           scope: 'personal',
           source: 'user',
           zipFileHash: item.zipFileHash,
@@ -118,7 +123,7 @@ export const resolveClientSkillRegistry = async (
           identifier: detail.identifier,
           key: `user:${detail.identifier}`,
           name: detail.name,
-          ownerId: 'client-user',
+          ownerId: context.userId,
           scope: 'personal',
           source: 'user',
           zipFileHash: detail.zipFileHash,
@@ -130,20 +135,50 @@ export const resolveClientSkillRegistry = async (
     source: 'user',
   };
 
-  const registry = new SkillRegistry({ providers: [builtinProvider, userProvider] });
+  const projectProvider: SkillProvider = {
+    list: async (context) => {
+      if (!context.workspace) return [];
+      const ownerId = context.workspace.id ?? context.userId;
+
+      return (context.workspaceInit?.skills ?? []).map<SkillRef>((skill) => ({
+        description: skill.description ?? '',
+        identifier: `project:${skill.name}`,
+        key: `project:${ownerId}:${skill.name}`,
+        location: skill.path,
+        name: skill.name,
+        ownerId,
+        scope: 'project',
+        source: 'project',
+      }));
+    },
+    source: 'project',
+  };
+
+  const registry = new SkillRegistry({
+    providers: [
+      builtinProvider,
+      userProvider,
+      ...(options.agentProvider ? [options.agentProvider] : []),
+      projectProvider,
+    ],
+  });
   const policy = {
     includeAgentSkills: true,
     includeProjectSkills: true,
     includeUserSkills: true,
+    ...options.skillContext?.skillPolicy,
     ...options.policy,
   };
+  const context: SkillProviderContext = {
+    agentId: options.skillContext?.agentId ?? 'client-agent',
+    skillPolicy: policy,
+    userId: options.skillContext?.userId ?? 'client-user',
+    workspace: options.skillContext?.workspace,
+    workspaceInit: options.skillContext?.workspaceInit,
+  };
 
-  return registry.resolve(
-    {
-      agentId: 'client-agent',
-      skillPolicy: policy,
-      userId: 'client-user',
-    },
-    { userId: 'client-user' },
-  );
+  return registry.resolve(context, {
+    userId: context.userId,
+    workspaceId: context.workspace?.id,
+  });
 };

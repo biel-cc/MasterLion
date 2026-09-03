@@ -140,19 +140,24 @@ export class SkillRegistry {
         this.precedence[b.ref.source] - this.precedence[a.ref.source] || a.order - b.order,
     );
 
-    let visibleKeys: Set<string>;
+    let visibleRefs: Set<SkillRef>;
     try {
+      const candidateRefs = candidates.map(({ ref }) => ref);
       const visible = await this.visibilityPolicy.filter(
-        candidates.map(({ ref }) => ref),
+        candidateRefs,
         principal,
       );
-      visibleKeys = new Set(visible.map(({ key }) => key));
+      const candidateIdentities = new Set(candidateRefs);
+      // A visibility policy may only return the exact immutable references it
+      // was given. Matching by key/identifier would let another provider's
+      // colliding ref re-enter after one of the colliding refs was authorized.
+      visibleRefs = new Set(visible.filter((ref) => candidateIdentities.has(ref)));
     } catch (error) {
       errors.push({
         message: error instanceof Error ? error.message : String(error),
         source: 'visibility',
       });
-      visibleKeys = new Set();
+      visibleRefs = new Set();
     }
 
     const entries: SkillRegistryEntry[] = [];
@@ -161,7 +166,7 @@ export class SkillRegistry {
     for (const { ref } of candidates) {
       // Hidden entries are omitted entirely so registry diagnostics never reveal
       // skill metadata the principal is not allowed to see.
-      if (!visibleKeys.has(ref.key)) continue;
+      if (!visibleRefs.has(ref)) continue;
 
       if (!isEnabledByPolicy(ref.source, policy)) {
         entries.push({ reason: 'policy', ref, status: 'disabled' });
