@@ -28,7 +28,7 @@ const readCapabilityLabels = (section: Locator) =>
       ),
     );
 
-test('AC-W05 production renderer keeps Topic and flat Recent independent from Task UI', async () => {
+test('AC-W05 production renderer keeps Task above Topic and flat Recent independent', async () => {
   const { page } = session;
   await expect(page.getByTestId('workspace-runtime-product-ui')).toBeVisible();
   const sidebar = page.getByTestId('production-agent-sidebar');
@@ -55,7 +55,7 @@ test('AC-W05 production renderer keeps Topic and flat Recent independent from Ta
     return Boolean(
       topicLabel &&
       taskLabel &&
-      topicLabel.compareDocumentPosition(taskLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      taskLabel.compareDocumentPosition(topicLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
     );
   });
   expect(order).toBe(true);

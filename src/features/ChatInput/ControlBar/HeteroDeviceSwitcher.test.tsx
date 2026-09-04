@@ -5,12 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import HeteroDeviceSwitcher from './HeteroDeviceSwitcher';
 
 const mocks = vi.hoisted(() => ({
-  agencyConfig: { executionTarget: 'none' as const },
+  agencyConfig: { executionTarget: 'none' } as any,
+  devices: [] as any[],
   enableCloudSandbox: false,
+  gatewayDeviceInfo: undefined as { deviceId: string } | undefined,
   updateAgentConfigById: vi.fn(async () => undefined),
 }));
 
-vi.mock('@lobechat/const', () => ({ isDesktop: false }));
+vi.mock('@lobechat/const', () => ({ isDesktop: true }));
 vi.mock('@lobechat/heterogeneous-agents', () => ({
   isRemoteHeterogeneousType: vi.fn(() => false),
 }));
@@ -54,7 +56,7 @@ vi.mock('@/libs/trpc/client', () => ({
   lambdaQuery: {
     device: {
       listDevices: {
-        useQuery: () => ({ data: [], isLoading: false }),
+        useQuery: () => ({ data: mocks.devices, isLoading: false }),
       },
     },
   },
@@ -73,7 +75,10 @@ vi.mock('@/store/agent/selectors', () => ({
 }));
 vi.mock('@/store/electron', () => ({
   useElectronStore: (selector: (state: any) => unknown) =>
-    selector({ gatewayDeviceInfo: undefined, useFetchGatewayDeviceInfo: vi.fn() }),
+    selector({
+      gatewayDeviceInfo: mocks.gatewayDeviceInfo,
+      useFetchGatewayDeviceInfo: vi.fn(),
+    }),
 }));
 vi.mock('@/store/serverConfig', () => ({
   serverConfigSelectors: {
@@ -90,8 +95,52 @@ const clickSandboxOption = () => {
 
 describe('HeteroDeviceSwitcher', () => {
   beforeEach(() => {
+    mocks.agencyConfig = { executionTarget: 'none' };
+    mocks.devices = [];
     mocks.enableCloudSandbox = false;
+    mocks.gatewayDeviceInfo = undefined;
     mocks.updateAgentConfigById.mockClear();
+  });
+
+  it('represents this desktop only once as the local target', () => {
+    const onSelectTarget = vi.fn();
+    mocks.gatewayDeviceInfo = { deviceId: 'device-current' };
+    mocks.devices = [
+      {
+        deviceId: 'device-current',
+        friendlyName: 'Current Mac',
+        hostname: 'current.local',
+        online: true,
+        platform: 'darwin',
+      },
+      {
+        deviceId: 'device-remote',
+        friendlyName: 'Remote Mac',
+        hostname: 'remote.local',
+        online: true,
+        platform: 'darwin',
+      },
+    ];
+
+    render(
+      <HeteroDeviceSwitcher
+        agentId="agent-1"
+        boundDeviceId="device-current"
+        executionTarget="device"
+        onSelectTarget={onSelectTarget}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', {
+        name: /heteroAgent\.executionTarget\.title: heteroAgent\.executionTarget\.local/,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Current Mac')).not.toBeInTheDocument();
+    expect(screen.getByText('Remote Mac')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByText('heteroAgent.executionTarget.local').at(-1)!);
+    expect(onSelectTarget).not.toHaveBeenCalled();
   });
 
   it('disables the sandbox option when the server reports it as unavailable', () => {

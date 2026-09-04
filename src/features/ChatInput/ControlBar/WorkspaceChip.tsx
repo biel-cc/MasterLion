@@ -54,8 +54,6 @@ const styles = createStaticStyles(({ css }) => ({
   `,
 }));
 
-const getDirName = (path: string) => path.split('/').findLast(Boolean) || path;
-
 export interface WorkspaceChipProps {
   bind: BindWorkspaceOnce;
   effective: EffectiveWorkspace;
@@ -74,11 +72,38 @@ const WorkspaceChip = memo<WorkspaceChipProps>(({ bind, effective, repoType }) =
 
   const cwd = effective.cwd ?? effective.workspace?.rootPath ?? '';
   const isScratch = effective.state === 'scratch';
-  const name = effective.workspace?.displayName || getDirName(cwd);
 
   const tooltip = isScratch
     ? tw('workspaceRuntime.chip.scratchTooltip', { path: cwd })
     : tw('workspaceRuntime.chip.boundTooltip', { path: cwd });
+
+  const contents = (
+    <>
+      <DirIcon repoType={repoType} />
+      <span className={styles.label}>{cwd}</span>
+      {isScratch && (
+        <Tag data-testid="workspace-chip-scratch" size={'small'}>
+          {tw('workspaceRuntime.chip.scratch')}
+        </Tag>
+      )}
+      <Icon className={styles.lock} icon={LockIcon} size={11} />
+    </>
+  );
+
+  if (!bind.canStartReferencedTopic) {
+    return (
+      <Tooltip title={tooltip}>
+        <span
+          aria-label={tooltip}
+          className={styles.chip}
+          data-testid="workspace-chip"
+          data-workspace-state={effective.state}
+        >
+          {contents}
+        </span>
+      </Tooltip>
+    );
+  }
 
   const chip = (
     <button
@@ -88,21 +113,10 @@ const WorkspaceChip = memo<WorkspaceChipProps>(({ bind, effective, repoType }) =
       data-workspace-state={effective.state}
       type="button"
     >
-      <DirIcon repoType={repoType} />
-      <span className={styles.label}>{name}</span>
-      {isScratch && (
-        <Tag data-testid="workspace-chip-scratch" size={'small'}>
-          {tw('workspaceRuntime.chip.scratch')}
-        </Tag>
-      )}
-      <Icon className={styles.lock} icon={LockIcon} size={11} />
-      {bind.canStartReferencedTopic && <Icon icon={ChevronDownIcon} size={12} />}
+      {contents}
+      <Icon icon={ChevronDownIcon} size={12} />
     </button>
   );
-
-  if (!bind.canStartReferencedTopic) {
-    return <Tooltip title={tooltip}>{chip}</Tooltip>;
-  }
 
   return (
     <Flexbox horizontal align={'center'} gap={4}>

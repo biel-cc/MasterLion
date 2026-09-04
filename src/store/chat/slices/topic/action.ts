@@ -20,6 +20,7 @@ import { type ChatStore } from '@/store/chat';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useGlobalStore } from '@/store/global';
 import {
+  buildDraftConversationKey,
   getProjectWorkspaceStoreState,
   resolvePendingTopicExecutionIntent,
 } from '@/store/projectWorkspace';
@@ -112,7 +113,14 @@ export class ChatTopicActionImpl {
   };
 
   openNewTopicOrSaveTopic = async (): Promise<void> => {
-    const { switchTopic, saveToTopic, refreshMessages, activeTopicId } = this.#get();
+    const {
+      switchTopic,
+      saveToTopic,
+      refreshMessages,
+      activeAgentId,
+      activeGroupId,
+      activeTopicId,
+    } = this.#get();
     const hasTopic = !!activeTopicId;
 
     if (hasTopic) await switchTopic(null, { resetFileSelection: true });
@@ -120,6 +128,15 @@ export class ChatTopicActionImpl {
       await saveToTopic();
       await useAgentStore.getState().disableAllFiles();
       await refreshMessages();
+    }
+
+    // The global "new topic" entry always starts an ordinary conversation.
+    // An explicit workspace-group `+` bypasses this action and therefore keeps
+    // its workspace-bound draft intent.
+    if (activeAgentId) {
+      getProjectWorkspaceStoreState().clearDraftIntent(
+        buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId }),
+      );
     }
   };
 

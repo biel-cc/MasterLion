@@ -19,7 +19,6 @@ import HeteroDeviceSwitcher from './HeteroDeviceSwitcher';
 import { useBindWorkspaceOnce } from './useBindWorkspaceOnce';
 import { useRepoType } from './useRepoType';
 import WorkspaceChip from './WorkspaceChip';
-import WorkspacePicker from './WorkspacePicker';
 
 const styles = createStaticStyles(({ css }) => ({
   targetError: css`
@@ -42,12 +41,13 @@ interface WorkspaceControlsProps {
 
 /**
  * Workspace/Project control strip shared by the chat-input control bars:
- * target switcher + (picker | read-only chip) + git status.
+ * target switcher + read-only workspace chip + git status.
  *
  * All state comes from `useEffectiveWorkspace` (the accepted contract). A
- * draft/unbound topic gets the bind-once picker; bound and scratch topics get
- * a read-only chip. Target switches only touch the draft intent or the current
- * topic snapshot, never the agent's stored defaults.
+ * Ordinary drafts and Recent topics have no user-selectable workspace. A
+ * workspace-group draft, a bound topic, or a scratch topic gets a read-only
+ * chip. Target switches only touch the draft intent or the current topic
+ * snapshot, never the agent's stored defaults.
  */
 const WorkspaceControls = memo<WorkspaceControlsProps>(
   ({ agentId, alwaysShowWorkspace = false }) => {
@@ -59,7 +59,6 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     const bind = useBindWorkspaceOnce(effective, agentId);
 
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
-    const seamAvailable = useProjectWorkspaceStore((s) => s.seamAvailable);
     const setDraftTargetIntent = useProjectWorkspaceStore((s) => s.setDraftTargetIntent);
     const captureTopicTarget = useProjectWorkspaceStore((s) => s.captureTopicTarget);
     const [targetError, setTargetError] = useState<ProjectWorkspaceErrorCode>();
@@ -97,6 +96,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     const isDeviceTarget = effective.target === 'local' || effective.target === 'device';
     const isLocalDevice =
       isDesktop && !!effective.targetDeviceId && effective.targetDeviceId === currentDeviceId;
+    const displayTarget = isLocalDevice ? 'local' : effective.target;
     const cwd = effective.cwd;
 
     // Local machine probes the filesystem for repoType; a remote device's repoType
@@ -123,7 +123,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         return null;
       }
 
-      if (seamAvailable && (effective.state === 'bound' || effective.state === 'scratch')) {
+      if (effective.state === 'bound' || effective.state === 'scratch') {
         return (
           <>
             <WorkspaceChip bind={bind} effective={effective} repoType={repoType} />
@@ -138,7 +138,10 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         );
       }
 
-      return <WorkspacePicker bind={bind} effective={effective} />;
+      // Ordinary conversations acquire a scratch cwd lazily when a local tool
+      // first needs one. Workspace selection is intentionally available only
+      // through the explicit workspace-group entry points.
+      return null;
     };
 
     return (
@@ -146,7 +149,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         <HeteroDeviceSwitcher
           agentId={agentId}
           boundDeviceId={effective.targetDeviceId ?? effective.recommendation.deviceId}
-          executionTarget={effective.target}
+          executionTarget={displayTarget}
           onSelectTarget={handleSelectTarget}
         />
         {targetError && (

@@ -50,7 +50,7 @@ vi.mock('./WorkspacePicker', () => ({ default: () => <div data-testid="workspace
 vi.mock('./useBindWorkspaceOnce', () => ({ useBindWorkspaceOnce: () => ({}) }));
 vi.mock('./useRepoType', () => ({ useRepoType: () => undefined }));
 
-describe('WorkspaceControls old-server compatibility', () => {
+describe('WorkspaceControls topic ownership', () => {
   beforeEach(() => {
     mocks.seamAvailable = false;
     mocks.effective = {
@@ -75,10 +75,50 @@ describe('WorkspaceControls old-server compatibility', () => {
     };
   });
 
-  it('keeps legacy cwd selection editable instead of claiming a formal locked binding', () => {
+  it('keeps a historical workspace readable but immutable on an old server', () => {
     render(<WorkspaceControls agentId="agent-1" />);
 
-    expect(screen.getByTestId('workspace-picker')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-chip')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['a global new-topic draft', true, undefined],
+    ['an existing Recent topic', false, 'topic-recent'],
+  ])('does not offer workspace selection for %s', (_label, isDraft, topicId) => {
+    mocks.seamAvailable = true;
+    mocks.effective = {
+      ...mocks.effective,
+      context: {
+        ...mocks.effective.context,
+        cwd: undefined,
+        workspace: undefined,
+      },
+      cwd: undefined,
+      isDraft,
+      state: 'unbound',
+      topicId,
+      workspace: undefined,
+    };
+
+    render(<WorkspaceControls agentId="agent-1" />);
+
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
     expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
+  });
+
+  it('shows a locked workspace for a draft opened from a workspace group', () => {
+    mocks.seamAvailable = true;
+    mocks.effective = {
+      ...mocks.effective,
+      isDraft: true,
+      state: 'bound',
+      topicId: undefined,
+    };
+
+    render(<WorkspaceControls agentId="agent-1" />);
+
+    expect(screen.getByTestId('workspace-chip')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
   });
 });

@@ -363,9 +363,9 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
       staleTime: 30_000,
     });
 
-    // The current machine's own gateway deviceId (desktop only), used only to
-    // badge the matching device row. The dedicated local "This device" option
-    // remains visible in desktop mode.
+    // The current machine's gateway registration and the dedicated local option
+    // describe the same execution target. Keep the id for dispatch, but present
+    // this desktop only once in the picker.
     useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
     const gatewayDeviceInfo = useElectronStore((s) => s.gatewayDeviceInfo);
     const currentDeviceId = isDesktop ? gatewayDeviceInfo?.deviceId : undefined;
@@ -373,14 +373,31 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     // Effective target: shared with server dispatch. In particular, a hetero
     // desktop "local" selection that carries this desktop's boundDeviceId becomes
     // a device target when the same agent is opened from web.
-    const executionTarget =
+    const resolvedExecutionTarget =
       (onSelectTarget ? conversationTarget : undefined) ??
       resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
+    const executionTarget =
+      isDesktop &&
+      resolvedExecutionTarget === 'device' &&
+      !!currentDeviceId &&
+      boundDeviceId === currentDeviceId
+        ? 'local'
+        : resolvedExecutionTarget;
     const isCloudSandboxEnabled = useServerConfigStore(serverConfigSelectors.enableCloudSandbox);
 
     const handleSelect = useCallback(
       async (target: DeviceExecutionTarget, deviceId?: string) => {
         setOpen(false);
+
+        // The current desktop may be persisted as a registered device target,
+        // but the UI normalizes it to `local`. Re-selecting it is a no-op and
+        // must not attempt to recapture an existing topic on an older server.
+        if (
+          target === executionTarget &&
+          (target !== 'device' || boundDeviceId === deviceId)
+        ) {
+          return;
+        }
 
         // `executionTarget` is the single source of truth — the server tool
         // gate + client `getRuntimeModeById` derive `runtimeMode` from it.
@@ -416,6 +433,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
         agencyConfig,
         boundDeviceId,
         currentDeviceId,
+        executionTarget,
         isHetero,
         onSelectTarget,
         updateAgentConfigById,
@@ -428,6 +446,9 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     const boundDevice =
       executionTarget === 'device' ? devices?.find((d) => d.deviceId === boundDeviceId) : undefined;
     const hasNoDevices = !devices || devices.length === 0;
+    const selectableDevices = (devices ?? []).filter(
+      (device) => !isDesktop || device.deviceId !== currentDeviceId,
+    );
     // On web with no device, the prominent download card below replaces the small
     // header link — avoid showing the same CTA twice.
     const showWebDownloadCard = !isDesktop && hasNoDevices && !isLoading;
@@ -532,7 +553,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
           }
           onClick={() => void handleSelect('sandbox')}
         />
-        {(devices ?? []).map((d) => renderDeviceRow(d))}
+        {selectableDevices.map((d) => renderDeviceRow(d))}
         {hasNoDevices && isLoading ? (
           <div className={styles.empty}>{t('heteroAgent.executionTarget.loading')}</div>
         ) : null}

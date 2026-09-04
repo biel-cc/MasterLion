@@ -28,14 +28,14 @@ vi.mock('./Topic', () => ({
 }));
 
 describe('Sidebar Body', () => {
-  it('renders Topic before Task and passes Task its unchanged item key', () => {
+  it('keeps Task above Topic and passes Task its unchanged item key', () => {
     render(<Body />);
 
     const accordion = screen.getByTestId('accordion');
     const order = [...accordion.querySelectorAll('[data-testid]')].map((node) =>
       node.getAttribute('data-testid'),
     );
-    expect(order).toEqual(['topic-list', 'task-list']);
+    expect(order).toEqual(['task-list', 'topic-list']);
 
     expect(taskProps).toHaveLength(1);
     expect(taskProps[0]).toEqual({ itemKey: ChatSidebarKey.Tasks });

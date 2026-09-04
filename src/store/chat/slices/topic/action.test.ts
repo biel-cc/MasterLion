@@ -12,6 +12,7 @@ import { useAgentStore } from '@/store/agent';
 import { PortalViewType } from '@/store/chat/slices/portal/initialState';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
+import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { useSessionStore } from '@/store/session';
 import { type ChatTopic } from '@/types/topic';
 
@@ -82,6 +83,7 @@ beforeEach(() => {
     false,
   );
   useAgentStore.setState({ agentDocumentsMap: {} });
+  useProjectWorkspaceStore.setState({ draftByConversationKey: {} });
   useSessionStore.setState(
     {
       activeId: 'inbox',
@@ -143,6 +145,28 @@ describe('topic action', () => {
       });
 
       expect(disableAllFilesSpy).toHaveBeenCalledOnce();
+    });
+
+    it('clears workspace intent when the global new-topic action replaces an empty workspace draft', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        draftByConversationKey: {
+          [draftKey]: {
+            target: 'local',
+            targetDeviceId: 'device-1',
+            updatedAt: Date.now(),
+            workspaceId: 'workspace-1',
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: undefined });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toBeUndefined();
     });
   });
   describe('saveToTopic', () => {
