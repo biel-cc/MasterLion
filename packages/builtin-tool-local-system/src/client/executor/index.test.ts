@@ -202,6 +202,7 @@ describe('LocalSystemExecutor', () => {
               rootPath: '/remote/project',
             },
           },
+          messageId: 'message-1',
           operationId: 'op-1',
           toolCallId: 'call-1',
           topicId: 'topic-1',
