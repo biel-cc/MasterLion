@@ -2,16 +2,42 @@ import { expect, test } from '@playwright/test';
 
 import { launchElectronTestApp } from '../support/electronTestApp.mjs';
 
+const observeSpinnerLifecycle = async (page) => {
+  const spinner = page.getByTestId('tool-spinner');
+  await spinner.evaluate((node) => {
+    window.__masterinoToolSpinnerWasVisible = !node.hidden;
+    new MutationObserver((records) => {
+      // Removing the initially-present `hidden` attribute proves the spinner
+      // entered its visible state even when the operation settles before the
+      // next Playwright polling interval.
+      if (records.some((record) => record.oldValue !== null)) {
+        window.__masterinoToolSpinnerWasVisible = true;
+      }
+    }).observe(node, {
+      attributeFilter: ['hidden'],
+      attributeOldValue: true,
+      attributes: true,
+    });
+  });
+};
+
+const expectSpinnerWasVisible = async (page) => {
+  await expect
+    .poll(() => page.evaluate(() => window.__masterinoToolSpinnerWasVisible))
+    .toBe(true);
+};
+
 test('retries a transient prepare failure before executing the local tool once', async () => {
   const electronApp = await launchElectronTestApp();
 
   try {
     const page = await electronApp.firstWindow();
     await expect(page.getByTestId('electron-runtime')).toHaveText('ready');
+    await observeSpinnerLifecycle(page);
 
     await page.getByTestId('run-transient').click();
 
-    await expect(page.getByTestId('tool-spinner')).toBeVisible();
+    await expectSpinnerWasVisible(page);
     await expect(page.getByTestId('tool-status')).toHaveText('completed');
     await expect(page.getByTestId('tool-spinner')).toBeHidden();
     await expect(page.getByTestId('prepare-attempts')).toHaveText('3');
@@ -29,10 +55,11 @@ test('stops the spinner without executing the local tool when prepare retries ar
   try {
     const page = await electronApp.firstWindow();
     await expect(page.getByTestId('electron-runtime')).toHaveText('ready');
+    await observeSpinnerLifecycle(page);
 
     await page.getByTestId('run-exhausted').click();
 
-    await expect(page.getByTestId('tool-spinner')).toBeVisible();
+    await expectSpinnerWasVisible(page);
     await expect(page.getByTestId('tool-status')).toHaveText('failed');
     await expect(page.getByTestId('tool-spinner')).toBeHidden();
     await expect(page.getByTestId('prepare-attempts')).toHaveText('3');
