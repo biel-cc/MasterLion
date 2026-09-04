@@ -3132,6 +3132,73 @@ describe('RuntimeExecutors', () => {
       });
     });
 
+    it('keeps and persists a successful scratch tool result when the scratch bind throws WORKSPACE_ALREADY_BOUND', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindError = new Error('WORKSPACE_ALREADY_BOUND') as Error & {
+        scratchWorkspaceId?: string;
+      };
+      bindError.scratchWorkspaceId = 'scratch-workspace';
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-bind-race',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-bind-race' }),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            result: expect.objectContaining({ content: 'Tool result', success: true }),
+            type: 'tool_result',
+          }),
+        ]),
+      );
+      // The successful tool ran against the scratch root; on bind failure we
+      // keep that pre-bind context rather than losing it or failing the call.
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/tmp/masterino/topic-123',
+        workspace: { kind: 'scratch', rootPath: '/tmp/masterino/topic-123' },
+      });
+    });
+
     it('uses the server-to-device transport for frozen local-system env authority', async () => {
       mockStreamManager.sendToolExecute = vi.fn();
       const executors = createRuntimeExecutors(ctx);

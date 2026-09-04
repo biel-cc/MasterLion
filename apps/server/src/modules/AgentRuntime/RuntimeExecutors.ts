@@ -3831,9 +3831,27 @@ export const createRuntimeExecutors = (
           };
         }
 
-        const resultingExecutionContext = execution.result.success
-          ? await bindPreparedScratchContext(ctx, state, preparedExecutionContext)
-          : preparedExecutionContext.executionContext;
+        let resultingExecutionContext = preparedExecutionContext.executionContext;
+        if (execution.result.success) {
+          try {
+            resultingExecutionContext = await bindPreparedScratchContext(
+              ctx,
+              state,
+              preparedExecutionContext,
+            );
+          } catch (error) {
+            // The tool already succeeded. A scratch bind failure/race (e.g. the
+            // user selecting a formal directory mid-run surfacing as
+            // WORKSPACE_ALREADY_BOUND) must not overwrite that success or skip
+            // persisting the successful tool output. Keep the pre-bind scratch
+            // context the tool actually ran with and continue.
+            log(
+              `[${operationLogId}] Scratch bind after successful tool ${toolName} failed; keeping the pre-bind scratch context and the successful tool result: %O`,
+              error,
+            );
+            resultingExecutionContext = preparedExecutionContext.executionContext;
+          }
+        }
 
         const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
           activeDeviceId: state.metadata?.activeDeviceId,
