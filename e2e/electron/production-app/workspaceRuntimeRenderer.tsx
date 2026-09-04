@@ -1,8 +1,6 @@
 import { mergeModelCatalogEntry } from '@lobechat/business-model-bank';
 import type { ContextBudgetFailCode } from '@lobechat/types/src/contextBudget';
 import type { EvidenceState } from '@lobechat/types/src/modelCatalog';
-import type { TopicExecutionSnapshot } from '@lobechat/types/src/projectWorkspace';
-import type { ChatTopic } from '@lobechat/types/src/topic';
 import { MotionProvider } from '@lobehub/ui';
 import { App as AntdApp } from 'antd';
 import i18n from 'i18next';
@@ -24,11 +22,9 @@ import {
 import SidebarBody from '@/routes/(main)/agent/_layout/Sidebar/Body';
 import { useAgentStore } from '@/store/agent';
 import { useChatStore } from '@/store/chat';
-import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useElectronStore } from '@/store/electron';
-import { useGlobalStore } from '@/store/global';
-import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
+import { AGENT_ID, DEVICE_ID } from './workspaceRuntimeTrpcClient';
 import chat from '../../../locales/en-US/chat.json';
 import common from '../../../locales/en-US/common.json';
 import components from '../../../locales/en-US/components.json';
@@ -42,85 +38,19 @@ void i18n.use(initReactI18next).init({
   resources: { 'en-US': { chat, common, components, error, topic: topicLocale } },
 });
 
-const AGENT_ID = 'electron-e2e-agent';
-const DEVICE_ID = 'electron-e2e-device';
-const FORMAL_WORKSPACE_ID = 'workspace-product';
-const SCRATCH_WORKSPACE_ID = 'workspace-scratch';
-const SCRATCH_ROOT = '/tmp/masterino/topic-scratch';
-
-const executionSnapshot = (
-  workspaceId: string,
-  workspaceKind: 'device' | 'scratch',
-): TopicExecutionSnapshot => ({
-  boundDeviceId: DEVICE_ID,
-  target: 'local',
-  targetCapturedAt: '2026-09-04T00:00:00.000Z',
-  version: 1,
-  workspaceBoundAt: '2026-09-04T00:00:00.000Z',
-  workspaceId,
-  workspaceKind,
-});
-
-const topic = (
-  id: string,
-  title: string,
-  snapshot?: TopicExecutionSnapshot,
-  updatedAt = '2026-09-04T00:00:00.000Z',
-): ChatTopic => ({
-  createdAt: new Date(updatedAt),
-  id,
-  metadata: snapshot ? { executionSnapshot: snapshot } : undefined,
-  title,
-  updatedAt: new Date(updatedAt),
-});
-
-const productTopics = [
-  topic(
-    'topic-workspace',
-    'Workspace feature work',
-    executionSnapshot(FORMAL_WORKSPACE_ID, 'device'),
-    '2026-09-04T03:00:00.000Z',
-  ),
-  topic(
-    'topic-scratch',
-    'Temporary work',
-    executionSnapshot(SCRATCH_WORKSPACE_ID, 'scratch'),
-    '2026-09-04T02:00:00.000Z',
-  ),
-  topic('topic-unbound', 'Pure chat', undefined, '2026-09-04T01:00:00.000Z'),
-];
-
-const workspaceRequestFixture = (workspaces: Record<string, unknown>) => ({
-  data: Object.values(workspaces),
-  error: undefined,
-  isLoading: false,
-  mutate: async () => Object.values(workspaces),
-});
-
 /**
- * Seed only server-shaped evidence. The mounted production sidebar still owns
- * placement, grouping, ordering and scratch-tag rendering; the E2E does not
- * duplicate any of those conclusions.
+ * Seed conversation identity only — the two things a signed-in desktop session
+ * would already hold: which agent is open and which topic the route points at.
+ *
+ * Nothing else is seeded. Topic rows and workspace rows are fetched by the
+ * production hooks through the production stores, SWR and services, and only
+ * the TRPC transport is deterministic (see `workspaceRuntimeTrpcClient`). If
+ * any of that production wiring is disconnected the sidebar stays empty and
+ * the spec fails.
  */
-const initializeProductState = () => {
-  useAgentStore.setState({
-    activeAgentId: AGENT_ID,
-    agentMap: { [AGENT_ID]: { id: AGENT_ID, title: 'Electron E2E agent' } },
-  });
-  useChatStore.setState({
-    activeAgentId: AGENT_ID,
-    activeTopicId: 'topic-scratch',
-    topicDataMap: {
-      [topicMapKey({ agentId: AGENT_ID })]: {
-        currentPage: 0,
-        hasMore: false,
-        items: productTopics,
-        pageSize: 20,
-        total: productTopics.length,
-      },
-    },
-    topicLoadingIds: [],
-  });
+const seedProductionSessionIdentity = () => {
+  useAgentStore.setState({ activeAgentId: AGENT_ID });
+  useChatStore.setState({ activeAgentId: AGENT_ID, activeTopicId: 'topic-scratch' });
   useElectronStore.setState({
     gatewayDeviceInfo: {
       description: 'Electron production E2E device',
@@ -130,40 +60,9 @@ const initializeProductState = () => {
       platform: 'darwin',
     },
   });
-
-  const workspaces = {
-    [FORMAL_WORKSPACE_ID]: {
-      deviceId: DEVICE_ID,
-      displayName: 'Masterino product workspace',
-      id: FORMAL_WORKSPACE_ID,
-      kind: 'device' as const,
-      repoType: 'git' as const,
-      rootPath: '/workspace/masterino',
-    },
-    [SCRATCH_WORKSPACE_ID]: {
-      deviceId: DEVICE_ID,
-      id: SCRATCH_WORKSPACE_ID,
-      kind: 'scratch' as const,
-      rootPath: SCRATCH_ROOT,
-    },
-  };
-  const fetchWorkspacesForFixture = () => workspaceRequestFixture(workspaces);
-  useProjectWorkspaceStore.setState({
-    isWorkspacesInit: true,
-    seamAvailable: true,
-    topicStatesById: {},
-    useFetchWorkspaces: fetchWorkspacesForFixture as never,
-    workspaceIdsByDevice: {
-      [DEVICE_ID]: [FORMAL_WORKSPACE_ID, SCRATCH_WORKSPACE_ID],
-    },
-    workspacesById: workspaces,
-  });
-  useGlobalStore.setState((state) => ({
-    status: { ...state.status, expandTopicGroupKeys: [FORMAL_WORKSPACE_ID] },
-  }));
 };
 
-initializeProductState();
+seedProductionSessionIdentity();
 
 interface ProductModelFixture {
   displayName: string;

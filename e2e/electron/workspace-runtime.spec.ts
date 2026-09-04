@@ -24,6 +24,9 @@ test('production renderer keeps Topic and flat Recent independent from Task UI',
 
   const recent = page.getByTestId('topic-recent-section');
   await expect(recent).toContainText('Recent');
+  // Exactly the two unbound/scratch rows — the workspace-bound row belongs to
+  // the group above, and the system-owned rows must never have been fetched.
+  await expect(recent.getByTestId('topic-item')).toHaveCount(2);
   await expect(recent.getByTestId('topic-item').filter({ hasText: 'Pure chat' })).toHaveCount(1);
   await expect(recent).not.toContainText(/Task|T-\d+/i);
 
@@ -46,9 +49,14 @@ test('production renderer keeps Topic and flat Recent independent from Task UI',
 test('production Workspace groups stay above Recent and real TopicItem marks scratch', async () => {
   const { page } = session;
   const workspaceSection = page.getByTestId('topic-workspace-section');
+  // The group title and the scratch tooltip path both come from the fetched
+  // `projectWorkspace.list` rows, so they only render when the production
+  // projectWorkspace store, service and placement selectors stay connected.
+  await expect(workspaceSection.getByTestId('workspace-group')).toHaveCount(1);
   await expect(workspaceSection.getByTestId('workspace-group')).toContainText(
     'Masterino product workspace',
   );
+  await expect(workspaceSection.getByTestId('topic-item')).toHaveCount(1);
   await expect(workspaceSection.getByTestId('topic-item')).toContainText('Workspace feature work');
 
   const recent = page.getByTestId('topic-recent-section');
@@ -60,6 +68,8 @@ test('production Workspace groups stay above Recent and real TopicItem marks scr
     /\/tmp\/masterino\/topic-scratch/,
   );
   await expect(recent).not.toContainText('Workspace feature work');
+  // Recent keeps the production `updatedAt` ordering, newest first.
+  await expect(recent.getByTestId('topic-item')).toHaveText([/Temporary work/, /Pure chat/]);
 
   const sectionOrder = await page.getByTestId('production-agent-sidebar').evaluate((node) => {
     const workspace = node.querySelector('[data-testid="topic-workspace-section"]');
@@ -71,6 +81,37 @@ test('production Workspace groups stay above Recent and real TopicItem marks scr
     );
   });
   expect(sectionOrder).toBe(true);
+});
+
+test('production Topic and Workspace data reach the deterministic TRPC boundary', async () => {
+  const { page } = session;
+  const sidebar = page.getByTestId('production-agent-sidebar');
+  await expect(page.getByTestId('topic-recent-section').getByTestId('topic-item')).toHaveCount(2);
+
+  // System-owned rows exist at the boundary and are only filtered out when the
+  // production `useFetchChatTopics` params travel the whole chain.
+  await expect(sidebar).not.toContainText('Task run sweep');
+  await expect(sidebar).not.toContainText('Completed retro');
+
+  const calls = await page.evaluate(
+    () =>
+      ((window as unknown as Record<string, any>).__masterinoWorkspaceRuntimeTrpc?.calls ?? []) as {
+        input: Record<string, unknown>;
+        path: string;
+      }[],
+  );
+
+  const topicCalls = calls.filter((call) => call.path === 'topic.getTopics');
+  expect(topicCalls.length).toBeGreaterThan(0);
+  expect(topicCalls[0].input).toMatchObject({
+    agentId: 'electron-e2e-agent',
+    current: 0,
+    excludeStatuses: ['completed'],
+    excludeTriggers: ['cron', 'eval', 'task'],
+    pageSize: 20,
+  });
+
+  expect(calls.some((call) => call.path === 'projectWorkspace.list')).toBe(true);
 });
 
 test('production model pipeline excludes rerank and renders all capability states', async () => {
