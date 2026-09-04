@@ -69,8 +69,12 @@ type AgentMap = Record<string, PartialDeep<AgentItem>>;
  * are leaves because `merge` replaces them wholesale; `undefined` writes
  * nothing and an empty object merges to a no-op, so neither owns a path.
  */
+// `isPlainObject` from es-toolkit/compat returns a plain boolean, so narrow the
+// unknown ourselves to keep `Object.entries` typed.
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => isPlainObject(value);
+
 const collectWrittenPaths = (value: unknown, prefix: string[], out: string[][]): void => {
-  if (isPlainObject(value)) {
+  if (isPlainRecord(value)) {
     for (const [key, child] of Object.entries(value)) {
       collectWrittenPaths(child, [...prefix, key], out);
     }
