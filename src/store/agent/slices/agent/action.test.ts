@@ -756,6 +756,103 @@ describe('AgentSlice Actions', () => {
       consoleError.mockRestore();
     });
 
+    it('leaves a scalar path alone when a later write already replaced its value', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'gpt-3.5-turbo' } },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        // A second save for the same field lands first and wins.
+        result.current.internal_dispatchAgentMap('agent-1', { model: 'gpt-4o' });
+        await pending;
+      });
+
+      // The stale failure must not resurrect a value older than the winner's.
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4o' });
+      consoleError.mockRestore();
+    });
+
+    it('leaves a replaced subtree alone when a later replace already rewrote it', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': { agencyConfig: { env: { KEEP: 'yes', REMOVED: 'old' } } } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig(
+          'agent-1',
+          { agencyConfig: { env: { KEEP: 'yes' } } } as any,
+          undefined,
+          { replacePaths: ['agencyConfig.env'] },
+        );
+        result.current.internal_dispatchAgentMap(
+          'agent-1',
+          { agencyConfig: { env: { ADDED: 'new', KEEP: 'yes' } } } as any,
+          { replacePaths: ['agencyConfig.env'] },
+        );
+        await pending;
+      });
+
+      // Neither the loser's optimistic subtree nor the pre-update one comes back.
+      expect((result.current.agentMap['agent-1'] as any).agencyConfig.env).toEqual({
+        ADDED: 'new',
+        KEEP: 'yes',
+      });
+      consoleError.mockRestore();
+    });
+
+    it('rolls back the paths it still owns while skipping the ones a later write took', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': { chatConfig: { historyCount: 10 }, model: 'gpt-3.5-turbo' } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', {
+          chatConfig: { historyCount: 99 },
+          model: 'gpt-4',
+        } as any);
+        // Overlaps on `model` only; `chatConfig.historyCount` is still ours.
+        result.current.internal_dispatchAgentMap('agent-1', { model: 'gpt-4o' });
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({
+        // rolled back
+        chatConfig: { historyCount: 10 },
+        // left to the winner
+        model: 'gpt-4o',
+      });
+      consoleError.mockRestore();
+    });
+
     it('keeps a concurrently created entry when the failed update created the agent', async () => {
       const { result } = renderHook(() => useAgentStore());
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});

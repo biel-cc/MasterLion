@@ -113,19 +113,75 @@ const resolveWrittenPaths = (
 };
 
 /**
- * Undo only the paths this update wrote. Restoring the whole pre-update agent
- * would discard any concurrent successful write — e.g. a meta update that
- * landed while this config save was still in flight.
+ * What this update left at one path once its optimistic write landed: the
+ * value plus whether the path exists at all. Rollback compares the live map
+ * against this snapshot, so a path some later write has already changed is
+ * recognised as no longer ours.
+ */
+interface OptimisticWrite {
+  /** Whether the path exists, so a later deletion is not mistaken for our value. */
+  present: boolean;
+  path: string[];
+  value: unknown;
+}
+
+/**
+ * Read back what the optimistic dispatch actually put in the map, rather than
+ * assuming it equals the payload: `merge` decides how a value lands, and a
+ * path it did not write must not be claimed by the rollback.
+ */
+const snapshotOptimisticWrites = (
+  agent: PartialDeep<AgentItem> | undefined,
+  paths: string[][],
+): OptimisticWrite[] =>
+  paths.map((path) => ({
+    present: agent !== undefined && hasAtPath(agent, path),
+    path,
+    value: agent === undefined ? undefined : getAtPath(agent, path),
+  }));
+
+/**
+ * Compare-and-swap guard: this update may only undo a path that still carries
+ * the value it wrote. Without it, two saves racing on one path let the loser's
+ * rollback overwrite the winner with a value older than either — a silent data
+ * loss the user never sees.
+ *
+ * Equivalence is by value, not by identity: another write that re-set the same
+ * value is indistinguishable here and its path is rolled back. That is the
+ * price of keeping this local; the alternative is a per-path writer token
+ * threaded through every dispatch.
+ */
+const stillHoldsOptimisticWrite = (
+  current: PartialDeep<AgentItem>,
+  { path, present, value }: OptimisticWrite,
+): boolean => {
+  if (hasAtPath(current, path) !== present) return false;
+  if (!present) return true;
+
+  return isEqual(getAtPath(current, path), value);
+};
+
+/**
+ * Undo only the paths this update wrote and still owns. Restoring the whole
+ * pre-update agent would discard any concurrent successful write — e.g. a meta
+ * update that landed while this config save was still in flight.
  */
 const rollbackWrittenPaths = (
   agentMap: AgentMap,
   id: string,
   previousAgent: PartialDeep<AgentItem> | undefined,
-  paths: string[][],
-): AgentMap =>
-  produce(agentMap, (draft) => {
+  writes: OptimisticWrite[],
+): AgentMap => {
+  const currentAgent = agentMap[id];
+  // A newer write already dropped the entry; it owns the state now.
+  if (!currentAgent) return agentMap;
+
+  const paths = writes
+    .filter((write) => stillHoldsOptimisticWrite(currentAgent, write))
+    .map((write) => write.path);
+
+  return produce(agentMap, (draft) => {
     const current = draft[id];
-    // A newer write already dropped the entry; it owns the state now.
     if (!current) return;
 
     for (const path of paths) {
@@ -159,6 +215,7 @@ const rollbackWrittenPaths = (
     // written to it since.
     if (previousAgent === undefined && Object.keys(current).length === 0) delete draft[id];
   });
+};
 
 /**
  * Agent Slice Actions
@@ -612,6 +669,13 @@ export class AgentSliceActionImpl {
     internal_dispatchAgentMap(id, data, options);
     updateSaveStatus('saving');
 
+    // Snapshot what this request just wrote, so a later rollback can tell its
+    // own optimistic value apart from one a concurrent write has since landed.
+    const optimisticWrites = snapshotOptimisticWrites(
+      this.#get().agentMap[id],
+      resolveWrittenPaths(data, options?.replacePaths),
+    );
+
     try {
       // 2. API call returns updated agent data
       const result = await agentService.updateAgentConfig(id, data, signal);
@@ -633,14 +697,15 @@ export class AgentSliceActionImpl {
 
       // The write never landed, so the optimistic value must not stay on screen. An abort
       // means a newer write already owns that state, so leave the map to the newer write.
-      // Roll back only the paths this update touched: restoring the whole agent would
-      // clobber a concurrent successful write (e.g. a meta update) on other fields.
+      // Roll back only the paths this update touched and still owns: restoring the whole
+      // agent would clobber a concurrent successful write (e.g. a meta update) on other
+      // fields, and restoring a path another write has since changed would clobber it there.
       if (!aborted) {
         const agentMap = rollbackWrittenPaths(
           this.#get().agentMap,
           id,
           previousAgent,
-          resolveWrittenPaths(data, options?.replacePaths),
+          optimisticWrites,
         );
         this.#set({ agentMap }, false, 'rollbackAgentConfig');
       }
