@@ -2,16 +2,14 @@
 
 import { isDesktop } from '@lobechat/const';
 import type { DeviceExecutionTarget } from '@lobechat/types';
-import { createStaticStyles, cssVar } from 'antd-style';
-import { memo, useCallback, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { memo, useCallback } from 'react';
 
 import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors } from '@/store/agent/selectors';
 import { deviceSelectors, useDeviceStore } from '@/store/device';
 import { useElectronStore } from '@/store/electron';
-import { type ProjectWorkspaceErrorCode, useProjectWorkspaceStore } from '@/store/projectWorkspace';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import CloudRepoSwitcher from './CloudRepoSwitcher';
 import GitStatus from './GitStatus';
@@ -19,15 +17,7 @@ import HeteroDeviceSwitcher from './HeteroDeviceSwitcher';
 import { useBindWorkspaceOnce } from './useBindWorkspaceOnce';
 import { useRepoType } from './useRepoType';
 import WorkspaceChip from './WorkspaceChip';
-
-const styles = createStaticStyles(({ css }) => ({
-  targetError: css`
-    padding-inline: 4px;
-    font-size: 11px;
-    color: ${cssVar.colorErrorText};
-    white-space: nowrap;
-  `,
-}));
+import WorkspacePicker from './WorkspacePicker';
 
 interface WorkspaceControlsProps {
   agentId: string;
@@ -51,40 +41,27 @@ interface WorkspaceControlsProps {
  */
 const WorkspaceControls = memo<WorkspaceControlsProps>(
   ({ agentId, alwaysShowWorkspace = false }) => {
-    const { t } = useTranslation('chat');
-    const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
-
     const isHeterogeneous = useAgentStore(agentByIdSelectors.isAgentHeterogeneousById(agentId));
     const effective = useEffectiveWorkspace(agentId);
     const bind = useBindWorkspaceOnce(effective, agentId);
 
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
     const setDraftTargetIntent = useProjectWorkspaceStore((s) => s.setDraftTargetIntent);
-    const captureTopicTarget = useProjectWorkspaceStore((s) => s.captureTopicTarget);
-    const [targetError, setTargetError] = useState<ProjectWorkspaceErrorCode>();
 
     const handleSelectTarget = useCallback(
-      async (target: DeviceExecutionTarget, deviceId?: string) => {
-        setTargetError(undefined);
+      (target: DeviceExecutionTarget, deviceId?: string) => {
+        // Existing topics and project-scoped new pages are rendered read-only.
+        // This guard also makes an unexpected stale callback harmless.
+        if (!effective.isDraft || effective.topicId) return;
         const targetDeviceId =
           target === 'device'
             ? deviceId
             : target === 'local'
               ? (deviceId ?? currentDeviceId)
               : undefined;
-        if (effective.isDraft || !effective.topicId) {
-          setDraftTargetIntent(effective.draftKey, { target, targetDeviceId });
-          return;
-        }
-        const outcome = await captureTopicTarget({
-          boundDeviceId: targetDeviceId,
-          target,
-          topicId: effective.topicId,
-        });
-        if (!outcome.ok) setTargetError(outcome.code);
+        setDraftTargetIntent(effective.draftKey, { target, targetDeviceId });
       },
       [
-        captureTopicTarget,
         currentDeviceId,
         effective.draftKey,
         effective.isDraft,
@@ -126,7 +103,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
       if (effective.state === 'bound' || effective.state === 'scratch') {
         return (
           <>
-            <WorkspaceChip bind={bind} effective={effective} repoType={repoType} />
+            <WorkspaceChip effective={effective} repoType={repoType} />
             {cwd && repoType && (
               <GitStatus
                 deviceId={isLocalDevice ? undefined : effective.targetDeviceId}
@@ -138,11 +115,18 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         );
       }
 
-      // Ordinary conversations acquire a scratch cwd lazily when a local tool
-      // first needs one. Workspace selection is intentionally available only
-      // through the explicit workspace-group entry points.
+      // A project is optional and can be selected only before the first
+      // message. Once a topic exists, an unbound local topic acquires a fresh
+      // scratch directory only when a tool actually needs one.
+      if (effective.isDraft && effective.state === 'unbound') {
+        return <WorkspacePicker bind={bind} effective={effective} />;
+      }
+
       return null;
     };
+
+    const targetReadOnly =
+      !effective.isDraft || (effective.state === 'bound' && effective.workspace?.kind === 'device');
 
     return (
       <>
@@ -150,15 +134,9 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
           agentId={agentId}
           boundDeviceId={effective.targetDeviceId ?? effective.recommendation.deviceId}
           executionTarget={displayTarget}
+          readOnly={targetReadOnly}
           onSelectTarget={handleSelectTarget}
         />
-        {targetError && (
-          <span className={styles.targetError} role="alert">
-            {targetError === 'SEAM_UNAVAILABLE'
-              ? tw('workspaceRuntime.target.seamUnavailable')
-              : tw('workspaceRuntime.target.captureFailed')}
-          </span>
-        )}
         {renderWorkspace()}
       </>
     );

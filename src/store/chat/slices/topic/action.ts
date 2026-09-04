@@ -10,6 +10,7 @@ import useSWR from 'swr';
 
 import { message } from '@/components/AntdStaticMethods';
 import { LOADING_FLAT } from '@/const/message';
+import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { mutate, useClientDataSWRWithSync } from '@/libs/swr';
 import { cronKeys, topicKeys } from '@/libs/swr/keys';
 import { chatService } from '@/services/chat';
@@ -23,6 +24,7 @@ import {
   buildDraftConversationKey,
   getProjectWorkspaceStoreState,
   resolvePendingTopicExecutionIntent,
+  type WorkspaceDraftIntent,
 } from '@/store/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
@@ -48,6 +50,52 @@ type CronTopicsGroupWithJobInfo = {
   cronJob: unknown;
   cronJobId: string;
   topics: ChatTopic[];
+};
+
+export type NewTopicExecutionIntent = Omit<WorkspaceDraftIntent, 'updatedAt'>;
+
+const localNewTopicIntent = (): NewTopicExecutionIntent => ({ target: 'local' });
+
+const resolveInheritedProjectIntent = (
+  topicId: string | undefined,
+  chatState: ChatStore,
+): NewTopicExecutionIntent => {
+  if (!topicId) return localNewTopicIntent();
+
+  const workspaceState = getProjectWorkspaceStoreState();
+  const topicState = workspaceState.topicStatesById[topicId];
+  const topic = topicSelectors.getTopicById(topicId)(chatState);
+  const metadata = topic?.metadata as ChatTopicMetadata | undefined;
+  const snapshot = topicState?.snapshot ?? metadata?.executionSnapshot;
+  const workspaceId = snapshot?.workspaceId ?? metadata?.workspaceId;
+  const workspace =
+    topicState?.workspace ?? (workspaceId ? workspaceState.workspacesById[workspaceId] : undefined);
+  const workspaceKind = workspace?.kind ?? snapshot?.workspaceKind ?? metadata?.workspaceKind;
+
+  // A project is durable, user-selected context. Sandboxes and scratch roots
+  // are execution details and always start fresh from the neutral local page.
+  if (workspaceKind === 'sandbox' || workspaceKind === 'scratch') return localNewTopicIntent();
+
+  if (workspaceKind === 'device' && workspaceId) {
+    const target = snapshot?.target === 'device' ? 'device' : 'local';
+    return {
+      target,
+      targetDeviceId: workspace?.deviceId ?? snapshot?.boundDeviceId ?? metadata?.boundDeviceId,
+      workspaceId,
+    };
+  }
+
+  // Old servers persisted only a device/path pair. Preserve that historical
+  // project without inventing a formal workspace identity on the client.
+  if (metadata?.workingDirectory && isAbsoluteFilesystemPath(metadata.workingDirectory)) {
+    return {
+      legacyWorkingDirectory: metadata.workingDirectory,
+      target: snapshot?.target === 'device' ? 'device' : 'local',
+      targetDeviceId: metadata.boundDeviceId,
+    };
+  }
+
+  return localNewTopicIntent();
 };
 
 /**
@@ -113,6 +161,19 @@ export class ChatTopicActionImpl {
   };
 
   openNewTopicOrSaveTopic = async (): Promise<void> => {
+    const { activeTopicId } = this.#get();
+    const intent = resolveInheritedProjectIntent(activeTopicId, this.#get());
+    await this.startNewTopic(intent);
+  };
+
+  /**
+   * Open the local new-topic page with an explicit, conversation-scoped runtime
+   * choice. Sidebar entry points use this method so a previous unstarted page
+   * can never leak its project or sandbox choice into the next one.
+   */
+  startNewTopic = async (
+    intent: NewTopicExecutionIntent = localNewTopicIntent(),
+  ): Promise<void> => {
     const {
       switchTopic,
       saveToTopic,
@@ -130,13 +191,11 @@ export class ChatTopicActionImpl {
       await refreshMessages();
     }
 
-    // The global "new topic" entry always starts an ordinary conversation.
-    // An explicit workspace-group `+` bypasses this action and therefore keeps
-    // its workspace-bound draft intent.
     if (activeAgentId) {
-      getProjectWorkspaceStoreState().clearDraftIntent(
-        buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId }),
-      );
+      const workspaceStore = getProjectWorkspaceStoreState();
+      const key = buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId });
+      workspaceStore.clearDraftIntent(key);
+      workspaceStore.setDraftWorkspaceIntent(key, intent);
     }
   };
 

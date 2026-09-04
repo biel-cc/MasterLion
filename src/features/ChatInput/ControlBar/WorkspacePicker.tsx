@@ -440,7 +440,10 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
       </Flexbox>
     );
 
-    const needsAttention = effective.state === 'unbound' || effective.state === 'unrouted';
+    // A project is optional for a fresh local topic, so the normal unbound state
+    // must look neutral. Warning emphasis is reserved for an actually unroutable
+    // execution target.
+    const needsAttention = effective.state === 'unrouted';
     const defaultTrigger = (
       <button
         aria-expanded={open}
@@ -464,7 +467,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
       <PopoverRoot open={open} onOpenChange={setOpen}>
         <PopoverTriggerElement
           aria-hidden={trigger ? true : undefined}
-          nativeButton={trigger ? false : undefined}
+          nativeButton={!trigger}
           tabIndex={trigger ? -1 : undefined}
         >
           {trigger ?? (

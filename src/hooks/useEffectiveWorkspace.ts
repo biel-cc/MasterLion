@@ -168,9 +168,10 @@ export const useEffectiveWorkspace = (
     // A draft target switch only changes this draft's platform slot; it never
     // writes the agent's stored defaults.
     const platformKey: keyof ExecutionTargetByPlatform = isDesktop ? 'desktop' : 'web';
+    const newTopicTarget = draft?.target ?? (isDesktop ? 'local' : undefined);
     const executionTargetByPlatform: ExecutionTargetByPlatform | undefined =
-      isDraft && draft?.target
-        ? { ...agencyConfig?.executionTargetByPlatform, [platformKey]: draft.target }
+      isDraft && newTopicTarget
+        ? { ...agencyConfig?.executionTargetByPlatform, [platformKey]: newTopicTarget }
         : agencyConfig?.executionTargetByPlatform;
 
     const target = resolveExecutionTarget(agencyConfig, {

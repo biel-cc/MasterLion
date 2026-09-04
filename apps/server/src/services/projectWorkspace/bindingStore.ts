@@ -270,7 +270,13 @@ export class DatabaseTopicWorkspaceBindingStore implements TopicWorkspaceBinding
         if (currentTuple !== nextTuple) throw new WorkspaceAlreadyBoundError();
       }
 
-      const target = params.target ?? snapshot?.target ?? inferTarget(nextWorkspace);
+      // Topic creation freezes the execution target. A later legacy bind may
+      // formalize the same target with a project, but cannot use that endpoint
+      // as a back door to switch local/device/sandbox in place.
+      if (snapshot && params.target && params.target !== snapshot.target) {
+        throw new WorkspaceAlreadyBoundError();
+      }
+      const target = snapshot?.target ?? params.target ?? inferTarget(nextWorkspace);
       assertTargetMatchesWorkspace(target, nextWorkspace);
       const nextSnapshot: TopicExecutionSnapshot = {
         boundDeviceId: nextWorkspace.deviceId,
@@ -363,9 +369,12 @@ export class DatabaseTopicWorkspaceBindingStore implements TopicWorkspaceBinding
     });
   };
 
-  /** Explicit target switch used by the user-facing target picker. */
+  /**
+   * Public compatibility seam. Topic targets are immutable after creation, so
+   * even an older client calling this method gets first-writer-wins behavior.
+   */
   captureTarget = async (params: CaptureTopicTargetParams): Promise<TopicExecutionSnapshot> =>
-    this.writeTarget(params, false);
+    this.writeTarget(params, true);
 
   /** Atomic first-writer-wins capture used only by legacy-topic migration. */
   captureTargetIfAbsent = async (

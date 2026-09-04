@@ -3,9 +3,9 @@
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import WorkspaceMode from './index';
 import RecentSection from './RecentSection';
@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   loadError: undefined as unknown,
   loading: false,
   reload: vi.fn(),
+  selectFolder: vi.fn(),
+  startNewTopic: vi.fn(),
   switchTopic: vi.fn(),
   topicItems: [] as Array<Record<string, unknown>>,
   updateAgentConfigById: vi.fn(),
@@ -94,11 +96,15 @@ vi.mock('react-i18next', () => ({
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('url-join', () => ({ default: (...parts: string[]) => parts.join('/') }));
 vi.mock('@/components/RingLoading', () => ({ default: () => null }));
+vi.mock('@/components/AntdStaticMethods', () => ({ message: { error: vi.fn() } }));
 vi.mock('@/features/NavPanel/components/NavItem', () => ({
   default: ({ onClick, title }: { onClick?: () => void; title?: ReactNode }) =>
     onClick ? <button onClick={onClick}>{title}</button> : <span>{title}</span>,
 }));
 vi.mock('@/features/NavPanel/components/SkeletonList', () => ({ default: () => null }));
+vi.mock('@/services/electron/system', () => ({
+  electronSystemService: { selectFolder: mocks.selectFolder },
+}));
 vi.mock('./useWorkspaceTopicNavigation', () => ({
   useWorkspaceTopicNavigation: () => ({
     groupIds: mocks.navigation.workspaceGroups.map((g: any) => g.workspaceId),
@@ -134,7 +140,12 @@ vi.mock('@/store/chat', () => ({
         activeTopicId: 't-1',
         topicLoadingIds: [],
       }),
-    { getState: () => ({ switchTopic: mocks.switchTopic }) },
+    {
+      getState: () => ({
+        startNewTopic: mocks.startNewTopic,
+        switchTopic: mocks.switchTopic,
+      }),
+    },
   ),
 }));
 vi.mock('@/store/chat/selectors', () => ({
@@ -185,6 +196,8 @@ describe('WorkspaceMode sidebar', () => {
     mocks.loadError = undefined;
     mocks.loading = false;
     mocks.reload.mockClear();
+    mocks.selectFolder.mockReset();
+    mocks.startNewTopic.mockReset();
     mocks.updateAgentConfigById.mockClear();
     mocks.updateAgentRuntimeEnvConfigById.mockClear();
     useProjectWorkspaceStore.setState({ draftByConversationKey: {} });
@@ -201,6 +214,8 @@ describe('WorkspaceMode sidebar', () => {
       workspaceGroups: [{ topics: [topic('bound')], workspace, workspaceId: 'ws-app' }],
     };
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   it('renders the workspace section above the fixed recent section', () => {
     render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
@@ -227,12 +242,62 @@ describe('WorkspaceMode sidebar', () => {
     });
   });
 
-  it('shows the empty recent copy without a workspace section when nothing is grouped', () => {
+  it('keeps the project section available when no project has been added yet', () => {
     mocks.navigation = { placementById: {}, recent: [], workspaceGroups: [] };
     render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
 
-    expect(screen.queryByTestId('topic-workspace-section')).not.toBeInTheDocument();
+    expect(screen.getByTestId('topic-workspace-section')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addProject' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('workspaceRuntime.sidebar.recentEmpty')).toBeInTheDocument();
+  });
+
+  it('chooses a folder before opening a new topic in a newly added project', async () => {
+    const getOrCreateDeviceWorkspace = vi
+      .spyOn(useProjectWorkspaceStore.getState(), 'getOrCreateDeviceWorkspace')
+      .mockResolvedValue({ ok: true, value: workspace });
+    mocks.selectFolder.mockResolvedValue({ path: '/projects/app', repoType: 'git' });
+
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addProject' }));
+
+    await vi.waitFor(() => expect(mocks.startNewTopic).toHaveBeenCalledOnce());
+    expect(getOrCreateDeviceWorkspace).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      repoType: 'git',
+      rootPath: '/projects/app',
+    });
+    expect(mocks.startNewTopic).toHaveBeenCalledWith({
+      target: 'local',
+      targetDeviceId: 'device-1',
+      workspaceId: 'ws-app',
+    });
+  });
+
+  it('does nothing when adding a project is cancelled', async () => {
+    const getOrCreateDeviceWorkspace = vi.spyOn(
+      useProjectWorkspaceStore.getState(),
+      'getOrCreateDeviceWorkspace',
+    );
+    mocks.selectFolder.mockResolvedValue(undefined);
+
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addProject' }));
+
+    await vi.waitFor(() => expect(mocks.selectFolder).toHaveBeenCalledOnce());
+    expect(getOrCreateDeviceWorkspace).not.toHaveBeenCalled();
+    expect(mocks.startNewTopic).not.toHaveBeenCalled();
+  });
+
+  it('opens a fresh local topic from the Recent section', () => {
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addRecentTopic' }),
+    );
+
+    expect(mocks.startNewTopic).toHaveBeenCalledWith({ target: 'local' });
   });
 
   it('does not flash an empty Recent section while workspace evidence is loading', () => {
@@ -311,7 +376,7 @@ describe('WorkspaceMode sidebar', () => {
     expect(mocks.reload).toHaveBeenCalledOnce();
   });
 
-  it('workspace group "+" only writes a draft intent and opens a draft', () => {
+  it('workspace group "+" opens a new topic page with the project fixed', () => {
     render(
       <WorkspaceGroupItem
         expanded
@@ -325,18 +390,17 @@ describe('WorkspaceMode sidebar', () => {
       screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addTopicInWorkspace' }),
     );
 
-    const key = buildDraftConversationKey({ agentId: 'agent-1' });
-    expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({
+    expect(mocks.startNewTopic).toHaveBeenCalledWith({
       target: 'local',
       targetDeviceId: 'device-1',
       workspaceId: 'ws-app',
     });
-    expect(mocks.switchTopic).toHaveBeenCalledWith(null, { skipRefreshMessage: true });
+    expect(mocks.switchTopic).not.toHaveBeenCalled();
     expect(mocks.updateAgentConfigById).not.toHaveBeenCalled();
     expect(mocks.updateAgentRuntimeEnvConfigById).not.toHaveBeenCalled();
   });
 
-  it('legacy directory group "+" creates an old-server draft without inventing a workspace id', () => {
+  it('legacy directory group "+" opens a new topic page without inventing a workspace id', () => {
     render(
       <WorkspaceGroupItem
         expanded
@@ -355,16 +419,12 @@ describe('WorkspaceMode sidebar', () => {
       screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addTopicInWorkspace' }),
     );
 
-    const key = buildDraftConversationKey({ agentId: 'agent-1' });
-    expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({
+    expect(mocks.startNewTopic).toHaveBeenCalledWith({
       legacyWorkingDirectory: '/legacy/app',
       target: 'local',
       targetDeviceId: 'device-1',
     });
-    expect(
-      useProjectWorkspaceStore.getState().draftByConversationKey[key]?.workspaceId,
-    ).toBeUndefined();
-    expect(mocks.switchTopic).toHaveBeenCalledWith(null, { skipRefreshMessage: true });
+    expect(mocks.switchTopic).not.toHaveBeenCalled();
   });
 
   it('RecentSection passes scratch root only for scratch placements', () => {

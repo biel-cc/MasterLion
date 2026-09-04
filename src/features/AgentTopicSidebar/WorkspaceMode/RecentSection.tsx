@@ -1,8 +1,10 @@
-import { Flexbox, Text } from '@lobehub/ui';
+import { ActionIcon, Flexbox, Text } from '@lobehub/ui';
 import { cssVar } from 'antd-style';
+import { PlusIcon } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useChatStore } from '@/store/chat';
 import { type TopicNavigationRecentEntry } from '@/store/projectWorkspace';
 
 import type { WorkspaceTopicItemComponent } from './types';
@@ -41,6 +43,13 @@ const RecentSection = memo<RecentSectionProps>(
               {entries.length}
             </Text>
           )}
+          <ActionIcon
+            icon={PlusIcon}
+            size="small"
+            title={t('workspaceRuntime.sidebar.addRecentTopic' as any)}
+            tooltipProps={{ placement: 'right' }}
+            onClick={() => void useChatStore.getState().startNewTopic({ target: 'local' })}
+          />
         </Flexbox>
         {entries.length === 0 ? (
           <Text

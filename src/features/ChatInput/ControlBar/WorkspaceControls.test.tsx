@@ -9,6 +9,7 @@ import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import WorkspaceControls from './WorkspaceControls';
 
 const mocks = vi.hoisted(() => ({
+  deviceSwitcherProps: {} as Record<string, unknown>,
   effective: {} as EffectiveWorkspace,
   seamAvailable: false,
 }));
@@ -43,7 +44,10 @@ vi.mock('@/store/projectWorkspace', () => ({
 vi.mock('./CloudRepoSwitcher', () => ({ default: () => <div data-testid="cloud-repo" /> }));
 vi.mock('./GitStatus', () => ({ default: () => <div data-testid="git-status" /> }));
 vi.mock('./HeteroDeviceSwitcher', () => ({
-  default: () => <div data-testid="device-switcher" />,
+  default: (props: Record<string, unknown>) => {
+    mocks.deviceSwitcherProps = props;
+    return <div data-testid="device-switcher" />;
+  },
 }));
 vi.mock('./WorkspaceChip', () => ({ default: () => <div data-testid="workspace-chip" /> }));
 vi.mock('./WorkspacePicker', () => ({ default: () => <div data-testid="workspace-picker" /> }));
@@ -52,6 +56,7 @@ vi.mock('./useRepoType', () => ({ useRepoType: () => undefined }));
 
 describe('WorkspaceControls topic ownership', () => {
   beforeEach(() => {
+    mocks.deviceSwitcherProps = {};
     mocks.seamAvailable = false;
     mocks.effective = {
       context: {
@@ -82,10 +87,7 @@ describe('WorkspaceControls topic ownership', () => {
     expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
   });
 
-  it.each([
-    ['a global new-topic draft', true, undefined],
-    ['an existing Recent topic', false, 'topic-recent'],
-  ])('does not offer workspace selection for %s', (_label, isDraft, topicId) => {
+  it('lets a new local topic choose a project before its first message', () => {
     mocks.seamAvailable = true;
     mocks.effective = {
       ...mocks.effective,
@@ -95,16 +97,39 @@ describe('WorkspaceControls topic ownership', () => {
         workspace: undefined,
       },
       cwd: undefined,
-      isDraft,
+      isDraft: true,
       state: 'unbound',
-      topicId,
+      topicId: undefined,
+      workspace: undefined,
+    };
+
+    render(<WorkspaceControls agentId="agent-1" />);
+
+    expect(screen.getByTestId('workspace-picker')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(false);
+  });
+
+  it('locks the target and hides project selection after the first message', () => {
+    mocks.seamAvailable = true;
+    mocks.effective = {
+      ...mocks.effective,
+      context: {
+        ...mocks.effective.context,
+        cwd: undefined,
+        workspace: undefined,
+      },
+      cwd: undefined,
+      isDraft: false,
+      state: 'unbound',
+      topicId: 'topic-recent',
       workspace: undefined,
     };
 
     render(<WorkspaceControls agentId="agent-1" />);
 
     expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(true);
   });
 
   it('shows a locked workspace for a draft opened from a workspace group', () => {
@@ -119,6 +144,32 @@ describe('WorkspaceControls topic ownership', () => {
     render(<WorkspaceControls agentId="agent-1" />);
 
     expect(screen.getByTestId('workspace-chip')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(true);
+  });
+
+  it('keeps sandbox selectable only on a new topic page', () => {
+    mocks.seamAvailable = true;
+    mocks.effective = {
+      ...mocks.effective,
+      context: {
+        ...mocks.effective.context,
+        cwd: '/workspace',
+        plan: { kind: 'sandbox', target: 'sandbox' },
+        workspace: { kind: 'sandbox', rootPath: '/workspace' },
+      },
+      cwd: '/workspace',
+      isDraft: true,
+      state: 'bound',
+      target: 'sandbox',
+      targetDeviceId: undefined,
+      topicId: undefined,
+      workspace: { kind: 'sandbox', rootPath: '/workspace' },
+    };
+
+    render(<WorkspaceControls agentId="agent-1" />);
+
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(false);
     expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
   });
 });

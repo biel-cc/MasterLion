@@ -68,6 +68,24 @@ describe('resolvePendingTopicExecutionIntent', () => {
     });
   });
 
+  it('defaults every new desktop topic to local unless the user explicitly selects sandbox', async () => {
+    mocks.agentConfig = {
+      agencyConfig: { executionTargetByPlatform: { desktop: 'sandbox' } },
+    };
+    mocks.getDeviceInfo.mockResolvedValue({ deviceId: 'desktop-device' });
+
+    await expect(
+      resolvePendingTopicExecutionIntent({ agentId: 'agent-1', isNewTopic: true }),
+    ).resolves.toEqual({
+      draftKey: buildDraftConversationKey({ agentId: 'agent-1' }),
+      intent: {
+        platform: 'desktop',
+        target: 'local',
+        targetDeviceId: 'desktop-device',
+      },
+    });
+  });
+
   it('uses web none as the native new-topic default and never probes desktop IPC', async () => {
     mocks.isDesktop = false;
 

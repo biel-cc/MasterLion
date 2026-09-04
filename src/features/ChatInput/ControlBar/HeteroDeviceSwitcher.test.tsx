@@ -28,7 +28,9 @@ vi.mock('@lobehub/ui', () => ({
 }));
 vi.mock('@lobehub/ui/base-ui', () => ({
   PopoverPopup: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
-    <div role="dialog" {...props}>{children}</div>
+    <div role="dialog" {...props}>
+      {children}
+    </div>
   ),
   PopoverPortal: ({ children }: { children?: ReactNode }) => <>{children}</>,
   PopoverPositioner: ({ children }: { children?: ReactNode }) => <>{children}</>,
@@ -141,6 +143,21 @@ describe('HeteroDeviceSwitcher', () => {
 
     fireEvent.click(screen.getAllByText('heteroAgent.executionTarget.local').at(-1)!);
     expect(onSelectTarget).not.toHaveBeenCalled();
+  });
+
+  it('does not expose the internal no-device target in the desktop app', () => {
+    render(<HeteroDeviceSwitcher agentId="agent-1" executionTarget="local" />);
+
+    expect(screen.queryByText('heteroAgent.executionTarget.none')).not.toBeInTheDocument();
+  });
+
+  it('renders a locked target as display-only after the topic starts', () => {
+    render(<HeteroDeviceSwitcher agentId="agent-1" executionTarget="local" readOnly />);
+
+    expect(screen.getByTestId('execution-target-readonly')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /executionTarget\.title/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('disables the sandbox option when the server reports it as unavailable', () => {

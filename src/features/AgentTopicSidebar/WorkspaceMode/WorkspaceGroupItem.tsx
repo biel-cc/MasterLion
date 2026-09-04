@@ -8,11 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
 import { useElectronStore } from '@/store/electron';
-import {
-  buildDraftConversationKey,
-  type TopicNavigationWorkspaceGroup,
-  useProjectWorkspaceStore,
-} from '@/store/projectWorkspace';
+import { type TopicNavigationWorkspaceGroup } from '@/store/projectWorkspace';
 
 import { CollapsedStatusBadges, CollapsedUnreadDot } from './CollapsedIndicators';
 import { getProjectTopicStatusCounts, hasProjectTopicStatusCounts } from './statusCounts';
@@ -53,9 +49,9 @@ export interface WorkspaceGroupItemProps {
 }
 
 /**
- * One formal workspace group, or an old-server legacy directory group. Its "+"
- * only records a draft intent for the current conversation container and opens
- * a fresh draft; it never writes agent defaults, device defaults or agency config.
+ * One project group, or an old-server legacy directory group. Its "+" opens a
+ * new topic page with the project execution intent already fixed; the topic is
+ * not persisted until the user sends its first message.
  */
 const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
   ({ group, activeTopicId, activeThreadId, expanded, TopicItemComponent }) => {
@@ -65,9 +61,8 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
     const title = workspace?.displayName || getDirName(workspace?.rootPath ?? workspaceId);
     const rootPath = workspace?.rootPath;
 
-    const [activeAgentId, activeGroupId] = useChatStore((s) => [s.activeAgentId, s.activeGroupId]);
+    const activeAgentId = useChatStore((s) => s.activeAgentId);
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
-    const setDraftWorkspaceIntent = useProjectWorkspaceStore((s) => s.setDraftWorkspaceIntent);
 
     const handleAddTopic = useCallback(() => {
       if (!activeAgentId) return;
@@ -77,8 +72,7 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
           : isDesktop && workspace?.deviceId && workspace.deviceId === currentDeviceId
             ? 'local'
             : 'device';
-      setDraftWorkspaceIntent(
-        buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId }),
+      void useChatStore.getState().startNewTopic(
         legacyWorkingDirectory
           ? {
               legacyWorkingDirectory,
@@ -87,16 +81,7 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
             }
           : { target, targetDeviceId: workspace?.deviceId, workspaceId },
       );
-      useChatStore.getState().switchTopic(null, { skipRefreshMessage: true });
-    }, [
-      activeAgentId,
-      activeGroupId,
-      currentDeviceId,
-      legacyWorkingDirectory,
-      setDraftWorkspaceIntent,
-      workspace,
-      workspaceId,
-    ]);
+    }, [activeAgentId, currentDeviceId, legacyWorkingDirectory, workspace, workspaceId]);
 
     const canAddTopic = !!activeAgentId;
 

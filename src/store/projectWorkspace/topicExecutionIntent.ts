@@ -44,9 +44,10 @@ export const resolvePendingTopicExecutionIntent = async (params: {
   const topicSnapshot =
     params.topicSnapshot ??
     (topicId ? workspaceState.topicStatesById[topicId]?.snapshot : undefined);
+  const newTopicTarget = draft?.target ?? (isNewTopic && isDesktop ? 'local' : undefined);
   const configuredTarget = resolveExecutionTarget(agencyConfig, {
-    executionTargetByPlatform: draft?.target
-      ? { ...agencyConfig?.executionTargetByPlatform, [platform]: draft.target }
+    executionTargetByPlatform: newTopicTarget
+      ? { ...agencyConfig?.executionTargetByPlatform, [platform]: newTopicTarget }
       : agencyConfig?.executionTargetByPlatform,
     isDesktop,
     isHetero: !!agencyConfig?.heterogeneousProvider,

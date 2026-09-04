@@ -111,6 +111,20 @@ describe('ProjectWorkspaceService', () => {
     expect(captureTargetIfAbsent).toHaveBeenCalledWith({ target: 'local', topicId: 'topic-a' });
   });
 
+  it('does not overwrite an existing topic target through the public capture seam', async () => {
+    const { bindingStore, service } = createService();
+    const captureTarget = vi.spyOn(bindingStore, 'captureTarget');
+    const captureTargetIfAbsent = vi.spyOn(bindingStore, 'captureTargetIfAbsent');
+
+    await service.captureTarget({ target: 'sandbox', topicId: 'topic-a' });
+
+    expect(captureTargetIfAbsent).toHaveBeenCalledWith({
+      target: 'sandbox',
+      topicId: 'topic-a',
+    });
+    expect(captureTarget).not.toHaveBeenCalled();
+  });
+
   it('keeps five plain-chat resolutions read-only and unbound', async () => {
     const { bindingStore, service, workspaceModel } = createService();
     const getState = vi.spyOn(bindingStore, 'getState');

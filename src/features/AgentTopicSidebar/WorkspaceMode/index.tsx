@@ -1,18 +1,22 @@
 'use client';
 
-import { Accordion, Flexbox, Text } from '@lobehub/ui';
-import { MoreHorizontal, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { Accordion, ActionIcon, Flexbox, Text } from '@lobehub/ui';
+import { MoreHorizontal, PlusIcon, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import urlJoin from 'url-join';
 
+import { message } from '@/components/AntdStaticMethods';
 import NavItem from '@/features/NavPanel/components/NavItem';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
+import { electronSystemService } from '@/services/electron/system';
 import { useChatStore } from '@/store/chat';
 import { topicSelectors } from '@/store/chat/selectors';
+import { useElectronStore } from '@/store/electron';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import RecentSection from './RecentSection';
 import type { WorkspaceTopicItemComponent } from './types';
@@ -32,6 +36,7 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
   const { t } = useTranslation(['topic', 'chat']);
   const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const navigate = useNavigate();
+  const [addingProject, setAddingProject] = useState(false);
 
   const [activeTopicId, activeThreadId, hasMore, isExpandingPageSize, activeAgentId] = useChatStore(
     (s) => [
@@ -45,6 +50,40 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
 
   const { navigation, groupIds, loadError, loading, reload, topicSortBy } =
     useWorkspaceTopicNavigation();
+  const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
+  const getOrCreateDeviceWorkspace = useProjectWorkspaceStore((s) => s.getOrCreateDeviceWorkspace);
+
+  const handleAddProject = useCallback(async () => {
+    if (!activeAgentId || !currentDeviceId || addingProject) return;
+
+    setAddingProject(true);
+    try {
+      const selected = await electronSystemService.selectFolder({
+        title: tw('workspaceRuntime.sidebar.chooseProjectFolder', { ns: 'chat' }),
+      });
+      if (!selected) return;
+
+      const result = await getOrCreateDeviceWorkspace({
+        deviceId: currentDeviceId,
+        repoType: selected.repoType,
+        rootPath: selected.path,
+      });
+      if (!result.ok) {
+        message.error(tw('workspaceRuntime.sidebar.addProjectFailed', { ns: 'chat' }));
+        return;
+      }
+
+      await useChatStore.getState().startNewTopic({
+        target: 'local',
+        targetDeviceId: currentDeviceId,
+        workspaceId: result.value.id,
+      });
+    } catch {
+      message.error(tw('workspaceRuntime.sidebar.addProjectFailed', { ns: 'chat' }));
+    } finally {
+      setAddingProject(false);
+    }
+  }, [activeAgentId, addingProject, currentDeviceId, getOrCreateDeviceWorkspace, tw]);
 
   const [topicGroupKeys, updateSystemStatus] = useGlobalStore((s) => [
     systemStatusSelectors.topicGroupKeys(s),
@@ -85,20 +124,29 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
           />
         </Flexbox>
       )}
-      {navigation.workspaceGroups.length > 0 && (
-        <Flexbox data-testid="topic-workspace-section" gap={2}>
-          <Flexbox
-            horizontal
-            align="center"
-            gap={4}
-            height={28}
-            paddingInline={'8px 4px'}
-            style={{ overflow: 'hidden' }}
-          >
-            <Text ellipsis fontSize={12} style={{ flex: 1 }} type={'secondary'} weight={500}>
-              {t('workspaceRuntime.sidebar.workspaces' as any, { ns: 'chat' })}
-            </Text>
-          </Flexbox>
+      <Flexbox data-testid="topic-workspace-section" gap={2}>
+        <Flexbox
+          horizontal
+          align="center"
+          gap={4}
+          height={28}
+          paddingInline={'8px 4px'}
+          style={{ overflow: 'hidden' }}
+        >
+          <Text ellipsis fontSize={12} style={{ flex: 1 }} type={'secondary'} weight={500}>
+            {t('workspaceRuntime.sidebar.workspaces' as any, { ns: 'chat' })}
+          </Text>
+          <ActionIcon
+            disabled={!activeAgentId || !currentDeviceId}
+            icon={PlusIcon}
+            loading={addingProject}
+            size="small"
+            title={tw('workspaceRuntime.sidebar.addProject', { ns: 'chat' })}
+            tooltipProps={{ placement: 'right' }}
+            onClick={() => void handleAddProject()}
+          />
+        </Flexbox>
+        {navigation.workspaceGroups.length > 0 && (
           <Accordion
             expandedKeys={expandedKeys}
             gap={2}
@@ -115,8 +163,8 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
               />
             ))}
           </Accordion>
-        </Flexbox>
-      )}
+        )}
+      </Flexbox>
       <RecentSection
         TopicItemComponent={TopicItemComponent}
         activeThreadId={activeThreadId}

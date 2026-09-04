@@ -21,6 +21,7 @@ import {
   ChevronDownIcon,
   InfoIcon,
   LaptopIcon,
+  LockIcon,
   MonitorDownIcon,
   MonitorIcon,
   MonitorOffIcon,
@@ -73,6 +74,17 @@ const styles = createStaticStyles(({ css }) => ({
     max-width: 120px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  `,
+  readOnly: css`
+    cursor: default;
+
+    &:hover {
+      color: ${cssVar.colorTextSecondary};
+      background: transparent;
+    }
+  `,
+  readOnlyLock: css`
+    color: ${cssVar.colorTextQuaternary};
   `,
   check: css`
     flex: none;
@@ -334,6 +346,8 @@ interface HeteroDeviceSwitcherProps {
    * stored defaults are never written.
    */
   onSelectTarget?: (target: DeviceExecutionTarget, deviceId?: string) => Promise<void> | void;
+  /** The topic has started, or a durable project has already been selected. */
+  readOnly?: boolean;
 }
 
 const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
@@ -342,6 +356,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     boundDeviceId: conversationDeviceId,
     executionTarget: conversationTarget,
     onSelectTarget,
+    readOnly = false,
   }) => {
     const { t } = useTranslation(['chat', 'common']);
     const [open, setOpen] = useState(false);
@@ -374,8 +389,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     // desktop "local" selection that carries this desktop's boundDeviceId becomes
     // a device target when the same agent is opened from web.
     const resolvedExecutionTarget =
-      (onSelectTarget ? conversationTarget : undefined) ??
-      resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
+      conversationTarget ?? resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
     const executionTarget =
       isDesktop &&
       resolvedExecutionTarget === 'device' &&
@@ -392,10 +406,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
         // The current desktop may be persisted as a registered device target,
         // but the UI normalizes it to `local`. Re-selecting it is a no-op and
         // must not attempt to recapture an existing topic on an older server.
-        if (
-          target === executionTarget &&
-          (target !== 'device' || boundDeviceId === deviceId)
-        ) {
+        if (target === executionTarget && (target !== 'device' || boundDeviceId === deviceId)) {
           return;
         }
 
@@ -521,7 +532,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
             </Tooltip>
           )}
         </div>
-        {isHetero ? null : (
+        {isHetero || isDesktop ? null : (
           <OptionRow
             active={isActive('none')}
             desc={t('heteroAgent.executionTarget.noneDesc')}
@@ -581,6 +592,22 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
         ) : null}
       </Flexbox>
     );
+
+    if (readOnly) {
+      return (
+        <Tooltip title={t('workspaceRuntime.target.locked')}>
+          <span
+            aria-label={`${t('heteroAgent.executionTarget.title')}: ${chipLabel}`}
+            className={cx(styles.button, styles.readOnly)}
+            data-testid="execution-target-readonly"
+          >
+            {chipIcon}
+            <span className={styles.buttonLabel}>{chipLabel}</span>
+            <Icon className={styles.readOnlyLock} icon={LockIcon} size={11} />
+          </span>
+        </Tooltip>
+      );
+    }
 
     return (
       <PopoverRoot open={open} onOpenChange={setOpen}>

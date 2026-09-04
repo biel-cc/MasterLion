@@ -147,7 +147,7 @@ describe('topic action', () => {
       expect(disableAllFilesSpy).toHaveBeenCalledOnce();
     });
 
-    it('clears workspace intent when the global new-topic action replaces an empty workspace draft', async () => {
+    it('starts an unbound local topic when the global action replaces an empty new-topic page', async () => {
       const { result } = renderHook(() => useChatStore());
       const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
       useProjectWorkspaceStore.setState({
@@ -166,7 +166,155 @@ describe('topic action', () => {
         await result.current.openNewTopicOrSaveTopic();
       });
 
-      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toBeUndefined();
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+      });
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.workspaceId,
+      ).toBeUndefined();
+    });
+
+    it('inherits the project of the topic currently being viewed', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        topicStatesById: {
+          'topic-project': {
+            snapshot: {
+              boundDeviceId: 'device-1',
+              target: 'local',
+              targetCapturedAt: '2026-09-03T00:00:00.000Z',
+              version: 1,
+              workspaceBoundAt: '2026-09-03T00:00:00.000Z',
+              workspaceId: 'workspace-1',
+              workspaceKind: 'device',
+            },
+            workspace: {
+              deviceId: 'device-1',
+              id: 'workspace-1',
+              kind: 'device',
+              rootPath: '/projects/acme',
+            },
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-project' });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+        targetDeviceId: 'device-1',
+        workspaceId: 'workspace-1',
+      });
+    });
+
+    it('inherits an old-server project that only stored a working directory', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+
+      await act(async () => {
+        useChatStore.setState({
+          activeAgentId: 'agent-1',
+          activeTopicId: 'topic-legacy',
+          topicDataMap: {
+            [topicMapKey({ agentId: 'agent-1' })]: {
+              currentPage: 1,
+              hasMore: false,
+              items: [
+                {
+                  createdAt: Date.now(),
+                  id: 'topic-legacy',
+                  metadata: { workingDirectory: '/projects/legacy' },
+                  title: 'Legacy project',
+                  updatedAt: Date.now(),
+                } as ChatTopic,
+              ],
+              pageSize: 20,
+              total: 1,
+            },
+          },
+        });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        legacyWorkingDirectory: '/projects/legacy',
+        target: 'local',
+      });
+    });
+
+    it.each(['scratch', 'sandbox'] as const)(
+      'never inherits a %s workspace into a new topic',
+      async (workspaceKind) => {
+        const { result } = renderHook(() => useChatStore());
+        const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+        useProjectWorkspaceStore.setState({
+          topicStatesById: {
+            'topic-temporary': {
+              snapshot: {
+                boundDeviceId: workspaceKind === 'scratch' ? 'device-1' : undefined,
+                target: workspaceKind === 'scratch' ? 'local' : 'sandbox',
+                targetCapturedAt: '2026-09-03T00:00:00.000Z',
+                version: 1,
+                workspaceId: 'workspace-temporary',
+                workspaceKind,
+              },
+              workspace: {
+                deviceId: workspaceKind === 'scratch' ? 'device-1' : undefined,
+                id: 'workspace-temporary',
+                kind: workspaceKind,
+                rootPath: workspaceKind === 'scratch' ? '/tmp/topic' : '/workspace',
+              },
+            },
+          },
+        });
+
+        await act(async () => {
+          useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-temporary' });
+          await result.current.openNewTopicOrSaveTopic();
+        });
+
+        expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+          target: 'local',
+        });
+        expect(
+          useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.workspaceId,
+        ).toBeUndefined();
+      },
+    );
+  });
+
+  describe('startNewTopic', () => {
+    it('replaces stale state with the explicit project selected by a sidebar entry', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        draftByConversationKey: {
+          [draftKey]: {
+            target: 'sandbox',
+            updatedAt: Date.now(),
+            workspaceId: 'workspace-stale',
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-current' });
+        await result.current.startNewTopic({
+          target: 'local',
+          targetDeviceId: 'device-1',
+          workspaceId: 'workspace-project',
+        });
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+        targetDeviceId: 'device-1',
+        workspaceId: 'workspace-project',
+      });
     });
   });
   describe('saveToTopic', () => {

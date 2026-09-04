@@ -125,6 +125,6 @@ describe('workspace extension registry', () => {
     expect(enChat['workspaceRuntime.settings.defaultCwdRecommendation']).toContain(
       'does not automatically bind',
     );
-    expect(zhChat['workspaceRuntime.settings.defaultCwdRecommendation']).toContain('不会自动绑定');
+    expect(zhChat['workspaceRuntime.settings.defaultCwdRecommendation']).toContain('不会自动关联');
   });
 });

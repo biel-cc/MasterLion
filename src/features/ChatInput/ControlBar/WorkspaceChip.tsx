@@ -1,17 +1,14 @@
 'use client';
 
-import { Flexbox, Icon, Tag, Tooltip } from '@lobehub/ui';
-import { DropdownMenu } from '@lobehub/ui/base-ui';
+import { Icon, Tag, Tooltip } from '@lobehub/ui';
 import { createStaticStyles, cssVar } from 'antd-style';
-import { ChevronDownIcon, LockIcon } from 'lucide-react';
-import { memo, useState } from 'react';
+import { LockIcon } from 'lucide-react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 
 import DirIcon from './DirIcon';
-import type { BindWorkspaceOnce } from './useBindWorkspaceOnce';
-import WorkspacePicker from './WorkspacePicker';
 
 const styles = createStaticStyles(({ css }) => ({
   chip: css`
@@ -55,21 +52,17 @@ const styles = createStaticStyles(({ css }) => ({
 }));
 
 export interface WorkspaceChipProps {
-  bind: BindWorkspaceOnce;
   effective: EffectiveWorkspace;
   repoType?: 'git' | 'github';
 }
 
 /**
- * Read-only chip for bound and scratch topics. The primary cwd cannot be
- * changed in place (bind-once); the only action is to start a new topic in
- * another directory that references this one. Scratch never upgrades in place.
+ * Read-only chip for project-bound and scratch topics. The primary cwd cannot
+ * be changed in place; users start another topic from the sidebar instead.
  */
-const WorkspaceChip = memo<WorkspaceChipProps>(({ bind, effective, repoType }) => {
+const WorkspaceChip = memo<WorkspaceChipProps>(({ effective, repoType }) => {
   const { t } = useTranslation('chat');
   const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
-  const [referenceOpen, setReferenceOpen] = useState(false);
-
   const cwd = effective.cwd ?? effective.workspace?.rootPath ?? '';
   const isScratch = effective.state === 'scratch';
 
@@ -90,69 +83,17 @@ const WorkspaceChip = memo<WorkspaceChipProps>(({ bind, effective, repoType }) =
     </>
   );
 
-  if (!bind.canStartReferencedTopic) {
-    return (
-      <Tooltip title={tooltip}>
-        <span
-          aria-label={tooltip}
-          className={styles.chip}
-          data-testid="workspace-chip"
-          data-workspace-state={effective.state}
-        >
-          {contents}
-        </span>
-      </Tooltip>
-    );
-  }
-
-  const chip = (
-    <button
-      aria-label={tooltip}
-      className={styles.chip}
-      data-testid="workspace-chip"
-      data-workspace-state={effective.state}
-      type="button"
-    >
-      {contents}
-      <Icon icon={ChevronDownIcon} size={12} />
-    </button>
-  );
-
   return (
-    <Flexbox horizontal align={'center'} gap={4}>
-      <DropdownMenu
-        items={[
-          {
-            key: 'new-referenced-topic',
-            label: tw('workspaceRuntime.chip.newReferencedTopic'),
-            onClick: () => setReferenceOpen(true),
-          },
-        ]}
+    <Tooltip title={tooltip}>
+      <span
+        aria-label={tooltip}
+        className={styles.chip}
+        data-testid="workspace-chip"
+        data-workspace-state={effective.state}
       >
-        {chip}
-      </DropdownMenu>
-      <WorkspacePicker
-        bind={bind}
-        effective={effective}
-        mode="reference"
-        open={referenceOpen}
-        trigger={<span aria-hidden data-testid="workspace-chip-reference-anchor" />}
-        onOpenChange={setReferenceOpen}
-      />
-      {bind.error?.code === 'WORKSPACE_ALREADY_BOUND' && !referenceOpen && (
-        <Tooltip title={tw('workspaceRuntime.chip.alreadyBoundHint')}>
-          <button
-            className={styles.chip}
-            data-testid="workspace-chip-already-bound"
-            style={{ color: cssVar.colorWarningText }}
-            type="button"
-            onClick={() => setReferenceOpen(true)}
-          >
-            {tw('workspaceRuntime.chip.newReferencedTopic')}
-          </button>
-        </Tooltip>
-      )}
-    </Flexbox>
+        {contents}
+      </span>
+    </Tooltip>
   );
 });
 

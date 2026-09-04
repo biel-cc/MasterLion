@@ -166,6 +166,17 @@ describe('useEffectiveWorkspace', () => {
     });
   });
 
+  it('does not select the agent sandbox default on a new desktop topic page', () => {
+    mocks.agencyConfig = { executionTargetByPlatform: { desktop: 'sandbox' } };
+
+    const { result } = renderHook(() => useEffectiveWorkspace('agent-1'));
+
+    expect(result.current.isDraft).toBe(true);
+    expect(result.current.target).toBe('local');
+    expect(result.current.state).toBe('unbound');
+    expect(result.current.cwd).toBeUndefined();
+  });
+
   it('keeps a legacy localStorage cwd visible as a migration recommendation', () => {
     mocks.legacyLocalPath = '/Users/me/legacy-project';
 

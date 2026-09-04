@@ -30,7 +30,6 @@ describe('WorkspaceChip', () => {
   it('renders a workspace-group draft as a non-interactive full path', () => {
     render(
       <WorkspaceChip
-        bind={{ canStartReferencedTopic: false } as any}
         effective={
           {
             cwd: '/projects/acme',
@@ -39,6 +38,31 @@ describe('WorkspaceChip', () => {
             workspace: {
               deviceId: 'device-1',
               displayName: 'Acme workspace',
+              kind: 'device',
+              rootPath: '/projects/acme',
+            },
+          } as any
+        }
+      />,
+    );
+
+    expect(screen.getByText('/projects/acme')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('keeps an existing project path display-only', () => {
+    render(
+      <WorkspaceChip
+        effective={
+          {
+            cwd: '/projects/acme',
+            isDraft: false,
+            state: 'bound',
+            topicId: 'topic-1',
+            workspace: {
+              deviceId: 'device-1',
+              displayName: 'Acme',
+              id: 'workspace-1',
               kind: 'device',
               rootPath: '/projects/acme',
             },
