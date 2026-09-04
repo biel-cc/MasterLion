@@ -13,8 +13,6 @@ import urlJoin from 'url-join';
 
 import { useHeteroAgentCloudConfig } from '@/business/client/hooks/useHeteroAgentCloudConfig';
 import { type ActionKeys } from '@/features/ChatInput';
-import { ChatInput } from '@/features/Conversation';
-import { contextSelectors, useConversationStore } from '@/features/Conversation/store';
 import WideScreenContainer from '@/features/WideScreenContainer';
 import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useRemoteAgentDeviceGuard } from '@/hooks/useRemoteAgentDeviceGuard';
@@ -23,6 +21,8 @@ import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
 import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
+import ChatInput from '../ChatInput';
+import { contextSelectors, useConversationStore } from '../store';
 import HeteroControlBar from './HeteroControlBar';
 
 // Heterogeneous agents (e.g. Claude Code) bring their own toolchain, memory,

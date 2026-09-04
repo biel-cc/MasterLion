@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 import AgentHome from '@/features/AgentHome';
 import ChatMiniMap from '@/features/ChatMiniMap';
-import { ChatList, ConversationProvider } from '@/features/Conversation';
+import { ChatList, ConversationProvider, HeterogeneousChatInput } from '@/features/Conversation';
 import { useChatFollowUp } from '@/features/Conversation/hooks/useChatFollowUp';
 import { mergeConversationHooks } from '@/features/Conversation/utils/mergeConversationHooks';
 import { useGatewayReconnect } from '@/hooks/useGatewayReconnect';
@@ -19,7 +19,6 @@ import { useChatStore } from '@/store/chat';
 import { threadSelectors, topicSelectors } from '@/store/chat/selectors';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
-import HeterogeneousChatInput from './HeterogeneousChatInput';
 import MainChatInput from './MainChatInput';
 import MessageFromUrl from './MainChatInput/MessageFromUrl';
 import ThreadHydration from './ThreadHydration';

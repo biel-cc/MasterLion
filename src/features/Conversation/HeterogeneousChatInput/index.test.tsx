@@ -69,8 +69,8 @@ vi.mock('@/business/client/hooks/useHeteroAgentCloudConfig', () => ({
 }));
 vi.mock('@/const/version', () => ({ isDesktop: true }));
 vi.mock('@/features/ChatInput', () => ({}));
-vi.mock('@/features/Conversation', () => ({
-  ChatInput: (props: Record<string, any>) => {
+vi.mock('../ChatInput', () => ({
+  default: (props: Record<string, any>) => {
     mocks.chatInputProps.push(props);
     return (
       <button
@@ -84,7 +84,7 @@ vi.mock('@/features/Conversation', () => ({
     );
   },
 }));
-vi.mock('@/features/Conversation/store', () => ({
+vi.mock('../store', () => ({
   contextSelectors: { agentId: () => 'agent-1' },
   useConversationStore: (selector: (s: any) => unknown) => selector({}),
 }));
