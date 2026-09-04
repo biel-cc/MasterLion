@@ -196,6 +196,16 @@ describe('RuntimeExecutors', () => {
     };
   });
 
+  /**
+   * Serialize everything a step hands back, with Errors expanded — a bare
+   * `JSON.stringify` renders an Error as `{}` and would pass a "no raw failure
+   * details" assertion even if one were embedded.
+   */
+  const serializeForSecretScan = (value: unknown) =>
+    JSON.stringify(value, (_key, item) =>
+      item instanceof Error ? `${item.name}: ${item.message}` : item,
+    );
+
   // Helper to create a valid mock usage object
   const createMockUsage = () => ({
     humanInteraction: {
@@ -3113,6 +3123,7 @@ describe('RuntimeExecutors', () => {
       );
 
       expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
       expect(mockMessageModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-cas-race' }),
       );
@@ -3124,42 +3135,55 @@ describe('RuntimeExecutors', () => {
           }),
         ]),
       );
+      // The delegate resolved the winner and handed it back, so this is a
+      // recoverable race: adopt the authoritative workspace and keep running.
       expect(result.newState.metadata?.executionContext).toMatchObject({
         cwd: '/Users/me/formal-project',
         plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
         snapshot: { workspaceId: 'formal-workspace', workspaceKind: 'device' },
         workspace: { id: 'formal-workspace', kind: 'device' },
       });
+      expect(result.newState.status).not.toBe('interrupted');
+      expect(result.nextContext).toBeDefined();
     });
 
-    it('keeps and persists a successful scratch tool result when the scratch bind throws WORKSPACE_ALREADY_BOUND', async () => {
+    const unboundExecutionContext = {
+      accessRoots: [],
+      plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+      unresolvedReason: 'no-workspace',
+      version: 1,
+    };
+    const createUnboundScratchState = () =>
+      createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: unboundExecutionContext,
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+    // The production delegate already absorbs a lost race itself: it catches
+    // WorkspaceAlreadyBoundError, resolves the winning binding and returns it
+    // (see AiAgentService#bindScratchAfterToolSuccess, exercised by the CAS
+    // test above). A rejection therefore always means no authoritative
+    // workspace could be resolved — including one that still carries
+    // WORKSPACE_ALREADY_BOUND, which must not be read as a harmless race.
+    it.each<[string, Error]>([
+      ['the concurrent winner cannot be resolved', new Error('WORKSPACE_ALREADY_BOUND')],
+      ['the bind query fails', new Error('Failed query: update "topics" set "metadata" = $1')],
+    ])('keeps the successful tool result and interrupts when %s', async (_case, bindError) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const ensureScratchWorkspace = vi
         .fn()
         .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
-      const bindError = new Error('WORKSPACE_ALREADY_BOUND') as Error & {
-        scratchWorkspaceId?: string;
-      };
-      bindError.scratchWorkspaceId = 'scratch-workspace';
       const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
       const executors = createRuntimeExecutors({
         ...ctx,
         bindScratchAfterToolSuccess,
         ensureScratchWorkspace,
         topicId: 'topic-123',
-      });
-      const state = createMockState({
-        metadata: {
-          activeDeviceId: 'device-a',
-          agentId: 'agent-123',
-          executionContext: {
-            accessRoots: [],
-            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
-            unresolvedReason: 'no-workspace',
-            version: 1,
-          },
-          threadId: 'thread-123',
-          topicId: 'topic-123',
-        },
       });
 
       const result = await executors.call_tool!(
@@ -3169,19 +3193,20 @@ describe('RuntimeExecutors', () => {
             toolCalling: {
               apiName: 'listFiles',
               arguments: '{}',
-              id: 'tool-call-bind-race',
+              id: 'tool-call-bind-failure',
               identifier: 'lobe-local-system',
               type: 'builtin' as const,
             },
           },
           type: 'call_tool' as const,
         },
-        state,
+        createUnboundScratchState(),
       );
 
-      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      // The tool ran exactly once and its result is persisted and reported.
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
       expect(mockMessageModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-bind-race' }),
+        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-bind-failure' }),
       );
       expect(result.events).toEqual(
         expect.arrayContaining([
@@ -3191,12 +3216,42 @@ describe('RuntimeExecutors', () => {
           }),
         ]),
       );
-      // The successful tool ran against the scratch root; on bind failure we
-      // keep that pre-bind context rather than losing it or failing the call.
-      expect(result.newState.metadata?.executionContext).toMatchObject({
-        cwd: '/tmp/masterino/topic-123',
-        workspace: { kind: 'scratch', rootPath: '/tmp/masterino/topic-123' },
+
+      // The run stops in a resumable interruption carrying a stable code, so
+      // nothing else is queued against a topic that nothing ever bound.
+      expect(result.newState.status).toBe('interrupted');
+      expect(result.newState.interruption).toMatchObject({
+        canResume: true,
+        reason: 'WORKSPACE_BIND_FAILED',
       });
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: 'WORKSPACE_BIND_FAILED', type: 'interrupted' }),
+        ]),
+      );
+
+      // Never reported as an error: clients read `error` events as a failed
+      // tool call, and this tool did not fail.
+      expect(result.events.some((event: any) => event.type === 'error')).toBe(false);
+      expect(
+        mockStreamManager.publishStreamEvent.mock.calls.filter(
+          ([, event]: [string, any]) => event.type === 'error',
+        ),
+      ).toHaveLength(0);
+
+      // Nothing bound the scratch root, so the execution context stays the last
+      // persisted one instead of claiming a workspace the topic is not bound to.
+      expect(result.newState.metadata?.executionContext).toEqual(unboundExecutionContext);
+
+      // The raw failure reaches the server log only — never the persisted state
+      // or the events, neither as a driver message nor as a scratch path.
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), bindError);
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
+
+      consoleError.mockRestore();
     });
 
     it('uses the server-to-device transport for frozen local-system env authority', async () => {
@@ -4331,6 +4386,154 @@ describe('RuntimeExecutors', () => {
         cwd: '/tmp/masterino/topic-123',
         workspace: { id: 'scratch-workspace', kind: 'scratch' },
       });
+    });
+
+    const createScratchBatchState = () =>
+      createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+    const scratchBatchInstruction = {
+      payload: {
+        parentMessageId: 'assistant-msg-123',
+        toolsCalling: [
+          {
+            apiName: 'listFiles',
+            arguments: '{}',
+            id: 'tool-call-scratch-1',
+            identifier: 'lobe-local-system',
+            type: 'builtin' as const,
+          },
+          {
+            apiName: 'searchFiles',
+            arguments: '{"query":"TODO"}',
+            id: 'tool-call-scratch-2',
+            identifier: 'lobe-local-system',
+            type: 'builtin' as const,
+          },
+        ],
+      },
+      type: 'call_tools_batch' as const,
+    };
+
+    const expectEveryBatchResultKept = (result: any) => {
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledTimes(2);
+      // The bug this guards: a bind outcome used to escape into the per-tool
+      // catch and skip persisting the result of a tool that already succeeded.
+      expect(mockMessageModel.create).toHaveBeenCalledTimes(2);
+      for (const toolCallId of ['tool-call-scratch-1', 'tool-call-scratch-2']) {
+        expect(mockMessageModel.create).toHaveBeenCalledWith(
+          expect.objectContaining({ content: 'Tool result', tool_call_id: toolCallId }),
+        );
+        expect(result.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: toolCallId, type: 'tool_result' }),
+          ]),
+        );
+      }
+    };
+
+    it('adopts the concurrent winner the shared batch bind resolves', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'formal-workspace',
+          kind: 'device',
+          rootPath: '/Users/me/formal-project',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+
+      const result = await executors.call_tools_batch!(
+        scratchBatchInstruction,
+        createScratchBatchState(),
+      );
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expectEveryBatchResultKept(result);
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/Users/me/formal-project',
+        snapshot: { workspaceId: 'formal-workspace', workspaceKind: 'device' },
+        workspace: { id: 'formal-workspace', kind: 'device' },
+      });
+      expect(result.newState.status).not.toBe('interrupted');
+      expect(result.nextContext).toBeDefined();
+    });
+
+    // Same semantics as call_tool: a rejected bind — WORKSPACE_ALREADY_BOUND
+    // included — means no workspace could be resolved, so the batch keeps every
+    // successful result and stops instead of running on unbound.
+    it.each<[string, Error]>([
+      ['the concurrent winner cannot be resolved', new Error('WORKSPACE_ALREADY_BOUND')],
+      ['the bind query fails', new Error('Failed query: update "topics" set "metadata" = $1')],
+    ])('keeps every successful batch result and interrupts when %s', async (_case, bindError) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createScratchBatchState();
+
+      const result = await executors.call_tools_batch!(scratchBatchInstruction, state);
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expectEveryBatchResultKept(result);
+
+      expect(result.newState.status).toBe('interrupted');
+      expect(result.newState.interruption).toMatchObject({
+        canResume: true,
+        reason: 'WORKSPACE_BIND_FAILED',
+      });
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: 'WORKSPACE_BIND_FAILED', type: 'interrupted' }),
+        ]),
+      );
+      expect(result.events.some((event: any) => event.type === 'error')).toBe(false);
+      expect(result.newState.metadata?.executionContext).toEqual(state.metadata!.executionContext);
+
+      // Server log only — the raw failure never reaches state or events.
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), bindError);
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
+
+      consoleError.mockRestore();
     });
 
     it('parks a device-authored path intervention from a batch instead of returning it to the LLM', async () => {

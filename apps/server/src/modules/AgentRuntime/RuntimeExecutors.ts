@@ -1155,6 +1155,100 @@ const bindPreparedScratchContext = async (
   };
 };
 
+/**
+ * Stable, secret-free reason for a scratch bind that never committed. The bind
+ * delegate already absorbs a concurrent formal bind: it catches
+ * `WorkspaceAlreadyBoundError`, resolves the winning topic binding, and returns
+ * it as its own result. A rejection is therefore never a harmless lost race —
+ * it means no authoritative workspace could be resolved at all. The raw error
+ * stays in the server log; persisted state and client events carry only this
+ * code, never a driver message, stack, or filesystem path.
+ */
+const WORKSPACE_BIND_FAILED = 'WORKSPACE_BIND_FAILED';
+
+/**
+ * Outcome of the post-success workspace coordination shared by `call_tool` and
+ * `call_tools_batch`. The tool has already run and owns its result, so settling
+ * a bind never rejects and never rewrites that result; `executionContext` is
+ * always safe to freeze onto the next state.
+ */
+interface ScratchBindSettlement {
+  /** Context the next step may run in: a committed bind, or the last persisted one. */
+  executionContext?: ExecutionContext;
+  /** A bind was owed but never committed; the step must interrupt rather than continue. */
+  failed?: boolean;
+}
+
+/**
+ * Bind the lazily created scratch root now that the tool that needed it has
+ * succeeded, without ever letting the binding decide the fate of that success.
+ */
+const settleScratchBindAfterToolSuccess = async (params: {
+  ctx: RuntimeExecutorContext;
+  operationLogId: string;
+  prepared: PreparedToolExecutionContext;
+  state: AgentState;
+  toolName: string;
+}): Promise<ScratchBindSettlement> => {
+  const { ctx, operationLogId, prepared, state, toolName } = params;
+  if (!prepared.scratchRoot) return { executionContext: prepared.executionContext };
+
+  try {
+    return { executionContext: await bindPreparedScratchContext(ctx, state, prepared) };
+  } catch (error) {
+    // The tool succeeded before this bind ran, so its result stands whatever
+    // happened here. What must NOT stand is `prepared.executionContext`: its
+    // scratch primary root was only ever a local proposal, and with no
+    // committed binding behind it, freezing it would make later steps act on a
+    // workspace this topic is not bound to. Fall back to the last persisted
+    // context, which still carries whatever binding/snapshot the topic has.
+    console.error(
+      `[StreamingToolExecutor] ${WORKSPACE_BIND_FAILED} after successful tool ${toolName} for operation ${operationLogId}; keeping the tool result and interrupting the run:`,
+      error,
+    );
+    return { executionContext: getFrozenExecutionContext(state), failed: true };
+  }
+};
+
+/** Freeze the settled execution context onto the next state. */
+const applyScratchBindSettlement = (state: AgentState, settlement: ScratchBindSettlement) => {
+  if (!settlement.executionContext) return;
+  state.metadata = {
+    ...state.metadata,
+    executionContext: settlement.executionContext,
+    executionPlan: settlement.executionContext.plan,
+  };
+};
+
+/**
+ * Stop the run after a bind that never committed, keeping every already
+ * persisted tool result. The step must not fail — that would re-run a tool
+ * whose side effects already happened — and must not report an `error` event,
+ * which clients read as a failed tool call. Returning no `nextContext` leaves
+ * nothing queued: no further LLM step and no further cwd-dependent tool runs
+ * against an unbound topic until a resume (or a user-picked workspace) can
+ * supply one.
+ */
+const interruptForScratchBindFailure = (state: AgentState, events: AgentEvent[]) => {
+  const interruptedAt = new Date().toISOString();
+  state.status = 'interrupted';
+  state.lastModified = interruptedAt;
+  state.interruption = { canResume: true, interruptedAt, reason: WORKSPACE_BIND_FAILED };
+
+  return {
+    events: [
+      ...events,
+      {
+        canResume: true,
+        interruptedAt,
+        reason: WORKSPACE_BIND_FAILED,
+        type: 'interrupted' as const,
+      },
+    ],
+    newState: state,
+  };
+};
+
 /** Never send resolved environment values to a renderer-facing gateway event. */
 const projectExecutionContextForClient = (
   state: AgentState,
@@ -3831,27 +3925,26 @@ export const createRuntimeExecutors = (
           };
         }
 
-        let resultingExecutionContext = preparedExecutionContext.executionContext;
-        if (execution.result.success) {
-          try {
-            resultingExecutionContext = await bindPreparedScratchContext(
+        // Post-success workspace coordination. Shared with call_tools_batch:
+        // the bind can change which context the next step runs in, but it can
+        // never fail, drop, or delay the result of the tool that just ran.
+        // Without a success there is no bind to owe, and a scratch root merely
+        // proposed for a failed tool is dropped rather than frozen — only a
+        // committed bind may move the topic's execution context, and the next
+        // cwd-dependent tool re-proposes the same deterministic root.
+        const scratchSettlement: ScratchBindSettlement = execution.result.success
+          ? await settleScratchBindAfterToolSuccess({
               ctx,
+              operationLogId,
+              prepared: preparedExecutionContext,
               state,
-              preparedExecutionContext,
-            );
-          } catch (error) {
-            // The tool already succeeded. A scratch bind failure/race (e.g. the
-            // user selecting a formal directory mid-run surfacing as
-            // WORKSPACE_ALREADY_BOUND) must not overwrite that success or skip
-            // persisting the successful tool output. Keep the pre-bind scratch
-            // context the tool actually ran with and continue.
-            log(
-              `[${operationLogId}] Scratch bind after successful tool ${toolName} failed; keeping the pre-bind scratch context and the successful tool result: %O`,
-              error,
-            );
-            resultingExecutionContext = preparedExecutionContext.executionContext;
-          }
-        }
+              toolName,
+            })
+          : {
+              executionContext: preparedExecutionContext.scratchRoot
+                ? getFrozenExecutionContext(state)
+                : preparedExecutionContext.executionContext,
+            };
 
         const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
           activeDeviceId: state.metadata?.activeDeviceId,
@@ -3911,13 +4004,7 @@ export const createRuntimeExecutors = (
             buildExecuteToolResultAttributes({ attempts: execution.attempts, success: false }),
           );
           const newState = structuredClone(state);
-          if (resultingExecutionContext) {
-            newState.metadata = {
-              ...newState.metadata,
-              executionContext: resultingExecutionContext,
-              executionPlan: resultingExecutionContext.plan,
-            };
-          }
+          applyScratchBindSettlement(newState, scratchSettlement);
           newState.lastModified = new Date().toISOString();
           newState.pendingToolsCalling = [chatToolPayload];
           newState.status = 'waiting_for_human';
@@ -4046,13 +4133,7 @@ export const createRuntimeExecutors = (
 
         const newState = structuredClone(state);
 
-        if (resultingExecutionContext) {
-          newState.metadata = {
-            ...newState.metadata,
-            executionContext: resultingExecutionContext,
-            executionPlan: resultingExecutionContext.plan,
-          };
-        }
+        applyScratchBindSettlement(newState, scratchSettlement);
 
         newState.messages.push({
           content: executionResult.content,
@@ -4158,6 +4239,10 @@ export const createRuntimeExecutors = (
         executeToolSpan.setAttributes(
           buildExecuteToolResultAttributes({ attempts: execution.attempts, success: isSuccess }),
         );
+
+        // Last: the tool result is persisted, reported and accounted for by
+        // now, so interrupting here loses none of it.
+        if (scratchSettlement.failed) return interruptForScratchBindFailure(newState, events);
 
         return {
           events,
@@ -4326,8 +4411,12 @@ export const createRuntimeExecutors = (
     const pathConsentTools: ChatToolPayload[] = [];
     const pathConsentToolMessageIds: Record<string, string> = {};
     let scratchPreparedPromise: Promise<PreparedToolExecutionContext> | undefined;
-    let scratchBindPromise: Promise<ExecutionContext | undefined> | undefined;
-    let boundScratchExecutionContext: ExecutionContext | undefined;
+    // One shared post-success settlement for the whole batch: the first tool
+    // that succeeds against the scratch root starts it, every other tool awaits
+    // the same outcome, and it never rejects — a bind must not decide whether a
+    // sibling tool's successful result gets persisted.
+    let scratchBindPromise: Promise<ScratchBindSettlement> | undefined;
+    let scratchSettlement: ScratchBindSettlement | undefined;
     const prepareBatchExecutionContext = (tool: ChatToolPayload) => {
       if (
         !requiresPrimaryCwdForTool({ executionContext: getFrozenExecutionContext(state), tool })
@@ -4582,12 +4671,14 @@ export const createRuntimeExecutors = (
             }
 
             if (execution.result.success && preparedExecutionContext.scratchRoot) {
-              scratchBindPromise ??= bindPreparedScratchContext(
+              scratchBindPromise ??= settleScratchBindAfterToolSuccess({
                 ctx,
+                operationLogId,
+                prepared: preparedExecutionContext,
                 state,
-                preparedExecutionContext,
-              );
-              boundScratchExecutionContext = await scratchBindPromise;
+                toolName,
+              });
+              scratchSettlement = await scratchBindPromise;
             }
 
             const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
@@ -4807,13 +4898,7 @@ export const createRuntimeExecutors = (
 
     // Accumulate tool usage sequentially after all tools have finished
     const newState = structuredClone(state);
-    if (boundScratchExecutionContext) {
-      newState.metadata = {
-        ...newState.metadata,
-        executionContext: boundScratchExecutionContext,
-        executionPlan: boundScratchExecutionContext.plan,
-      };
-    }
+    if (scratchSettlement) applyScratchBindSettlement(newState, scratchSettlement);
     for (const result of toolResults) {
       if (result.usageParams) {
         const { usage, cost } = UsageCounter.accumulateTool({
@@ -4957,6 +5042,10 @@ export const createRuntimeExecutors = (
         newState,
       };
     }
+
+    // Same post-success workspace semantics as call_tool, applied once for the
+    // whole batch and only after every tool result is persisted and reported.
+    if (scratchSettlement?.failed) return interruptForScratchBindFailure(newState, events);
 
     return {
       events,
