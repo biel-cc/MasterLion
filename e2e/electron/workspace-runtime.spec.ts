@@ -247,7 +247,7 @@ test('AC-W07 consented read creates no scratch and concurrent init persists exac
   expect(row.placement).toEqual({ kind: 'recent', reason: 'scratch' });
 });
 
-test('AC-W08 a scratch topic is never rebound and the chip offers a referenced topic', async () => {
+test('AC-W08 a scratch topic is never rebound and its directory control is read-only', async () => {
   const row = await session.run('AC-W08');
 
   // Database half: the bind-once writer rejected the formal directory and the
@@ -260,16 +260,17 @@ test('AC-W08 a scratch topic is never rebound and the chip offers a referenced t
   expect(row.workspaceStateAfter).toBe('scratch');
   expect(row.formalWorkspaceRootPath).not.toBe(row.cwdAfter);
 
-  // UI half: the production chip renders those rows.
+  // UI half: the production chip renders the frozen directory without an
+  // in-place rebind or referenced-topic action. New-topic entry points live in
+  // the sidebar so an existing topic cannot mutate its runtime identity.
   const section = session.page.getByTestId('workspace-bind-once');
   await expect(section).toHaveAttribute('data-state', 'ready');
   const chip = section.getByTestId('workspace-chip');
   await expect(chip).toHaveAttribute('data-workspace-state', 'scratch');
   await expect(chip).toHaveAttribute('aria-label', new RegExp(escapeRegExp(row.cwdAfter!)));
   await expect(section.getByTestId('workspace-chip-scratch')).toHaveText('Temporary');
-  await expect(section.getByTestId('workspace-chip-already-bound')).toHaveText(
-    'New referenced topic',
-  );
+  await expect(section.getByTestId('workspace-chip-already-bound')).toHaveCount(0);
+  await expect(section.getByTestId('workspace-chip-reference-anchor')).toHaveCount(0);
 });
 
 test('AC-W09 only explicit sources create workspace-topics and the agent default is untouched', async () => {
