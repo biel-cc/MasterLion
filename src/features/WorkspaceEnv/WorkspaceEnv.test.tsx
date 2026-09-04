@@ -15,6 +15,7 @@ const translations: Record<string, string> = {
   'workspaceEnv.keyLabel': 'Name',
   'workspaceEnv.loadError': 'Could not load variables.',
   'workspaceEnv.loading': 'Loading variables',
+  'workspaceEnv.reservedKey': '{{key}} is set by the Masterino runtime.',
   'workspaceEnv.retry': 'Retry',
   'workspaceEnv.revoke': 'Revoke',
   'workspaceEnv.revokeConfirmDescription': 'Commands will stop receiving this variable.',
@@ -25,13 +26,19 @@ const translations: Record<string, string> = {
   'workspaceEnv.saveSuccess': 'Variable saved.',
   'workspaceEnv.secret': 'Secret',
   'workspaceEnv.secretLabel': 'Store as a secret',
+  'workspaceEnv.securitySensitiveKey': '{{key}} changes how commands load code.',
   'workspaceEnv.title': 'Workspace environment',
   'workspaceEnv.valueLabel': 'Value',
 };
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => translations[key] ?? key,
+    // Interpolate like i18next so restriction messages can be asserted with the offending key.
+    t: (key: string, options?: Record<string, string>) =>
+      Object.entries(options ?? {}).reduce(
+        (message, [name, replacement]) => message.replaceAll(`{{${name}}}`, replacement),
+        translations[key] ?? key,
+      ),
   }),
 }));
 
@@ -53,7 +60,12 @@ vi.mock('@lobehub/ui', () => ({
 
 // Buttons must come from the headless base-ui package, so only that mock provides one.
 vi.mock('@lobehub/ui/base-ui', () => ({
-  Button: ({ children, htmlType, loading: _loading, ...props }: ComponentProps<'button'> & {
+  Button: ({
+    children,
+    htmlType,
+    loading: _loading,
+    ...props
+  }: ComponentProps<'button'> & {
     htmlType?: 'button' | 'reset' | 'submit';
     loading?: boolean;
   }) => (
@@ -62,7 +74,11 @@ vi.mock('@lobehub/ui/base-ui', () => ({
     </button>
   ),
   confirmModal: ({ onOk }: { onOk?: () => void | Promise<void> }) => void onOk?.(),
-  Switch: ({ checked, onChange, ...props }: {
+  Switch: ({
+    checked,
+    onChange,
+    ...props
+  }: {
     checked?: boolean;
     onChange?: (checked: boolean) => void;
   } & Omit<ComponentProps<'input'>, 'onChange'>) => (
@@ -164,6 +180,51 @@ describe('WorkspaceEnv', () => {
 
     fireEvent.change(input, { target: { value: 'UPPER_KEY' } });
     expect(input).toHaveAttribute('aria-invalid', 'false');
+  });
+
+  it.each([
+    ['HOME', '{{key}} is set by the Masterino runtime.'],
+    ['PATH', '{{key}} is set by the Masterino runtime.'],
+    ['DYLD_INSERT_LIBRARIES', '{{key}} is set by the Masterino runtime.'],
+    ['LOBEHUB_JWT', '{{key}} is set by the Masterino runtime.'],
+    ['MASTERINO_WORKSPACE', '{{key}} is set by the Masterino runtime.'],
+    ['NODE_OPTIONS', '{{key}} changes how commands load code.'],
+    ['LD_PRELOAD', '{{key}} changes how commands load code.'],
+  ])('explains that %s is rejected before the server sees it', async (name, template) => {
+    const save = vi.fn(async () => {});
+    render(<WorkspaceEnv client={createClient({ save })} workspaceId="workspace-1" />);
+    await screen.findByText('No variables yet');
+
+    const input = screen.getByRole('textbox', { name: 'Name' });
+    fireEvent.change(input, { target: { value: name } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'anything' } });
+
+    const alert = screen.getByRole('alert');
+    const saveButton = screen.getByRole('button', { name: 'Save' });
+    expect(alert).toHaveTextContent(template.replace('{{key}}', name));
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAttribute('aria-describedby', alert.id);
+    expect(saveButton).toBeDisabled();
+
+    // Submitting around the disabled button must stay a no-op, not a failed round-trip.
+    fireEvent.submit(saveButton.closest('form')!);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('clears the reserved-key warning once the name becomes configurable', async () => {
+    render(<WorkspaceEnv client={createClient()} workspaceId="workspace-1" />);
+    await screen.findByText('No variables yet');
+
+    const input = screen.getByRole('textbox', { name: 'Name' });
+    fireEvent.change(input, { target: { value: 'HOME' } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'anything' } });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: 'HOME_DIR' } });
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
   it('revokes an entry and announces completion', async () => {

@@ -2522,6 +2522,8 @@ When I am ___, I need ___
   'workspaceEnv.loadError': 'Could not load environment variables.',
   'workspaceEnv.loading': 'Loading environment variables',
   'workspaceEnv.maskedValueLabel': '{{key}} is a masked secret',
+  'workspaceEnv.reservedKey':
+    '{{key}} is set by the Masterino runtime and cannot be overridden here. Pick another name.',
   'workspaceEnv.retry': 'Retry',
   'workspaceEnv.revoke': 'Revoke',
   'workspaceEnv.revokeConfirmDescription':
@@ -2534,6 +2536,8 @@ When I am ___, I need ___
   'workspaceEnv.saveSuccess': 'Environment variable saved.',
   'workspaceEnv.secret': 'Secret',
   'workspaceEnv.secretLabel': 'Store as a secret',
+  'workspaceEnv.securitySensitiveKey':
+    '{{key}} changes how commands load code or credentials, so it cannot be set here. Pick another name.',
   'workspaceEnv.title': 'Workspace environment',
   'workspaceEnv.valueLabel': 'Value',
   'workspaceEnv.valuePlaceholder': 'Enter a value',

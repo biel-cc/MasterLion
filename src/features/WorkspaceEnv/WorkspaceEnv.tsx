@@ -1,5 +1,6 @@
 'use client';
 
+import { getExecutionEnvKeyRestriction } from '@lobechat/const/executionEnv';
 import { Empty, Input, Skeleton } from '@lobehub/ui';
 import { Button, confirmModal, Switch } from '@lobehub/ui/base-ui';
 import { createStaticStyles } from 'antd-style';
@@ -8,7 +9,6 @@ import { useTranslation } from 'react-i18next';
 
 import type { WorkspaceEnvClient, WorkspaceEnvEntrySummary } from './types';
 
-const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const MASKED_VALUE = '••••••••';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -185,8 +185,17 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, description, title, work
   }, [load]);
 
   const normalizedKey = key.trim();
-  const keyIsInvalid = normalizedKey.length > 0 && !ENV_KEY_PATTERN.test(normalizedKey);
-  const canSave = normalizedKey.length > 0 && value.length > 0 && !keyIsInvalid && !isSaving;
+  /** The classifier the server enforces, so a rejected name is explained before the round-trip. */
+  const keyRestriction = normalizedKey ? getExecutionEnvKeyRestriction(normalizedKey) : undefined;
+  const keyRestrictionMessage = keyRestriction
+    ? {
+        'invalid': t('workspaceEnv.invalidKey'),
+        'reserved': t('workspaceEnv.reservedKey', { key: normalizedKey }),
+        'security-sensitive': t('workspaceEnv.securitySensitiveKey', { key: normalizedKey }),
+      }[keyRestriction]
+    : undefined;
+  const canSave =
+    normalizedKey.length > 0 && value.length > 0 && !keyRestrictionMessage && !isSaving;
 
   const save = async () => {
     if (!canSave) return;
@@ -306,8 +315,8 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, description, title, work
                 {t('workspaceEnv.keyLabel')}
               </label>
               <Input
-                aria-describedby={keyIsInvalid ? validationId : undefined}
-                aria-invalid={keyIsInvalid}
+                aria-describedby={keyRestrictionMessage ? validationId : undefined}
+                aria-invalid={!!keyRestrictionMessage}
                 autoCapitalize="none"
                 autoComplete="off"
                 id={`${inputId}-key`}
@@ -316,9 +325,9 @@ const WorkspaceEnv = memo<WorkspaceEnvProps>(({ client, description, title, work
                 value={key}
                 onChange={(event) => setKey(event.target.value)}
               />
-              {keyIsInvalid && (
+              {keyRestrictionMessage && (
                 <span className={styles.validation} id={validationId} role="alert">
-                  {t('workspaceEnv.invalidKey')}
+                  {keyRestrictionMessage}
                 </span>
               )}
             </div>

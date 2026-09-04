@@ -1,3 +1,8 @@
+import {
+  getExecutionEnvKeyRestriction as sharedGetRestriction,
+  RUNTIME_RESERVED_ENV_KEYS as sharedReservedKeys,
+  SECURITY_SENSITIVE_ENV_KEYS as sharedSensitiveKeys,
+} from '@lobechat/const/executionEnv';
 import type {
   ExecutionEnv,
   ExecutionEnvAdapter,
@@ -7,20 +12,23 @@ import type { ProjectWorkspaceEnvRecord } from '@lobechat/types/src/projectWorks
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  assertConfigurableExecutionEnvKey,
   createExecutionEnvAdapter,
   ExecutionEnvError,
+  getExecutionEnvKeyRestriction,
   parseExecutionEnvFile,
   redactExecutionEnvData,
   resolveOperationExecutionEnv,
+  RUNTIME_RESERVED_ENV_KEYS,
+  SECURITY_SENSITIVE_ENV_KEYS,
   summarizeExecutionEnv,
   toBrowserExecutionEnv,
 } from '..';
 
 const entry = (value: string, secret = false) => ({ secret, value });
 
-const createLayerLoader = (
-  layers: Partial<Record<ExecutionEnvLayer, ProjectWorkspaceEnvRecord>>,
-) => vi.fn(async (layer: ExecutionEnvLayer) => layers[layer]);
+const createLayerLoader = (layers: Partial<Record<ExecutionEnvLayer, ProjectWorkspaceEnvRecord>>) =>
+  vi.fn(async (layer: ExecutionEnvLayer) => layers[layer]);
 
 describe('createExecutionEnvAdapter', () => {
   it('uses host < user < workspace < topic < agent < call precedence', async () => {
@@ -275,5 +283,30 @@ describe('operation boundary and redaction', () => {
     expect(JSON.stringify(redacted)).toContain('[redacted]');
     expect(JSON.stringify(redacted)).not.toContain('server-secret');
     expect(JSON.stringify(redacted)).not.toContain('private-mode');
+  });
+});
+
+// The settings UI warns from `@lobechat/const/executionEnv`. If this service ever re-declares the
+// policy locally, the client hint silently drifts from what writes actually reject.
+describe('execution env key policy sharing', () => {
+  it('serves the same policy objects the client imports', () => {
+    expect(getExecutionEnvKeyRestriction).toBe(sharedGetRestriction);
+    expect(RUNTIME_RESERVED_ENV_KEYS).toBe(sharedReservedKeys);
+    expect(SECURITY_SENSITIVE_ENV_KEYS).toBe(sharedSensitiveKeys);
+  });
+
+  it('still rejects the keys the client warns about', () => {
+    for (const key of ['HOME', 'PATH', 'DYLD_INSERT_LIBRARIES', 'LOBEHUB_JWT', 'MASTERINO_HOME']) {
+      expect(getExecutionEnvKeyRestriction(key)).toBe('reserved');
+      expect(() => assertConfigurableExecutionEnvKey(key)).toThrow(ExecutionEnvError);
+    }
+
+    for (const key of ['NODE_OPTIONS', 'LD_PRELOAD']) {
+      expect(getExecutionEnvKeyRestriction(key)).toBe('security-sensitive');
+      expect(() => assertConfigurableExecutionEnvKey(key)).toThrow(ExecutionEnvError);
+    }
+
+    expect(getExecutionEnvKeyRestriction('HOME_DIR')).toBeUndefined();
+    expect(() => assertConfigurableExecutionEnvKey('HOME_DIR')).not.toThrow();
   });
 });

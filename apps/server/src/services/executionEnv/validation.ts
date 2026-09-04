@@ -1,33 +1,11 @@
+import { ENV_KEY_PATTERN, getExecutionEnvKeyRestriction } from '@lobechat/const/executionEnv';
 import type { ExecutionEnvLayer } from '@lobechat/types/src/executionContext';
 
-import {
-  ENV_KEY_PATTERN,
-  RUNTIME_RESERVED_ENV_KEYS,
-  RUNTIME_RESERVED_ENV_PREFIXES,
-  SECURITY_SENSITIVE_ENV_KEYS,
-} from './constants';
 import { ExecutionEnvError } from './errors';
 
-export type ExecutionEnvKeyRestriction = 'invalid' | 'reserved' | 'security-sensitive';
-
-const normalizeKey = (key: string) => key.toUpperCase();
-
-export const getExecutionEnvKeyRestriction = (
-  key: string,
-): ExecutionEnvKeyRestriction | undefined => {
-  if (!ENV_KEY_PATTERN.test(key)) return 'invalid';
-
-  const normalized = normalizeKey(key);
-  if (SECURITY_SENSITIVE_ENV_KEYS.has(normalized)) return 'security-sensitive';
-  if (
-    RUNTIME_RESERVED_ENV_KEYS.has(normalized) ||
-    RUNTIME_RESERVED_ENV_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-  ) {
-    return 'reserved';
-  }
-
-  return undefined;
-};
+/** The classifier is shared with the settings UI; this service owns the enforcement around it. */
+export { getExecutionEnvKeyRestriction };
+export type { ExecutionEnvKeyRestriction } from '@lobechat/const/executionEnv';
 
 export const isValidExecutionEnvKey = (key: string): boolean => ENV_KEY_PATTERN.test(key);
 
