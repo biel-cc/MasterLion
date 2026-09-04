@@ -1,7 +1,7 @@
 import type {
   ExecutionAccessRoot,
   ToolCallExecutionContext,
-} from '@lobechat/types/src/executionContext';
+} from '@lobechat/types';
 
 // ─── Device Info ───
 

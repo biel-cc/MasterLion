@@ -1,4 +1,4 @@
-import type { ToolCallExecutionContext } from '@lobechat/types/src/executionContext';
+import type { ToolCallExecutionContext } from '@lobechat/types';
 
 // ─── Agent Stream Event (mirrors server StreamEvent) ───
 
