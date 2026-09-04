@@ -31,23 +31,32 @@ button.
 The renderer only seeds conversation identity (active agent, active topic, gateway device). Topic
 rows and workspace rows are fetched by production code.
 
+Workspace lifecycle rows (W04 and W07–W10), path consent (P08), and compatibility (X02) execute in
+the Electron main process through the preload IPC bridge. They use the production workspace models,
+services, execution-context resolver and device execution boundary against an isolated PGlite
+database and a unique temporary filesystem. The harness reads rows and files back after each
+operation and records provider/device-port call counts.
+
 ### Remaining test doubles
 
-1. **TRPC transport** (`production-app/workspaceRuntimeTrpcClient.ts`) — the only data-chain
-   substitution, so the suite needs no server, database or account. It applies the same
+1. **Renderer TRPC transport** (`production-app/workspaceRuntimeTrpcClient.ts`) — supplies the
+   deterministic sidebar presentation rows without a server or account. It applies the same
    `agentId` / `excludeTriggers` / `excludeStatuses` / `pageSize` filtering the real routers apply
    and records every call, so the spec fails if the production params stop arriving.
-2. **Shell-only UI substitutions** (`workspace-runtime-product-boundaries` plugin) — the Topic and
+2. **External runtime ports** — the model-provider HTTP request and remote-device directory probe
+   are deterministic and counted. The device port resolves against the real temporary filesystem;
+   database models, workspace services, execution boundaries and IPC are not replaced.
+3. **Shell-only UI substitutions** (`workspace-runtime-product-boundaries` plugin) — the Topic and
    TopicItem overflow menus (`useDropdownMenu`, `Actions`, `Editing`), the sidebar `Filter` and
    `ToggleGroups` affordances, `AllTopicsDrawer` and `ThreadList`. These are presentation surfaces
    outside the Topic navigation contract; they pull heavy portal/menu machinery into a headless
    window without adding coverage. No store, action, selector, SWR hook or service is substituted.
 
 This remains a focused Electron-hosted contract rather than a signed packaged-app smoke test. The
-tool-call and Aihub scenarios use deterministic lifecycle adapters; the Notebook and Workspace
-Runtime scenarios run the production renderer data and UI chain through the TRPC client boundary.
-Approval actions, message services, routers, and database behavior remain covered by their Vitest
-and database integration suites. A packaged desktop smoke test remains separate follow-up work.
+tool-call and Aihub scenarios use deterministic lifecycle adapters; Notebook scenarios run through
+the renderer TRPC boundary; Workspace Runtime combines the production renderer chain with real
+main-process IPC, database, filesystem, workspace-service and execution-boundary seams. A packaged
+desktop smoke test remains separate follow-up work.
 
 It intentionally does not use the Chromium/Next.js harness under `e2e/src`: that harness cannot
 exercise Electron preload or IPC.
@@ -61,7 +70,9 @@ pnpm install --frozen-lockfile
 pnpm --dir apps/desktop install
 ```
 
-No Playwright browser download, database, Next.js server, or external network service is needed.
+No Playwright browser download, external database, Next.js server, account, or network service is
+needed. Workspace Runtime creates and removes its own in-process PGlite database and temporary
+filesystem.
 
 ## Run
 

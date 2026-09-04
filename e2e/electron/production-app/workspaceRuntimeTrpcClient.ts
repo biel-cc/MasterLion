@@ -8,8 +8,14 @@ import type { ProjectWorkspaceItem } from '@/services/projectWorkspace';
  * `@/libs/swr` → `topicService` → here, and `useWorkspaceTopicNavigation` →
  * the production `projectWorkspace` store `useFetchWorkspaces` action →
  * `@/libs/swr` → `projectWorkspaceService` → here. Only the HTTP transport is
- * replaced, so the E2E needs no server, database or account while still
- * failing when production actions, services or selectors get disconnected.
+ * replaced, so the Topic-navigation UI needs no HTTP server or account while
+ * still failing when production actions, services or selectors get
+ * disconnected.
+ *
+ * This boundary covers the *presentation* rows only. Every database, task,
+ * topic and filesystem invariant is verified separately in the Electron main
+ * process against the repository's isolated PGlite database and a real
+ * temporary filesystem (see `workspaceRuntimeSeams.ts`).
  *
  * The fixtures deliberately apply the same server-side filtering the real
  * lambda routers apply (`agentId`, `excludeTriggers`, `excludeStatuses`,

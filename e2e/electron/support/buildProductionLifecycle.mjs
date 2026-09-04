@@ -1,7 +1,9 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 import { build as viteBuild } from 'vite';
@@ -10,25 +12,7 @@ const supportDirectory = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(supportDirectory, '..');
 const repositoryRoot = path.resolve(electronRoot, '../..');
 const artifactDirectory = path.resolve(electronRoot, '.artifacts');
-
-// Ordered mirror of the repository tsconfig `paths` fallback lists. Vite's
-// `resolve.alias` cannot express an ordered fallback, so a hand-maintained
-// alias list used to be needed for every source-only module (`@/const/topic`,
-// `@/utils/navigation`, …). Resolving the fallbacks properly keeps the harness
-// honest as the production module graph grows.
-const TSCONFIG_PATH_GROUPS = [
-  ['@/database/', ['packages/database/src']],
-  ['@/business/server/', ['packages/business-server/src', 'src/business/server']],
-  ['@/libs/trpc/', ['packages/trpc/src', 'src/libs/trpc']],
-  ['@/const/', ['packages/const/src', 'src/const']],
-  ['@/utils/', ['packages/utils/src', 'src/utils']],
-  ['@/types/', ['packages/types/src', 'src/types']],
-  ['@/envs/', ['packages/env/src', 'src/envs']],
-  ['@/config/', ['packages/app-config/src', 'src/config']],
-  ['@/locales/', ['packages/locales/src', 'src/locales']],
-  ['@/server/', ['apps/server/src', 'src/server']],
-  ['@/', ['src']],
-];
+const pluginArtifactDirectory = path.resolve(artifactDirectory, 'production-plugins');
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.json'];
 
@@ -52,101 +36,56 @@ const resolveModuleFile = (basePath) => {
   return undefined;
 };
 
-/** Resolves `@/…` specifiers through the tsconfig fallback order. */
-const workspacePathsPlugin = () => ({
+/**
+ * Read the repository `tsconfig.json` `paths` map instead of restating it.
+ * Vite's `resolve.alias` cannot express an ordered fallback list, so the
+ * fallbacks are resolved here — but the list itself has a single source of
+ * truth, so adding a `@/…` alias upstream needs no change in this harness.
+ */
+const readTsconfigPathGroups = async () => {
+  const tsconfig = JSON.parse(
+    await readFile(path.resolve(repositoryRoot, 'tsconfig.json'), 'utf8'),
+  );
+  const paths = tsconfig.compilerOptions?.paths ?? {};
+
+  return Object.entries(paths)
+    .map(([pattern, targets]) => ({
+      // '@/database/*' → '@/database/'; '~test-utils' stays exact.
+      prefix: pattern.endsWith('/*') ? pattern.slice(0, -1) : pattern,
+      roots: targets.map((target) =>
+        (target.endsWith('/*') ? target.slice(0, -2) : target).replace(/^\.\//, ''),
+      ),
+      wildcard: pattern.endsWith('/*'),
+    }))
+    .sort((left, right) => right.prefix.length - left.prefix.length);
+};
+
+/** Resolves tsconfig-mapped specifiers through their declared fallback order. */
+const workspacePathsPlugin = (groups) => ({
   enforce: 'pre',
   name: 'masterino-e2e-tsconfig-path-fallbacks',
   resolveId(source) {
-    if (!source.startsWith('@/')) return;
+    for (const group of groups) {
+      if (group.wildcard) {
+        if (!source.startsWith(group.prefix)) continue;
+        const rest = source.slice(group.prefix.length);
+        for (const root of group.roots) {
+          const resolved = resolveModuleFile(path.resolve(repositoryRoot, root, rest));
+          if (resolved) return resolved;
+        }
+        continue;
+      }
 
-    for (const [prefix, roots] of TSCONFIG_PATH_GROUPS) {
-      if (!source.startsWith(prefix)) continue;
-      const rest = source.slice(prefix.length);
-      for (const root of roots) {
-        const resolved = resolveModuleFile(path.resolve(repositoryRoot, root, rest));
+      if (source !== group.prefix) continue;
+      for (const root of group.roots) {
+        const resolved = resolveModuleFile(path.resolve(repositoryRoot, root));
         if (resolved) return resolved;
       }
     }
   },
 });
 
-/**
- * Local copies of the production renderer plugins (`plugins/vite/*`). They are
- * inlined rather than imported because this harness module is plain ESM loaded
- * by Playwright's Node runtime, which does not transpile the `.ts` originals.
- */
-const nodeModuleStubPlugin = () => {
-  const stubbed = new Set(['node:stream', 'node-fetch']);
-  const VIRTUAL_PREFIX = '\0node-stub:';
-
-  return {
-    enforce: 'pre',
-    load(id) {
-      return id.startsWith(VIRTUAL_PREFIX) ? 'export default {};' : null;
-    },
-    name: 'masterino-e2e-node-module-stub',
-    resolveId(source) {
-      if (!stubbed.has(source)) return null;
-      return { id: `${VIRTUAL_PREFIX}${source}`, moduleSideEffects: false };
-    },
-  };
-};
-
-const markdownImportPlugin = () => {
-  const QUERY = 'lobe-md-import';
-
-  return {
-    enforce: 'pre',
-    async load(id) {
-      if (!new URLSearchParams(id.split('?')[1] ?? '').has(QUERY)) return null;
-      return `export default ${JSON.stringify(await readFile(id.replace(/[?#].*$/, ''), 'utf8'))};`;
-    },
-    name: 'masterino-e2e-markdown-import',
-    async resolveId(source, importer, options) {
-      if (!importer || source.includes('?') || !source.endsWith('.md')) return null;
-      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
-      if (!resolved) return null;
-      return { id: `${resolved.id}?${QUERY}`, moduleSideEffects: false };
-    },
-  };
-};
-
-/** Mirrors `vitePlatformResolve('desktop')` — the Electron renderer's variant order. */
-const platformResolvePlugin = () => {
-  const suffixes = ['.desktop', '.vite'];
-  const EXT_RE = /\.(ts|tsx|js|jsx)$/;
-  const PLATFORM_RE = /\.(?:vite|web|mobile|desktop|auth)\.(?:ts|tsx|js|jsx)$/;
-
-  return {
-    enforce: 'pre',
-    name: 'masterino-e2e-platform-resolve',
-    async resolveId(source, importer, options) {
-      if (!importer || importer.includes('node_modules')) return null;
-
-      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
-      if (!resolved) return null;
-
-      const id = resolved.id.split('?')[0];
-      const extMatch = id.match(EXT_RE);
-      if (!extMatch || PLATFORM_RE.test(id)) return null;
-
-      const basePath = id.slice(0, -extMatch[0].length);
-      for (const suffix of suffixes) {
-        const candidate = `${basePath}${suffix}${extMatch[0]}`;
-        try {
-          await access(candidate);
-          return candidate;
-        } catch {
-          // Not found, try the next suffix.
-        }
-      }
-
-      return null;
-    },
-  };
-};
-
-const transpile = async ({ outputName, sourcePath }) => {
+const transpile = async ({ outputDirectory = artifactDirectory, outputName, sourcePath }) => {
   const source = await readFile(sourcePath, 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: {
@@ -169,11 +108,187 @@ const transpile = async ({ outputName, sourcePath }) => {
     );
   }
 
-  await writeFile(path.resolve(artifactDirectory, `${outputName}.mjs`), output.outputText, 'utf8');
+  const outputPath = path.resolve(outputDirectory, `${outputName}.mjs`);
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(outputPath, output.outputText, 'utf8');
+  return outputPath;
 };
+
+/**
+ * The renderer plugins are the production implementations from
+ * `plugins/vite/*`. They are TypeScript and this harness module is plain ESM
+ * loaded by Playwright's Node runtime, so each one is transpiled 1:1 into
+ * `.artifacts/production-plugins` and imported from there. Nothing is
+ * re-implemented, so a change to the production plugin reaches this harness
+ * without a second copy to maintain.
+ */
+const PRODUCTION_PLUGIN_MODULES = ['markdownImport', 'nodeModuleStub', 'platformResolve'];
+
+const loadProductionRendererPlugins = async () => {
+  const entries = await Promise.all(
+    PRODUCTION_PLUGIN_MODULES.map(async (name) => {
+      const outputPath = await transpile({
+        outputDirectory: pluginArtifactDirectory,
+        outputName: name,
+        sourcePath: path.resolve(repositoryRoot, 'plugins/vite', `${name}.ts`),
+      });
+      return import(pathToFileURL(outputPath).href);
+    }),
+  );
+  const [{ viteMarkdownImport }, { viteNodeModuleStub }, { vitePlatformResolve }] = entries;
+
+  return { viteMarkdownImport, viteNodeModuleStub, vitePlatformResolve };
+};
+
+/**
+ * Native / WebAssembly runtime packages that must stay outside the bundle:
+ * PGlite ships its own `postgres.wasm` assets next to its entry, and `pg` may
+ * load a native binding, so both have to be loaded by Node from their real
+ * install location. pnpm keeps them out of the repository-root `node_modules`,
+ * so they are symlinked next to the artifacts and imported by bare specifier —
+ * that way Node applies the package's own export conditions instead of this
+ * harness guessing an entry file.
+ */
+const NODE_RUNTIME_PACKAGES = [
+  { from: 'packages/database/package.json', name: '@electric-sql/pglite' },
+  { from: 'package.json', name: 'pg' },
+];
+
+/**
+ * The package entry *and* every subpath export of it.
+ *
+ * `ssr.external` only accepts exact package names, so `@electric-sql/pglite`
+ * stayed external while `@electric-sql/pglite/vector` was inlined — a second,
+ * bundled copy of the extension whose `bundlePath` is
+ * `new URL('../vector.tar.gz', import.meta.url)`. Inlined, that URL points next
+ * to the emitted artifact instead of the package's `dist/`, so
+ * `CREATE EXTENSION IF NOT EXISTS vector` failed on the first migration
+ * statement. Rollup/Rolldown `external` accepts patterns, so the whole package
+ * — entry and subpaths — resolves at runtime from the single symlinked
+ * physical installation.
+ */
+const NODE_RUNTIME_EXTERNAL_PATTERNS = NODE_RUNTIME_PACKAGES.map(
+  ({ name }) => new RegExp(`^${name.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`)}(?:/.+)?$`),
+);
+
+let primaryCheckout;
+
+/**
+ * A graph worktree intentionally reuses the primary checkout's installed
+ * dependencies (the same strategy `electronTestApp` uses for the Electron
+ * runtime). Resolve it through git's common directory without assuming a
+ * sibling directory name.
+ */
+const getPrimaryCheckout = () => {
+  if (primaryCheckout !== undefined) return primaryCheckout;
+  try {
+    const commonDirectory = execFileSync(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    primaryCheckout = path.dirname(commonDirectory);
+  } catch {
+    primaryCheckout = '';
+  }
+  return primaryCheckout;
+};
+
+const resolvePackageDirectoryFrom = (base, requireFrom, name) => {
+  const require = createRequire(path.resolve(base, requireFrom));
+  try {
+    return path.dirname(require.resolve(`${name}/package.json`));
+  } catch {
+    // Packages whose `exports` map hides `./package.json`.
+    let current = path.dirname(require.resolve(name));
+    while (current !== path.dirname(current)) {
+      if (isFile(path.join(current, 'package.json'))) return current;
+      current = path.dirname(current);
+    }
+    throw new Error(`Could not locate the installed package directory for ${name}`);
+  }
+};
+
+const resolvePackageDirectory = (requireFrom, name) => {
+  const failures = [];
+  for (const base of [repositoryRoot, getPrimaryCheckout()].filter(Boolean)) {
+    try {
+      return resolvePackageDirectoryFrom(base, requireFrom, name);
+    } catch (error) {
+      failures.push(`${base}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(
+    `Could not resolve ${name} for the Electron acceptance seams\n${failures.join('\n')}`,
+  );
+};
+
+const linkNodeRuntimePackages = async () => {
+  for (const { from, name } of NODE_RUNTIME_PACKAGES) {
+    const target = resolvePackageDirectory(from, name);
+    const link = path.resolve(artifactDirectory, 'node_modules', name);
+    await mkdir(path.dirname(link), { recursive: true });
+    await rm(link, { force: true, recursive: true });
+    await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+};
+
+/**
+ * Restores the CommonJS `__dirname` / `__filename` of each bundled source file.
+ * `packages/database/src/core/getTestDB.ts` locates the real migration folder
+ * relative to its own directory, and the acceptance database has to run those
+ * real migrations.
+ */
+const nodeDirnameShimPlugin = () => ({
+  enforce: 'post',
+  name: 'masterino-e2e-node-dirname-shim',
+  transform(code, id) {
+    const file = id.split('?')[0];
+    // Repository sources only: dependencies keep whatever the bundler's own
+    // CommonJS interop already gave them.
+    if (file.startsWith('\0') || !file.startsWith(repositoryRoot)) return null;
+    if (file.includes(`${path.sep}node_modules${path.sep}`)) return null;
+    if (!/\b__(?:dirname|filename)\b/.test(code)) return null;
+    if (/(?:const|let|var|function)\s+__(?:dirname|filename)\b/.test(code)) return null;
+
+    return {
+      code:
+        `const __filename = ${JSON.stringify(file)};\n` +
+        `const __dirname = ${JSON.stringify(path.dirname(file))};\n${code}`,
+      map: null,
+    };
+  },
+});
+
+/** Compile-time switches the packaged Electron renderer builds with. */
+const rendererDefine = (mode) => ({
+  '__CI__': 'false',
+  '__DEV__': mode === 'development' ? 'true' : 'false',
+  '__ELECTRON__': 'true',
+  '__MOBILE__': 'false',
+  '__TEST__': 'false',
+  'process.env': '{}',
+  'process.env.NODE_ENV': JSON.stringify(mode),
+});
 
 const buildOnce = async () => {
   await mkdir(artifactDirectory, { recursive: true });
+  // Node loads `.artifacts/*` as ESM, including any code-split chunk the
+  // bundler names `.js`. The browser bundles are loaded with
+  // `<script type="module">` and are unaffected.
+  await writeFile(
+    path.resolve(artifactDirectory, 'package.json'),
+    `${JSON.stringify({ private: true, type: 'module' }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const [pathGroups, productionPlugins] = await Promise.all([
+    readTsconfigPathGroups(),
+    loadProductionRendererPlugins(),
+    linkNodeRuntimePackages(),
+  ]);
+  const { viteMarkdownImport, viteNodeModuleStub, vitePlatformResolve } = productionPlugins;
+
   await Promise.all([
     transpile({
       outputName: 'ToolCallLifecycle',
@@ -198,6 +313,50 @@ const buildOnce = async () => {
     }),
   ]);
 
+  // ─── Electron main-process acceptance seams ───────────────────────────────
+  // Real production services over a real isolated PGlite database and a real
+  // temporary filesystem. Built for Node (not the browser) and loaded by
+  // `app/main.cjs`, so the seams execute in the Electron main process and are
+  // reached from the renderer through the preload IPC bridge.
+  await viteBuild({
+    build: {
+      emptyOutDir: false,
+      lib: {
+        entry: path.resolve(electronRoot, 'production-app/workspaceRuntimeSeams.ts'),
+        fileName: () => 'workspaceRuntimeSeams.mjs',
+        formats: ['es'],
+      },
+      minify: false,
+      outDir: artifactDirectory,
+      rollupOptions: { external: NODE_RUNTIME_EXTERNAL_PATTERNS },
+      sourcemap: false,
+      ssr: true,
+      target: 'node20',
+    },
+    configFile: false,
+    // Main-process compile-time switches. `process.env` is deliberately left
+    // alone: the database layer reads it at runtime.
+    define: {
+      __CI__: 'false',
+      __DEV__: 'false',
+      __ELECTRON__: 'true',
+      __MOBILE__: 'false',
+      __TEST__: 'false',
+    },
+    logLevel: 'warn',
+    plugins: [workspacePathsPlugin(pathGroups), nodeDirnameShimPlugin()],
+    resolve: { tsconfigPaths: true },
+    ssr: {
+      // Workspace packages publish TypeScript sources, so nothing may stay a
+      // bare runtime import except the native/WASM packages linked above.
+      // Subpath exports of those packages are held external by
+      // `NODE_RUNTIME_EXTERNAL_PATTERNS` on `rollupOptions`.
+      external: NODE_RUNTIME_PACKAGES.map(({ name }) => name),
+      noExternal: true,
+      target: 'node',
+    },
+  });
+
   await viteBuild({
     build: {
       emptyOutDir: false,
@@ -215,7 +374,7 @@ const buildOnce = async () => {
       'process.env.NODE_ENV': JSON.stringify('test'),
     },
     logLevel: 'warn',
-    plugins: [workspacePathsPlugin()],
+    plugins: [workspacePathsPlugin(pathGroups)],
     resolve: {
       alias: [
         {
@@ -232,6 +391,16 @@ const buildOnce = async () => {
     },
   });
 
+  const rendererPlugins = () => [
+    // Order matters: the platform-variant resolver has to see a specifier
+    // before the path resolver answers it, so it can look for the
+    // `.desktop` / `.vite` sibling of whatever the path fallbacks pick.
+    vitePlatformResolve('desktop'),
+    workspacePathsPlugin(pathGroups),
+    viteMarkdownImport(),
+    viteNodeModuleStub(),
+  ];
+
   await viteBuild({
     build: {
       emptyOutDir: false,
@@ -245,18 +414,7 @@ const buildOnce = async () => {
       sourcemap: false,
     },
     configFile: false,
-    // Same compile-time switches the packaged Electron renderer builds with
-    // (`sharedRendererDefine({ isElectron: true, isMobile: false })`), so the
-    // production stores and hooks take their real desktop branches.
-    define: {
-      '__CI__': 'false',
-      '__DEV__': 'false',
-      '__ELECTRON__': 'true',
-      '__MOBILE__': 'false',
-      '__TEST__': 'false',
-      'process.env': '{}',
-      'process.env.NODE_ENV': JSON.stringify('test'),
-    },
+    define: rendererDefine('test'),
     logLevel: 'warn',
     plugins: [
       {
@@ -306,13 +464,7 @@ const buildOnce = async () => {
           }
         },
       },
-      // Order matters: the platform-variant resolver has to see a specifier
-      // before the path resolver answers it, so it can look for the
-      // `.desktop` / `.vite` sibling of whatever the path fallbacks pick.
-      platformResolvePlugin(),
-      workspacePathsPlugin(),
-      markdownImportPlugin(),
-      nodeModuleStubPlugin(),
+      ...rendererPlugins(),
     ],
     resolve: {
       // The only data-chain substitution: the TRPC transport. Production
@@ -326,6 +478,28 @@ const buildOnce = async () => {
       dedupe: ['react', 'react-dom'],
       tsconfigPaths: true,
     },
+  });
+
+  // ─── AC-M03: the same production model rows, compiled in development mode ──
+  // The only difference from the bundle above is `sharedRendererDefine`'s dev
+  // switches, so a label that changes with dev mode fails the comparison.
+  await viteBuild({
+    build: {
+      emptyOutDir: false,
+      lib: {
+        entry: path.resolve(electronRoot, 'production-app/workspaceRuntimeDevModels.tsx'),
+        fileName: () => 'workspaceRuntimeDevModels.js',
+        formats: ['es'],
+      },
+      minify: false,
+      outDir: artifactDirectory,
+      sourcemap: false,
+    },
+    configFile: false,
+    define: rendererDefine('development'),
+    logLevel: 'warn',
+    plugins: rendererPlugins(),
+    resolve: { dedupe: ['react', 'react-dom'], tsconfigPaths: true },
   });
 };
 

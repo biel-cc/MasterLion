@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Locator, test } from '@playwright/test';
 
 import {
   type ElectronWorkspaceRuntimeSession,
@@ -15,7 +15,20 @@ test.afterAll(async () => {
   await session?.close();
 });
 
-test('production renderer keeps Topic and flat Recent independent from Task UI', async () => {
+const escapeRegExp = (value: string) => value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);
+
+/** `data-input-modality` + its accessible label, in render order. */
+const readCapabilityLabels = (section: Locator) =>
+  section
+    .locator('[data-input-modality]')
+    .evaluateAll((nodes) =>
+      nodes.map(
+        (node) =>
+          `${node.getAttribute('data-input-modality')}|${node.getAttribute('aria-label') ?? ''}`,
+      ),
+    );
+
+test('AC-W05 production renderer keeps Topic and flat Recent independent from Task UI', async () => {
   const { page } = session;
   await expect(page.getByTestId('workspace-runtime-product-ui')).toBeVisible();
   const sidebar = page.getByTestId('production-agent-sidebar');
@@ -46,7 +59,7 @@ test('production renderer keeps Topic and flat Recent independent from Task UI',
   expect(order).toBe(true);
 });
 
-test('production Workspace groups stay above Recent and real TopicItem marks scratch', async () => {
+test('AC-W06 production Workspace groups stay above Recent and real TopicItem marks scratch', async () => {
   const { page } = session;
   const workspaceSection = page.getByTestId('topic-workspace-section');
   // The group title and the scratch tooltip path both come from the fetched
@@ -114,18 +127,46 @@ test('production Topic and Workspace data reach the deterministic TRPC boundary'
   expect(calls.some((call) => call.path === 'projectWorkspace.list')).toBe(true);
 });
 
-test('production model pipeline excludes rerank and renders all capability states', async () => {
+test('AC-M03 identical capability labels in production and development builds', async () => {
   const { page } = session;
+  await expect(page.getByTestId('workspace-runtime-development-ui')).toBeVisible();
+
+  const production = page.getByTestId('model-capabilities');
+  const development = page.getByTestId('model-capabilities-development');
+
   await expect(
-    page.getByTestId('model-row-vision-chat').locator('[data-input-modality="supported"]'),
+    production.getByTestId('model-row-vision-chat').locator('[data-input-modality="supported"]'),
   ).toHaveCount(1);
   await expect(
-    page.getByTestId('model-row-text-chat').locator('[data-input-modality="text-only"]'),
+    production.getByTestId('model-row-text-chat').locator('[data-input-modality="text-only"]'),
   ).toHaveCount(1);
   await expect(
-    page.getByTestId('model-row-unverified-chat').locator('[data-input-modality="unknown"]'),
+    production.getByTestId('model-row-unverified-chat').locator('[data-input-modality="unknown"]'),
   ).toHaveCount(1);
+  // The rerank entry is filtered out of both builds by the production
+  // chat-eligibility resolver, so it has no row anywhere on the page.
   await expect(page.locator('[data-model-id="qwen3-vl-rerank"]')).toHaveCount(0);
+
+  const productionLabels = await readCapabilityLabels(production);
+  const developmentLabels = await readCapabilityLabels(development);
+
+  expect(productionLabels.map((label) => label.split('|')[0])).toEqual([
+    'supported',
+    'text-only',
+    'unknown',
+  ]);
+  expect(productionLabels.every((label) => label.split('|')[1].length > 0)).toBe(true);
+  // The two bundles differ only in `__DEV__` / `NODE_ENV`, so a label that
+  // moves with dev mode fails here instead of being asserted twice.
+  expect(developmentLabels).toEqual(productionLabels);
+});
+
+test('AC-C04 production no-candidates card gives manual feedback and disables futile retry', async () => {
+  const card = session.page.locator('[data-context-budget-code="NO_CANDIDATES"]');
+  await expect(card.getByRole('heading', { name: 'Nothing left to compress' })).toBeVisible();
+  await expect(card.getByRole('list', { name: 'What you can do' })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Retry summary' })).toBeDisabled();
+  await expect(card).toContainText('Compressing again will not help');
 });
 
 test('production compression progress is visible and accessible', async () => {
@@ -135,15 +176,7 @@ test('production compression progress is visible and accessible', async () => {
   await expect(progress).toContainText('Compressing context');
 });
 
-test('production no-candidates card gives manual feedback and disables futile retry', async () => {
-  const card = session.page.locator('[data-context-budget-code="NO_CANDIDATES"]');
-  await expect(card.getByRole('heading', { name: 'Nothing left to compress' })).toBeVisible();
-  await expect(card.getByRole('list', { name: 'What you can do' })).toBeVisible();
-  await expect(card.getByRole('button', { name: 'Retry summary' })).toBeDisabled();
-  await expect(card).toContainText('Compressing again will not help');
-});
-
-test('production terminal cards expose bounded actions and dispatch clicks', async () => {
+test('AC-C08 production terminal cards expose bounded actions and dispatch clicks', async () => {
   const { page } = session;
   const tail = page.locator('[data-context-budget-code="TAIL_TOO_LARGE"]');
   const noCandidates = page.locator('[data-context-budget-code="NO_CANDIDATES"]');
@@ -163,7 +196,7 @@ test('production terminal cards expose bounded actions and dispatch clicks', asy
   );
 });
 
-test('production diagnostics are redacted before they reach the DOM', async () => {
+test('AC-C08 production diagnostics are redacted before they reach the DOM', async () => {
   const card = session.page.locator('[data-context-budget-code="TAIL_TOO_LARGE"]');
   await card.getByRole('button', { name: 'Diagnostics' }).click();
   await expect(card).toContainText('aihub / masterino-chat');
@@ -172,4 +205,187 @@ test('production diagnostics are redacted before they reach the DOM', async () =
   for (const secretFragment of ['hunter2', 'AKIA', 'sk-live', 'payroll']) {
     expect(html).not.toContain(secretFragment);
   }
+});
+
+// ─── Main-process seams: real isolated database, real filesystem, real counters ───
+
+test('AC-W04 five pure-chat turns leave the workspace table and scratch tree untouched', async () => {
+  const row = await session.run('AC-W04');
+
+  // The provider counter proves the five turns actually ran: a harness that
+  // silently skipped them could not produce this number.
+  expect(row.providerCalls).toBe(5);
+  expect(row.turnCwds).toHaveLength(5);
+  expect(row.turnCwds.every((cwd) => cwd === undefined)).toBe(true);
+
+  expect(row.projectWorkspaceRowsBefore).toBe(0);
+  expect(row.projectWorkspaceRowsAfter).toBe(row.projectWorkspaceRowsBefore);
+  expect(row.scratchDirectoriesBefore).toEqual([]);
+  expect(row.scratchDirectoriesAfter).toEqual(row.scratchDirectoriesBefore);
+  expect(row.boundWorkspaceIdAfter).toBeUndefined();
+});
+
+test('AC-W07 consented read creates no scratch and concurrent init persists exactly one', async () => {
+  const row = await session.run('AC-W07');
+
+  // 1. An absolute, consented structured read reaches the device boundary and
+  //    still creates no scratch row and no scratch directory.
+  expect(row.directReadDeviceCalls).toBe(1);
+  expect(row.directReadScratchRows).toBe(0);
+  expect(row.directReadScratchDirectories).toEqual([]);
+
+  // 2. Two concurrent first default-cwd device operations converge on one row.
+  expect(row.concurrentDeviceCalls).toBe(2);
+  expect(row.scratchRowsAfter).toBe(1);
+  expect(new Set(row.scratchWorkspaceIds).size).toBe(1);
+  expect(row.scratchWorkspaceIds).toHaveLength(2);
+  expect(row.snapshotWorkspaceId).toBe(row.scratchWorkspaceIds[0]);
+  expect(row.scratchDirectoriesAfter).toEqual(['topic-w07-scratch']);
+  expect(row.persistedScratchRootPath.endsWith('/topic-w07-scratch')).toBe(true);
+  expect(row.placement).toEqual({ kind: 'recent', reason: 'scratch' });
+});
+
+test('AC-W08 a scratch topic is never rebound and the chip offers a referenced topic', async () => {
+  const row = await session.run('AC-W08');
+
+  // Database half: the bind-once writer rejected the formal directory and the
+  // topic kept its scratch identity and cwd.
+  expect(row.rejectionCode).toBe('WORKSPACE_ALREADY_BOUND');
+  expect(row.cwdBefore).toBeTruthy();
+  expect(row.cwdAfter).toBe(row.cwdBefore);
+  expect(row.boundWorkspaceIdAfter).toBe(row.boundWorkspaceIdBefore);
+  expect(row.boundWorkspaceIdAfter).toBe(row.scratchWorkspaceId);
+  expect(row.workspaceStateAfter).toBe('scratch');
+  expect(row.formalWorkspaceRootPath).not.toBe(row.cwdAfter);
+
+  // UI half: the production chip renders those rows.
+  const section = session.page.getByTestId('workspace-bind-once');
+  await expect(section).toHaveAttribute('data-state', 'ready');
+  const chip = section.getByTestId('workspace-chip');
+  await expect(chip).toHaveAttribute('data-workspace-state', 'scratch');
+  await expect(chip).toHaveAttribute('aria-label', new RegExp(escapeRegExp(row.cwdAfter!)));
+  await expect(section.getByTestId('workspace-chip-scratch')).toHaveText('Temporary');
+  await expect(section.getByTestId('workspace-chip-already-bound')).toHaveText(
+    'New referenced topic',
+  );
+});
+
+test('AC-W09 only explicit sources create workspace-topics and the agent default is untouched', async () => {
+  const row = await session.run('AC-W09');
+
+  expect(row.bindingBySource).toEqual({
+    attachment: false,
+    codeBlock: false,
+    confirmedDirectory: true,
+    quote: false,
+    workspacePlus: true,
+  });
+
+  // Rejected sources never reach a write path: the table is still empty when
+  // the negative matrix has been evaluated.
+  expect(row.workspaceRowsBefore).toBe(0);
+  expect(row.workspaceRowsAfterRejectedSources).toBe(0);
+
+  expect(row.createdTopicWorkspaceIds).toHaveLength(2);
+  expect(new Set(row.createdTopicWorkspaceIds).size).toBe(2);
+  expect(row.workspaceRowsAfterExplicitSources).toBe(2);
+  expect(Object.values(row.boundWorkspaceIdsByTopic).sort()).toEqual(
+    [...row.createdTopicWorkspaceIds].sort(),
+  );
+
+  expect(row.agentDefaultAfter).toBe(row.agentDefaultBefore);
+  expect(row.agentDefaultBefore).toContain('/agent/default');
+});
+
+test('AC-W10 unbound hetero send is blocked and resume uses the canonical identity', async () => {
+  const row = await session.run('AC-W10');
+
+  expect(row.preBindCode).toBe('WORKSPACE_REQUIRED');
+  expect(row.preBindProviderCalls).toBe(0);
+
+  expect(row.resumeError).toBeUndefined();
+  expect(row.resumeProviderCalls).toBe(1);
+  expect(row.resumeCwd).toBeTruthy();
+  expect(row.normalizedResumeIdentity).toBe(row.persistedIdentity);
+  expect(row.normalizedResumeIdentity).toMatch(/^id:[^:]+:device:[^:]+:\//);
+});
+
+test('AC-P08 consent surface shows the real cwd, command and out-of-scope risk', async () => {
+  const row = await session.run('AC-P08');
+
+  // Device-boundary half: the model's cwd is overridden, and the out-of-scope
+  // read stops at the boundary asking for consent instead of executing.
+  expect(row.interventionCode).toBe('INTERVENTION_REQUIRED');
+  expect(row.warningCodes).toEqual(['MODEL_CWD_OVERRIDDEN']);
+  expect(row.spawnCwd).not.toBe(row.requestedCwd);
+  // The prepared spawn directory is the topic's primary cwd, not the model's.
+  expect(row.consentRequest.primaryCwd).toBe(row.spawnCwd);
+  expect(JSON.parse(row.displayedArguments).cwd).not.toBe(row.requestedCwd);
+  expect(row.deviceCalls).toBe(2);
+  expect(row.providerCalls).toBe(0);
+
+  // UI half: the production consent component and argument view.
+  const surface = session.page.getByTestId('workspace-path-consent-surface');
+  await expect(surface).toHaveAttribute('data-state', 'ready');
+
+  const consent = surface.getByTestId('workspace-path-consent');
+  await expect(consent).toBeVisible();
+  await expect(consent).toContainText('Additional path access requested');
+  await expect(consent).toContainText(row.spawnCwd);
+  await expect(consent).toContainText(row.consentRequest.requestedPath);
+
+  const risk = surface.getByTestId('workspace-path-consent-risk');
+  await expect(risk).toContainText(/Consent and audit only/i);
+  await expect(risk).toContainText(/not OS isolation/i);
+  await expect(risk).toContainText(/does not create an operating-system sandbox/i);
+  await expect(surface.getByTestId('workspace-path-consent-cwd-override')).toContainText(
+    'MODEL_CWD_OVERRIDDEN',
+  );
+
+  // The shell confirmation must not hide the command or the full directory the
+  // command will actually run in.
+  const shell = surface.getByTestId('out-of-scope-shell-confirmation');
+  await expect(shell).toContainText('cat payroll.csv');
+  await expect(shell).toContainText(row.spawnCwd);
+});
+
+test('AC-X02 every compatibility cell passes and only new/new/new is hard validated', async () => {
+  const row = await session.run('AC-X02');
+
+  expect(row.matrix).toHaveLength(8);
+  expect(row.matrix.filter(({ passed }) => passed)).toHaveLength(8);
+  // Only the four new-device cells reach the v2 execution boundary.
+  expect(row.deviceCalls).toBe(4);
+
+  const legacyCells = row.matrix.filter(
+    ({ client, device, server }) => client === 'old' || device === 'old' || server === 'old',
+  );
+  expect(legacyCells).toHaveLength(7);
+  expect(legacyCells.every(({ hardValidated }) => !hardValidated)).toBe(true);
+
+  expect(
+    row.matrix.find(
+      ({ client, device, server }) => client === 'new' && device === 'new' && server === 'new',
+    )?.hardValidated,
+  ).toBe(true);
+});
+
+test('main-process provider and device ports are counted, not assumed', async () => {
+  // Runs are memoized in the preload, so re-requesting the rows this test
+  // reasons about is free and makes the assertion independent of test
+  // selection or ordering.
+  const pureChat = await session.run('AC-W04');
+  const hetero = await session.run('AC-W10');
+  const consent = await session.run('AC-P08');
+  const grid = await session.run('AC-X02');
+
+  const counters = await session.counters();
+
+  // The provider port is only ever reached by the five pure-chat turns and the
+  // one resumed heterogeneous turn; nothing else in the suite may call it.
+  expect(counters.providerCalls).toBe(
+    pureChat.providerCalls + hetero.preBindProviderCalls + hetero.resumeProviderCalls,
+  );
+  expect(counters.providerCalls).toBe(6);
+  expect(counters.deviceCalls).toBeGreaterThanOrEqual(consent.deviceCalls + grid.deviceCalls);
 });

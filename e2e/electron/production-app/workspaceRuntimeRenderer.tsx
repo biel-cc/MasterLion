@@ -1,42 +1,76 @@
-import { mergeModelCatalogEntry } from '@lobechat/business-model-bank';
 import type { ContextBudgetFailCode } from '@lobechat/types/src/contextBudget';
-import type { EvidenceState } from '@lobechat/types/src/modelCatalog';
 import { MotionProvider } from '@lobehub/ui';
 import { App as AntdApp } from 'antd';
-import i18n from 'i18next';
 import * as m from 'motion/react-m';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { I18nextProvider, initReactI18next } from 'react-i18next';
+import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router-dom';
 
-import { ModelItemRender } from '@/components/ModelSelect';
-import { resolveChatModelCatalog } from '@/components/ModelSelect/modality';
+import WorkspaceChip from '@/features/ChatInput/ControlBar/WorkspaceChip';
+import { useBindWorkspaceOnce } from '@/features/ChatInput/ControlBar/useBindWorkspaceOnce';
 import ContextBudgetErrorCard from '@/features/Conversation/Error/ContextBudgetError/ContextBudgetErrorCard';
+import Arguments from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Arguments';
+import PathConsent, {
+  parseStructuredPathConsentRequest,
+} from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/PathConsent';
 import CompressionProgress from '@/features/Conversation/Messages/CompressedGroup/CompressionProgress';
 import {
   buildContextBudgetErrorViewModel,
   type ContextBudgetUIAction,
   getContextBudgetFailureFromErrorBody,
 } from '@/features/Conversation/utils/contextBudgetView';
+import { resolveExecutionContext } from '@/helpers/executionContext';
+import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import SidebarBody from '@/routes/(main)/agent/_layout/Sidebar/Body';
 import { useAgentStore } from '@/store/agent';
 import { useChatStore } from '@/store/chat';
 import { useElectronStore } from '@/store/electron';
+import { buildDraftConversationKey } from '@/store/projectWorkspace';
 
+import type { ElectronAcceptanceResultMap } from './workspaceRuntimeSeams';
+import { createWorkspaceRuntimeI18n } from './workspaceRuntimeI18n';
+import { ModelCapabilityRows } from './workspaceRuntimeModels';
 import { AGENT_ID, DEVICE_ID } from './workspaceRuntimeTrpcClient';
-import chat from '../../../locales/en-US/chat.json';
-import common from '../../../locales/en-US/common.json';
-import components from '../../../locales/en-US/components.json';
-import error from '../../../locales/en-US/error.json';
-import topicLocale from '../../../locales/en-US/topic.json';
 
-void i18n.use(initReactI18next).init({
-  fallbackLng: 'en-US',
-  interpolation: { escapeValue: false },
-  lng: 'en-US',
-  resources: { 'en-US': { chat, common, components, error, topic: topicLocale } },
-});
+const i18n = createWorkspaceRuntimeI18n();
+
+/**
+ * Preload bridge into the Electron main process, where the production
+ * Workspace Runtime seams execute against the repository's isolated PGlite
+ * database and a unique temporary filesystem. The runs are memoized in the
+ * preload, so the UI below and the Playwright spec observe the same single
+ * execution of each acceptance row.
+ */
+interface WorkspaceRuntimeBridge {
+  run: <Id extends keyof ElectronAcceptanceResultMap>(
+    acceptanceId: Id,
+  ) => Promise<ElectronAcceptanceResultMap[Id]>;
+}
+
+const workspaceRuntimeBridge = (
+  window as unknown as { masterinoElectronE2E?: { workspaceRuntime?: WorkspaceRuntimeBridge } }
+).masterinoElectronE2E?.workspaceRuntime;
+
+const useAcceptanceRow = <Id extends keyof ElectronAcceptanceResultMap>(acceptanceId: Id) => {
+  const [row, setRow] = useState<ElectronAcceptanceResultMap[Id]>();
+  const [failure, setFailure] = useState<string>();
+
+  useEffect(() => {
+    if (!workspaceRuntimeBridge) {
+      setFailure('The Workspace Runtime preload bridge is missing');
+      return;
+    }
+    workspaceRuntimeBridge
+      .run(acceptanceId)
+      .then(setRow)
+      .catch((error: unknown) =>
+        setFailure(error instanceof Error ? error.message : String(error)),
+      );
+  }, [acceptanceId]);
+
+  return { failure, row };
+};
 
 /**
  * Seed conversation identity only — the two things a signed-in desktop session
@@ -63,59 +97,6 @@ const seedProductionSessionIdentity = () => {
 };
 
 seedProductionSessionIdentity();
-
-interface ProductModelFixture {
-  displayName: string;
-  id: string;
-  providerId: string;
-  settings: { modelCatalog: ReturnType<typeof mergeModelCatalogEntry> };
-  type: 'chat';
-}
-
-const productModel = (
-  id: string,
-  displayName: string,
-  inputModalities?: Partial<Record<'audio' | 'file' | 'image' | 'text' | 'video', EvidenceState>>,
-  endpointTypes: readonly string[] = ['chat'],
-): ProductModelFixture => ({
-  displayName,
-  id,
-  providerId: 'electron-product-provider',
-  settings: {
-    modelCatalog: mergeModelCatalogEntry({
-      modelId: id,
-      now: '2026-09-04T00:00:00.000Z',
-      providerId: 'electron-product-provider',
-      providerMetadata: {
-        endpointTypes,
-        inputModalities,
-        verifiedAt: '2026-09-04T00:00:00.000Z',
-      },
-    }),
-  },
-  type: 'chat',
-});
-
-const modelEvidence = [
-  productModel('vision-chat', 'Vision chat', {
-    audio: 'unsupported',
-    file: 'unsupported',
-    image: 'supported',
-    text: 'supported',
-    video: 'unsupported',
-  }),
-  productModel('text-chat', 'Text chat', {
-    audio: 'unsupported',
-    file: 'unsupported',
-    image: 'unsupported',
-    text: 'supported',
-    video: 'unsupported',
-  }),
-  productModel('unverified-chat', 'Unverified chat'),
-  productModel('qwen3-vl-rerank', 'Qwen rerank', undefined, ['rerank']),
-];
-
-const chatModels = modelEvidence.filter((model) => resolveChatModelCatalog(model).chatEligible);
 
 const secret = {
   attachment: 'payroll-2026-Q3-CONFIDENTIAL.xlsx',
@@ -176,6 +157,86 @@ const ContextBudgetCards = () => {
   );
 };
 
+/**
+ * AC-W08 — the production bind-once chip, rendered from the rows the main
+ * process read back out of `topics.metadata` and `project_workspaces` after a
+ * real rebind attempt was rejected by `DatabaseTopicWorkspaceBindingStore`.
+ * Only `bind.error` is injected, and it carries the code that rejection
+ * actually produced.
+ */
+const BindOnceChip = ({ row }: { row: ElectronAcceptanceResultMap['AC-W08'] }) => {
+  const workspaces = row.workspaceAfter?.id ? { [row.workspaceAfter.id]: row.workspaceAfter } : {};
+  const context = resolveExecutionContext({
+    isDesktop: true,
+    onlineDeviceIds: [row.deviceId],
+    snapshot: row.snapshotAfter,
+    workspaces,
+  });
+  const effective: EffectiveWorkspace = {
+    context,
+    cwd: context.cwd,
+    draftKey: buildDraftConversationKey({ agentId: AGENT_ID }),
+    isDraft: false,
+    recommendation: { deviceId: row.deviceId },
+    state: context.workspace
+      ? context.workspace.kind === 'scratch'
+        ? 'scratch'
+        : 'bound'
+      : 'unbound',
+    target: 'local',
+    targetDeviceId: row.deviceId,
+    topicId: row.topicId,
+    workspace: context.workspace,
+  };
+  const bind = useBindWorkspaceOnce(effective);
+
+  return (
+    <div data-bound-workspace-id={row.boundWorkspaceIdAfter} data-cwd={context.cwd}>
+      <WorkspaceChip
+        bind={{ ...bind, error: { code: row.rejectionCode } } as typeof bind}
+        effective={effective}
+      />
+    </div>
+  );
+};
+
+const BindOnceSection = () => {
+  const { failure, row } = useAcceptanceRow('AC-W08');
+
+  return (
+    <section data-testid="workspace-bind-once" data-state={row ? 'ready' : (failure ?? 'loading')}>
+      {row && <BindOnceChip row={row} />}
+      {failure && <p role="alert">{failure}</p>}
+    </section>
+  );
+};
+
+/**
+ * AC-P08 — the production consent surface, built from the runtime-authored
+ * request the Electron main process produced from a real device-boundary
+ * denial, plus the production argument view that shows the full shell command
+ * and the model-supplied directory.
+ */
+const PathConsentSection = () => {
+  const { failure, row } = useAcceptanceRow('AC-P08');
+  const request = row ? parseStructuredPathConsentRequest(row.consentRequest) : undefined;
+
+  return (
+    <section
+      data-testid="workspace-path-consent-surface"
+      data-state={row ? (request ? 'ready' : 'rejected-request') : (failure ?? 'loading')}
+    >
+      {row && (
+        <div data-testid="out-of-scope-shell-confirmation">
+          <Arguments arguments={row.displayedArguments} />
+        </div>
+      )}
+      {request && <PathConsent messageId="workspace-runtime-consent-message" request={request} />}
+      {failure && <p role="alert">{failure}</p>}
+    </section>
+  );
+};
+
 const WorkspaceRuntimeProductHarness = () => (
   <I18nextProvider i18n={i18n}>
     <MotionProvider motion={m}>
@@ -186,13 +247,10 @@ const WorkspaceRuntimeProductHarness = () => (
               <SidebarBody />
             </section>
 
-            <section aria-label="Model input capabilities" data-testid="model-capabilities">
-              {chatModels.map((model) => (
-                <div data-model-id={model.id} data-testid={`model-row-${model.id}`} key={model.id}>
-                  <ModelItemRender {...model} showInfoTag={false} />
-                </div>
-              ))}
-            </section>
+            <ModelCapabilityRows sectionTestId="model-capabilities" testIdPrefix="model-row-" />
+
+            <BindOnceSection />
+            <PathConsentSection />
 
             <section data-testid="compression-progress">
               <CompressionProgress />

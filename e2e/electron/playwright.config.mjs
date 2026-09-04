@@ -12,9 +12,11 @@ export default defineConfig({
   reporter: [['list']],
   testDir: '..',
   testMatch: ['electron/tests/**/*.spec.mjs', 'electron/workspace-runtime.spec.ts'],
-  // The first spec to run bundles the production renderer module graph inside
-  // its `beforeAll` (the artifacts are then reused by the other specs), so the
-  // budget has to cover a cold Vite build rather than just the assertions.
+  // The first spec to run bundles the production module graphs inside its
+  // `beforeAll` (the artifacts are then reused by the other specs), and the
+  // Workspace Runtime seams additionally migrate an isolated PGlite database
+  // in the Electron main process. The budget has to cover that cold start
+  // rather than just the assertions.
   timeout: 300_000,
   workers: 1,
 });
