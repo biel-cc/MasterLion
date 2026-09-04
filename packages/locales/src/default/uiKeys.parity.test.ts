@@ -67,7 +67,7 @@ const requiredKeys: Record<keyof typeof namespaces, string[]> = {
     'ModelSelect.inputModality.verifiedAt',
     'ModelSelect.inputModality.video',
   ],
-  error: ['contextBudget.actionFailed'],
+  error: ['contextBudget.actionFailed', 'contextBudget.toolResultPlaceholder'],
   setting: [
     'heterogeneousStatus.cloud.agentEnv.saveError',
     'heterogeneousStatus.cloud.tokenSaveError',

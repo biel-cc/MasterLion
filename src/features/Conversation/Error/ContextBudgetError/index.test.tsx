@@ -232,15 +232,52 @@ describe('<ContextBudgetError />', () => {
     await act(async () => {
       fireEvent.click(button('contextBudget.action.truncateToolResults'));
     });
+    // The placeholder reaches the store through the error-namespace translator, never as a
+    // hardcoded English string.
     expect(updateMessageContentMock).toHaveBeenCalledWith(
       'tool-1',
-      '[Tool result removed to reduce context size]',
+      'contextBudget.toolResultPlaceholder',
     );
 
     await act(async () => {
       fireEvent.click(button('contextBudget.action.forkTopic'));
     });
     expect(switchTopicMock).toHaveBeenCalledWith(null, { skipRefreshMessage: true });
+  });
+
+  it('keeps truncation feedback truthful when the rewrite lands but the retry fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    regenerateUserMessageMock.mockRejectedValueOnce(new Error('regenerate failed'));
+
+    const toolHeavyFailure = failure('TAIL_TOO_LARGE');
+    toolHeavyFailure.decision.offending = [{ estimatedTokens: 10, source: 'tool-result' }];
+    render(<ContextBudgetError failure={toolHeavyFailure} id={'assistant-1'} />);
+
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.truncateToolResults'));
+    });
+
+    // Truncation is persisted before the retry, so a failed regeneration must still surface
+    // the action-failed feedback instead of silently dropping the error.
+    expect(updateMessageContentMock).toHaveBeenCalledWith(
+      'tool-1',
+      'contextBudget.toolResultPlaceholder',
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('alert')
+          .some((node) => node.textContent === 'contextBudget.actionFailed'),
+      ).toBe(true),
+    );
+    // The failed action recovers: it is clickable again and a second attempt regenerates.
+    expect(button('contextBudget.action.truncateToolResults')).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(button('contextBudget.action.truncateToolResults'));
+    });
+    expect(regenerateUserMessageMock).toHaveBeenCalledTimes(2);
+
+    consoleError.mockRestore();
   });
 
   it('opens the real conversation model switcher for model recovery', () => {

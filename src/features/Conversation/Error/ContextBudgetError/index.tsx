@@ -1,4 +1,5 @@
 import { memo, type ReactNode, useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { useChatEligibleModelList } from '@/components/ModelSelect';
 import { useConversationStore } from '@/features/Conversation/store';
@@ -42,6 +43,7 @@ export interface ContextBudgetErrorProps {
 }
 
 const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, id }) => {
+  const { t: tr } = useTranslation('error');
   const { allowed: canCreate } = usePermission('create_content');
   const context = useConversationStore((s) => s.context);
   const {
@@ -124,11 +126,13 @@ const ContextBudgetError = memo<ContextBudgetErrorProps>(({ callbacks, failure, 
   const truncateToolResultsAndRetry = useCallback(async () => {
     if (!canCreate || !parentId) return;
     await retryParentMessage(async () => {
+      // The placeholder is persisted as message content, so it is localized at write time.
+      const placeholder = tr('contextBudget.toolResultPlaceholder');
       for (const toolResultId of toolResultIds) {
-        await updateMessageContent(toolResultId, '[Tool result removed to reduce context size]');
+        await updateMessageContent(toolResultId, placeholder);
       }
     });
-  }, [canCreate, parentId, retryParentMessage, toolResultIds, updateMessageContent]);
+  }, [canCreate, parentId, retryParentMessage, toolResultIds, tr, updateMessageContent]);
 
   const forkTopic = useCallback(async () => {
     if (!canCreate || !context?.topicId) return;

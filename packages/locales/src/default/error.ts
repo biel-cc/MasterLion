@@ -8,7 +8,7 @@ export default {
   'contextBudget.action.switchModel': 'Switch model',
   'contextBudget.action.truncateToolResults': 'Truncate tool results',
   'contextBudget.actionFailed':
-    'That recovery action did not go through. Nothing was changed — try again or pick another option.',
+    'That recovery action did not finish. Some of its changes may already be applied — check the conversation, then retry or pick another option.',
   'contextBudget.actionsLabel': 'Recovery actions',
   'contextBudget.desc.NO_CANDIDATES':
     'The conversation still exceeds the context window, and there is no earlier history that can be summarized. Your messages are unchanged.',
@@ -54,6 +54,7 @@ export default {
   'contextBudget.title.RETRY_EXHAUSTED': 'Automatic recovery stopped',
   'contextBudget.title.SUMMARY_FAILED': 'Context summary failed',
   'contextBudget.title.TAIL_TOO_LARGE': 'Latest message is too large for the context window',
+  'contextBudget.toolResultPlaceholder': '[Tool result removed to reduce context size]',
   'error.backHome': 'Back to Home',
   'error.desc': 'Give it a try later, or go back to the known world.',
   'error.stack': 'Error Stack',
