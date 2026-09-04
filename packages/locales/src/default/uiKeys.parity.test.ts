@@ -4,14 +4,17 @@ import enUSChat from '../../../../locales/en-US/chat.json';
 import enUSComponents from '../../../../locales/en-US/components.json';
 import enUSError from '../../../../locales/en-US/error.json';
 import enUSSetting from '../../../../locales/en-US/setting.json';
+import enUSTool from '../../../../locales/en-US/tool.json';
 import zhCNChat from '../../../../locales/zh-CN/chat.json';
 import zhCNComponents from '../../../../locales/zh-CN/components.json';
 import zhCNError from '../../../../locales/zh-CN/error.json';
 import zhCNSetting from '../../../../locales/zh-CN/setting.json';
+import zhCNTool from '../../../../locales/zh-CN/tool.json';
 import chat from './chat';
 import components from './components';
 import error from './error';
 import setting from './setting';
+import tool from './tool';
 
 /**
  * The canonical `default/*` source is what type-checking and every un-translated locale fall
@@ -23,6 +26,7 @@ const namespaces = {
   components: { canonical: components, enUS: enUSComponents, zhCN: zhCNComponents },
   error: { canonical: error, enUS: enUSError, zhCN: zhCNError },
   setting: { canonical: setting, enUS: enUSSetting, zhCN: zhCNSetting },
+  tool: { canonical: tool, enUS: enUSTool, zhCN: zhCNTool },
 } as const;
 
 const requiredKeys: Record<keyof typeof namespaces, string[]> = {
@@ -67,6 +71,22 @@ const requiredKeys: Record<keyof typeof namespaces, string[]> = {
   setting: [
     'heterogeneousStatus.cloud.agentEnv.saveError',
     'heterogeneousStatus.cloud.tokenSaveError',
+  ],
+  tool: [
+    'workspaceAutoPathConsent.actions',
+    'workspaceAutoPathConsent.grantsError',
+    'workspaceAutoPathConsent.grantsRetry',
+    'workspaceAutoPathConsent.note',
+    'workspaceAutoPathConsent.pathsLabel',
+    'workspaceAutoPathConsent.revoke',
+    'workspaceAutoPathConsent.revokeDone',
+    'workspaceAutoPathConsent.revokeFailed',
+    'workspaceAutoPathConsent.revokeUnavailable',
+    'workspaceAutoPathConsent.title',
+    'workspaceAutoPathConsent.upgrade',
+    'workspaceAutoPathConsent.upgradeDone',
+    'workspaceAutoPathConsent.upgradeFailed',
+    'workspaceAutoPathConsent.upgradeUnavailable',
   ],
 };
 

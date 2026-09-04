@@ -222,4 +222,24 @@ export default {
   'updateArgs.formValidationFailed': 'Form validation failed, please check the parameter format',
   'updateArgs.keyRequired': 'Field key cannot be empty',
   'updateArgs.stringifyError': 'Unable to serialize parameters, please check the parameter format',
+  'workspaceAutoPathConsent.actions': 'Path authorization actions',
+  'workspaceAutoPathConsent.grantsError':
+    'Could not load this topic’s path authorizations, so these actions are unavailable.',
+  'workspaceAutoPathConsent.grantsRetry': 'Retry',
+  'workspaceAutoPathConsent.note':
+    'Read-only, limited to this one operation, and already finished. Keep it for this topic if later turns should reach the same paths.',
+  'workspaceAutoPathConsent.pathsLabel': 'Paths released by your message',
+  'workspaceAutoPathConsent.revoke': 'Revoke topic access',
+  'workspaceAutoPathConsent.revokeDone':
+    'Topic access revoked. A later turn needs a fresh decision for these paths.',
+  'workspaceAutoPathConsent.revokeFailed': 'Could not revoke topic access. You can try again.',
+  'workspaceAutoPathConsent.revokeUnavailable':
+    'The read that already finished cannot be taken back. Once these paths are kept for the topic, they can be revoked here.',
+  'workspaceAutoPathConsent.title': 'Read as requested in your message',
+  'workspaceAutoPathConsent.upgrade': 'Keep for this topic',
+  'workspaceAutoPathConsent.upgradeDone':
+    'Kept for this topic. You can revoke it here at any time.',
+  'workspaceAutoPathConsent.upgradeFailed':
+    'Could not keep these paths for the topic. You can try again.',
+  'workspaceAutoPathConsent.upgradeUnavailable': 'These paths are already kept for this topic.',
 };
