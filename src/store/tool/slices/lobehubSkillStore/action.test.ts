@@ -26,6 +26,10 @@ vi.mock('@lobechat/const', async (importOriginal) => {
 });
 
 vi.mock('@/libs/trpc/client', () => ({
+  // ToolStore now initializes the workspace runtime bridge as part of its
+  // local-system slice. Keep that unrelated typed-router seam present while
+  // this suite controls only the marketplace procedures below.
+  lambdaClient: { projectWorkspace: {} },
   toolsClient: {
     market: {
       connectCallTool: { mutate: vi.fn() },
