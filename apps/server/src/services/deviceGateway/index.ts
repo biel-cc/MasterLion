@@ -886,8 +886,8 @@ export class DeviceGateway {
    * Check whether a path exists on the device and is a directory, via the same
    * generic `invokeRpc` channel as `gitInfo`. Lets a web / remote client
    * validate a manually-entered working directory before binding it. Returns
-   * `undefined` when the gateway is unconfigured or the device is unreachable
-   * (the caller treats "can't verify" as non-blocking).
+   * `undefined` when the gateway is unconfigured or the device is unreachable;
+   * callers choose whether their operation can proceed without proof.
    */
   async statPath(params: {
     deviceId: string;

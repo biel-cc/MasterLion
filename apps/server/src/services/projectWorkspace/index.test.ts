@@ -14,6 +14,7 @@ const snapshot: TopicExecutionSnapshot = {
 
 const createService = () => {
   const workspaceModel = new ProjectWorkspaceModel({} as never, 'user-a');
+  const resolveDeviceWorkspacePath = vi.fn();
   const bindingStore: TopicWorkspaceBindingStore = {
     bind: async () => {
       throw new Error('not implemented');
@@ -24,12 +25,83 @@ const createService = () => {
   };
   return {
     bindingStore,
-    service: new ProjectWorkspaceService({ bindingStore, workspaceModel }),
+    resolveDeviceWorkspacePath,
+    service: new ProjectWorkspaceService({
+      bindingStore,
+      resolveDeviceWorkspacePath,
+      workspaceModel,
+    }),
     workspaceModel,
   };
 };
 
 describe('ProjectWorkspaceService', () => {
+  it('rejects an unresolvable device directory before persisting a workspace', async () => {
+    const { resolveDeviceWorkspacePath, service, workspaceModel } = createService();
+    resolveDeviceWorkspacePath.mockResolvedValue(undefined);
+    const getOrCreate = vi.spyOn(workspaceModel, 'getOrCreate');
+
+    await expect(
+      service.getOrCreate({
+        deviceId: 'device-a',
+        kind: 'device',
+        rootPath: '/missing/project',
+      }),
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('does not exist or cannot be verified'),
+    });
+
+    expect(resolveDeviceWorkspacePath).toHaveBeenCalledWith({
+      deviceId: 'device-a',
+      path: '/missing/project',
+    });
+    expect(getOrCreate).not.toHaveBeenCalled();
+  });
+
+  it('persists only the device-authored canonical directory path', async () => {
+    const { resolveDeviceWorkspacePath, service, workspaceModel } = createService();
+    const createdAt = new Date('2026-09-03T00:00:00.000Z');
+    resolveDeviceWorkspacePath.mockResolvedValue({
+      repoType: 'git',
+      rootPath: '/canonical/project',
+    });
+    const getOrCreate = vi.spyOn(workspaceModel, 'getOrCreate').mockResolvedValue({
+      accessedAt: createdAt,
+      createdAt,
+      deviceId: 'device-a',
+      displayName: 'project',
+      env: null,
+      envFiles: [],
+      id: 'pws-project',
+      kind: 'device',
+      lastUsedAt: createdAt,
+      repoType: 'git',
+      rootPath: '/canonical/project',
+      scan: null,
+      scannedAt: null,
+      scopeKey: 'device:device-a:/canonical/project',
+      skillPolicy: null,
+      updatedAt: createdAt,
+      userId: 'user-a',
+      workspaceId: null,
+    });
+
+    const workspace = await service.getOrCreate({
+      deviceId: 'device-a',
+      kind: 'device',
+      rootPath: '/linked/project',
+    });
+
+    expect(getOrCreate).toHaveBeenCalledWith({
+      deviceId: 'device-a',
+      kind: 'device',
+      repoType: 'git',
+      rootPath: '/canonical/project',
+    });
+    expect(workspace.rootPath).toBe('/canonical/project');
+  });
+
   it('uses the atomic first-writer-wins target capture seam for legacy migration', async () => {
     const { bindingStore, service } = createService();
     const captureTargetIfAbsent = vi.spyOn(bindingStore, 'captureTargetIfAbsent');

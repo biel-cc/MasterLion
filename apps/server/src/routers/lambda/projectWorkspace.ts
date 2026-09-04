@@ -41,7 +41,31 @@ const projectWorkspaceProcedure = wsCompatProcedure.use(serverDatabase).use(asyn
     ctx.userId,
     ctx.workspaceId ?? undefined,
   );
-  const workspaceService = new ProjectWorkspaceService({ bindingStore, workspaceModel });
+  const deviceGateway = new DeviceGateway();
+  const workspaceService = new ProjectWorkspaceService({
+    bindingStore,
+    resolveDeviceWorkspacePath: async ({ deviceId, path }) => {
+      const rootPath = await deviceGateway.resolveRealPath({
+        deviceId,
+        path,
+        userId: ctx.userId,
+      });
+      if (!rootPath) return undefined;
+
+      // Inspect the canonical target, not the lexical path. Besides avoiding
+      // persistence of symlink spellings, this closes the gap where the
+      // original path could be replaced between stat and realpath.
+      const status = await deviceGateway.statPath({
+        deviceId,
+        path: rootPath,
+        userId: ctx.userId,
+      });
+      if (!status?.exists || !status.isDirectory) return undefined;
+
+      return { repoType: status.repoType, rootPath };
+    },
+    workspaceModel,
+  });
   const grantService = new WorkspaceAccessGrantService({
     grantModel: new WorkspaceAccessGrantModel(ctx.serverDB, ctx.userId),
     topicModel: new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId ?? undefined),
@@ -78,17 +102,20 @@ const requireAbsolutePath = (rootPath: string) => {
   }
 };
 
-const envFilePathSchema = z.string().min(1).refine(
-  (value) => {
-    const normalized = value.replaceAll('\\', '/');
-    return (
-      !normalized.startsWith('/') &&
-      !/^[A-Z]:\//i.test(normalized) &&
-      !normalized.split('/').includes('..')
-    );
-  },
-  { message: 'envFiles entries must be workspace-relative paths without traversal' },
-);
+const envFilePathSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => {
+      const normalized = value.replaceAll('\\', '/');
+      return (
+        !normalized.startsWith('/') &&
+        !/^[A-Z]:\//i.test(normalized) &&
+        !normalized.split('/').includes('..')
+      );
+    },
+    { message: 'envFiles entries must be workspace-relative paths without traversal' },
+  );
 
 export const projectWorkspaceRouter = router({
   bindTopic: projectWorkspaceWriteProcedure

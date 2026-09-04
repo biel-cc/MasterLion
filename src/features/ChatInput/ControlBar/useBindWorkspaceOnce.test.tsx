@@ -78,6 +78,45 @@ describe('useBindWorkspaceOnce', () => {
     );
   });
 
+  it('keeps a rejected nonexistent directory out of draft, binding, and recents', async () => {
+    mocks.getOrCreateDeviceWorkspace.mockResolvedValue({
+      code: 'UNKNOWN',
+      message: 'The selected directory does not exist or cannot be verified on the target device',
+      ok: false,
+    });
+    const { result } = renderHook(() => useBindWorkspaceOnce(effective()));
+
+    let selected!: boolean;
+    await act(async () => {
+      selected = await result.current.select({ path: '/missing/project' });
+    });
+
+    expect(selected).toBe(false);
+    expect(result.current.error).toEqual({
+      code: 'UNKNOWN',
+      message: 'The selected directory does not exist or cannot be verified on the target device',
+    });
+    expect(mocks.setDraftWorkspaceIntent).not.toHaveBeenCalled();
+    expect(mocks.bindTopicWorkspace).not.toHaveBeenCalled();
+    expect(mocks.updateDeviceCwd).not.toHaveBeenCalled();
+  });
+
+  it('records the server-canonicalized directory instead of the renderer path', async () => {
+    mocks.getOrCreateDeviceWorkspace.mockResolvedValue({
+      ok: true,
+      value: { ...workspace, rootPath: '/canonical/project' },
+    });
+    const { result } = renderHook(() => useBindWorkspaceOnce(effective()));
+
+    await act(() => result.current.select({ path: '/linked/project', repoType: 'git' }));
+
+    expect(mocks.updateDeviceCwd).toHaveBeenCalledWith(
+      'device-1',
+      { path: '/canonical/project', repoType: 'git' },
+      { setDefault: false },
+    );
+  });
+
   it('binds an existing unbound topic once', async () => {
     const { result } = renderHook(() =>
       useBindWorkspaceOnce(effective({ isDraft: false, topicId: 'topic-1' })),

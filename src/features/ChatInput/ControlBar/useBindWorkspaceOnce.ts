@@ -99,7 +99,10 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
           }
         }
 
-        rememberRecent(selection);
+        rememberRecent({
+          path: created.value.rootPath,
+          repoType: created.value.repoType ?? selection.repoType,
+        });
         return true;
       } finally {
         setPending(false);
@@ -141,7 +144,10 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
           targetDeviceId: deviceId,
           workspaceId: created.value.id,
         });
-        rememberRecent(selection);
+        rememberRecent({
+          path: created.value.rootPath,
+          repoType: created.value.repoType ?? selection.repoType,
+        });
         await useChatStore.getState().switchTopic(null, { skipRefreshMessage: true });
         return true;
       } finally {

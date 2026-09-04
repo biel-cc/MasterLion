@@ -1,6 +1,7 @@
 import type { DeviceExecutionTarget } from '@lobechat/types/src/agent/agencyConfig';
 import type { WorkspaceInitResult } from '@lobechat/types/src/device';
 import type { ProjectWorkspaceSkillPolicy } from '@lobechat/types/src/projectWorkspace/skillAdapter';
+import { TRPCError } from '@trpc/server';
 
 import type {
   GetOrCreateProjectWorkspaceParams,
@@ -8,6 +9,7 @@ import type {
   ProjectWorkspaceModel,
 } from '@/database/models/projectWorkspace';
 import { toProjectWorkspaceDTO } from '@/database/models/projectWorkspace';
+import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 
 import {
   type BindTopicWorkspaceResult,
@@ -28,8 +30,18 @@ export { DatabaseTopicWorkspaceBindingStore, WorkspaceAlreadyBoundError } from '
 
 interface ProjectWorkspaceServiceDependencies {
   bindingStore: TopicWorkspaceBindingStore;
+  resolveDeviceWorkspacePath?: (params: {
+    deviceId: string;
+    path: string;
+  }) => Promise<{ repoType?: 'git' | 'github'; rootPath: string } | undefined>;
   workspaceModel: ProjectWorkspaceModel;
 }
+
+const workspaceDirectoryUnavailable = () =>
+  new TRPCError({
+    code: 'PRECONDITION_FAILED',
+    message: 'The selected directory does not exist or cannot be verified on the target device',
+  });
 
 /**
  * The only service allowed to bind a topic to a persisted workspace.
@@ -49,8 +61,30 @@ export class ProjectWorkspaceService {
     return row ? toProjectWorkspaceDTO(row) : undefined;
   };
 
-  getOrCreate = async (params: GetOrCreateProjectWorkspaceParams): Promise<ProjectWorkspaceDTO> =>
-    toProjectWorkspaceDTO(await this.deps.workspaceModel.getOrCreate(params));
+  getOrCreate = async (params: GetOrCreateProjectWorkspaceParams): Promise<ProjectWorkspaceDTO> => {
+    if (params.kind !== 'device') {
+      return toProjectWorkspaceDTO(await this.deps.workspaceModel.getOrCreate(params));
+    }
+
+    if (!params.deviceId || !this.deps.resolveDeviceWorkspacePath) {
+      throw workspaceDirectoryUnavailable();
+    }
+    const resolved = await this.deps.resolveDeviceWorkspacePath({
+      deviceId: params.deviceId,
+      path: params.rootPath,
+    });
+    if (!resolved || !isAbsoluteFilesystemPath(resolved.rootPath)) {
+      throw workspaceDirectoryUnavailable();
+    }
+
+    return toProjectWorkspaceDTO(
+      await this.deps.workspaceModel.getOrCreate({
+        ...params,
+        repoType: resolved.repoType ?? params.repoType,
+        rootPath: resolved.rootPath,
+      }),
+    );
+  };
 
   update = async (
     id: string,
@@ -78,9 +112,8 @@ export class ProjectWorkspaceService {
   captureTarget = async (params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date }) =>
     this.deps.bindingStore.captureTarget(params);
 
-  captureTargetIfAbsent = async (
-    params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date },
-  ) => this.deps.bindingStore.captureTargetIfAbsent(params);
+  captureTargetIfAbsent = async (params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date }) =>
+    this.deps.bindingStore.captureTargetIfAbsent(params);
 
   bindTopic = async (params: {
     now?: Date;
