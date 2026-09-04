@@ -118,6 +118,11 @@ export interface PendingOptimisticWrite {
   ticket: number;
 }
 
+export interface ProjectedWriteResponse {
+  data: PartialDeep<LobeAgentConfig>;
+  replacePaths?: string[];
+}
+
 const capturePathState = (
   agent: PartialDeep<AgentItem> | undefined,
   path: string[],
@@ -210,6 +215,55 @@ const isBlocked = (histories: PathHistories, entry: WriteEntry): boolean => {
     for (const other of entries) {
       if (other.ticket <= entry.ticket || other.state === 'failed') continue;
       if (arePathsOverlapping(other.path, entry.path)) return true;
+    }
+  }
+
+  return false;
+};
+
+const hasNewerStandingWrite = (
+  histories: PathHistories,
+  ticket: number,
+  path: string[],
+): boolean => {
+  for (const entries of histories.values()) {
+    for (const other of entries) {
+      if (other.ticket <= ticket || other.state === 'failed') continue;
+      if (arePathsOverlapping(other.path, path)) return true;
+    }
+  }
+
+  return false;
+};
+
+/**
+ * A full mutation response may contain fields unrelated to the request that
+ * produced it. Preserve another in-flight optimistic write on such a field,
+ * even when that write has the older ticket: the response is only a snapshot
+ * of server state and cannot prove that the other request failed.
+ *
+ * The current request's own paths are exempt. A newer write to the same path
+ * intentionally supersedes an older pending write and may commit its
+ * server-normalized value there.
+ */
+const hasOtherPendingOwner = (
+  histories: PathHistories,
+  current: PartialDeep<AgentItem>,
+  ticket: number,
+  path: string[],
+  ownEntries: WriteEntry[],
+): boolean => {
+  const requestOwnsPath = ownEntries.some(
+    (entry) => !isBlocked(histories, entry) && arePathsOverlapping(entry.path, path),
+  );
+  if (requestOwnsPath) return false;
+
+  for (const entries of histories.values()) {
+    for (const other of entries) {
+      if (other.ticket === ticket || other.state !== 'pending') continue;
+      if (!arePathsOverlapping(other.path, path)) continue;
+      if (isBlocked(histories, other) || !stillHoldsWrittenValue(current, other)) continue;
+      return true;
     }
   }
 
@@ -402,16 +456,71 @@ export class AgentWriteLedger {
   };
 
   /**
-   * Give an aborted request's ownership up without immediately changing the
-   * visible value. The normal caller aborts only because a replacement request
-   * is starting; if that replacement also fails, the tombstone lets the
-   * rollback continue past the aborted value instead of stopping on it.
+   * Project a full server response onto only the paths this request may still
+   * commit. Mutation responses contain the whole agent, so applying an older
+   * response wholesale would let it overwrite a newer optimistic or confirmed
+   * write. A request whose own paths were all superseded commits nothing; a
+   * still-current request may adopt server-normalized/derived fields, except
+   * where a newer write owns an overlapping path.
    */
-  abandonWrite = ({ agentId, ticket }: PendingOptimisticWrite): void => {
+  projectServerResponse = (
+    agentMap: AgentMap,
+    { agentId, ticket }: PendingOptimisticWrite,
+    response: PartialDeep<LobeAgentConfig>,
+    replacePaths?: string[],
+  ): ProjectedWriteResponse | undefined => {
     const histories = this.#ledgers.get(agentId);
-    if (!histories) return;
+    const current = agentMap[agentId];
+    if (!histories || !current) return;
+
+    const ownEntries = entriesOf(histories, ticket);
+    const requestStillOwnsVisibleState = ownEntries.some(
+      (entry) => !isBlocked(histories, entry) && stillHoldsWrittenValue(current, entry),
+    );
+    if (!requestStillOwnsVisibleState) return;
+
+    const replacementPathsByKey = new Map(
+      (replacePaths ?? []).map((path) => [pathKey(toPath(path)), path] as const),
+    );
+    const projected: PartialDeep<LobeAgentConfig> = {};
+    const projectedReplacePaths: string[] = [];
+    let projectedPathCount = 0;
+
+    for (const path of resolveWrittenPaths(response, replacePaths)) {
+      if (hasNewerStandingWrite(histories, ticket, path)) continue;
+      if (hasOtherPendingOwner(histories, current, ticket, path, ownEntries)) continue;
+
+      setAtPath(projected, path, getAtPath(response, path));
+      projectedPathCount += 1;
+
+      const replacementPath = replacementPathsByKey.get(pathKey(path));
+      if (replacementPath) projectedReplacePaths.push(replacementPath);
+    }
+
+    if (projectedPathCount === 0) return;
+
+    return {
+      data: projected,
+      ...(projectedReplacePaths.length > 0 ? { replacePaths: projectedReplacePaths } : {}),
+    };
+  };
+
+  /**
+   * Give an aborted request's ownership up and run the same ordered cleanup as
+   * a failure. A normal replacement request already owns an overlapping path,
+   * so it blocks this rollback; when no replacement stands, the unsaved value
+   * is removed immediately rather than surviving as a failed tombstone.
+   */
+  abandonWrite = (agentMap: AgentMap, { agentId, ticket }: PendingOptimisticWrite): AgentMap => {
+    const histories = this.#ledgers.get(agentId);
+    if (!histories) return agentMap;
 
     for (const entry of entriesOf(histories, ticket)) entry.state = 'failed';
+
+    const next = this.#undoFailedWrites(agentMap, agentId, histories);
+    this.#releaseMissingAgents(next);
+
+    return next;
   };
 
   /**

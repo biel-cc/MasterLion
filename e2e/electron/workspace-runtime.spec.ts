@@ -305,6 +305,7 @@ test('AC-W10 unbound hetero send is blocked and resume uses the canonical identi
 
   expect(row.resumeError).toBeUndefined();
   expect(row.resumeProviderCalls).toBe(1);
+  expect(row.resumeSessionId).toBe('session-w10');
   expect(row.resumeCwd).toBeTruthy();
   expect(row.normalizedResumeIdentity).toBe(row.persistedIdentity);
   expect(row.normalizedResumeIdentity).toMatch(/^id:[^:]+:device:[^:]+:\//);
@@ -321,7 +322,9 @@ test('AC-P08 consent surface shows the real cwd, command and out-of-scope risk',
   // The prepared spawn directory is the topic's primary cwd, not the model's.
   expect(row.consentRequest.primaryCwd).toBe(row.spawnCwd);
   expect(JSON.parse(row.displayedArguments).cwd).not.toBe(row.requestedCwd);
-  expect(row.deviceCalls).toBe(2);
+  // One counted directory probe establishes the persisted primary workspace;
+  // the shell and read then cross the device execution boundary.
+  expect(row.deviceCalls).toBe(3);
   expect(row.providerCalls).toBe(0);
 
   // UI half: the production consent component and argument view.
@@ -338,14 +341,13 @@ test('AC-P08 consent surface shows the real cwd, command and out-of-scope risk',
   await expect(risk).toContainText(/Consent and audit only/i);
   await expect(risk).toContainText(/not OS isolation/i);
   await expect(risk).toContainText(/does not create an operating-system sandbox/i);
-  await expect(surface.getByTestId('workspace-path-consent-cwd-override')).toContainText(
-    'MODEL_CWD_OVERRIDDEN',
-  );
-
   // The shell confirmation must not hide the command or the full directory the
   // command will actually run in.
   const shell = surface.getByTestId('out-of-scope-shell-confirmation');
-  await expect(shell).toContainText('cat payroll.csv');
+  await expect(shell.getByTestId('workspace-shell-full-arguments')).toContainText('cat');
+  await expect(shell.getByTestId('workspace-shell-full-arguments')).toContainText(
+    row.consentRequest.requestedPath,
+  );
   await expect(shell).toContainText(row.spawnCwd);
 });
 

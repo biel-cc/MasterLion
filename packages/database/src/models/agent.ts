@@ -614,61 +614,69 @@ export class AgentModel {
   updateConfig = async (agentId: string, data: PartialDeep<AgentItem> | undefined | null) => {
     if (!data || Object.keys(data).length === 0) return;
 
-    const agent = await this.db.query.agents.findFirst({
-      where: and(eq(agents.id, agentId), this.ownership()),
-    });
+    return this.db.transaction(async (tx) => {
+      // The merge below reads and rewrites the complete agent row. Hold a row
+      // lock through both operations so a concurrent config or partial meta
+      // update cannot be resurrected from this caller's stale snapshot.
+      const [agent] = await tx
+        .select()
+        .from(agents)
+        .where(and(eq(agents.id, agentId), this.ownership()))
+        .limit(1)
+        .for('update');
 
-    if (!agent) return;
+      if (!agent) return;
 
-    // First process the params field: undefined means delete, null means disable flag
-    const existingParams = agent.params ?? {};
-    const updatedParams: Record<string, any> = { ...existingParams };
+      // First process the params field: undefined means delete, null means disable flag
+      const existingParams = agent.params ?? {};
+      const updatedParams: Record<string, any> = { ...existingParams };
 
-    if (data.params) {
-      const incomingParams = data.params as Record<string, any>;
-      Object.keys(incomingParams).forEach((key) => {
-        const incomingValue = incomingParams[key];
+      if (data.params) {
+        const incomingParams = data.params as Record<string, any>;
+        Object.keys(incomingParams).forEach((key) => {
+          const incomingValue = incomingParams[key];
 
-        // undefined means explicitly delete this field
-        if (incomingValue === undefined) {
-          delete updatedParams[key];
-          return;
-        }
+          // undefined means explicitly delete this field
+          if (incomingValue === undefined) {
+            delete updatedParams[key];
+            return;
+          }
 
-        // All other values (including null) are directly overwritten, null means disable this param on the frontend
-        updatedParams[key] = incomingValue;
-      });
-    }
-
-    // Build data to be merged, excluding params (processed separately)
-
-    const { params: _params, ...restData } = data;
-    const mergedValue = merge(agent, restData);
-
-    // Apply the processed parameters
-    mergedValue.params = Object.keys(updatedParams).length > 0 ? updatedParams : undefined;
-
-    // Final cleanup: ensure no undefined or null values enter the database
-    if (mergedValue.params) {
-      const params = mergedValue.params as Record<string, any>;
-      Object.keys(params).forEach((key) => {
-        if (params[key] === undefined) {
-          delete params[key];
-        }
-      });
-      if (Object.keys(params).length === 0) {
-        mergedValue.params = undefined;
+          // All other values (including null) are directly overwritten; null disables this param in the UI.
+          updatedParams[key] = incomingValue;
+        });
       }
-    }
 
-    // Remove timestamp fields to let Drizzle's $onUpdate handle them automatically
+      // Build data to be merged, excluding params (processed separately)
 
-    const { updatedAt: _, accessedAt: __, createdAt: ___, ...updateData } = mergedValue;
+      const { params: _params, ...restData } = data;
+      const mergedValue = merge(agent, restData);
 
-    return this.db
-      .update(agents)
-      .set(updateData)
-      .where(and(eq(agents.id, agentId), this.ownership()));
+      // Apply the processed parameters
+      mergedValue.params = Object.keys(updatedParams).length > 0 ? updatedParams : undefined;
+
+      // Final cleanup: ensure no undefined values enter the database
+      if (mergedValue.params) {
+        const params = mergedValue.params as Record<string, any>;
+        Object.keys(params).forEach((key) => {
+          if (params[key] === undefined) {
+            delete params[key];
+          }
+        });
+        if (Object.keys(params).length === 0) {
+          mergedValue.params = undefined;
+        }
+      }
+
+      // Remove timestamp fields to let Drizzle's $onUpdate handle them automatically
+
+      const { updatedAt: _, accessedAt: __, createdAt: ___, ...updateData } = mergedValue;
+
+      return tx
+        .update(agents)
+        .set(updateData)
+        .where(and(eq(agents.id, agentId), this.ownership()));
+    });
   };
 
   /**

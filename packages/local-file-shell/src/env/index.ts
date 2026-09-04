@@ -1,4 +1,9 @@
-const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+import {
+  ENV_KEY_PATTERN,
+  getExecutionEnvKeyRestriction,
+  RUNTIME_RESERVED_ENV_KEYS,
+  SECURITY_SENSITIVE_ENV_KEYS,
+} from '@lobechat/const/executionEnv';
 
 /** Host credentials that must never leak into an agent child implicitly. */
 export const HOST_ENV_BLOCKLIST = [
@@ -8,43 +13,9 @@ export const HOST_ENV_BLOCKLIST = [
 ] as const;
 
 export const RUNTIME_PROTECTED_ENV_KEYS = new Set([
-  'BASH_ENV',
-  'BUN_OPTIONS',
-  'CDPATH',
-  'COMSPEC',
-  'ENV',
-  'GIT_ASKPASS',
-  'GIT_CONFIG_COUNT',
-  'GIT_CONFIG_GLOBAL',
-  'GIT_CONFIG_PARAMETERS',
-  'GIT_CONFIG_SYSTEM',
-  'GLOBIGNORE',
-  'HOME',
-  'LD_LIBRARY_PATH',
-  'LD_PRELOAD',
-  'LOGNAME',
-  'NODE_OPTIONS',
-  'OLDPWD',
-  'PATH',
-  'PATHEXT',
-  'PERL5OPT',
-  'PS4',
-  'PWD',
-  'PYTHONHOME',
-  'PYTHONPATH',
-  'RUBYOPT',
-  'SHELL',
-  'SHELLOPTS',
-  'SSH_ASKPASS',
-  'SYSTEMROOT',
-  'TEMP',
-  'TMP',
-  'TMPDIR',
-  'USER',
-  'WINDIR',
+  ...RUNTIME_RESERVED_ENV_KEYS,
+  ...SECURITY_SENSITIVE_ENV_KEYS,
 ]);
-
-const RUNTIME_PROTECTED_ENV_PREFIXES = ['DYLD_', 'LOBEHUB_', 'MASTERINO_'] as const;
 
 export interface ComposeChildProcessEnvInput {
   /** Environment owned by the process host. */
@@ -58,11 +29,7 @@ export interface ComposeChildProcessEnvInput {
 }
 
 export const isRuntimeProtectedEnvKey = (key: string): boolean => {
-  const normalized = key.toUpperCase();
-  return (
-    RUNTIME_PROTECTED_ENV_KEYS.has(normalized) ||
-    RUNTIME_PROTECTED_ENV_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-  );
+  return getExecutionEnvKeyRestriction(key.toUpperCase()) !== undefined;
 };
 
 const assertValidKey = (key: string): void => {

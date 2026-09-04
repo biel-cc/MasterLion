@@ -166,18 +166,11 @@ export class GroupAgentBuilderExecutionRuntime {
           ...(tags !== undefined && { tags }),
           ...(supervisorTitle !== undefined && { title: supervisorTitle }),
         };
-        const tasks = [];
-
-        if (Object.keys(supervisorConfig).length > 0) {
-          tasks.push(agentService.updateAgentConfig(supervisorAgentId, supervisorConfig));
-        }
-
-        if (Object.keys(supervisorMeta).length > 0) {
-          tasks.push(agentService.updateAgentMeta(supervisorAgentId, supervisorMeta));
-        }
-
-        if (tasks.length > 0) {
-          await Promise.all(tasks);
+        const supervisorUpdate = { ...supervisorConfig, ...supervisorMeta };
+        if (Object.keys(supervisorUpdate).length > 0) {
+          // One server mutation preserves the field set atomically; splitting
+          // config and meta here used to race two writes to the same agent row.
+          await agentService.updateAgentConfig(supervisorAgentId, supervisorUpdate);
         }
       }
 

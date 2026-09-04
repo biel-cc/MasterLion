@@ -1,27 +1,34 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { AgentState } from '@lobechat/agent-runtime';
+import type { UIChatMessage } from '@lobechat/types';
 import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import { eq } from 'drizzle-orm';
 
-import { getTestDB } from '@/database/core/getTestDB';
+import { closeTestDB, getTestDB } from '@/database/core/getTestDB';
+import { MessageModel } from '@/database/models/message';
 import { ProjectWorkspaceModel, toWorkspaceRef } from '@/database/models/projectWorkspace';
 import { agents } from '@/database/schemas/agent';
 import { topics } from '@/database/schemas/topic';
 import { users } from '@/database/schemas/user';
 import type { LobeChatDatabase } from '@/database/type';
-import { detectWorkspaceBindingIntent } from '@/features/ChatInput/ControlBar/workspaceBindingIntent';
 import {
-  assertExecutionContextReady,
-  normalizeWorkspaceIdentity,
-  resolveExecutionContext,
-} from '@/helpers/executionContext';
+  confirmWorkspaceBindingIntent,
+  selectWorkspaceOnce,
+} from '@/features/ChatInput/ControlBar/workspaceBindingActions';
+import { normalizeWorkspaceIdentity, resolveExecutionContext } from '@/helpers/executionContext';
 import { classifyTopicPlacement } from '@/helpers/topicPlacement';
+import { InMemoryStreamEventManager } from '@/server/modules/AgentRuntime/InMemoryStreamEventManager';
+import { createRuntimeExecutors } from '@/server/modules/AgentRuntime/RuntimeExecutors';
+import { AiAgentService } from '@/server/services/aiAgent';
+import type { DeviceGateway } from '@/server/services/deviceGateway';
 import {
   DatabaseTopicWorkspaceBindingStore,
   ProjectWorkspaceService,
   WorkspaceAlreadyBoundError,
 } from '@/server/services/projectWorkspace';
+import type { ToolExecutionService } from '@/server/services/toolExecution';
 
 import { parseExecutionContextValidation } from '../../../packages/device-gateway-client/src/http';
 import { prepareToolCallExecution } from '../../../packages/local-file-shell/src/file/executionBoundary';
@@ -45,16 +52,19 @@ import { prepareToolCallExecution } from '../../../packages/local-file-shell/src
  *   (`prepareToolCallExecution`), the execution-context resolver and the topic
  *   placement classifier are all the production implementations.
  *
- * The **only** test doubles are two external ports, and both are counted:
+ * The **only** test doubles are external ports:
  *
- * 1. `chatProviderPort` — the model provider HTTP API. It never runs a model;
- *    it only records that a turn actually reached the provider so acceptance
- *    rows can distinguish "did not happen" from "happened and changed
- *    nothing".
+ * 1. `chatProviderPort` / `heterogeneousDeviceDispatcher` — the external model
+ *    and device transports. They never run a model; they only record that a
+ *    turn reached the production dispatch edge so acceptance rows can
+ *    distinguish "did not happen" from "happened and changed nothing".
  * 2. `deviceDirectoryPort` — the device gateway's directory probe used by
  *    `ProjectWorkspaceService.getOrCreate`. Because the Electron host *is* the
  *    device in this harness, it is implemented against the real filesystem
  *    rather than stubbed; it is counted as a device call.
+ * 3. `traceExporterPort` — tracing is deliberately disabled for this isolated
+ *    acceptance lane. It supplies the same empty callback/header contract as
+ *    production when no trace exporter is configured.
  *
  * Nothing else is substituted. In particular no acceptance row returns a
  * constant: every value below is read back out of the database, the
@@ -80,11 +90,11 @@ export interface WorkspaceRuntimeConsentRequest {
   requestedPath: string;
   topicId: string;
   version: 1;
-  warnings: Array<{ code: 'MODEL_CWD_OVERRIDDEN'; overridden: true }>;
 }
 
 export interface ElectronAcceptanceResultMap {
   'AC-P08': {
+    consentToolMessages: UIChatMessage[];
     consentRequest: WorkspaceRuntimeConsentRequest;
     deviceCalls: number;
     displayedArguments: string;
@@ -155,6 +165,7 @@ export interface ElectronAcceptanceResultMap {
     resumeCwd?: string;
     resumeError?: string;
     resumeProviderCalls: number;
+    resumeSessionId?: string;
   };
   'AC-X02': {
     deviceCalls: number;
@@ -229,6 +240,20 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
     },
   };
 
+  const traceExporterPort = {
+    createOptions: () => ({ callback: {}, headers: new Headers() }),
+  };
+
+  const heterogeneousDispatches: Array<Parameters<DeviceGateway['dispatchAgentRun']>[0]> = [];
+  const heterogeneousDeviceDispatcher = {
+    dispatchAgentRun: async (params) => {
+      counters.deviceCalls += 1;
+      heterogeneousDispatches.push(params);
+      await chatProviderPort.send();
+      return { success: true };
+    },
+  } satisfies Pick<DeviceGateway, 'dispatchAgentRun'>;
+
   /**
    * Test double #2: the device gateway directory probe. The Electron host is
    * the device here, so the probe is a real filesystem check.
@@ -258,9 +283,13 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
     resolveDeviceWorkspacePath: deviceDirectoryPort.resolveWorkspacePath,
     workspaceModel,
   });
+  const aiAgentService = new AiAgentService(db, USER_ID, { heterogeneousDeviceDispatcher });
 
-  const createTopic = async (id: string) => {
-    await db.insert(topics).values({ id, title: id, userId: USER_ID }).onConflictDoNothing();
+  const createTopic = async (id: string, agentId?: string) => {
+    await db
+      .insert(topics)
+      .values({ agentId, id, title: id, userId: USER_ID })
+      .onConflictDoNothing();
     return id;
   };
 
@@ -316,8 +345,35 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
      */
     'AC-W04': async () => {
       const deviceId = 'device-w04';
+      const agentId = 'agent-w04';
       const topicId = await createTopic('topic-w04-pure-chat');
       const scratchParent = await makeDirectory('w04', 'scratch');
+      await db.insert(agents).values({ id: agentId, userId: USER_ID }).onConflictDoNothing();
+
+      const messageModel = new MessageModel(db, USER_ID);
+      const executors = createRuntimeExecutors({
+        createTraceOptions: traceExporterPort.createOptions,
+        initModelRuntime: async () =>
+          ({
+            chat: async (_payload: unknown, options: any) => {
+              const response = await chatProviderPort.send();
+              await options.callback?.onText?.(response.content);
+              return new Response();
+            },
+          }) as any,
+        messageModel,
+        operationId: `${OPERATION_ID}-w04`,
+        serverDB: db,
+        stepIndex: 1,
+        streamManager: new InMemoryStreamEventManager(),
+        toolExecutionService: {
+          executeTool: async () => {
+            throw new Error('A pure-chat turn must not execute a tool');
+          },
+        } as ToolExecutionService,
+        topicId,
+        userId: USER_ID,
+      });
 
       const projectWorkspaceRowsBefore = await countWorkspaceRows(deviceId);
       const scratchDirectoriesBefore = await listDirectory(scratchParent);
@@ -327,7 +383,63 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       for (let turn = 0; turn < 5; turn += 1) {
         const context = await resolveTopicContext(topicId, deviceId);
         turnCwds.push(context.cwd);
-        await chatProviderPort.send();
+        await executors.call_llm!(
+          {
+            payload: {
+              messages: [
+                {
+                  content: `pure chat turn ${turn + 1}`,
+                  id: `message-w04-user-${turn + 1}`,
+                  role: 'user',
+                },
+              ],
+              model: 'workspace-runtime-e2e',
+              provider: 'external-test-port',
+            },
+            type: 'call_llm',
+          },
+          {
+            cost: {
+              calculatedAt: new Date().toISOString(),
+              currency: 'USD',
+              llm: { byModel: [], currency: 'USD', total: 0 },
+              tools: { byTool: [], currency: 'USD', total: 0 },
+              total: 0,
+            },
+            createdAt: new Date().toISOString(),
+            lastModified: new Date().toISOString(),
+            maxSteps: 10,
+            messages: [],
+            metadata: {
+              agentId,
+              executionContext: context,
+              executionPlan: context.plan,
+              topicId,
+            },
+            modelRuntimeConfig: {
+              model: 'workspace-runtime-e2e',
+              provider: 'external-test-port',
+            },
+            operationId: `${OPERATION_ID}-w04-${turn + 1}`,
+            status: 'running',
+            stepCount: turn,
+            toolManifestMap: {},
+            usage: {
+              humanInteraction: {
+                approvalRequests: 0,
+                promptRequests: 0,
+                selectRequests: 0,
+                totalWaitingTimeMs: 0,
+              },
+              llm: {
+                apiCalls: 0,
+                processingTimeMs: 0,
+                tokens: { input: 0, output: 0, total: 0 },
+              },
+              tools: { byTool: [], totalCalls: 0, totalTimeMs: 0 },
+            },
+          },
+        );
       }
 
       const { snapshot } = await loadTopicExecution(topicId);
@@ -350,6 +462,7 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
      */
     'AC-W07': async () => {
       const deviceId = 'device-w07';
+      const agentId = 'agent-w07';
       const topicId = await createTopic('topic-w07-scratch');
       const scratchParent = await makeDirectory('w07', 'scratch');
       // A `direct-user-message` operation root is only honoured inside the
@@ -360,54 +473,162 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       const readTarget = path.join(documents, 'notes.md');
       await writeFile(readTarget, 'consented reading material');
 
-      const directReadDeviceCallsBefore = counters.deviceCalls;
-      await runDeviceBoundary({
-        apiName: 'readFile',
-        args: { path: readTarget },
-        context: {
-          accessRoots: [
-            {
-              modes: ['read'],
-              operationId: OPERATION_ID,
-              rootPath: documents,
-              scope: 'operation',
-              source: 'direct-user-message',
+      await db.insert(agents).values({ id: agentId, userId: USER_ID }).onConflictDoNothing();
+      const messageModel = new MessageModel(db, USER_ID);
+      const directParentId = 'message-w07-direct-parent';
+      const batchParentId = 'message-w07-batch-parent';
+      await messageModel.create(
+        { agentId, content: 'read the note', role: 'assistant', topicId },
+        directParentId,
+      );
+      await messageModel.create(
+        { agentId, content: 'inspect the workspace', role: 'assistant', topicId },
+        batchParentId,
+      );
+
+      const scratchRootsSeen: string[] = [];
+      const toolExecutionService = {
+        executeTool: async (
+          tool: { apiName: string; arguments: string; id: string },
+          context: any,
+        ) => {
+          const executionContext = context.executionContext;
+          const args = JSON.parse(tool.arguments || '{}');
+          const prepared = await runDeviceBoundary({
+            apiName: tool.apiName,
+            args,
+            context: {
+              accessRoots: executionContext?.accessRoots,
+              cwd: executionContext?.cwd,
+              workspaceRootPath: executionContext?.workspace?.rootPath,
             },
-          ],
+            homeDir,
+            trace: { deviceId, operationId: OPERATION_ID, topicId },
+          });
+          if (executionContext?.workspace?.kind === 'scratch') {
+            scratchRootsSeen.push(executionContext.workspace.rootPath);
+          }
+
+          const content =
+            tool.apiName === 'readFile'
+              ? await readFile(prepared.args.path as string, 'utf8')
+              : String(prepared.args.cwd);
+          return { content, error: null, executionTime: 0, state: {}, success: true };
         },
-        homeDir,
-        trace: { deviceId, operationId: OPERATION_ID, topicId },
+      } as ToolExecutionService;
+      const streamManager = new InMemoryStreamEventManager();
+      const scratchRoot = path.join(scratchParent, topicId);
+      const executors = createRuntimeExecutors({
+        bindScratchAfterToolSuccess: (input) => service.bindScratchAfterToolSuccess(input),
+        ensureScratchWorkspace: async () => {
+          await mkdir(scratchRoot, { recursive: true });
+          return { root: await realpath(scratchRoot) };
+        },
+        messageModel,
+        operationId: OPERATION_ID,
+        serverDB: db,
+        stepIndex: 1,
+        streamManager,
+        toolExecutionService,
+        topicId,
+        userId: USER_ID,
       });
+      const createState = (
+        accessRoots: NonNullable<AgentState['metadata']>['executionContext']['accessRoots'] = [],
+      ): AgentState => ({
+        cost: {
+          calculatedAt: new Date().toISOString(),
+          currency: 'USD',
+          llm: { byModel: [], currency: 'USD', total: 0 },
+          tools: { byTool: [], currency: 'USD', total: 0 },
+          total: 0,
+        },
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        maxSteps: 10,
+        messages: [],
+        metadata: {
+          activeDeviceId: deviceId,
+          agentId,
+          executionContext: {
+            accessRoots,
+            plan: { deviceId, kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          topicId,
+        },
+        operationId: OPERATION_ID,
+        status: 'running',
+        stepCount: 0,
+        toolManifestMap: {},
+        usage: {
+          humanInteraction: {
+            approvalRequests: 0,
+            promptRequests: 0,
+            selectRequests: 0,
+            totalWaitingTimeMs: 0,
+          },
+          llm: {
+            apiCalls: 0,
+            processingTimeMs: 0,
+            tokens: { input: 0, output: 0, total: 0 },
+          },
+          tools: { byTool: [], totalCalls: 0, totalTimeMs: 0 },
+        },
+      });
+
+      const directReadDeviceCallsBefore = counters.deviceCalls;
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: directParentId,
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: JSON.stringify({ path: readTarget }),
+              id: 'tool-call-w07-direct',
+              identifier: 'lobe-local-system',
+              type: 'builtin',
+            },
+          },
+          type: 'call_tool',
+        },
+        createState([
+          {
+            deviceId,
+            modes: ['read'],
+            operationId: OPERATION_ID,
+            rootPath: documents,
+            scope: 'operation',
+            source: 'direct-user-message',
+          },
+        ]),
+      );
       const directReadDeviceCalls = counters.deviceCalls - directReadDeviceCallsBefore;
       const directReadScratchRows = await countWorkspaceRows(deviceId, 'scratch');
       const directReadScratchDirectories = await listDirectory(scratchParent);
 
-      const scratchRoot = path.join(scratchParent, topicId);
       const concurrentDeviceCallsBefore = counters.deviceCalls;
-      /** The deterministic per-topic scratch root a device prepares lazily. */
-      const firstDefaultCwdOperation = async () => {
-        await mkdir(scratchRoot, { recursive: true });
-        const canonicalScratchRoot = await realpath(scratchRoot);
-        await runDeviceBoundary({
-          apiName: 'runCommand',
-          args: { command: 'pwd' },
-          context: { cwd: canonicalScratchRoot, workspaceRootPath: canonicalScratchRoot },
-          homeDir,
-          trace: { deviceId, operationId: OPERATION_ID, topicId },
-        });
-        return service.bindScratchAfterToolSuccess({
-          deviceId,
-          rootPath: canonicalScratchRoot,
-          target: 'local',
-          toolSucceeded: true,
-          topicId,
-        });
-      };
-
-      const bindings = await Promise.all([firstDefaultCwdOperation(), firstDefaultCwdOperation()]);
+      await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: batchParentId,
+            toolsCalling: [1, 2].map((index) => ({
+              apiName: 'runCommand',
+              arguments: JSON.stringify({ command: 'pwd' }),
+              id: `tool-call-w07-default-${index}`,
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            })),
+          },
+          type: 'call_tools_batch',
+        },
+        createState(),
+      );
       const concurrentDeviceCalls = counters.deviceCalls - concurrentDeviceCallsBefore;
 
       const { snapshot, workspace } = await loadTopicExecution(topicId);
+      if (!workspace?.id) throw new Error('AC-W07 did not persist its scratch workspace');
       const placement = classifyTopicPlacement(
         snapshot,
         workspace?.id ? { id: workspace.id, kind: workspace.kind } : undefined,
@@ -422,7 +643,9 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
         placement: { kind: placement.kind, reason: (placement as { reason?: string }).reason },
         scratchDirectoriesAfter: await listDirectory(scratchParent),
         scratchRowsAfter: await countWorkspaceRows(deviceId, 'scratch'),
-        scratchWorkspaceIds: bindings.map(({ workspace: bound }) => bound.id!),
+        scratchWorkspaceIds: scratchRootsSeen.map((root) =>
+          root === workspace.rootPath ? workspace.id! : '',
+        ),
         snapshotWorkspaceId: snapshot?.workspaceId,
       };
     },
@@ -515,59 +738,141 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       const agentDefaultBefore = await readAgentDefault();
       const workspaceRowsBefore = await countWorkspaceRows(deviceId);
 
-      const intentFor = (message: string, hasAttachments = false) =>
-        detectWorkspaceBindingIntent({ hasAttachments, message });
-
       // The intent words are kept adjacent to each other and after the path so
       // the phrase is recognized whatever the length of the absolute path is.
       const persistentRequest = (directory: string) =>
         `请在 ${directory} 开发，后续持续在这个目录工作`;
 
-      const confirmedIntent = intentFor(persistentRequest(confirmedDirectory));
-      const bindingBySource: Record<string, boolean> = {
-        attachment: Boolean(intentFor(persistentRequest(attachmentDirectory), true)),
-        codeBlock: Boolean(intentFor(persistentRequest(`\`${codeBlockDirectory}\``))),
-        confirmedDirectory: confirmedIntent?.rootPath === confirmedDirectory,
-        quote: Boolean(intentFor(`> ${persistentRequest(quotedDirectory)}`)),
-        // The workspace "+" action is an explicit user gesture by construction.
-        workspacePlus: true,
+      const selectForTopic = async (topicId: string, selection: { path: string }) => {
+        const context = await resolveTopicContext(topicId, deviceId);
+        return selectWorkspaceOnce({
+          effective: {
+            context,
+            draftKey: `acceptance:${topicId}`,
+            isDraft: false,
+            recommendation: { deviceId },
+            state: context.workspace ? 'bound' : 'unbound',
+            target: 'local',
+            targetDeviceId: deviceId,
+            topicId,
+            workspace: context.workspace,
+          },
+          ports: {
+            bindTopicWorkspace: async (input) => {
+              try {
+                const value = await service.bindTopic(input);
+                return { ok: true, value };
+              } catch (error) {
+                return {
+                  code:
+                    error instanceof WorkspaceAlreadyBoundError
+                      ? 'WORKSPACE_ALREADY_BOUND'
+                      : 'UNKNOWN',
+                  message: error instanceof Error ? error.message : String(error),
+                  ok: false,
+                };
+              }
+            },
+            getOrCreateDeviceWorkspace: async (input) => {
+              try {
+                return { ok: true, value: await service.getOrCreate({ ...input, kind: 'device' }) };
+              } catch (error) {
+                return {
+                  code: 'UNKNOWN',
+                  message: error instanceof Error ? error.message : String(error),
+                  ok: false,
+                };
+              }
+            },
+            rememberRecent: () => undefined,
+            setDraftWorkspaceIntent: () => {
+              throw new Error('AC-W09 uses existing topics, never a renderer-only draft');
+            },
+          },
+          selection,
+        });
       };
 
-      // No rejected source reaches a write path, so the row count must be
-      // identical to the pre-source baseline.
+      const runMessageSource = async (params: {
+        hasAttachments?: boolean;
+        message: string;
+        source: string;
+      }) => {
+        const topicId = await createTopic(`topic-w09-${params.source}`);
+        let confirmationOpened = false;
+        const shouldSend = await confirmWorkspaceBindingIntent({
+          confirm: async ({ bind }) => {
+            confirmationOpened = true;
+            return bind();
+          },
+          desktop: true,
+          effective: { state: 'unbound' },
+          payload: {
+            hasAttachments: params.hasAttachments ?? false,
+            message: params.message,
+          } as any,
+          select: async (selection) => (await selectForTopic(topicId, selection)).ok,
+        });
+        const bound = await loadTopicExecution(topicId);
+        return {
+          bound: Boolean(bound.snapshot?.workspaceId),
+          confirmationOpened,
+          shouldSend,
+          topicId,
+        };
+      };
+
+      const attachment = await runMessageSource({
+        hasAttachments: true,
+        message: persistentRequest(attachmentDirectory),
+        source: 'attachment',
+      });
+      const codeBlock = await runMessageSource({
+        message: persistentRequest(`\`${codeBlockDirectory}\``),
+        source: 'code-block',
+      });
+      const quote = await runMessageSource({
+        message: `> ${persistentRequest(quotedDirectory)}`,
+        source: 'quote',
+      });
+
+      // No rejected source reaches the production selection action, so the row
+      // count remains at its pre-source baseline.
       const workspaceRowsAfterRejectedSources = await countWorkspaceRows(deviceId);
 
-      const explicitSelections = [
-        { rootPath: confirmedIntent?.rootPath, topicId: 'topic-w09-confirmed' },
-        { rootPath: workspacePlusDirectory, topicId: 'topic-w09-workspace-plus' },
-      ].filter((selection): selection is { rootPath: string; topicId: string } =>
-        Boolean(selection.rootPath),
-      );
+      const confirmed = await runMessageSource({
+        message: persistentRequest(confirmedDirectory),
+        source: 'confirmed',
+      });
+      const workspacePlusTopicId = await createTopic('topic-w09-workspace-plus');
+      const workspacePlus = await selectForTopic(workspacePlusTopicId, {
+        path: workspacePlusDirectory,
+      });
 
-      const createdTopicWorkspaceIds: string[] = [];
-      const boundWorkspaceIdsByTopic: Record<string, string | undefined> = {};
-      for (const selection of explicitSelections) {
-        await createTopic(selection.topicId);
-        const workspace = await service.getOrCreate({
-          deviceId,
-          kind: 'device',
-          rootPath: selection.rootPath,
-        });
-        const bound = await service.bindTopic({
-          target: 'local',
-          topicId: selection.topicId,
-          workspaceId: workspace.id,
-        });
-        createdTopicWorkspaceIds.push(normalizeWorkspaceIdentity(bound.workspace).workspaceId!);
-        boundWorkspaceIdsByTopic[selection.topicId] = (
-          await loadTopicExecution(selection.topicId)
-        ).snapshot?.workspaceId;
-      }
+      const createdTopicWorkspaceIds = [
+        (await loadTopicExecution(confirmed.topicId)).snapshot?.workspaceId,
+        (await loadTopicExecution(workspacePlusTopicId)).snapshot?.workspaceId,
+      ].filter((workspaceId): workspaceId is string => Boolean(workspaceId));
+      const [confirmedExecution, workspacePlusExecution] = await Promise.all([
+        loadTopicExecution(confirmed.topicId),
+        loadTopicExecution(workspacePlusTopicId),
+      ]);
+      const boundWorkspaceIdsByTopic: Record<string, string | undefined> = {
+        [confirmed.topicId]: confirmedExecution.snapshot?.workspaceId,
+        [workspacePlusTopicId]: workspacePlusExecution.snapshot?.workspaceId,
+      };
 
       return {
         agentDefaultAfter: await readAgentDefault(),
         agentDefaultBefore,
-        bindingBySource,
+        bindingBySource: {
+          attachment: attachment.confirmationOpened || attachment.bound,
+          codeBlock: codeBlock.confirmationOpened || codeBlock.bound,
+          confirmedDirectory:
+            confirmed.confirmationOpened && confirmed.bound && confirmed.shouldSend,
+          quote: quote.confirmationOpened || quote.bound,
+          workspacePlus: workspacePlus.ok,
+        },
         boundWorkspaceIdsByTopic,
         createdTopicWorkspaceIds,
         workspaceRowsAfterExplicitSources: await countWorkspaceRows(deviceId),
@@ -582,14 +887,39 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
      */
     'AC-W10': async () => {
       const deviceId = 'device-w10';
-      const topicId = await createTopic('topic-w10-hetero');
+      const agentId = 'agent-w10-hetero';
+      await db
+        .insert(agents)
+        .values({
+          agencyConfig: {
+            executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+            heterogeneousProvider: { type: 'claude-code' },
+          },
+          chatConfig: {},
+          id: agentId,
+          model: 'claude-code',
+          plugins: [],
+          provider: 'anthropic',
+          userId: USER_ID,
+        })
+        .onConflictDoNothing();
+      const topicId = await createTopic('topic-w10-hetero', agentId);
       const projectRoot = await makeDirectory('w10', 'project');
 
-      const preBindContext = await resolveTopicContext(topicId, deviceId, { isHetero: true });
-      const preBindError = assertExecutionContextReady(preBindContext, { requireWorkspace: true });
       const providerCallsBeforeSend = counters.providerCalls;
-      // Production gate: the send only happens when the context is ready.
-      if (!preBindError) await chatProviderPort.send();
+      const preBindResult = await aiAgentService.execAgent({
+        agentId,
+        appContext: {
+          topicExecutionIntent: {
+            platform: 'desktop',
+            target: 'local',
+            targetDeviceId: deviceId,
+          },
+          topicId,
+        },
+        deviceId,
+        prompt: 'Run the project checks',
+      });
       const preBindProviderCalls = counters.providerCalls - providerCallsBeforeSend;
 
       const workspace = await service.getOrCreate({
@@ -598,28 +928,62 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
         rootPath: projectRoot,
       });
       await service.bindTopic({ target: 'local', topicId, workspaceId: workspace.id });
+      const [boundTopic] = await db.select().from(topics).where(eq(topics.id, topicId)).limit(1);
+      await db
+        .update(topics)
+        .set({
+          metadata: {
+            ...boundTopic?.metadata,
+            heteroSessionId: 'session-w10',
+            workingDirectory: workspace.rootPath,
+          },
+        })
+        .where(eq(topics.id, topicId));
 
-      const resumeContext = await resolveTopicContext(topicId, deviceId, { isHetero: true });
-      const resumeError = assertExecutionContextReady(resumeContext, { requireWorkspace: true });
       const providerCallsBeforeResume = counters.providerCalls;
-      if (!resumeError) await chatProviderPort.send();
+      const dispatchesBeforeResume = heterogeneousDispatches.length;
+      const resumeResult = await aiAgentService.execAgent({
+        agentId,
+        appContext: {
+          topicExecutionIntent: {
+            platform: 'desktop',
+            target: 'local',
+            targetDeviceId: deviceId,
+          },
+          topicId,
+        },
+        deviceId,
+        prompt: 'Resume the project checks',
+      });
       const resumeProviderCalls = counters.providerCalls - providerCallsBeforeResume;
+      const resumeDispatch = heterogeneousDispatches.at(dispatchesBeforeResume);
 
       const persistedRow = await workspaceModel.findById(workspace.id);
       if (!persistedRow) throw new Error('AC-W10 lost its persisted workspace row');
 
+      const normalizedResumeIdentity = resumeDispatch
+        ? normalizeWorkspaceIdentity({
+            deviceId: resumeDispatch.deviceId,
+            id: persistedRow.id,
+            kind: resumeDispatch.executionContext?.workspaceKind ?? persistedRow.kind,
+            rootPath:
+              resumeDispatch.executionContext?.workspaceRootPath ?? resumeDispatch.cwd ?? '',
+          }).key
+        : '';
+
       return {
-        normalizedResumeIdentity: normalizeWorkspaceIdentity(resumeContext.workspace!).key,
+        normalizedResumeIdentity,
         // Same row, denormalized on the way in: identity must still collapse.
         persistedIdentity: normalizeWorkspaceIdentity({
           ...toWorkspaceRef(persistedRow),
           rootPath: `${persistedRow.rootPath}/`,
         }).key,
-        preBindCode: preBindError?.code ?? 'READY',
+        preBindCode: preBindResult.error ?? '',
         preBindProviderCalls,
-        resumeCwd: resumeContext.cwd,
-        resumeError: resumeError?.code,
+        resumeCwd: resumeDispatch?.cwd,
+        resumeError: resumeResult.success ? undefined : resumeResult.error,
         resumeProviderCalls,
+        resumeSessionId: resumeDispatch?.resumeSessionId,
       };
     },
 
@@ -636,17 +1000,122 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       const outsideDirectory = await makeDirectory('p08', 'outside');
       const outsideFile = path.join(outsideDirectory, 'payroll.csv');
       await writeFile(outsideFile, 'employee,salary\n');
+      const agentId = 'agent-p08';
+      await db.insert(agents).values({ id: agentId, userId: USER_ID }).onConflictDoNothing();
 
       const deviceCallsBefore = counters.deviceCalls;
       const providerCallsBefore = counters.providerCalls;
 
+      // Persist the primary workspace first, then resolve the same frozen
+      // execution context the runtime consumes. This makes the consent request
+      // come from the production request builder instead of the harness
+      // restating transport fields.
+      const workspace = await service.getOrCreate({
+        deviceId,
+        kind: 'device',
+        rootPath: workspaceRoot,
+      });
+      await service.bindTopic({ target: 'local', topicId, workspaceId: workspace.id });
+      const executionContext = await resolveTopicContext(topicId, deviceId);
+
       const prepared = await runDeviceBoundary({
         apiName: 'runCommand',
-        args: { command: 'cat payroll.csv', cwd: outsideDirectory },
+        args: { command: `cat ${outsideFile}`, cwd: outsideDirectory },
         context: { cwd: workspaceRoot, workspaceRootPath: workspaceRoot },
         homeDir,
         trace: { deviceId, operationId: OPERATION_ID, topicId },
       });
+
+      const messageModel = new MessageModel(db, USER_ID);
+      const assistantMessage = await messageModel.create({
+        agentId,
+        content: '',
+        role: 'assistant',
+        topicId,
+      });
+      const pendingToolsCalling = [
+        {
+          apiName: 'runCommand',
+          arguments: JSON.stringify(prepared.args),
+          id: 'tool-call-p08-shell',
+          identifier: 'lobe-local-system',
+          type: 'builtin',
+        },
+        {
+          apiName: 'readFile',
+          arguments: JSON.stringify({ path: outsideFile }),
+          id: 'tool-call-p08-read',
+          identifier: 'lobe-local-system',
+          type: 'builtin',
+        },
+      ];
+      const approvalExecutors = createRuntimeExecutors({
+        messageModel,
+        operationId: OPERATION_ID,
+        serverDB: db,
+        stepIndex: 1,
+        streamManager: new InMemoryStreamEventManager(),
+        toolExecutionService: {
+          executeTool: async () => {
+            throw new Error('AC-P08 stops before tool execution while approval is pending');
+          },
+        } as ToolExecutionService,
+        topicId,
+        userId: USER_ID,
+      });
+      await approvalExecutors.request_human_approve!(
+        { pendingToolsCalling, type: 'request_human_approve' } as any,
+        {
+          cost: {
+            calculatedAt: new Date().toISOString(),
+            currency: 'USD',
+            llm: { byModel: [], currency: 'USD', total: 0 },
+            tools: { byTool: [], currency: 'USD', total: 0 },
+            total: 0,
+          },
+          createdAt: new Date().toISOString(),
+          lastModified: new Date().toISOString(),
+          maxSteps: 10,
+          messages: [{ ...assistantMessage, role: 'assistant' } as any],
+          metadata: {
+            activeDeviceId: deviceId,
+            agentId,
+            executionContext,
+            executionPlan: executionContext.plan,
+            topicId,
+          },
+          operationId: OPERATION_ID,
+          pendingToolsCalling: [],
+          status: 'running',
+          stepCount: 0,
+          toolManifestMap: {},
+          usage: {
+            humanInteraction: {
+              approvalRequests: 0,
+              promptRequests: 0,
+              selectRequests: 0,
+              totalWaitingTimeMs: 0,
+            },
+            llm: {
+              apiCalls: 0,
+              processingTimeMs: 0,
+              tokens: { input: 0, output: 0, total: 0 },
+            },
+            tools: { byTool: [], totalCalls: 0, totalTimeMs: 0 },
+          },
+        } as AgentState,
+      );
+
+      const consentToolMessages = (await messageModel.query({ agentId, topicId })).filter(
+        (message) => message.role === 'tool',
+      );
+      const readToolMessage = consentToolMessages.find(
+        (message) => message.tool_call_id === 'tool-call-p08-read',
+      );
+      const consentRequest = readToolMessage?.pluginState?.workspacePathConsent;
+      if (!consentRequest) {
+        throw new Error('AC-P08 request_human_approve did not persist workspace path consent');
+      }
 
       let interventionCode = 'ALLOWED';
       try {
@@ -662,17 +1131,8 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       }
 
       return {
-        consentRequest: {
-          actualCwd: workspaceRoot,
-          deviceId,
-          modes: ['exec', 'read'],
-          operationId: OPERATION_ID,
-          primaryCwd: workspaceRoot,
-          requestedPath: outsideFile,
-          topicId,
-          version: 1,
-          warnings: prepared.warnings,
-        },
+        consentRequest,
+        consentToolMessages,
         deviceCalls: counters.deviceCalls - deviceCallsBefore,
         displayedArguments: JSON.stringify(prepared.args),
         interventionCode,
@@ -779,9 +1239,11 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
 
   return {
     close: async () => {
-      const client = (db as unknown as { $client?: { close?: () => Promise<void> } }).$client;
-      await client?.close?.().catch(() => undefined);
-      await rm(filesystemRoot, { force: true, recursive: true });
+      try {
+        await closeTestDB();
+      } finally {
+        await rm(filesystemRoot, { force: true, recursive: true });
+      }
     },
     counters: () => ({ ...counters }),
     filesystemRoot,

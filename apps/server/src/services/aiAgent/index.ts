@@ -75,11 +75,11 @@ import { UserPersonaModel } from '@/database/models/userMemory/persona';
 import { WorkspaceAccessGrantModel } from '@/database/models/workspaceAccessGrant';
 import { toolsEnv } from '@/envs/tools';
 import {
-  assertExecutionContextReady,
   isAbsoluteFilesystemPath,
   normalizeRootPath,
   resolveExecutionContext,
   type ResolveExecutionContextInput,
+  routeHeterogeneousExecution,
   toToolCallExecutionContext,
 } from '@/helpers/executionContext';
 import {
@@ -323,17 +323,28 @@ export class AiAgentService {
   private readonly agentRuntimeService: AgentRuntimeService;
   private readonly marketService: MarketService;
   private readonly composioService: ComposioService;
+  /**
+   * External device transport. Production uses the singleton gateway; tests may
+   * replace only this I/O edge while still exercising the complete execAgent
+   * routing, persistence, readiness and resume path.
+   */
+  private readonly heterogeneousDeviceDispatcher: Pick<typeof deviceGateway, 'dispatchAgentRun'>;
 
   private readonly workspaceId?: string;
 
   constructor(
     db: LobeChatDatabase,
     userId: string,
-    options?: { runtimeOptions?: AgentRuntimeServiceOptions; workspaceId?: string },
+    options?: {
+      heterogeneousDeviceDispatcher?: Pick<typeof deviceGateway, 'dispatchAgentRun'>;
+      runtimeOptions?: AgentRuntimeServiceOptions;
+      workspaceId?: string;
+    },
   ) {
     this.userId = userId;
     this.db = db;
     this.workspaceId = options?.workspaceId;
+    this.heterogeneousDeviceDispatcher = options?.heterogeneousDeviceDispatcher ?? deviceGateway;
     const wsId = this.workspaceId;
     this.agentDocumentsService = new AgentDocumentsService(db, userId, wsId);
     this.agentModel = new AgentModel(db, userId, wsId);
@@ -1781,32 +1792,38 @@ export class AiAgentService {
 
     if (isHeteroAgent) {
       const isRemoteHetero = isRemoteHeterogeneousType(heteroType);
-      const readiness = assertExecutionContextReady(executionContext, { requireWorkspace: true });
-      if (readiness || !executionContext.cwd) {
-        const detail = readiness?.message ?? 'A workspace is required for this operation.';
-        await this.messageModel.update(assistantMessageRecord.id, {
-          content: '',
-          error: {
-            body: { code: readiness?.code ?? 'WORKSPACE_REQUIRED', detail },
+      const executionRoute = await routeHeterogeneousExecution({
+        context: executionContext,
+        onBlocked: async (readiness) => {
+          const detail = readiness.message;
+          await this.messageModel.update(assistantMessageRecord.id, {
+            content: '',
+            error: {
+              body: { code: readiness.code, detail },
+              message: detail,
+              type: 'ServerAgentRuntimeError',
+            },
+          });
+          return {
+            agentId: resolvedAgentId,
+            assistantMessageId: assistantMessageRecord.id,
+            autoStarted: false,
+            createdAt: new Date().toISOString(),
+            error: readiness.code,
             message: detail,
-            type: 'ServerAgentRuntimeError',
-          },
-        });
-        return {
-          agentId: resolvedAgentId,
-          assistantMessageId: assistantMessageRecord.id,
-          autoStarted: false,
-          createdAt: new Date().toISOString(),
-          error: readiness?.code ?? 'WORKSPACE_REQUIRED',
-          message: detail,
-          operationId,
-          status: 'error',
-          success: false,
-          timestamp: new Date().toISOString(),
-          topicId,
-          userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
-        };
-      }
+            operationId,
+            status: 'error' as const,
+            success: false as const,
+            timestamp: new Date().toISOString(),
+            topicId,
+            userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
+          };
+        },
+        // This callback is deliberately empty: the route owns the hard gate;
+        // the selected device/sandbox dispatch below still owns transport.
+        onReady: () => undefined,
+      });
+      if (executionRoute.status === 'blocked') return executionRoute.value;
 
       // Read resume session id for next-turn continuity.
       const heteroService = new HeterogeneousAgentService(this.db, this.userId, {
@@ -2147,7 +2164,7 @@ export class AiAgentService {
             },
           )}`;
 
-          const result = await deviceGateway.dispatchAgentRun({
+          const result = await this.heterogeneousDeviceDispatcher.dispatchAgentRun({
             ...heteroParams,
             executionContext: toToolCallExecutionContext(executionContext, {
               includeEnvValues: true,

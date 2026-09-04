@@ -46,9 +46,12 @@ import { AgentRuntimeCoordinator, createStreamEventManager } from '@/server/modu
 import { formatErrorForState } from '@/server/modules/AgentRuntime/formatErrorForState';
 import {
   createRuntimeExecutors,
+  hasPendingWorkspaceBindFailure,
+  interruptForPendingWorkspaceBindFailure,
   type RuntimeExecutorContext,
 } from '@/server/modules/AgentRuntime/RuntimeExecutors';
 import { type IStreamEventManager } from '@/server/modules/AgentRuntime/types';
+import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import {
   tagWorkspacePathInterventionAudits,
   workspacePathInterventionAudits,
@@ -933,6 +936,9 @@ export class AgentRuntimeService {
         // Handle human intervention
         let currentContext = context;
         let currentState = agentState;
+        let forcedStepResult:
+          | ReturnType<typeof interruptForPendingWorkspaceBindFailure>
+          | undefined;
 
         if (humanInput || approvedToolCall || rejectionReason) {
           const interventionResult = await this.humanIntervention.process(currentState, {
@@ -944,6 +950,14 @@ export class AgentRuntimeService {
           });
           currentState = interventionResult.newState;
           currentContext = interventionResult.nextContext;
+
+          // A rejection (or plain human input) resolves the human wait without
+          // executing another cwd tool that could repair an earlier bind debt.
+          // Surface that debt before the intervention can re-enter the LLM.
+          if (hasPendingWorkspaceBindFailure(currentState) && !approvedToolCall) {
+            currentState = structuredClone(currentState);
+            forcedStepResult = interruptForPendingWorkspaceBindFailure(currentState, []);
+          }
         }
 
         // Resume from a parked async-tool wait (server sub-agent completion
@@ -960,20 +974,29 @@ export class AgentRuntimeService {
           currentState = structuredClone(currentState);
           currentState.messages = refreshed;
           currentState.pendingToolsCalling = [];
-          currentState.status = 'running';
-          currentState.interruption = undefined;
           currentState.lastModified = new Date().toISOString();
-          currentContext = {
-            payload: { parentMessageId: resumeParentMessageId },
-            phase: 'user_input',
-          } as AgentRuntimeContext;
-          log(
-            '[%s][%d] Resuming from async tool with %d messages (parent=%s)',
-            operationId,
-            stepIndex,
-            refreshed.length,
-            resumeParentMessageId,
-          );
+          if (hasPendingWorkspaceBindFailure(currentState)) {
+            forcedStepResult = interruptForPendingWorkspaceBindFailure(currentState, []);
+            log(
+              '[%s][%d] Interrupting async-tool resume because workspace binding never committed',
+              operationId,
+              stepIndex,
+            );
+          } else {
+            currentState.status = 'running';
+            currentState.interruption = undefined;
+            currentContext = {
+              payload: { parentMessageId: resumeParentMessageId },
+              phase: 'user_input',
+            } as AgentRuntimeContext;
+            log(
+              '[%s][%d] Resuming from async tool with %d messages (parent=%s)',
+              operationId,
+              stepIndex,
+              refreshed.length,
+              resumeParentMessageId,
+            );
+          }
         }
 
         // Finish a parked supervisor op WITHOUT another LLM turn (group
@@ -982,7 +1005,11 @@ export class AgentRuntimeService {
         // and let the standard `!shouldContinue` finalization below record
         // completion + dispatch hooks. Skips runtime.step entirely.
         let forcedFinishState: AgentState | undefined;
-        if (finishAfterAsyncTool && currentState.status === 'waiting_for_async_tool') {
+        if (
+          !forcedStepResult &&
+          finishAfterAsyncTool &&
+          currentState.status === 'waiting_for_async_tool'
+        ) {
           const refreshed = await this.refreshMessagesFromDB(currentState);
           currentState = structuredClone(currentState);
           currentState.messages = refreshed;
@@ -1018,9 +1045,25 @@ export class AgentRuntimeService {
 
         // Execute step (skipped when force-finishing a parked supervisor op).
         const startAt = Date.now();
-        const stepResult = forcedFinishState
-          ? { events: [], newState: forcedFinishState, nextContext: undefined }
-          : await runtime.step(currentState, currentContext);
+        let stepResult = forcedStepResult
+          ? forcedStepResult
+          : forcedFinishState
+            ? { events: [], newState: forcedFinishState, nextContext: undefined }
+            : await runtime.step(currentState, currentContext);
+
+        // An approved pending tool must be allowed to execute: it may establish
+        // the authoritative workspace and clear the debt. If it did not, stop
+        // before any returned nextContext can schedule another LLM step. Keep a
+        // marker only while another human/async result is still outstanding.
+        if (
+          hasPendingWorkspaceBindFailure(stepResult.newState) &&
+          !isParkedStatus(stepResult.newState.status)
+        ) {
+          stepResult = interruptForPendingWorkspaceBindFailure(
+            stepResult.newState,
+            stepResult.events,
+          );
+        }
 
         // Inner runtime.step() catches model-runtime exceptions and stuffs the
         // raw error into newState.error without re-throwing — so the outer
@@ -2455,6 +2498,7 @@ export class AgentRuntimeService {
       agentConfig: metadata?.agentConfig,
       botContext: metadata?.botContext,
       botPlatformContext: metadata?.botPlatformContext,
+      createTraceOptions,
       discordContext: metadata?.discordContext,
       userTimezone: metadata?.userTimezone,
       evalContext: metadata?.evalContext,
@@ -2464,6 +2508,7 @@ export class AgentRuntimeService {
       bindScratchAfterToolSuccess: this.delegate.bindScratchAfterToolSuccess,
       ensureScratchWorkspace: this.delegate.ensureScratchWorkspace,
       hookDispatcher,
+      initModelRuntime: initModelRuntimeFromDB,
       loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,
       onContextWindowObserved,

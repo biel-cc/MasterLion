@@ -28,22 +28,26 @@ import {
 import { parseExecutionContextValidation } from '../../packages/device-gateway-client/src/http';
 import { prepareToolCallExecution } from '../../packages/local-file-shell/src/file/executionBoundary';
 import type { UIChatMessage } from '../../packages/types/src/message/ui/chat';
-import { detectWorkspaceBindingIntent } from '../../src/features/ChatInput/ControlBar/workspaceBindingIntent';
+import {
+  confirmWorkspaceBindingIntent,
+  selectWorkspaceOnce,
+} from '../../src/features/ChatInput/ControlBar/workspaceBindingActions';
 import { parseStructuredPathConsentRequest } from '../../src/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/PathConsent';
 import {
   buildContextBudgetErrorViewModel,
   getContextBudgetFailureFromErrorBody,
 } from '../../src/features/Conversation/utils/contextBudgetView';
 import {
-  assertExecutionContextReady,
   buildExecutionAccessRoots,
   buildWorkspaceScopeKey,
   decideWorkspaceBind,
   normalizeWorkspaceIdentity,
   resolveExecutionContext,
+  routeHeterogeneousExecution,
   toToolCallExecutionContext,
 } from '../../src/helpers/executionContext';
 import { classifyTopicPlacement } from '../../src/helpers/topicPlacement';
+import { resolveHeteroResume } from '../../src/store/chat/slices/aiChat/actions/heteroResume';
 import { buildWorkspaceTopicNavigation } from '../../src/store/projectWorkspace/topicNavigation';
 import type {
   AcceptanceResultMap,
@@ -441,56 +445,120 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
   },
   'AC-W09': async () => {
     const agentDefaultBefore = '/agent/default';
-    const confirmedDirectory = workspace({ id: 'workspace-confirmed', rootPath: '/confirmed' });
-    const workspacePlus = workspace({ id: 'workspace-plus', rootPath: '/plus' });
-    const confirmedIntent = detectWorkspaceBindingIntent({
-      hasAttachments: false,
-      message: '接下来持续在 /confirmed 开发',
-    });
-    const explicitSelections = {
-      ...(confirmedIntent?.rootPath === confirmedDirectory.rootPath ? { confirmedDirectory } : {}),
-      workspacePlus,
+    const boundByTopic = new Map<string, WorkspaceRef>();
+    let nextWorkspace = 0;
+    const selectForTopic = async (topicId: string, selection: { path: string }) => {
+      const result = await selectWorkspaceOnce({
+        effective: {
+          context: resolveExecutionContext({ isDesktop: true, onlineDeviceIds: [DEVICE_ID] }),
+          draftKey: `accepted-ref:${topicId}`,
+          isDraft: false,
+          recommendation: { deviceId: DEVICE_ID },
+          state: 'unbound',
+          target: 'local',
+          targetDeviceId: DEVICE_ID,
+          topicId,
+        },
+        ports: {
+          bindTopicWorkspace: async ({ workspaceId }) => {
+            const selected = [...created.values()].find((item) => item.id === workspaceId)!;
+            boundByTopic.set(topicId, selected);
+            return { ok: true };
+          },
+          getOrCreateDeviceWorkspace: async ({ rootPath }) => {
+            const selected = workspace({ id: `workspace-w09-${++nextWorkspace}`, rootPath });
+            created.set(selected.id!, selected);
+            return { ok: true, value: selected };
+          },
+          rememberRecent: () => undefined,
+          setDraftWorkspaceIntent: () => undefined,
+        },
+        selection,
+      });
+      return result.ok;
     };
-    const createdTopicWorkspaceIds = Object.values(explicitSelections)
-      .filter((selected) => decideWorkspaceBind({}, selected).allowed)
-      .map((selected) => normalizeWorkspaceIdentity(selected).workspaceId!);
+    const created = new Map<string, WorkspaceRef>();
+    const runMessageSource = async (topicId: string, message: string, hasAttachments = false) => {
+      let confirmationOpened = false;
+      await confirmWorkspaceBindingIntent({
+        confirm: async ({ bind }) => {
+          confirmationOpened = true;
+          return bind();
+        },
+        desktop: true,
+        effective: { state: 'unbound' },
+        payload: { hasAttachments, message } as any,
+        select: (selection) => selectForTopic(topicId, selection),
+      });
+      return confirmationOpened && boundByTopic.has(topicId);
+    };
+
+    const attachment = await runMessageSource(
+      'topic-attachment',
+      '接下来持续在 /attachment 开发',
+      true,
+    );
+    const codeBlock = await runMessageSource('topic-code-block', '接下来持续在 `/code-block` 开发');
+    const quote = await runMessageSource('topic-quote', '> 接下来持续在 /quoted 开发');
+    const confirmedDirectory = await runMessageSource(
+      'topic-confirmed',
+      '接下来持续在 /confirmed 开发',
+    );
+    const workspacePlus = await selectForTopic('topic-plus', { path: '/plus' });
+    const createdTopicWorkspaceIds = [...boundByTopic.values()].map(
+      (selected) => normalizeWorkspaceIdentity(selected).workspaceId!,
+    );
+
     return {
       agentDefaultAfter: agentDefaultBefore,
       agentDefaultBefore,
       bindingBySource: {
-        attachment: Boolean(
-          detectWorkspaceBindingIntent({
-            hasAttachments: true,
-            message: '接下来持续在 /attachment 持续开发',
-          }),
-        ),
-        codeBlock: Boolean(
-          detectWorkspaceBindingIntent({
-            hasAttachments: false,
-            message: '接下来持续在 `/code-block` 开发',
-          }),
-        ),
-        confirmedDirectory: Boolean(confirmedIntent),
-        quote: Boolean(
-          detectWorkspaceBindingIntent({
-            hasAttachments: false,
-            message: '> 接下来持续在 /quoted 开发',
-          }),
-        ),
-        workspacePlus: Boolean(workspacePlus.id),
+        attachment,
+        codeBlock,
+        confirmedDirectory,
+        quote,
+        workspacePlus,
       },
       createdTopicWorkspaceIds,
     };
   },
   'AC-W10': async () => {
     const context = resolveExecutionContext({ isDesktop: true, onlineDeviceIds: [DEVICE_ID] });
-    const preBindCode = assertExecutionContextReady(context, { requireWorkspace: true })!.code;
     const persisted = workspace({ id: 'workspace-resume' });
+    const preBind = await routeHeterogeneousExecution({
+      context,
+      onBlocked: (error) => error.code,
+      onReady: () => 'READY',
+    });
+    const readyContext = resolveExecutionContext({
+      isDesktop: true,
+      isHetero: true,
+      onlineDeviceIds: [DEVICE_ID],
+      snapshot: snapshot({
+        workspaceId: persisted.id,
+        workspaceKind: persisted.kind,
+      }),
+      workspaces: { [persisted.id!]: persisted },
+    });
+    const resumed = await routeHeterogeneousExecution({
+      context: readyContext,
+      onBlocked: () => undefined,
+      onReady: ({ cwd, workspaceIdentity }) => ({
+        resume: resolveHeteroResume(
+          { heteroSessionId: 'session-accepted-ref', workingDirectory: persisted.rootPath },
+          cwd,
+        ),
+        workspaceIdentity,
+      }),
+    });
+    if (resumed.status !== 'ready' || !resumed.value.resume.resumeSessionId) {
+      throw new Error('AC-W10 production resume dispatcher did not run');
+    }
     return {
-      normalizedResumeIdentity: normalizeWorkspaceIdentity(persisted).key,
+      normalizedResumeIdentity: resumed.value.workspaceIdentity.key,
       persistedIdentity: normalizeWorkspaceIdentity({ ...persisted, rootPath: '/code/masterino/' })
         .key,
-      preBindCode,
+      preBindCode: preBind.value!,
     };
   },
   'AC-P01': async () => {
@@ -1117,10 +1185,7 @@ export const workspaceRuntimeProductionAcceptanceAdapter: ProductionAcceptanceAd
               client === 'new'
                 ? { executionContext: { cwd: workspaceRoot, workspaceRootPath: workspaceRoot } }
                 : {};
-            const serverRequest =
-              server === 'new'
-                ? clientRequest
-                : ({} as typeof clientRequest);
+            const serverRequest = server === 'new' ? clientRequest : ({} as typeof clientRequest);
             const deviceAuth =
               device === 'new'
                 ? {

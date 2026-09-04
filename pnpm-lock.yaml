@@ -2777,6 +2777,9 @@ importers:
 
   packages/local-file-shell:
     dependencies:
+      '@lobechat/const':
+        specifier: workspace:*
+        version: link:../const
       '@lobechat/file-loaders':
         specifier: workspace:*
         version: link:../file-loaders

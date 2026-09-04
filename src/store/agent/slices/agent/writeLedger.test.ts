@@ -58,7 +58,19 @@ class Store {
 
   succeed = (write: PendingOptimisticWrite): void => this.ledger.settleWrite(write);
 
-  abort = (write: PendingOptimisticWrite): void => this.ledger.abandonWrite(write);
+  abort = (write: PendingOptimisticWrite): void => {
+    this.agentMap = this.ledger.abandonWrite(this.agentMap, write);
+  };
+
+  respond = (
+    write: PendingOptimisticWrite,
+    data: PartialDeep<LobeAgentConfig>,
+    replacePaths?: string[],
+  ): void => {
+    const projected = this.ledger.projectServerResponse(this.agentMap, write, data, replacePaths);
+    if (projected) this.dispatch(projected);
+    this.succeed(write);
+  };
 
   agent = (id = 'a'): any => this.agentMap[id];
 }
@@ -186,13 +198,84 @@ describe('AgentWriteLedger', () => {
       expect(store.agent()).toEqual({ model: 'O' });
     });
 
-    it('keeps an aborted optimistic value until a superseding write settles it', () => {
+    it('removes an aborted optimistic value when no superseding write exists', () => {
       const store = new Store({ a: { model: 'O' } });
 
       const write = store.start({ data: { model: 'A' } });
       store.abort(write);
 
+      expect(store.agent()).toEqual({ model: 'O' });
+    });
+
+    it('unwinds both failures when the newer one fails before the older abort arrives', () => {
+      const store = new Store({ a: { model: 'O' } });
+
+      const older = store.start({ data: { model: 'A' } });
+      const newer = store.start({ data: { model: 'B' } });
+
+      store.fail(newer);
       expect(store.agent()).toEqual({ model: 'A' });
+
+      store.abort(older);
+      expect(store.agent()).toEqual({ model: 'O' });
+    });
+
+    it('does not let an older successful response overwrite a newer success', () => {
+      const store = new Store({ a: { model: 'O' } });
+
+      const older = store.start({ data: { model: 'A' } });
+      const newer = store.start({ data: { model: 'B' } });
+
+      store.respond(newer, { model: 'B', provider: 'newer-provider' });
+      store.respond(older, { model: 'A', provider: 'older-provider' });
+
+      expect(store.agent()).toEqual({ model: 'B', provider: 'newer-provider' });
+    });
+
+    it('does not let a newer response roll back an older pending write on another field', () => {
+      const store = new Store({ a: { model: 'O', title: 'O' } });
+
+      const modelWrite = store.start({ data: { model: 'A' } });
+      const titleWrite = store.start({ data: { title: 'B' } });
+
+      // The title mutation returns a full, stale row while the independent
+      // model mutation is still in flight. Only title belongs to this response.
+      store.respond(titleWrite, { model: 'O', title: 'B' });
+      expect(store.agent()).toEqual({ model: 'A', title: 'B' });
+
+      store.respond(modelWrite, { model: 'A', title: 'O' });
+      expect(store.agent()).toEqual({ model: 'A', title: 'B' });
+    });
+
+    it('protects a newer leaf success from an older subtree response', () => {
+      const store = new Store({ a: { agencyConfig: { env: { FOO: 'O' } } } as any });
+
+      const older = store.start({
+        data: { agencyConfig: { env: { FOO: 'A' } } } as any,
+        replacePaths: ['agencyConfig.env'],
+      });
+      const newer = store.start({
+        data: { agencyConfig: { env: { FOO: 'B' } } } as any,
+      });
+
+      store.respond(newer, { agencyConfig: { env: { FOO: 'B' } } } as any);
+      store.respond(older, { agencyConfig: { env: { FOO: 'A', STALE: 'yes' } } } as any, [
+        'agencyConfig.env',
+      ]);
+
+      expect(store.agent()).toEqual({ agencyConfig: { env: { FOO: 'B' } } });
+    });
+
+    it('protects a newer ABA success from an older response', () => {
+      const store = new Store({ a: { model: 'O' } });
+
+      const older = store.start({ data: { model: 'A' } });
+      const newer = store.start({ data: { model: 'O' } });
+
+      store.respond(newer, { model: 'O' });
+      store.respond(older, { model: 'A' });
+
+      expect(store.agent()).toEqual({ model: 'O' });
     });
   });
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
-import { build as viteBuild } from 'vite';
+import { build as viteBuild, loadConfigFromFile } from 'vite';
 
 const supportDirectory = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(supportDirectory, '..');
@@ -151,7 +151,9 @@ const loadProductionRendererPlugins = async () => {
  */
 const NODE_RUNTIME_PACKAGES = [
   { from: 'packages/database/package.json', name: '@electric-sql/pglite' },
+  { from: 'package.json', name: '@napi-rs/canvas' },
   { from: 'package.json', name: 'pg' },
+  { from: 'package.json', name: 'sharp' },
 ];
 
 /**
@@ -167,9 +169,16 @@ const NODE_RUNTIME_PACKAGES = [
  * — entry and subpaths — resolves at runtime from the single symlinked
  * physical installation.
  */
-const NODE_RUNTIME_EXTERNAL_PATTERNS = NODE_RUNTIME_PACKAGES.map(
-  ({ name }) => new RegExp(`^${name.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`)}(?:/.+)?$`),
-);
+const NODE_RUNTIME_EXTERNAL_PATTERNS = [
+  ...NODE_RUNTIME_PACKAGES.map(
+    ({ name }) =>
+      new RegExp(`^${name.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`)}(?:/.+)?$`),
+  ),
+  // @discordjs/ws imports this optional native compressor dynamically and
+  // already falls back when it is absent. Keep the unresolved optional edge
+  // out of the acceptance bundle just as a normal Node runtime would.
+  /^zlib-sync$/,
+];
 
 let primaryCheckout;
 
@@ -244,10 +253,11 @@ const nodeDirnameShimPlugin = () => ({
   name: 'masterino-e2e-node-dirname-shim',
   transform(code, id) {
     const file = id.split('?')[0];
-    // Repository sources only: dependencies keep whatever the bundler's own
-    // CommonJS interop already gave them.
+    // The enlarged production-service graph includes CommonJS dependencies
+    // whose transformed ESM still references a module-local `__dirname`.
+    // Inject it for every real bundled file; Rollup scopes/renames each
+    // declaration, preserving the dependency's own directory semantics.
     if (file.startsWith('\0') || !file.startsWith(repositoryRoot)) return null;
-    if (file.includes(`${path.sep}node_modules${path.sep}`)) return null;
     if (!/\b__(?:dirname|filename)\b/.test(code)) return null;
     if (/(?:const|let|var|function)\s+__(?:dirname|filename)\b/.test(code)) return null;
 
@@ -260,16 +270,33 @@ const nodeDirnameShimPlugin = () => ({
   },
 });
 
-/** Compile-time switches the packaged Electron renderer builds with. */
-const rendererDefine = (mode) => ({
-  '__CI__': 'false',
-  '__DEV__': mode === 'development' ? 'true' : 'false',
-  '__ELECTRON__': 'true',
-  '__MOBILE__': 'false',
-  '__TEST__': 'false',
-  'process.env': '{}',
-  'process.env.NODE_ENV': JSON.stringify(mode),
-});
+/**
+ * Load the desktop renderer's production compile-time contract instead of
+ * restating it in the harness. This keeps NEXT_PUBLIC_* projection and every
+ * future shared switch identical to the packaged application.
+ */
+const loadRendererDefine = async (mode) => {
+  // The real Electron config loads mode-specific .env files directly into
+  // process.env. Snapshot the whole environment so production-only keys cannot
+  // leak into the development define (or into the launched test application).
+  const previousEnvironment = { ...process.env };
+  process.env.NODE_ENV = mode;
+  try {
+    const loaded = await loadConfigFromFile(
+      { command: 'build', mode },
+      path.resolve(repositoryRoot, 'apps/desktop/electron.vite.config.ts'),
+      repositoryRoot,
+    );
+    const define = loaded?.config?.renderer?.define;
+    if (!define) throw new Error(`${mode} Electron renderer define was not resolved`);
+    return { ...define, 'process.env.NODE_ENV': JSON.stringify(mode) };
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in previousEnvironment)) delete process.env[key];
+    }
+    Object.assign(process.env, previousEnvironment);
+  }
+};
 
 const buildOnce = async () => {
   await mkdir(artifactDirectory, { recursive: true });
@@ -282,6 +309,10 @@ const buildOnce = async () => {
     'utf8',
   );
 
+  // Config loading temporarily scopes process.env, so keep the two modes
+  // sequential instead of racing those mutations.
+  const productionRendererDefine = await loadRendererDefine('production');
+  const developmentRendererDefine = await loadRendererDefine('development');
   const [pathGroups, productionPlugins] = await Promise.all([
     readTsconfigPathGroups(),
     loadProductionRendererPlugins(),
@@ -344,7 +375,7 @@ const buildOnce = async () => {
       __TEST__: 'false',
     },
     logLevel: 'warn',
-    plugins: [workspacePathsPlugin(pathGroups), nodeDirnameShimPlugin()],
+    plugins: [workspacePathsPlugin(pathGroups), viteMarkdownImport(), nodeDirnameShimPlugin()],
     resolve: { tsconfigPaths: true },
     ssr: {
       // Workspace packages publish TypeScript sources, so nothing may stay a
@@ -370,9 +401,7 @@ const buildOnce = async () => {
       sourcemap: false,
     },
     configFile: false,
-    define: {
-      'process.env.NODE_ENV': JSON.stringify('test'),
-    },
+    define: productionRendererDefine,
     logLevel: 'warn',
     plugins: [workspacePathsPlugin(pathGroups)],
     resolve: {
@@ -414,7 +443,7 @@ const buildOnce = async () => {
       sourcemap: false,
     },
     configFile: false,
-    define: rendererDefine('test'),
+    define: productionRendererDefine,
     logLevel: 'warn',
     plugins: [
       {
@@ -471,6 +500,10 @@ const buildOnce = async () => {
       // stores, actions, selectors, SWR hooks and services are all real.
       alias: [
         {
+          find: '@/libs/trpc/client/lambda',
+          replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeTrpcClient.ts'),
+        },
+        {
           find: '@/libs/trpc/client',
           replacement: path.resolve(electronRoot, 'production-app/workspaceRuntimeTrpcClient.ts'),
         },
@@ -496,7 +529,7 @@ const buildOnce = async () => {
       sourcemap: false,
     },
     configFile: false,
-    define: rendererDefine('development'),
+    define: developmentRendererDefine,
     logLevel: 'warn',
     plugins: rendererPlugins(),
     resolve: { dedupe: ['react', 'react-dom'], tsconfigPaths: true },

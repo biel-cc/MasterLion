@@ -9,6 +9,9 @@ const unwrap = async (channel, ...args) => {
   const error = new Error(response?.error?.message ?? `${channel} failed`);
   error.code = response?.error?.code;
   error.mainProcessStack = response?.error?.stack;
+  if (response?.error?.stack) {
+    error.stack = `${error.stack}\n--- Electron main process ---\n${response.error.stack}`;
+  }
   throw error;
 };
 

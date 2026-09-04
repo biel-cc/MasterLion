@@ -35,7 +35,10 @@ Workspace lifecycle rows (W04 and W07–W10), path consent (P08), and compatibil
 the Electron main process through the preload IPC bridge. They use the production workspace models,
 services, execution-context resolver and device execution boundary against an isolated PGlite
 database and a unique temporary filesystem. The harness reads rows and files back after each
-operation and records provider/device-port call counts.
+operation and records provider/device-port call counts. W10 invokes the production
+`AiAgentService.execAgent` entry for both the rejected unbound send and the bound resume; only its
+external device transport is injected, so message persistence, target capture, workspace gating,
+frozen context, JWT signing, session lookup, and dispatch argument construction remain real.
 
 ### Remaining test doubles
 
@@ -43,9 +46,10 @@ operation and records provider/device-port call counts.
    deterministic sidebar presentation rows without a server or account. It applies the same
    `agentId` / `excludeTriggers` / `excludeStatuses` / `pageSize` filtering the real routers apply
    and records every call, so the spec fails if the production params stop arriving.
-2. **External runtime ports** — the model-provider HTTP request and remote-device directory probe
-   are deterministic and counted. The device port resolves against the real temporary filesystem;
-   database models, workspace services, execution boundaries and IPC are not replaced.
+2. **External runtime ports** — the model-provider HTTP request, heterogeneous device dispatch,
+   and remote-device directory probe are deterministic and counted. The directory port resolves
+   against the real temporary filesystem; database models, workspace services, execution
+   boundaries, agent dispatch logic and IPC are not replaced.
 3. **Shell-only UI substitutions** (`workspace-runtime-product-boundaries` plugin) — the Topic and
    TopicItem overflow menus (`useDropdownMenu`, `Actions`, `Editing`), the sidebar `Filter` and
    `ToggleGroups` affordances, `AllTopicsDrawer` and `ThreadList`. These are presentation surfaces

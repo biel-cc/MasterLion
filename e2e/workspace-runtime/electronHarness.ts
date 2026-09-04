@@ -50,21 +50,37 @@ const MISSING_BRIDGE = 'The Workspace Runtime preload bridge is not exposed';
 export const launchElectronWorkspaceRuntimeSession =
   async (): Promise<ElectronWorkspaceRuntimeSession> => {
     const stateRoot = await mkdtemp(path.join(tmpdir(), 'masterino-workspace-runtime-e2e-'));
-    const { launchElectronTestApp } = await import('../electron/support/electronTestApp.mjs');
-    const electronApp = await launchElectronTestApp({
-      env: { MASTERINO_ELECTRON_E2E_STATE_ROOT: stateRoot },
-    });
-    const page = await electronApp.firstWindow();
-    await page.waitForSelector('[data-testid="electron-runtime"]');
-    await page.waitForFunction(
-      () =>
-        Boolean(
-          (window as unknown as WorkspaceRuntimeBridgeWindow).masterinoElectronE2E
-            ?.workspaceRuntime,
-        ),
-      undefined,
-      { timeout: 30_000 },
-    );
+    let electronApp: Awaited<
+      ReturnType<
+        (typeof import('../electron/support/electronTestApp.mjs'))['launchElectronTestApp']
+      >
+    >;
+    let page: Page;
+    try {
+      const { launchElectronTestApp } = await import('../electron/support/electronTestApp.mjs');
+      electronApp = await launchElectronTestApp({
+        env: { MASTERINO_ELECTRON_E2E_STATE_ROOT: stateRoot, TEST_SERVER_DB: '0' },
+      });
+      page = await electronApp.firstWindow();
+      await page.waitForSelector('[data-testid="electron-runtime"]');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as unknown as WorkspaceRuntimeBridgeWindow).masterinoElectronE2E
+              ?.workspaceRuntime,
+          ),
+        undefined,
+        { timeout: 30_000 },
+      );
+    } catch (error) {
+      await electronApp?.close().catch(() => undefined);
+      try {
+        await rm(stateRoot, { force: true, recursive: true });
+      } catch {
+        // Preserve the launch failure: it is the actionable root cause.
+      }
+      throw error;
+    }
 
     // Ask the main process to close the isolated database and delete the
     // temporary tree it created, then drop the state root itself. A window
@@ -73,22 +89,32 @@ export const launchElectronWorkspaceRuntimeSession =
     // teardown must not restate the failure that already failed the test.
     let closePromise: Promise<void> | undefined;
     const close = async () => {
-      let disposeError: unknown;
-      if (!page.isClosed()) {
-        try {
+      let firstError: unknown;
+      try {
+        if (!page.isClosed()) {
           await page.evaluate(async (missing) => {
             const bridge = (window as unknown as WorkspaceRuntimeBridgeWindow).masterinoElectronE2E
               ?.workspaceRuntime;
             if (!bridge) throw new Error(missing);
             await bridge.dispose();
           }, MISSING_BRIDGE);
+        }
+      } catch (error) {
+        firstError = error;
+      } finally {
+        try {
+          await electronApp.close();
         } catch (error) {
-          disposeError = error;
+          firstError ??= error;
+        } finally {
+          try {
+            await rm(stateRoot, { force: true, recursive: true });
+          } catch (error) {
+            firstError ??= error;
+          }
         }
       }
-      await electronApp.close();
-      await rm(stateRoot, { force: true, recursive: true });
-      if (disposeError) throw disposeError;
+      if (firstError) throw firstError;
     };
 
     return {

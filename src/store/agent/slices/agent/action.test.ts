@@ -356,11 +356,7 @@ describe('AgentSlice Actions', () => {
         await result.current.updateAgentConfig({ model: 'gpt-4' });
       });
 
-      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
-        'agent-1',
-        { model: 'gpt-4' },
-        expect.any(AbortSignal),
-      );
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith('agent-1', { model: 'gpt-4' });
     });
   });
 
@@ -393,11 +389,7 @@ describe('AgentSlice Actions', () => {
         await result.current.updateAgentMeta({ title: 'New Title' });
       });
 
-      expect(agentService.updateAgentMeta).toHaveBeenCalledWith(
-        'agent-1',
-        { title: 'New Title' },
-        expect.any(AbortSignal),
-      );
+      expect(agentService.updateAgentMeta).toHaveBeenCalledWith('agent-1', { title: 'New Title' });
     });
 
     it('should preserve explicit null when clearing avatar', async () => {
@@ -416,11 +408,7 @@ describe('AgentSlice Actions', () => {
         await result.current.updateAgentMeta({ avatar: null });
       });
 
-      expect(agentService.updateAgentMeta).toHaveBeenCalledWith(
-        'agent-1',
-        { avatar: null },
-        expect.any(AbortSignal),
-      );
+      expect(agentService.updateAgentMeta).toHaveBeenCalledWith('agent-1', { avatar: null });
     });
   });
 
@@ -453,11 +441,9 @@ describe('AgentSlice Actions', () => {
         await result.current.updateAgentChatConfig({ historyCount: 10 });
       });
 
-      expect(agentService.updateAgentConfig).toHaveBeenCalledWith(
-        'agent-1',
-        { chatConfig: { historyCount: 10 } },
-        expect.any(AbortSignal),
-      );
+      expect(agentService.updateAgentConfig).toHaveBeenCalledWith('agent-1', {
+        chatConfig: { historyCount: 10 },
+      });
     });
   });
 
@@ -486,6 +472,113 @@ describe('AgentSlice Actions', () => {
         model: 'gpt-4',
         provider: 'openai',
       });
+    });
+
+    it('does not let an older successful response overwrite a newer success', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      let resolveOlder!: (value: any) => void;
+      let resolveNewer!: (value: any) => void;
+      const olderResponse = new Promise((resolve) => {
+        resolveOlder = resolve;
+      });
+      const newerResponse = new Promise((resolve) => {
+        resolveNewer = resolve;
+      });
+
+      vi.mocked(agentService.updateAgentConfig)
+        .mockReturnValueOnce(olderResponse as any)
+        .mockReturnValueOnce(newerResponse as any);
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'original' } },
+        });
+      });
+
+      let olderSave!: Promise<void>;
+      let newerSave!: Promise<void>;
+      act(() => {
+        olderSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'older' });
+        newerSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'newer' });
+      });
+
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        resolveOlder({
+          agent: { model: 'older', provider: 'older-provider' },
+          success: true,
+        });
+        await olderSave;
+      });
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        resolveNewer({
+          agent: { model: 'newer', provider: 'newer-provider' },
+          success: true,
+        });
+        await newerSave;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({
+        model: 'newer',
+        provider: 'newer-provider',
+      });
+    });
+
+    it('serializes persistence per agent so the latest intent is also the database winner', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      let resolveOlder!: (value: any) => void;
+      let resolveNewer!: (value: any) => void;
+      const olderResponse = new Promise((resolve) => {
+        resolveOlder = resolve;
+      });
+      const newerResponse = new Promise((resolve) => {
+        resolveNewer = resolve;
+      });
+
+      vi.mocked(agentService.updateAgentConfig)
+        .mockReturnValueOnce(olderResponse as any)
+        .mockReturnValueOnce(newerResponse as any);
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'original', title: 'original' } },
+        });
+      });
+
+      let olderSave!: Promise<void>;
+      let newerSave!: Promise<void>;
+      act(() => {
+        olderSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'older' });
+        newerSave = result.current.optimisticUpdateAgentConfig('agent-1', { title: 'newer' });
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'older', title: 'newer' });
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        resolveOlder({
+          agent: { model: 'older', title: 'original' },
+          success: true,
+        });
+        await olderSave;
+      });
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(2));
+
+      await act(async () => {
+        resolveNewer({
+          agent: { model: 'older', title: 'newer' },
+          success: true,
+        });
+        await newerSave;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'older', title: 'newer' });
+      expect(vi.mocked(agentService.updateAgentConfig).mock.calls).toEqual([
+        ['agent-1', { model: 'older' }],
+        ['agent-1', { title: 'newer' }],
+      ]);
     });
 
     // Note: refreshSessions is no longer called after optimistic update
@@ -1054,7 +1147,7 @@ describe('AgentSlice Actions', () => {
       consoleError.mockRestore();
     });
 
-    it('keeps the newer optimistic write when an in-flight request is aborted', async () => {
+    it('rolls an aborted optimistic write back when no replacement exists', async () => {
       const { result } = renderHook(() => useAgentStore());
       const aborted = Object.assign(new Error('aborted'), { name: 'AbortError' });
 
@@ -1075,7 +1168,54 @@ describe('AgentSlice Actions', () => {
         ).rejects.toBe(aborted);
       });
 
-      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4' });
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-3.5-turbo' });
+    });
+
+    it('continues the serial queue after an older abort and unwinds a newer failure', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const aborted = Object.assign(new Error('aborted'), { name: 'AbortError' });
+      let rejectOlder!: (reason: unknown) => void;
+      let rejectNewer!: (reason: unknown) => void;
+      const olderResponse = new Promise((_resolve, reject) => {
+        rejectOlder = reject;
+      });
+      const newerResponse = new Promise((_resolve, reject) => {
+        rejectNewer = reject;
+      });
+
+      vi.mocked(agentService.updateAgentConfig)
+        .mockReturnValueOnce(olderResponse as any)
+        .mockReturnValueOnce(newerResponse as any);
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'original' } },
+        });
+      });
+
+      let olderSave!: Promise<void>;
+      let newerSave!: Promise<void>;
+      act(() => {
+        olderSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'older' });
+        newerSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'newer' });
+      });
+
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        rejectOlder(aborted);
+        await olderSave;
+      });
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'newer' });
+
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        rejectNewer(new Error('newer failed'));
+        await newerSave;
+      });
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'original' });
+      consoleError.mockRestore();
     });
   });
 
@@ -1138,6 +1278,117 @@ describe('AgentSlice Actions', () => {
         title: 'New Title',
       });
       expect(result.current.availableAgents).toBeUndefined();
+    });
+
+    it('shares the per-agent persistence queue with config writes', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      let resolveConfig!: (value: any) => void;
+      let resolveMeta!: (value: any) => void;
+      vi.mocked(agentService.updateAgentConfig).mockReturnValue(
+        new Promise((resolve) => {
+          resolveConfig = resolve;
+        }) as any,
+      );
+      vi.mocked(agentService.updateAgentMeta).mockReturnValue(
+        new Promise((resolve) => {
+          resolveMeta = resolve;
+        }) as any,
+      );
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'original', title: 'Original Title' } },
+        });
+      });
+
+      let configSave!: Promise<void>;
+      let metaSave!: Promise<void>;
+      act(() => {
+        configSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'updated' });
+        metaSave = result.current.optimisticUpdateAgentMeta('agent-1', { title: 'Updated Title' });
+      });
+
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1));
+      expect(agentService.updateAgentMeta).not.toHaveBeenCalled();
+      expect(result.current.agentMap['agent-1']).toMatchObject({
+        model: 'updated',
+        title: 'Updated Title',
+      });
+
+      await act(async () => {
+        resolveConfig({
+          agent: { model: 'updated', title: 'Original Title' },
+          success: true,
+        });
+        await configSave;
+      });
+      await vi.waitFor(() => expect(agentService.updateAgentMeta).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        resolveMeta({
+          agent: { model: 'updated', title: 'Updated Title' },
+          success: true,
+        });
+        await metaSave;
+      });
+
+      expect(result.current.agentMap['agent-1']).toMatchObject({
+        model: 'updated',
+        title: 'Updated Title',
+      });
+    });
+
+    it('does not let a full meta response overwrite a pending config field', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      let resolveMeta!: (value: any) => void;
+      let resolveConfig!: (value: any) => void;
+      vi.mocked(agentService.updateAgentMeta).mockReturnValue(
+        new Promise((resolve) => {
+          resolveMeta = resolve;
+        }) as any,
+      );
+      vi.mocked(agentService.updateAgentConfig).mockReturnValue(
+        new Promise((resolve) => {
+          resolveConfig = resolve;
+        }) as any,
+      );
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'original', title: 'Original Title' } },
+        });
+      });
+
+      let metaSave!: Promise<void>;
+      let configSave!: Promise<void>;
+      act(() => {
+        metaSave = result.current.optimisticUpdateAgentMeta('agent-1', {
+          title: 'Updated Title',
+        });
+        configSave = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'updated' });
+      });
+
+      await vi.waitFor(() => expect(agentService.updateAgentMeta).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        resolveMeta({
+          agent: { model: 'original', title: 'Updated Title' },
+          success: true,
+        });
+        await metaSave;
+      });
+      expect(result.current.agentMap['agent-1']).toMatchObject({
+        model: 'updated',
+        title: 'Updated Title',
+      });
+
+      await vi.waitFor(() => expect(agentService.updateAgentConfig).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        resolveConfig({
+          agent: { model: 'updated', title: 'Updated Title' },
+          success: true,
+        });
+        await configSave;
+      });
     });
 
     // Note: refreshSessions is no longer called after optimistic update

@@ -58,11 +58,13 @@ vi.mock('@/database/models/plugin', () => ({
 
 // Mock ModelRuntime to avoid server-side env access
 vi.mock('@/server/modules/ModelRuntime', () => ({
-  initializeRuntimeOptions: vi.fn(),
   ApiKeyManager: vi.fn().mockImplementation(() => ({
     getApiKey: vi.fn(),
     getAllApiKeys: vi.fn(),
   })),
+  createTraceOptions: vi.fn(() => ({ callback: {}, headers: new Headers() })),
+  initializeRuntimeOptions: vi.fn(),
+  initModelRuntimeFromDB: vi.fn(),
 }));
 
 // Mock search service to avoid server-side env access
@@ -741,6 +743,63 @@ describe('AgentRuntimeService', () => {
           phase: 'user_input',
         }),
       );
+    });
+
+    it('interrupts a parked mixed batch with bind debt before resuming the LLM', async () => {
+      const pendingTools = [
+        {
+          apiName: 'pickFile',
+          arguments: '{}',
+          id: 'tool-call-client',
+          identifier: 'client-extension',
+          type: 'default',
+        },
+      ];
+      const parkedState = {
+        ...mockState,
+        interruption: {
+          canResume: true,
+          interruptedAt: new Date().toISOString(),
+          reason: 'client_tool_execution',
+        },
+        metadata: { _pendingWorkspaceBindFailure: true },
+        pendingToolsCalling: pendingTools,
+        status: 'waiting_for_async_tool',
+      };
+      const refreshedMessages = [
+        { content: 'use tools', id: 'user-msg-1', role: 'user' },
+        {
+          content: 'picked',
+          id: 'tool-msg-client',
+          role: 'tool',
+          tool_call_id: 'tool-call-client',
+        },
+      ];
+      const mockRuntime = { step: vi.fn() };
+
+      mockCoordinator.loadAgentState.mockResolvedValue(parkedState);
+      vi.spyOn(service as any, 'refreshMessagesFromDB').mockResolvedValue(refreshedMessages);
+      vi.spyOn(service as any, 'createAgentRuntime').mockReturnValue({ runtime: mockRuntime });
+
+      const result = await service.executeStep({ ...mockParams, resumeAsyncTool: true });
+
+      expect(mockRuntime.step).not.toHaveBeenCalled();
+      expect(result.state).toMatchObject({
+        interruption: { canResume: true, reason: 'WORKSPACE_BIND_FAILED' },
+        messages: refreshedMessages,
+        pendingToolsCalling: [],
+        status: 'interrupted',
+      });
+      expect(result.state.metadata).not.toHaveProperty('_pendingWorkspaceBindFailure');
+      expect(result.nextStepScheduled).toBe(false);
+      expect(mockQueueService.scheduleMessage).not.toHaveBeenCalled();
+      expect(mockCoordinator.saveStepResult).toHaveBeenCalledWith(
+        'test-operation-1',
+        expect.objectContaining({
+          newState: expect.objectContaining({ status: 'interrupted' }),
+        }),
+      );
+      expect(result.stepResult.nextContext).toBeUndefined();
     });
 
     it('should handle missing agent state', async () => {

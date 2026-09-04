@@ -4,12 +4,14 @@ import { consumeStreamUntilDone } from '@lobechat/model-runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as ContextEngineering from '@/server/modules/Mecha/ContextEngineering';
-import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { FileService } from '@/server/services/file';
 
 import { ModelEmptyError } from '../ModelEmptyError';
 import {
   collectProviderMediaTokenEstimates,
   createRuntimeExecutors,
+  hasPendingWorkspaceBindFailure,
   resolveCompressionSummaryBudgetTokens,
   type RuntimeExecutorContext,
 } from '../RuntimeExecutors';
@@ -185,6 +187,8 @@ describe('RuntimeExecutors', () => {
     };
 
     ctx = {
+      createTraceOptions,
+      initModelRuntime: initModelRuntimeFromDB,
       loadAgentState: vi.fn().mockResolvedValue(null),
       messageModel: mockMessageModel,
       operationId: 'op-123',
@@ -381,6 +385,7 @@ describe('RuntimeExecutors', () => {
           parentId: 'parent-msg-123',
         }),
       );
+      expect(FileService).not.toHaveBeenCalled();
     });
 
     it('does not send an LLM request when projected input exceeds the remaining token budget', async () => {
@@ -4533,6 +4538,66 @@ describe('RuntimeExecutors', () => {
       expect(exposed).not.toContain(bindError.message);
       expect(exposed).not.toContain('/tmp/masterino/topic-123');
 
+      consoleError.mockRestore();
+    });
+
+    it('persists a bind-failure debt while a mixed batch waits for its client tool', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const bindError = new Error('Failed query: update workspace binding');
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createScratchBatchState();
+      state.toolSourceMap = { 'client-extension': 'client' };
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'listFiles',
+                arguments: '{}',
+                id: 'tool-call-server',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+              {
+                apiName: 'pickFile',
+                arguments: '{}',
+                id: 'tool-call-client',
+                identifier: 'client-extension',
+                type: 'default' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tool_call_id: 'tool-call-server' }),
+      );
+      expect(result.newState.status).toBe('waiting_for_async_tool');
+      expect(result.newState.pendingToolsCalling).toEqual([
+        expect.objectContaining({ id: 'tool-call-client' }),
+      ]);
+      expect(result.newState.interruption).toMatchObject({ reason: 'client_tool_execution' });
+      expect(hasPendingWorkspaceBindFailure(result.newState)).toBe(true);
+      expect(result.nextContext).toBeUndefined();
+
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
       consoleError.mockRestore();
     });
 

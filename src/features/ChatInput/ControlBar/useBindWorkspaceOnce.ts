@@ -5,10 +5,9 @@ import { useChatStore } from '@/store/chat';
 import { useDeviceStore } from '@/store/device';
 import { type ProjectWorkspaceErrorCode, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
-export interface WorkspaceSelection {
-  path: string;
-  repoType?: 'git' | 'github';
-}
+import { selectWorkspaceOnce, type WorkspaceSelection } from './workspaceBindingActions';
+
+export type { WorkspaceSelection } from './workspaceBindingActions';
 
 export interface BindWorkspaceError {
   code: ProjectWorkspaceErrorCode;
@@ -71,51 +70,30 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
       setPending(true);
       setError(undefined);
       try {
-        const created = await getOrCreateDeviceWorkspace({
-          deviceId,
-          repoType: selection.repoType ?? null,
-          rootPath: selection.path,
+        const result = await selectWorkspaceOnce({
+          effective,
+          ports: {
+            bindTopicWorkspace,
+            getOrCreateDeviceWorkspace,
+            rememberRecent,
+            setDraftWorkspaceIntent,
+          },
+          selection,
         });
-        if (!created.ok) {
-          setError({ code: created.code, message: created.message });
+        if (!result.ok) {
+          if (result.code) setError({ code: result.code, message: result.message });
           return false;
         }
-
-        if (effective.isDraft || !effective.topicId) {
-          setDraftWorkspaceIntent(effective.draftKey, {
-            target: bindTarget,
-            targetDeviceId: deviceId,
-            workspaceId: created.value.id,
-          });
-        } else {
-          const bound = await bindTopicWorkspace({
-            target: bindTarget,
-            topicId: effective.topicId,
-            workspaceId: created.value.id,
-          });
-          if (!bound.ok) {
-            setError({ code: bound.code, message: bound.message });
-            return false;
-          }
-        }
-
-        rememberRecent({
-          path: created.value.rootPath,
-          repoType: created.value.repoType ?? selection.repoType,
-        });
         return true;
       } finally {
         setPending(false);
       }
     },
     [
-      bindTarget,
       bindTopicWorkspace,
       canSelect,
       deviceId,
-      effective.draftKey,
-      effective.isDraft,
-      effective.topicId,
+      effective,
       getOrCreateDeviceWorkspace,
       rememberRecent,
       setDraftWorkspaceIntent,

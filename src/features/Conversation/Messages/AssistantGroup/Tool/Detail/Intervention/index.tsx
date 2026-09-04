@@ -105,6 +105,7 @@ const Intervention = memo<InterventionProps>(
     const parsedArgs = useMemo(() => safeParseJSON(requestArgs || '') ?? {}, [requestArgs]);
 
     const isCustomInteraction = isCustomInteractionIdentifier(identifier, apiName);
+    const showFullShellArguments = identifier === 'lobe-local-system' && apiName === 'runCommand';
 
     const toolMessage = useConversationStore(dataSelectors.getDbMessageById(id));
     const topicId = toolMessage?.topicId;
@@ -300,6 +301,11 @@ const Intervention = memo<InterventionProps>(
       return (
         <Flexbox gap={12}>
           <SecurityBlacklistWarning args={parsedArgs} />
+          {showFullShellArguments && (
+            <div data-testid="workspace-shell-full-arguments">
+              <Arguments arguments={requestArgs} />
+            </div>
+          )}
           <BuiltinToolInterventionRender
             apiName={apiName}
             args={parsedArgs}
@@ -325,6 +331,11 @@ const Intervention = memo<InterventionProps>(
     return (
       <Flexbox gap={12}>
         <SecurityBlacklistWarning args={parsedArgs} />
+        {showFullShellArguments && (
+          <div data-testid="workspace-shell-full-arguments">
+            <Arguments arguments={requestArgs} />
+          </div>
+        )}
         <Fallback
           actionsPortalTarget={actionsPortalTarget}
           apiName={apiName}

@@ -9,11 +9,9 @@ import { MemoryRouter } from 'react-router-dom';
 
 import WorkspaceChip from '@/features/ChatInput/ControlBar/WorkspaceChip';
 import { useBindWorkspaceOnce } from '@/features/ChatInput/ControlBar/useBindWorkspaceOnce';
+import { ConversationProvider } from '@/features/Conversation/ConversationProvider';
 import ContextBudgetErrorCard from '@/features/Conversation/Error/ContextBudgetError/ContextBudgetErrorCard';
-import Arguments from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Arguments';
-import PathConsent, {
-  parseStructuredPathConsentRequest,
-} from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention/PathConsent';
+import Intervention from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention';
 import CompressionProgress from '@/features/Conversation/Messages/CompressedGroup/CompressionProgress';
 import {
   buildContextBudgetErrorViewModel,
@@ -219,19 +217,46 @@ const BindOnceSection = () => {
  */
 const PathConsentSection = () => {
   const { failure, row } = useAcceptanceRow('AC-P08');
-  const request = row ? parseStructuredPathConsentRequest(row.consentRequest) : undefined;
+  const shellMessage = row?.consentToolMessages.find(
+    (message) => message.tool_call_id === 'tool-call-p08-shell',
+  );
+  const readMessage = row?.consentToolMessages.find(
+    (message) => message.tool_call_id === 'tool-call-p08-read',
+  );
+
+  const renderIntervention = (message: NonNullable<typeof shellMessage>) => {
+    if (!message.plugin || !message.tool_call_id) return null;
+    return (
+      <Intervention
+        apiName={message.plugin.apiName}
+        id={message.id}
+        identifier={message.plugin.identifier}
+        requestArgs={message.plugin.arguments}
+        toolCallId={message.tool_call_id}
+      />
+    );
+  };
 
   return (
     <section
       data-testid="workspace-path-consent-surface"
-      data-state={row ? (request ? 'ready' : 'rejected-request') : (failure ?? 'loading')}
+      data-state={
+        row ? (shellMessage && readMessage ? 'ready' : 'rejected-request') : (failure ?? 'loading')
+      }
     >
-      {row && (
-        <div data-testid="out-of-scope-shell-confirmation">
-          <Arguments arguments={row.displayedArguments} />
-        </div>
+      {row && shellMessage && readMessage && (
+        <ConversationProvider
+          hasInitMessages
+          skipFetch
+          context={{ agentId: 'agent-p08', threadId: null, topicId: 'topic-p08-consent' }}
+          messages={row.consentToolMessages}
+        >
+          <div data-testid="out-of-scope-shell-confirmation">
+            {renderIntervention(shellMessage)}
+          </div>
+          <div data-testid="out-of-scope-read-confirmation">{renderIntervention(readMessage)}</div>
+        </ConversationProvider>
       )}
-      {request && <PathConsent messageId="workspace-runtime-consent-message" request={request} />}
       {failure && <p role="alert">{failure}</p>}
     </section>
   );

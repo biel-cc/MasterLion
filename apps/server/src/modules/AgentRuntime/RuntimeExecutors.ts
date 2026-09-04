@@ -104,7 +104,6 @@ import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { type ExecutionPlan, isDeviceCapablePlan } from '@/helpers/executionTarget';
 import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering';
 import { type EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
-import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import type { HookDispatcher } from '@/server/services/agentRuntime/hooks/HookDispatcher';
 import type {
@@ -364,10 +363,11 @@ const archiveRuntimeToolResult = async (
 const buildPostProcessUrl = (
   ctx: Pick<RuntimeExecutorContext, 'serverDB' | 'userId' | 'workspaceId'>,
 ) => {
-  if (!ctx.userId || !ctx.serverDB) return undefined;
+  const userId = ctx.userId;
+  if (!userId || !ctx.serverDB) return undefined;
   let fileService: FileService | undefined;
   try {
-    fileService = new FileService(ctx.serverDB, ctx.userId, ctx.workspaceId);
+    fileService = new FileService(ctx.serverDB, userId, ctx.workspaceId);
   } catch {
     return undefined;
   }
@@ -396,17 +396,11 @@ const buildProviderImageDataUrlResolver = (
   ctx: Pick<RuntimeExecutorContext, 'serverDB' | 'userId' | 'workspaceId'>,
   workspaceId?: string,
 ) => {
-  if (!ctx.userId || !ctx.serverDB) return undefined;
+  const userId = ctx.userId;
+  if (!userId || !ctx.serverDB) return undefined;
 
-  let fileModel: FileModel;
-  let fileService: FileService;
-  try {
-    fileModel = new FileModel(ctx.serverDB, ctx.userId, workspaceId ?? ctx.workspaceId);
-    fileService = new FileService(ctx.serverDB, ctx.userId, workspaceId ?? ctx.workspaceId);
-  } catch {
-    return undefined;
-  }
-
+  let fileModel: FileModel | undefined;
+  let fileService: FileService | undefined;
   const cache = new Map<string, Promise<string | undefined>>();
 
   return (fileId: string) => {
@@ -414,6 +408,8 @@ const buildProviderImageDataUrlResolver = (
       cache.set(
         fileId,
         (async () => {
+          fileModel ??= new FileModel(ctx.serverDB, userId, workspaceId ?? ctx.workspaceId);
+          fileService ??= new FileService(ctx.serverDB, userId, workspaceId ?? ctx.workspaceId);
           const file = await fileModel.findById(fileId);
           if (!file?.url || !file.fileType?.startsWith('image')) return undefined;
 
@@ -980,6 +976,9 @@ const buildToolDiscoveryConfig = (operationToolSet: OperationToolSet, enabledToo
   return { availableTools };
 };
 
+type InitModelRuntime = (typeof import('@/server/modules/ModelRuntime'))['initModelRuntimeFromDB'];
+type CreateTraceOptions = (typeof import('@/server/modules/ModelRuntime'))['createTraceOptions'];
+
 export interface RuntimeExecutorContext {
   agentConfig?: any;
   bindScratchAfterToolSuccess?: (params: {
@@ -991,6 +990,8 @@ export interface RuntimeExecutorContext {
   }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
   botContext?: unknown;
   botPlatformContext?: BotPlatformContext;
+  /** External trace-export boundary, wired by AgentRuntimeService in production. */
+  createTraceOptions?: CreateTraceOptions;
   discordContext?: any;
   ensureScratchWorkspace?: (params: {
     deviceId: string;
@@ -1016,6 +1017,8 @@ export interface RuntimeExecutorContext {
    */
   execVirtualSubAgent?: (params: ExecVirtualSubAgentParams) => Promise<unknown>;
   hookDispatcher?: HookDispatcher;
+  /** External model-provider boundary, wired by AgentRuntimeService in production. */
+  initModelRuntime?: InitModelRuntime;
   loadAgentState?: (operationId: string) => Promise<AgentState | null>;
   messageModel: MessageModel;
   onContextWindowObserved?: (input: ContextWindowRejectionObservation) => Promise<void> | void;
@@ -1048,6 +1051,11 @@ export interface RuntimeExecutorContext {
    */
   workspaceId?: string;
 }
+
+const requireRuntimeBoundary = <T>(boundary: T | undefined, name: string): T => {
+  if (boundary) return boundary;
+  throw new Error(`Runtime executor boundary "${name}" is not configured`);
+};
 
 const getFrozenExecutionContext = (state: AgentState): ExecutionContext | undefined =>
   state.metadata?.executionContext as ExecutionContext | undefined;
@@ -1164,7 +1172,28 @@ const bindPreparedScratchContext = async (
  * stays in the server log; persisted state and client events carry only this
  * code, never a driver message, stack, or filesystem path.
  */
-const WORKSPACE_BIND_FAILED = 'WORKSPACE_BIND_FAILED';
+export const WORKSPACE_BIND_FAILED = 'WORKSPACE_BIND_FAILED';
+
+/**
+ * A batch may have to park for a client/deferred/human tool after a server tool
+ * has already succeeded but its scratch workspace failed to bind. Keep that
+ * debt separate from the ordinary parking interruption: the pending tool still
+ * owns its result, but no later LLM turn may start until the bind failure has
+ * been surfaced. The value is deliberately just a boolean — no driver error or
+ * filesystem detail crosses the persistence boundary.
+ */
+const PENDING_WORKSPACE_BIND_FAILURE_KEY = '_pendingWorkspaceBindFailure';
+
+export const hasPendingWorkspaceBindFailure = (state: AgentState): boolean =>
+  state.metadata?.[PENDING_WORKSPACE_BIND_FAILURE_KEY] === true;
+
+const clearPendingWorkspaceBindFailure = (state: AgentState): void => {
+  if (!state.metadata || !(PENDING_WORKSPACE_BIND_FAILURE_KEY in state.metadata)) return;
+
+  const metadata = { ...state.metadata };
+  delete metadata[PENDING_WORKSPACE_BIND_FAILURE_KEY];
+  state.metadata = metadata;
+};
 
 /**
  * Outcome of the post-success workspace coordination shared by `call_tool` and
@@ -1173,6 +1202,8 @@ const WORKSPACE_BIND_FAILED = 'WORKSPACE_BIND_FAILED';
  * always safe to freeze onto the next state.
  */
 interface ScratchBindSettlement {
+  /** A proposed scratch root was committed as the authoritative workspace. */
+  committed?: boolean;
   /** Context the next step may run in: a committed bind, or the last persisted one. */
   executionContext?: ExecutionContext;
   /** A bind was owed but never committed; the step must interrupt rather than continue. */
@@ -1194,7 +1225,10 @@ const settleScratchBindAfterToolSuccess = async (params: {
   if (!prepared.scratchRoot) return { executionContext: prepared.executionContext };
 
   try {
-    return { executionContext: await bindPreparedScratchContext(ctx, state, prepared) };
+    return {
+      committed: true,
+      executionContext: await bindPreparedScratchContext(ctx, state, prepared),
+    };
   } catch (error) {
     // The tool succeeded before this bind ran, so its result stands whatever
     // happened here. What must NOT stand is `prepared.executionContext`: its
@@ -1212,12 +1246,24 @@ const settleScratchBindAfterToolSuccess = async (params: {
 
 /** Freeze the settled execution context onto the next state. */
 const applyScratchBindSettlement = (state: AgentState, settlement: ScratchBindSettlement) => {
-  if (!settlement.executionContext) return;
-  state.metadata = {
-    ...state.metadata,
-    executionContext: settlement.executionContext,
-    executionPlan: settlement.executionContext.plan,
-  };
+  if (settlement.executionContext) {
+    state.metadata = {
+      ...state.metadata,
+      executionContext: settlement.executionContext,
+      executionPlan: settlement.executionContext.plan,
+    };
+  }
+
+  if (settlement.failed) {
+    state.metadata = {
+      ...state.metadata,
+      [PENDING_WORKSPACE_BIND_FAILURE_KEY]: true,
+    };
+  } else if (settlement.committed) {
+    // A later approved cwd tool may repair the debt while a human-consent batch
+    // is being resumed. Only an authoritative scratch commit can clear it.
+    clearPendingWorkspaceBindFailure(state);
+  }
 };
 
 /**
@@ -1229,8 +1275,12 @@ const applyScratchBindSettlement = (state: AgentState, settlement: ScratchBindSe
  * against an unbound topic until a resume (or a user-picked workspace) can
  * supply one.
  */
-const interruptForScratchBindFailure = (state: AgentState, events: AgentEvent[]) => {
+export const interruptForPendingWorkspaceBindFailure = (
+  state: AgentState,
+  events: AgentEvent[],
+) => {
   const interruptedAt = new Date().toISOString();
+  clearPendingWorkspaceBindFailure(state);
   state.status = 'interrupted';
   state.lastModified = interruptedAt;
   state.interruption = { canResume: true, interruptedAt, reason: WORKSPACE_BIND_FAILED };
@@ -1246,6 +1296,7 @@ const interruptForScratchBindFailure = (state: AgentState, events: AgentEvent[])
       },
     ],
     newState: state,
+    nextContext: undefined,
   };
 };
 
@@ -1973,7 +2024,8 @@ export const createRuntimeExecutors = (
       }
 
       // Initialize ModelRuntime (read user's keyVaults from database)
-      const modelRuntime = await initModelRuntimeFromDB(
+      const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+      const modelRuntime = await initModelRuntime(
         ctx.serverDB,
         ctx.userId!,
         provider,
@@ -2020,6 +2072,10 @@ export const createRuntimeExecutors = (
           return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
         }
       }
+      const createTraceOptions = requireRuntimeBoundary(
+        ctx.createTraceOptions,
+        'createTraceOptions',
+      );
       const runtimeTraceOptions = createTraceOptions(chatPayload as ChatStreamPayload, {
         includeInput: false,
         metadata: {
@@ -2106,11 +2162,10 @@ export const createRuntimeExecutors = (
 
       // File service + date shard used to persist model-generated images
       // (Gemini multimodal `content_part`/`reasoning_part` images) to object
-      // storage, built once and reused across parts. The `userId` check only
-      // satisfies its optional type — it is always present in this executor.
-      // A missing-S3-config failure surfaces later at uploadBase64 (caught per
-      // image in uploadPartImage), never at construction.
-      const imageUploadService = ctx.userId ? new FileService(ctx.serverDB, ctx.userId) : undefined;
+      // storage. Construct it lazily on the first image: pure-text turns must
+      // not require object-storage configuration merely because they share the
+      // streaming executor with multimodal turns.
+      let imageUploadService: FileService | undefined;
       const imageUploadDate = new Date().toISOString().split('T')[0];
 
       // Coalesce a streamed text chunk into the trailing text part (mirrors the
@@ -2135,7 +2190,13 @@ export const createRuntimeExecutors = (
         base64: string,
         mimeType: string | undefined,
       ): Promise<void> => {
-        if (!imageUploadService) return Promise.resolve();
+        if (!ctx.userId) return Promise.resolve();
+        try {
+          imageUploadService ??= new FileService(ctx.serverDB, ctx.userId);
+        } catch (error) {
+          console.error(`[${operationLogId}][content_part] image upload setup failed:`, error);
+          return Promise.resolve();
+        }
         const ext = mimeType?.split('/')[1] || 'png';
         const pathname = `${fileEnv.NEXT_PUBLIC_S3_FILE_PATH}/generations/${imageUploadDate}/${nanoid()}.${ext}`;
         return imageUploadService
@@ -2206,7 +2267,8 @@ export const createRuntimeExecutors = (
             model,
             provider,
           };
-          const compressionRuntime = await initModelRuntimeFromDB(
+          const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+          const compressionRuntime = await initModelRuntime(
             ctx.serverDB,
             ctx.userId!,
             compressionModel.provider,
@@ -3343,7 +3405,8 @@ export const createRuntimeExecutors = (
         };
       }
 
-      const compressionRuntime = await initModelRuntimeFromDB(
+      const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+      const compressionRuntime = await initModelRuntime(
         ctx.serverDB,
         ctx.userId,
         compressionModel.provider,
@@ -4242,7 +4305,8 @@ export const createRuntimeExecutors = (
 
         // Last: the tool result is persisted, reported and accounted for by
         // now, so interrupting here loses none of it.
-        if (scratchSettlement.failed) return interruptForScratchBindFailure(newState, events);
+        if (scratchSettlement.failed)
+          return interruptForPendingWorkspaceBindFailure(newState, events);
 
         return {
           events,
@@ -5045,7 +5109,7 @@ export const createRuntimeExecutors = (
 
     // Same post-success workspace semantics as call_tool, applied once for the
     // whole batch and only after every tool result is persisted and reported.
-    if (scratchSettlement?.failed) return interruptForScratchBindFailure(newState, events);
+    if (scratchSettlement?.failed) return interruptForPendingWorkspaceBindFailure(newState, events);
 
     return {
       events,

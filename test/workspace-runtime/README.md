@@ -7,29 +7,22 @@ AC-C01..C08, AC-X01..X02 and the accepted C0 contracts at
 - `acceptanceMatrix.ts` is the exhaustive 34-row mapping and frozen argv source.
 - `acceptanceAssertions.ts` is the reusable behavioral suite.
 - `referenceAdapter.ts` proves that every assertion and fixture contract is executable.
-- `acceptedRefAdapter.ts` binds AC-W01..W03 to accepted production seams. Every other method throws
-  `MISSING_ACCEPTANCE_SEAM` at invocation time, so red results identify integration work rather than
-  compile/import failures.
-- `e2e/electron/workspace-runtime.spec.ts` is the focused Electron UI/DB/filesystem suite.
+- `productionAdapter.ts` binds the non-Electron rows to production policy, resolver, boundary, and
+  navigation seams; `acceptedRefAdapter.ts` composes those with AC-W01..W03.
+- `e2e/electron/workspace-runtime.spec.ts` is the focused production-renderer/main-process suite.
+  Its runtime rows use an isolated PGlite database and temporary filesystem, and count external
+  provider/device calls.
 
 The security-sensitive oracle details are intentional: AC-C08 enables `retry_compression` and
 `switch_compression_model` only for `SUMMARY_FAILED`; AC-P06 uses the device boundary's stable
 `SCOPE_DENIED` code for both denied cases with zero provider calls; and AC-P07 keeps the model's
 requested cwd as fixture input while exposing only `MODEL_CWD_OVERRIDDEN` in audit warnings.
 
-## Integration wiring requests
+## Integration status
 
-1. Replace each `missingAcceptanceSeam` entry in `acceptedRefAdapter.ts` with a thin call into the
-   integrated production boundary. Preserve the fixture values and return only observable output;
-   do not substitute the reference adapter or mock the behavior being accepted.
-2. Implement `launchElectronWorkspaceRuntimeSession` with the production renderer/IPC, an isolated
-   test database, a unique temporary filesystem root, and provider/device counters. `close` must
-   clean up that isolated state.
-3. The existing Electron Playwright config fixes `testDir` to `e2e/electron/tests`, while this lane
-   may write only `e2e/electron/workspace-runtime.spec.ts`. The integration owner must widen
-   `e2e/electron/playwright.config.mjs` to `testDir: '..'` and set `testMatch` to
-   `['electron/tests/**/*.spec.mjs', 'electron/workspace-runtime.spec.ts']`, or provide an equivalent
-   controller-owned config that makes the frozen argv collect this exact spec.
+All acceptance rows are bound. The Electron controller launches the production renderer and preload
+IPC bridge, isolates database/filesystem state per session, cleans it on close, and collects this
+spec through the repository Playwright config.
 
 ## Frozen verification argv
 

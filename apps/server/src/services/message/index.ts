@@ -1,5 +1,3 @@
-import { type LobeChatDatabase } from '@lobechat/database';
-import { CompressionRepository } from '@lobechat/database';
 import {
   type CommitToolResultInput,
   type CommitToolResultResult,
@@ -13,6 +11,8 @@ import {
 import { createTimingHelpers, getDurationMs } from '@lobechat/utils';
 
 import { MessageModel } from '@/database/models/message';
+import { CompressionRepository } from '@/database/repositories/compression';
+import type { LobeChatDatabase } from '@/database/type';
 
 import { FileService } from '../file';
 
