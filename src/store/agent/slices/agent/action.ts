@@ -291,14 +291,12 @@ export class AgentSliceActionImpl {
   ): Promise<void> => {
     if (!agentId) return;
 
-    if (isDesktop && 'workingDirectory' in config) {
-      setLocalAgentWorkingDirectory(agentId, config.workingDirectory);
+    if (isDesktop && 'workingDirectory' in config && !config.workingDirectory) {
+      // Compatibility storage is read/delete-only. New selections must be
+      // persisted as formal project workspaces, never written back here.
+      setLocalAgentWorkingDirectory(agentId, undefined);
       const nextMap = { ...this.#get().localAgentWorkingDirectoryMap };
-      if (config.workingDirectory) {
-        nextMap[agentId] = config.workingDirectory;
-      } else {
-        delete nextMap[agentId];
-      }
+      delete nextMap[agentId];
       this.#set({ localAgentWorkingDirectoryMap: nextMap }, false, 'updateAgentWorkingDirectory');
     }
 

@@ -20,9 +20,13 @@ const storeState = {
 
 vi.mock('@lobechat/const', () => ({ isDesktop: true }));
 vi.mock('@lobehub/ui', () => ({
-  Flexbox: ({ children, 'data-testid': testId }: { children?: ReactNode; 'data-testid'?: string }) => (
-    <div data-testid={testId}>{children}</div>
-  ),
+  Flexbox: ({
+    children,
+    'data-testid': testId,
+  }: {
+    'children'?: ReactNode;
+    'data-testid'?: string;
+  }) => <div data-testid={testId}>{children}</div>,
   Icon: () => null,
   Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   Tooltip: ({ children }: { children: ReactElement; title?: string }) => children,
@@ -50,7 +54,8 @@ vi.mock('@/store/projectWorkspace', () => ({
     isSeamAvailable: (state: typeof storeState) => state.seamAvailable,
     pickerFocusNonce: (state: typeof storeState) => state.pickerFocusNonce,
   },
-  useProjectWorkspaceStore: (selector: (state: typeof storeState) => unknown) => selector(storeState),
+  useProjectWorkspaceStore: (selector: (state: typeof storeState) => unknown) =>
+    selector(storeState),
 }));
 vi.mock('./AddWorkingDirModal', () => ({ openAddWorkingDirModal: vi.fn() }));
 vi.mock('./DirIcon', () => ({ default: () => null }));
@@ -99,9 +104,7 @@ describe('WorkspacePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /app/i }));
 
     await waitFor(() => {
-      expect(select).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/projects/app' }),
-      );
+      expect(select).toHaveBeenCalledWith(expect.objectContaining({ path: '/projects/app' }));
       expect(onOpenChange).toHaveBeenCalledWith(false);
       expect(clearError).toHaveBeenCalledOnce();
     });
@@ -122,7 +125,7 @@ describe('WorkspacePicker', () => {
     expect(screen.queryByText('workspaceRuntime.picker.empty')).not.toBeInTheDocument();
   });
 
-  it('surfaces evidence load failures and lets the user retry', () => {
+  it('keeps local workspace selection available while evidence reload fails', () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     const bind = {
       clearError: vi.fn(),
@@ -142,6 +145,7 @@ describe('WorkspacePicker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.picker.retry' }));
     expect(reload).toHaveBeenCalledOnce();
-    expect(screen.queryByText('workspaceRuntime.picker.empty')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /app/i })).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-picker-choose-folder')).toBeInTheDocument();
   });
 });

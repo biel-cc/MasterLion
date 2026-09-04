@@ -24,15 +24,17 @@ import {
 import { buildTaskDetailPrompt, buildTaskListPrompt } from '@lobechat/prompts';
 import {
   type ConversationContext,
+  type ExecutionContext,
   type MessageMetadata,
   type RunSubAgentResult,
   type RuntimeInitialContext,
   type UIChatMessage,
 } from '@lobechat/types';
 import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
-import type { SkillProviderContext } from '@lobechat/types/src/projectWorkspace';
+import type { SkillProviderContext, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 
+import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { aiAgentService } from '@/services/aiAgent';
 import { isCanUseVideo, isCanUseVision } from '@/services/chat/helper';
@@ -99,10 +101,7 @@ const resolveClientModelCatalogSnapshot = (
   providerId: string,
   operationId: string,
 ): ModelCatalogSnapshot => {
-  const model = aiModelSelectors.getEnabledModelById(
-    modelId,
-    providerId,
-  )(getAiInfraStoreState());
+  const model = aiModelSelectors.getEnabledModelById(modelId, providerId)(getAiInfraStoreState());
   const persisted = getModelCatalogFromSettings(model?.settings);
   const entry =
     persisted?.entry.modelId === modelId && persisted.entry.providerId === providerId
@@ -366,7 +365,8 @@ export class StreamingExecutorActionImpl {
       modelRuntimeConfig.compressionModel.model === modelRuntimeConfig.model
         ? modelCatalogSnapshot
         : existingCompressionSnapshot?.operationId === stateOperationId &&
-            existingCompressionSnapshot.entry.modelId === modelRuntimeConfig.compressionModel.model &&
+            existingCompressionSnapshot.entry.modelId ===
+              modelRuntimeConfig.compressionModel.model &&
             existingCompressionSnapshot.entry.providerId ===
               modelRuntimeConfig.compressionModel.provider
           ? existingCompressionSnapshot
@@ -501,6 +501,8 @@ export class StreamingExecutorActionImpl {
   executeClientAgent = async (params: {
     context: ConversationContext;
     disableTools?: boolean;
+    /** Immutable workspace authority captured by the caller for this run. */
+    executionContext?: ExecutionContext;
     initialContext?: AgentRuntimeContext;
     initialState?: AgentState;
     inPortalThread?: boolean;
@@ -537,6 +539,17 @@ export class StreamingExecutorActionImpl {
     // Generate message key from context
     const messageKey = messageMapKey(context);
 
+    // Reuse the parent run's immutable authority for nested/resumed client
+    // operations. If there is no parent snapshot, a fresh one is resolved
+    // below after agent configuration has been loaded.
+    let frozenExecutionContext = params.executionContext;
+    let ancestorOperationId = params.parentOperationId;
+    while (!frozenExecutionContext && ancestorOperationId) {
+      const ancestor = this.#get().operations[ancestorOperationId];
+      frozenExecutionContext = ancestor?.metadata?.executionContext;
+      ancestorOperationId = ancestor?.parentOperationId;
+    }
+
     // Create or use provided operation
     let operationId = params.operationId;
     const shouldAssociateParentMessage = !operationId;
@@ -551,12 +564,17 @@ export class StreamingExecutorActionImpl {
         parentOperationId: params.parentOperationId, // Pass parent operation ID
         label: 'AI Generation',
         metadata: {
+          executionContext: frozenExecutionContext,
           // Mark if this operation is in thread context
           // Thread operations should not affect main window UI state
           inThread: params.inPortalThread || false,
         },
       });
       operationId = newOperationId;
+    } else if (frozenExecutionContext) {
+      this.#get().updateOperationMetadata(operationId, {
+        executionContext: frozenExecutionContext,
+      });
     }
 
     const runScope: RunScope = scope === 'sub_agent' ? 'sub_agent' : 'top_level';
@@ -629,6 +647,56 @@ export class StreamingExecutorActionImpl {
         workingDirectory: params.workingDirectory,
       });
 
+      const projectWorkspaceState = getProjectWorkspaceStoreState();
+      const topicWorkspaceState = topicId
+        ? projectWorkspaceState.topicStatesById[topicId]
+        : undefined;
+      const topic = topicId ? topicSelectors.getTopicById(topicId)(this.#get()) : undefined;
+      const workspaces: Record<string, WorkspaceRef | undefined> = {
+        ...projectWorkspaceState.workspacesById,
+      };
+      if (topicWorkspaceState?.workspace?.id && !workspaces[topicWorkspaceState.workspace.id]) {
+        workspaces[topicWorkspaceState.workspace.id] = topicWorkspaceState.workspace;
+      }
+      const workspaceItem = topicWorkspaceState?.workspace?.id
+        ? projectWorkspaceState.workspacesById[topicWorkspaceState.workspace.id]
+        : undefined;
+
+      if (!frozenExecutionContext) {
+        const snapshot = topic?.metadata?.executionSnapshot ?? topicWorkspaceState?.snapshot;
+        frozenExecutionContext = resolveFrozenClientExecutionContext({
+          agencyConfig: agentConfig.agentConfig.agencyConfig,
+          chatConfig: agentConfig.agentConfig.chatConfig,
+          envFiles: workspaceItem?.envFiles,
+          initialTopicMetadata:
+            !topicId && params.workingDirectory
+              ? { workingDirectory: params.workingDirectory }
+              : undefined,
+          isDesktop,
+          isHetero: !!agentConfig.agentConfig.agencyConfig?.heterogeneousProvider,
+          operationId,
+          requestedDeviceId:
+            snapshot?.boundDeviceId ??
+            topic?.metadata?.boundDeviceId ??
+            topicWorkspaceState?.workspace?.deviceId ??
+            agentConfig.agentConfig.agencyConfig?.boundDeviceId,
+          snapshot,
+          topic: topic
+            ? {
+                boundDeviceId: topic.metadata?.boundDeviceId,
+                workingDirectory: topic.metadata?.workingDirectory,
+                workspaceId: topic.metadata?.workspaceId,
+              }
+            : undefined,
+          topicGrants: Object.values(projectWorkspaceState.grantsByTopicDevice).flat(),
+          topicId: topicId ?? undefined,
+          workspaces,
+        });
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
+
       // Use model/provider from resolved agentConfig
       const { agentConfig: agentConfigData } = agentConfig;
       const model = agentConfigData.model;
@@ -642,12 +710,6 @@ export class StreamingExecutorActionImpl {
           provider: provider!,
         },
       };
-      const topicWorkspaceState = topicId
-        ? getProjectWorkspaceStoreState().topicStatesById[topicId]
-        : undefined;
-      const workspaceItem = topicWorkspaceState?.workspace?.id
-        ? getProjectWorkspaceStoreState().workspacesById[topicWorkspaceState.workspace.id]
-        : undefined;
       const skillContext = params.skillContext ?? {
         agentId: effectiveAgentId || agentId || 'client-agent',
         skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
@@ -663,6 +725,7 @@ export class StreamingExecutorActionImpl {
             skillContext,
           })
         ).skills;
+      this.#get().updateOperationMetadata(operationId, { operationSkills });
       // ===========================================
       // Step 2: Create and Execute Agent Runtime
       // ===========================================

@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPermission';
 import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceAuth';
+import { AgentModel } from '@/database/models/agent';
 import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
@@ -13,7 +14,11 @@ import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { DeviceGateway } from '@/server/services/deviceGateway';
-import { UserEnvService, WorkspaceEnvService } from '@/server/services/executionEnv';
+import {
+  resolveDesktopExecutionEnv,
+  UserEnvService,
+  WorkspaceEnvService,
+} from '@/server/services/executionEnv';
 import {
   DatabaseTopicWorkspaceBindingStore,
   ProjectWorkspaceService,
@@ -209,6 +214,61 @@ export const projectWorkspaceRouter = router({
         userEnvKeys,
         workspaceEnvKeys,
       };
+    }),
+
+  /** Authenticated desktop main-process lane. Never call this from browser code. */
+  getResolvedEnv: projectWorkspaceProcedure
+    .input(
+      z.object({
+        agentId: z.string().min(1),
+        topicId: z.string().min(1).optional(),
+        workspaceId: z.string().min(1).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const gateKeeper = await KeyVaultsGateKeeper.initWithEnvKey();
+      try {
+        return await resolveDesktopExecutionEnv(input, {
+          decrypt: async (encryptedValue) => {
+            const decrypted = await gateKeeper.decrypt(encryptedValue);
+            if (!decrypted.wasAuthentic) {
+              throw new Error('Workspace environment authentication failed');
+            }
+            return decrypted.plaintext;
+          },
+          loadAgentAgencyConfig: async (agentId) => {
+            const agent = await new AgentModel(
+              ctx.serverDB,
+              ctx.userId,
+              ctx.workspaceId ?? undefined,
+            ).getAgentConfigById(agentId);
+            return agent ? (agent.agencyConfig ?? {}) : null;
+          },
+          loadTopicWorkspaceId: async (topicId) => {
+            const state = await ctx.workspaceService.resolveTopic(topicId);
+            return state === undefined ? undefined : (state.workspace?.id ?? null);
+          },
+          loadUserEnv: async () =>
+            (await new UserModel(ctx.serverDB, ctx.userId).getUserSettings())?.executionEnv ??
+            undefined,
+          loadWorkspaceEnv: async (workspaceId) => {
+            const workspace = await new ProjectWorkspaceModel(ctx.serverDB, ctx.userId).findById(
+              workspaceId,
+            );
+            return workspace ? (workspace.env ?? undefined) : null;
+          },
+          userId: ctx.userId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to resolve environment';
+        if (message.endsWith('not found')) {
+          throw new TRPCError({ code: 'NOT_FOUND', message });
+        }
+        if (message.includes('does not match')) {
+          throw new TRPCError({ code: 'FORBIDDEN', message });
+        }
+        throw error;
+      }
     }),
 
   listUserEnv: projectWorkspaceProcedure.query(async ({ ctx }) =>

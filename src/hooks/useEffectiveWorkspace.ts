@@ -1,7 +1,6 @@
 import { isDesktop } from '@lobechat/const';
 import type { DeviceExecutionTarget } from '@lobechat/types/src/agent/agencyConfig';
 import type {
-  ExecutionAccessRoot,
   ExecutionContext,
   ExecutionPlanUnroutedReason,
 } from '@lobechat/types/src/executionContext';
@@ -13,7 +12,10 @@ import type {
 } from '@lobechat/types/src/projectWorkspace';
 import { useCallback, useMemo } from 'react';
 
-import { type ExecutionAgencyConfig, resolveExecutionContext } from '@/helpers/executionContext';
+import {
+  type ExecutionAgencyConfig,
+  resolveFrozenClientExecutionContext,
+} from '@/helpers/executionContext';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
@@ -23,13 +25,14 @@ import { useDeviceStore } from '@/store/device';
 import { useElectronStore } from '@/store/electron';
 import {
   buildDraftConversationKey,
-  buildTopicDeviceKey,
   projectWorkspaceSelectors,
   readTopicExecutionSnapshot,
   useProjectWorkspaceStore,
 } from '@/store/projectWorkspace';
 import { useUserStore } from '@/store/user';
 import { authSelectors } from '@/store/user/selectors';
+
+import { useLegacyWorkspaceMigration } from './useLegacyWorkspaceMigration';
 
 export type EffectiveWorkspaceState = 'bound' | 'scratch' | 'unbound' | 'unrouted';
 
@@ -76,8 +79,6 @@ interface TransitionalTopicMetadata {
   workspaceKind?: WorkspaceKind;
 }
 
-const EMPTY_ROOTS: ExecutionAccessRoot[] = [];
-
 /**
  * The single renderer-side cwd view. It feeds server-authored evidence
  * (topic snapshot, persisted workspaces, topic grants) plus the draft intent
@@ -117,6 +118,11 @@ export const useEffectiveWorkspace = (
   const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
   const devices = useDeviceStore((s) => s.devices);
   const isDevicesInit = useDeviceStore((s) => s.isDevicesInit);
+  const legacyLocalWorkingDirectory = useLegacyWorkspaceMigration(
+    agentId,
+    agencyConfig,
+    currentDeviceId,
+  );
 
   const draftKey = buildDraftConversationKey({ agentId, groupId: activeGroupId });
   const draft = useProjectWorkspaceStore(projectWorkspaceSelectors.getDraftIntent(draftKey));
@@ -127,13 +133,13 @@ export const useEffectiveWorkspace = (
   const grantsByTopicDevice = useProjectWorkspaceStore((s) => s.grantsByTopicDevice);
   const reload = useCallback(async () => {
     const requests = [devicesRequest, gatewayRequest, workspacesRequest, topicRequest];
-    await Promise.all(requests.map((request) => request?.mutate?.()));
+    await Promise.allSettled(requests.map((request) => request?.mutate?.()));
   }, [devicesRequest, gatewayRequest, topicRequest, workspacesRequest]);
   const loading = Boolean(
     devicesRequest?.isLoading ||
-      gatewayRequest?.isLoading ||
-      workspacesRequest?.isLoading ||
-      topicRequest?.isLoading,
+    gatewayRequest?.isLoading ||
+    workspacesRequest?.isLoading ||
+    topicRequest?.isLoading,
   );
   const loadError =
     devicesRequest?.error ??
@@ -214,27 +220,11 @@ export const useEffectiveWorkspace = (
       workspaces,
     };
 
-    // First pass identifies the device so the right topic grants are composed.
-    const preliminary = resolveExecutionContext(baseInput);
-    const grantDeviceId =
-      preliminary.plan.kind === 'device' ? preliminary.plan.deviceId : undefined;
-    const grants =
-      resolvedTopicId && grantDeviceId
-        ? (grantsByTopicDevice[buildTopicDeviceKey(resolvedTopicId, grantDeviceId)] ?? [])
-        : [];
-    const accessRoots: ExecutionAccessRoot[] =
-      grants.length > 0
-        ? grants.map((grant) => ({
-            grantId: grant.id,
-            modes: grant.modes,
-            rootPath: grant.rootPath,
-            scope: 'topic' as const,
-            source: 'user-approval' as const,
-          }))
-        : EMPTY_ROOTS;
-
-    const context =
-      accessRoots.length > 0 ? resolveExecutionContext({ ...baseInput, accessRoots }) : preliminary;
+    const context = resolveFrozenClientExecutionContext({
+      ...baseInput,
+      topicGrants: Object.values(grantsByTopicDevice).flat(),
+      topicId: resolvedTopicId,
+    });
 
     const plan = context.plan;
     let state: EffectiveWorkspaceState;
@@ -253,8 +243,11 @@ export const useEffectiveWorkspace = (
       : undefined;
     const recommendation: WorkspaceRecommendation = {
       agentDefault: recommendationDeviceId
-        ? (agencyConfig?.workingDirByDevice?.[recommendationDeviceId] ??
-          (agentDefaultWorkspaceId ? workspacesById[agentDefaultWorkspaceId]?.rootPath : undefined))
+        ? ((agentDefaultWorkspaceId
+            ? workspacesById[agentDefaultWorkspaceId]?.rootPath
+            : undefined) ??
+          agencyConfig?.workingDirByDevice?.[recommendationDeviceId] ??
+          legacyLocalWorkingDirectory)
         : undefined,
       deviceDefault: recommendationDeviceId
         ? (devices.find((device) => device.deviceId === recommendationDeviceId)?.defaultCwd ??
@@ -288,6 +281,7 @@ export const useEffectiveWorkspace = (
     draftKey,
     grantsByTopicDevice,
     isDevicesInit,
+    legacyLocalWorkingDirectory,
     loadError,
     loading,
     reload,

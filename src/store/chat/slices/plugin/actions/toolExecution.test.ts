@@ -118,6 +118,64 @@ describe('raw tool execution boundary', () => {
     expect(messageService.updateMessageError).not.toHaveBeenCalled();
   });
 
+  it('passes the root runtime frozen execution context to client tool executors', async () => {
+    const invokeBuiltinTool = vi.fn().mockResolvedValue({ content: 'ok', success: true });
+    vi.mocked(hasExecutor).mockReturnValue(true);
+    vi.mocked(useToolStore.getState).mockReturnValue({ invokeBuiltinTool } as any);
+    const actions = createActions();
+    actions.messageOperationMap['tool-message-1'] = 'tool-operation';
+    actions.operations['tool-operation'] = {
+      context: { agentId: 'agent-1', topicId: 'topic-1' },
+      id: 'tool-operation',
+      metadata: {},
+      parentOperationId: 'runtime-operation',
+      type: 'executeToolCall',
+    };
+    actions.operations['runtime-operation'] = {
+      context: { agentId: 'agent-1', topicId: 'topic-1' },
+      id: 'runtime-operation',
+      metadata: {
+        executionContext: {
+          accessRoots: [
+            {
+              modes: ['read', 'write', 'exec'],
+              rootPath: '/workspace/project',
+              scope: 'primary',
+              source: 'workspace',
+            },
+          ],
+          cwd: '/workspace/project',
+          plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+          version: 1,
+          workspace: {
+            deviceId: 'device-1',
+            id: 'workspace-1',
+            kind: 'device',
+            rootPath: '/workspace/project',
+          },
+        },
+      },
+      type: 'execAgentRuntime',
+    };
+
+    await actions.internal_executeDifferentTypePlugin(
+      'tool-message-1',
+      builtinPayload,
+      undefined,
+      new AbortController().signal,
+    );
+
+    expect(invokeBuiltinTool).toHaveBeenCalledWith(
+      builtinPayload.identifier,
+      builtinPayload.apiName,
+      { input: 'hello' },
+      expect.objectContaining({
+        executionContext: expect.objectContaining({ cwd: '/workspace/project' }),
+        workingDirectory: '/workspace/project',
+      }),
+    );
+  });
+
   it.each([
     {
       expectedContent: 'composio result',

@@ -51,7 +51,7 @@ describe('routeDesktopWorkspaceRuntime', () => {
         { getManagedEnvSummary },
         true,
       ),
-    ).resolves.toBe('gateway');
+    ).resolves.toBe('client');
     expect(getManagedEnvSummary).toHaveBeenCalledTimes(1);
     await expect(
       routeDesktopWorkspaceRuntime(
@@ -63,7 +63,7 @@ describe('routeDesktopWorkspaceRuntime', () => {
     ).resolves.toBe('client');
   });
 
-  it('routes bound and unbound desktop clients through the coordinator without probing env', async () => {
+  it('preserves bound and unbound desktop client execution without probing managed env', async () => {
     const getManagedEnvSummary = vi.fn().mockResolvedValue({ hasManagedEnv: false });
 
     await expect(
@@ -73,7 +73,7 @@ describe('routeDesktopWorkspaceRuntime', () => {
         { getManagedEnvSummary },
         true,
       ),
-    ).resolves.toBe('gateway');
+    ).resolves.toBe('client');
     await expect(
       routeDesktopWorkspaceRuntime(
         'client',
@@ -81,7 +81,7 @@ describe('routeDesktopWorkspaceRuntime', () => {
         { getManagedEnvSummary },
         true,
       ),
-    ).resolves.toBe('gateway');
+    ).resolves.toBe('client');
     expect(getManagedEnvSummary).not.toHaveBeenCalled();
   });
 });

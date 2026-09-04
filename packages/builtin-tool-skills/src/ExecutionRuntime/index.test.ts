@@ -47,7 +47,9 @@ describe('SkillsExecutionRuntime', () => {
         const result = await runtime.execScript(args);
 
         expect(result.success).toBe(false);
-        expect(result.content).toBe('Command failed with exit code 1\n\nStderr:\ncommand not found');
+        expect(result.content).toBe(
+          'Command failed with exit code 1\n\nStderr:\ncommand not found',
+        );
         expect(result.state).toEqual({ command: 'echo hello', exitCode: 1, success: false });
       });
 
@@ -173,9 +175,7 @@ describe('SkillsExecutionRuntime', () => {
           version: 1,
           workspace: { deviceId: 'device-1', kind: 'device', rootPath: '/repo' },
         },
-        projectSkills: [
-          { location: '/repo/.agents/skills/deploy/SKILL.md', name: 'deploy' },
-        ],
+        projectSkills: [{ location: '/repo/.agents/skills/deploy/SKILL.md', name: 'deploy' }],
         service: createMockService(),
       });
 
@@ -189,7 +189,7 @@ describe('SkillsExecutionRuntime', () => {
       expect(deviceScriptRunner).toHaveBeenCalledWith(
         'scripts/deploy.sh',
         expect.objectContaining({
-          cwd: '/repo',
+          cwd: '/repo/.agents/skills/deploy',
           deviceId: 'device-1',
           env: {
             SKILL_DIR: '/repo/.agents/skills/deploy',

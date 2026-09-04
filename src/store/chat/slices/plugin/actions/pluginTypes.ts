@@ -146,12 +146,14 @@ export class PluginTypesActionImpl {
       const operationId = this.#get().messageOperationMap[id];
       const operation = operationId ? this.#get().operations[operationId] : undefined;
       let rootRuntimeOperationId: string | undefined;
+      let rootRuntimeOperation = operation;
       let rootRuntimeOperationContext = operation?.context;
       if (operationId) {
         let currentOp = operation;
         while (currentOp) {
           if (AI_RUNTIME_OPERATION_TYPES.includes(currentOp.type)) {
             rootRuntimeOperationId = currentOp.id;
+            rootRuntimeOperation = currentOp;
             rootRuntimeOperationContext = currentOp.context;
             break;
           }
@@ -171,6 +173,8 @@ export class PluginTypesActionImpl {
       const viewedTask = operation?.context?.viewedTask ?? rootRuntimeOperationContext?.viewedTask;
       const taskId = viewedTask?.type === 'detail' ? viewedTask.taskId : undefined;
       const topicId = operation?.context?.topicId ?? rootRuntimeOperationContext?.topicId;
+      const executionContext = rootRuntimeOperation?.metadata?.executionContext;
+      const operationSkills = rootRuntimeOperation?.metadata?.operationSkills;
       const isSubAgent =
         operation?.context?.isSubAgent ?? rootRuntimeOperationContext?.isSubAgent ?? false;
 
@@ -257,11 +261,13 @@ export class PluginTypesActionImpl {
         .invokeBuiltinTool(payload.identifier, payload.apiName, params, {
           agentId,
           documentId,
+          executionContext,
           groupId,
           groupOrchestration,
           isSubAgent,
           messageId: id,
           operationId,
+          operationSkills,
           registerAfterCompletion,
           scope,
           signal: signal ?? operation?.abortController?.signal,
@@ -274,6 +280,7 @@ export class PluginTypesActionImpl {
           taskId,
           toolCallId: payload.id,
           topicId,
+          workingDirectory: executionContext?.cwd,
         });
 
       log('[BuiltinToolCall] invoke:end', {

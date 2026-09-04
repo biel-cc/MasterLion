@@ -1,7 +1,4 @@
-import type {
-  ExecutionContext,
-  ExecutionContextError,
-} from '@lobechat/types/src/executionContext';
+import type { ExecutionContext, ExecutionContextError } from '@lobechat/types/src/executionContext';
 
 export type SkillScriptExecutionRoute =
   | {
@@ -71,11 +68,13 @@ const workspaceRequired = (message: string): SkillScriptExecutionRoute => ({
 
 /** Sandbox keeps its provider-owned route; device execution requires gateway realpath evidence. */
 export const resolveSkillScriptExecutionRoute = async (input: {
+  /** Managed builtin/user bundles are materialized in the app-owned cache, outside the project. */
+  allowExternalSkillDir?: boolean;
   context: ExecutionContext;
   skillDir?: string;
   verifyDevicePaths?: DeviceSkillPathVerifier;
 }): Promise<SkillScriptExecutionRoute> => {
-  const { context, skillDir, verifyDevicePaths } = input;
+  const { allowExternalSkillDir = false, context, skillDir, verifyDevicePaths } = input;
 
   if (context.plan.kind === 'none') {
     return workspaceRequired('A workspace is required to execute a skill script.');
@@ -97,7 +96,11 @@ export const resolveSkillScriptExecutionRoute = async (input: {
   const workspaceDir = context.workspace?.rootPath ?? context.cwd;
   const lexicalWorkspace = workspaceDir && canonicalizeAbsolutePath(workspaceDir);
   const lexicalSkill = skillDir && canonicalizeAbsolutePath(skillDir);
-  if (!lexicalWorkspace || !lexicalSkill || !isWithinWorkspace(lexicalWorkspace, lexicalSkill)) {
+  if (
+    !lexicalWorkspace ||
+    !lexicalSkill ||
+    (!allowExternalSkillDir && !isWithinWorkspace(lexicalWorkspace, lexicalSkill))
+  ) {
     return workspaceRequired(
       'A canonical workspace-local skill directory is required for device execution.',
     );
@@ -120,12 +123,16 @@ export const resolveSkillScriptExecutionRoute = async (input: {
 
   const verifiedWorkspace = verified && canonicalizeAbsolutePath(verified.workspaceRoot);
   const verifiedSkill = verified && canonicalizeAbsolutePath(verified.skillDir);
-  if (!verifiedWorkspace || !verifiedSkill || !isWithinWorkspace(verifiedWorkspace, verifiedSkill)) {
+  if (
+    !verifiedWorkspace ||
+    !verifiedSkill ||
+    (!allowExternalSkillDir && !isWithinWorkspace(verifiedWorkspace, verifiedSkill))
+  ) {
     return workspaceRequired('The verified skill directory is outside the device workspace.');
   }
 
   return {
-    cwd: verifiedWorkspace.value,
+    cwd: verifiedSkill.value,
     deviceId: context.plan.deviceId,
     env: {
       ...context.env?.values,

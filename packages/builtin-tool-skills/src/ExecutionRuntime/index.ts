@@ -199,6 +199,7 @@ export class SkillsExecutionRuntime {
         ? getDirname(projectSkill.location)
         : await this.skillDirectoryResolver?.(activatedSkills ?? []);
       const route = await resolveSkillScriptExecutionRoute({
+        allowExternalSkillDir: !projectSkill,
         context: this.executionContext,
         skillDir,
         verifyDevicePaths: this.deviceSkillPathVerifier,

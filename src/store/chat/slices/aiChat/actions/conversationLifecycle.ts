@@ -30,6 +30,7 @@ import { t } from 'i18next';
 
 import { markUserValidAction } from '@/business/client/markUserValidAction';
 import { message as antdMessage } from '@/components/AntdStaticMethods';
+import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
 import { agentService } from '@/services/agent';
 import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
@@ -509,12 +510,10 @@ export class ConversationLifecycleActionImpl {
       workspaceInit: workspaceItem?.scan,
     };
 
-    // Native Electron topics run through the server workspace coordinator.
-    // This preserves local/device intent while giving first-use cwd tools the
-    // only production path that can lazily bind scratch; explicit absolute-path
-    // reads can remain unbound. LocalSystem may be injected dynamically for a
-    // device-capable plan, so even a bound topic with an empty static plugin
-    // list cannot safely prove that renderer-local execution is plain chat.
+    // Preserve renderer-local execution for ordinary Electron chat. Only
+    // heterogeneous runs with server-managed environment values are promoted
+    // to the coordinator; local tools cross the Electron main-process boundary
+    // later with the immutable context captured below.
     runtimeType = await routeDesktopWorkspaceRuntime(runtimeType, {
       topicId: context.topicId ?? undefined,
       workspaceId: frozenWorkspaceId,
@@ -569,6 +568,34 @@ export class ConversationLifecycleActionImpl {
         // Mark this as thread operation if threadId exists
         inThread: !!operationContext.threadId,
       },
+    });
+    const frozenExecutionContext = resolveFrozenClientExecutionContext({
+      agencyConfig: agentConfig?.agencyConfig,
+      chatConfig: agentConfig?.chatConfig,
+      envFiles: workspaceItem?.envFiles,
+      executionTargetByPlatform: pendingExecution?.intent.target
+        ? {
+            ...agentConfig?.agencyConfig?.executionTargetByPlatform,
+            [pendingExecution.intent.platform]: pendingExecution.intent.target,
+          }
+        : agentConfig?.agencyConfig?.executionTargetByPlatform,
+      initialTopicMetadata:
+        !context.topicId && frozenWorkspaceId ? { workspaceId: frozenWorkspaceId } : undefined,
+      isDesktop,
+      isHetero: !!heterogeneousProvider,
+      operationId,
+      requestedDeviceId: pendingExecution?.intent.targetDeviceId,
+      snapshot: existingTopic?.metadata?.executionSnapshot ?? topicWorkspaceState?.snapshot,
+      topicGrants: Object.values(projectWorkspaceState.grantsByTopicDevice).flat(),
+      topicId: context.topicId ?? undefined,
+      topic: existingTopic
+        ? {
+            boundDeviceId: existingTopic.metadata?.boundDeviceId,
+            workingDirectory: existingTopic.metadata?.workingDirectory,
+            workspaceId: existingTopic.metadata?.workspaceId,
+          }
+        : undefined,
+      workspaces: projectWorkspaceState.workspacesById,
     });
 
     // Construct local media preview for server-mode temporary messages (S3 URL takes priority).
@@ -1249,6 +1276,7 @@ export class ConversationLifecycleActionImpl {
 
           await executeClientAgent({
             context: execContext,
+            executionContext: frozenExecutionContext,
             initialContext: mergedAgentRuntimeInitialContext,
             metadata: requestMetadata,
             messages: displayMessages,

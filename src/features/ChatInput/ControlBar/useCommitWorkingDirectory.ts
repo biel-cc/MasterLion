@@ -130,13 +130,9 @@ export const useCommitWorkingDirectory = (agentId: string) => {
             workingDirByDevice: { ...prev, [targetDeviceId]: path },
           },
         });
-      } else {
-        // No resolvable device (e.g. gateway id unavailable) — fall back to the
-        // legacy per-agent slot so the action still takes effect.
-        await updateAgentRuntimeEnvConfigById(agentId, { workingDirectory: path });
       }
     },
-    [agentId, agencyConfig, targetDeviceId, updateAgentConfigById, updateAgentRuntimeEnvConfigById],
+    [agentId, agencyConfig, targetDeviceId, updateAgentConfigById],
   );
 
   /** Clear the current selection (falls back to the next precedence level). */

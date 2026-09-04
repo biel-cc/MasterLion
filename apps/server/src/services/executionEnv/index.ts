@@ -1,5 +1,6 @@
 export * from './adapter';
 export * from './constants';
+export * from './desktopExecutionEnv';
 export * from './envFile';
 export * from './errors';
 export * from './operation';

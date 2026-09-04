@@ -83,6 +83,46 @@ describe('runtime workspace path consent', () => {
     ).toBeUndefined();
   });
 
+  it('requires explicit approval before reading credentials named in a direct user message', async () => {
+    const directCredentialContext: ExecutionContext = {
+      ...executionContext,
+      accessRoots: [
+        ...(executionContext.accessRoots ?? []),
+        {
+          modes: ['read'],
+          operationId: 'op-123',
+          rootPath: '/outside/project/.env',
+          scope: 'operation',
+          source: 'direct-user-message',
+        },
+      ],
+    };
+    const tool = {
+      apiName: 'readFile',
+      arguments: '{"path":"/outside/project/.env"}',
+      id: 'call-credential',
+      identifier: LocalSystemIdentifier,
+      type: 'builtin' as const,
+    };
+
+    expect(
+      buildPendingWorkspacePathConsent({
+        activeDeviceId: 'device-a',
+        executionContext: directCredentialContext,
+        operationId: 'op-123',
+        tool,
+        topicId: 'topic-a',
+      }),
+    ).toMatchObject({ modes: ['read'], requestedPath: '/outside/project/.env' });
+
+    await expect(
+      workspacePathInterventionAudits['workspacePathScopeAudit:readFile'](
+        { path: '/outside/project/.env' },
+        { executionContext: directCredentialContext, workingDirectory: '/workspace' },
+      ),
+    ).resolves.toBe(true);
+  });
+
   it('requests the existing parent directory for a prospective write target', () => {
     expect(
       buildPendingWorkspacePathConsent({

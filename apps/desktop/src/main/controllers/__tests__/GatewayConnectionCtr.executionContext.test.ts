@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import ExecutionEnvService from '../../services/executionEnvSrv';
 import GatewayConnectionCtr from '../GatewayConnectionCtr';
 import HeterogeneousAgentCtr from '../HeterogeneousAgentCtr';
 import LocalFileCtr from '../LocalFileCtr';
@@ -48,6 +49,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
   const handleRunCommand = vi.fn(async () => ({ success: true, stdout: 'ok' }));
   const readFile = vi.fn(async () => ({ content: 'safe' }));
   const spawnLhHeteroExec = vi.fn();
+  const resolveExecutionEnv = vi.fn(async () => ({ MANAGED: 'resolved', SHARED: 'managed' }));
 
   const localFileCtr = {
     handleEditFile: vi.fn(),
@@ -83,6 +85,8 @@ describe('GatewayConnectionCtr execution context boundary', () => {
         if (Controller === HeterogeneousAgentCtr) return { spawnLhHeteroExec };
         return {};
       },
+      getService: (Service: unknown) =>
+        Service === ExecutionEnvService ? { resolve: resolveExecutionEnv } : {},
       storeManager: {
         get: (key: string, fallback: unknown) =>
           key === 'localFileWorkspaceRoots' ? allowedMountRoots : fallback,
@@ -117,7 +121,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     await rm(tempRoot, { force: true, recursive: true });
   });
 
-  it('rejects a standalone renderer tool_execute even with a forged frozen context', async () => {
+  it('executes a standalone renderer tool call through the main-process boundary', async () => {
     const file = path.join(workspace, 'safe.txt');
     await writeFile(file, 'safe');
     const controller = makeController();
@@ -134,8 +138,8 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
-    expect(readFile).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true });
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ path: file }));
   });
 
   it('blocks an absolute standalone renderer read outside the frozen workspace', async () => {
@@ -155,7 +159,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
+    expect(result).toMatchObject({ content: 'INTERVENTION_REQUIRED', success: false });
     expect(readFile).not.toHaveBeenCalled();
   });
 
@@ -174,7 +178,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       },
     });
 
-    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
+    expect(result).toMatchObject({ content: 'WORKSPACE_REQUIRED', success: false });
     expect(readFile).not.toHaveBeenCalled();
   });
 
@@ -186,7 +190,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       args: { command: 'id' },
     });
 
-    expect(result).toMatchObject({ content: 'SERVER_AUTHORITY_REQUIRED', success: false });
+    expect(result).toMatchObject({ content: 'WORKSPACE_REQUIRED', success: false });
     expect(handleRunCommand).not.toHaveBeenCalled();
   });
 
@@ -210,6 +214,84 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     ]);
     expect(JSON.stringify(result.state.workspaceWarnings)).not.toContain('/tmp/evil');
     expect(JSON.stringify(result)).not.toContain('MODEL_SECRET');
+  });
+
+  it('resolves an envRef in main and merges it over workspace dotenv files', async () => {
+    const controller = makeController();
+    const executionContext = context();
+    delete executionContext.env;
+
+    await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: 'env' },
+      executionContext: {
+        ...executionContext,
+        envRef: { agentId: 'agent-1', topicId: 'topic-1', workspaceId: 'workspace-1' },
+      },
+      trace: {
+        deviceId: 'device-1',
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      },
+    });
+
+    expect(resolveExecutionEnv).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      topicId: 'topic-1',
+      workspaceId: 'workspace-1',
+    });
+    expect(handleRunCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: { FILE_ONLY: 'from-file', MANAGED: 'resolved', SHARED: 'managed' },
+      }),
+    );
+  });
+
+  it('injects deterministic skill directories after resolving managed env', async () => {
+    const controller = makeController();
+    const skillDir = path.join(workspace, '.skills', 'deploy');
+    await mkdir(skillDir, { recursive: true });
+
+    await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: './run.sh', env: { SKILL_DIR: '/tmp/forged' } },
+      executionContext: {
+        accessRoots: [
+          {
+            modes: ['read', 'exec'],
+            operationId: 'op-1',
+            rootPath: skillDir,
+            scope: 'operation',
+            source: 'user-approval',
+          },
+        ],
+        cwd: skillDir,
+        envFiles: ['.env'],
+        envRef: { agentId: 'agent-1', topicId: 'topic-1', workspaceId: 'workspace-1' },
+        workspaceRootPath: workspace,
+      },
+      purpose: 'skill-script',
+      trace: {
+        deviceId: 'device-1',
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      },
+    });
+
+    expect(handleRunCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: skillDir,
+        env: {
+          FILE_ONLY: 'from-file',
+          MANAGED: 'resolved',
+          SHARED: 'managed',
+          SKILL_DIR: skillDir,
+          WORKSPACE_DIR: workspace,
+        },
+      }),
+    );
   });
 
   it('spawns a gateway agent run with only the server-frozen cwd and environment', async () => {

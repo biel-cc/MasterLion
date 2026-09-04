@@ -113,6 +113,18 @@ const createTestContext = (agentId: string = TEST_IDS.SESSION_ID) => ({
   threadId: null,
 });
 
+const mockClientMessagePersistence = () =>
+  vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+    assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+    messages: [
+      createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
+      createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
+    ],
+    topicId: TEST_IDS.TOPIC_ID,
+    topics: { items: [], total: 0 },
+    userMessageId: TEST_IDS.USER_MESSAGE_ID,
+  } as any);
+
 const seedFormalLocalWorkspace = (agentId: string = TEST_IDS.SESSION_ID) => {
   const draftKey = buildDraftConversationKey({ agentId });
   useProjectWorkspaceStore.setState({
@@ -1235,7 +1247,7 @@ describe('ConversationLifecycle actions', () => {
           operationId: 'gateway-op',
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
-        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const sendMessageInServerSpy = mockClientMessagePersistence();
         act(() => {
           useChatStore.setState({ executeGatewayAgent });
         });
@@ -1257,7 +1269,7 @@ describe('ConversationLifecycle actions', () => {
         expect(sendMessageInServerSpy).not.toHaveBeenCalled();
       });
 
-      it('routes native desktop managed env through the server/device transport', async () => {
+      it('keeps native desktop managed env on client runtime with a frozen workspace context', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: {
@@ -1288,7 +1300,7 @@ describe('ConversationLifecycle actions', () => {
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
         const executeClientAgent = vi.fn();
-        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const sendMessageInServerSpy = mockClientMessagePersistence();
         act(() => {
           useChatStore.setState({ executeClientAgent, executeGatewayAgent });
         });
@@ -1301,16 +1313,23 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect(executeClientAgent).toHaveBeenCalledWith(
           expect.objectContaining({
             context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID }),
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/project',
+              plan: expect.objectContaining({ deviceId: 'device-local', kind: 'device' }),
+              workspace: expect.objectContaining({ id: 'workspace-project' }),
+            }),
+            workingDirectory: '/Users/me/project',
           }),
         );
-        expect(executeClientAgent).not.toHaveBeenCalled();
-        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
-      it('routes an unbound desktop local topic through the production gateway lifecycle', async () => {
+      it('keeps an unbound desktop local topic on client runtime and freezes it unresolved', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: {
@@ -1325,7 +1344,7 @@ describe('ConversationLifecycle actions', () => {
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
         const executeClientAgent = vi.fn();
-        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const sendMessageInServerSpy = mockClientMessagePersistence();
         act(() => {
           useChatStore.setState({ executeClientAgent, executeGatewayAgent });
         });
@@ -1338,20 +1357,23 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect(executeClientAgent).toHaveBeenCalledWith(
           expect.objectContaining({
-            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID, topicId: null }),
-            message: 'read /Users/me/shared/README.md then list cwd',
+            context: expect.objectContaining({
+              agentId: TEST_IDS.SESSION_ID,
+              topicId: TEST_IDS.TOPIC_ID,
+            }),
+            executionContext: expect.objectContaining({ unresolvedReason: 'device-unrouted' }),
           }),
         );
-        expect(executeClientAgent).not.toHaveBeenCalled();
-        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
         // Unbound routing is decided before the managed-env probe: no secret
         // values or cache-dependent decision crosses the renderer boundary.
         expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
-      it('routes user-level managed env through gateway even without a workspace cache entry', async () => {
+      it('does not probe managed env before native desktop client execution', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
@@ -1368,6 +1390,7 @@ describe('ConversationLifecycle actions', () => {
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
         const executeClientAgent = vi.fn();
+        mockClientMessagePersistence();
         act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
         const { result } = renderHook(() => useChatStore());
 
@@ -1378,11 +1401,12 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledOnce();
-        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
-      it('fails closed to gateway when the managed env summary is unavailable', async () => {
+      it('does not let an unavailable managed env summary break native desktop chat', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
@@ -1396,6 +1420,7 @@ describe('ConversationLifecycle actions', () => {
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
         const executeClientAgent = vi.fn();
+        mockClientMessagePersistence();
         act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
         const { result } = renderHook(() => useChatStore());
 
@@ -1406,8 +1431,9 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledOnce();
-        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
       it('should materialize local file mention editor data into persisted tool-result snapshots', async () => {
@@ -1490,7 +1516,7 @@ describe('ConversationLifecycle actions', () => {
         ]);
       });
 
-      it('routes a formally-bound LocalSystem topic through gateway, never renderer execution', async () => {
+      it('routes a formally-bound LocalSystem topic through the native client runtime', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: {
@@ -1506,7 +1532,7 @@ describe('ConversationLifecycle actions', () => {
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
         });
         const executeClientAgent = vi.fn();
-        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const sendMessageInServerSpy = mockClientMessagePersistence();
         act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
         const { result } = renderHook(() => useChatStore());
 
@@ -1521,12 +1547,19 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledOnce();
-        expect(executeClientAgent).not.toHaveBeenCalled();
-        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/project',
+              workspace: expect.objectContaining({ id: 'workspace-project' }),
+            }),
+          }),
+        );
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
       });
 
-      it('routes a formally-bound desktop chat through gateway even when plugins is empty', async () => {
+      it('keeps a formally-bound desktop chat on client runtime when plugins are empty', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({ agentConfig: { plugins: [] } });
         seedBoundTopicWorkspace();
@@ -1538,7 +1571,7 @@ describe('ConversationLifecycle actions', () => {
         });
         const executeClientAgent = vi.fn();
         act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
-        const sendMessageInServerSpy = vi.spyOn(aiChatService, 'sendMessageInServer');
+        const sendMessageInServerSpy = mockClientMessagePersistence();
         const { result } = renderHook(() => useChatStore());
 
         await act(async () => {
@@ -1552,9 +1585,9 @@ describe('ConversationLifecycle actions', () => {
           });
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledOnce();
-        expect(executeClientAgent).not.toHaveBeenCalled();
-        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
       });
     });
 

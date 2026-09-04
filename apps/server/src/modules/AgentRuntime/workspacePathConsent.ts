@@ -96,10 +96,12 @@ const collectToolPathRequests = (
       return args.items.flatMap((item) => {
         if (!item || typeof item !== 'object') return [];
         const record = item as Record<string, unknown>;
-        return [...one(record.oldPath, 'write'), ...one(record.newPath, 'write')].map((request) => ({
-          ...request,
-          value: dirnameForPath(request.value),
-        }));
+        return [...one(record.oldPath, 'write'), ...one(record.newPath, 'write')].map(
+          (request) => ({
+            ...request,
+            value: dirnameForPath(request.value),
+          }),
+        );
       });
     }
     case 'renameLocalFile': {
@@ -151,10 +153,7 @@ const rootCovers = (
     return false;
   }
   if (credentialRead) {
-    return (
-      root.scope === 'operation' &&
-      (root.source === 'direct-user-message' || root.source === 'user-approval')
-    );
+    return root.scope === 'operation' && root.source === 'user-approval';
   }
   return true;
 };
@@ -222,9 +221,14 @@ export const requiresPrimaryCwdForTool = (params: {
   }
   const requests = collectToolPathRequests(tool.apiName, args);
   if (requests.length === 0) {
-    return ['globFiles', 'globLocalFiles', 'listFiles', 'listLocalFiles', 'searchFiles', 'searchLocalFiles'].includes(
-      tool.apiName,
-    );
+    return [
+      'globFiles',
+      'globLocalFiles',
+      'listFiles',
+      'listLocalFiles',
+      'searchFiles',
+      'searchLocalFiles',
+    ].includes(tool.apiName);
   }
   return requests.some(
     ({ value }) =>

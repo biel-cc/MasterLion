@@ -40,6 +40,7 @@ import {
 } from '@lobechat/local-file-shell';
 import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 
+import ExecutionEnvService from '@/services/executionEnvSrv';
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
 import ImessageBridgeService from '@/services/imessageBridgeSrv';
 import { createLogger } from '@/utils/logger';
@@ -284,26 +285,25 @@ export default class GatewayConnectionCtr extends ControllerModule {
   }
 
   /**
-   * Compatibility shim for older renderers. Local-system authority is issued
-   * only by the authenticated server -> central gateway channel wired in
-   * `afterAppReady`; renderer-supplied context/trace values are forgeable.
+   * Standalone desktop conversations execute client tools through this IPC
+   * boundary. Keep the same fail-closed preparation used by gateway calls so
+   * the renderer cannot bypass frozen-workspace or path-consent checks.
    */
   @IpcMethod()
-  async executeLocalToolCall(_params: {
+  async executeLocalToolCall(params: {
     apiName: string;
     args: Record<string, unknown>;
     executionContext?: GatewayToolCallExecutionContext;
+    purpose?: 'skill-command' | 'skill-script';
     trace?: ExecutionBoundaryTrace;
   }): Promise<BuiltinServerRuntimeOutput> {
-    return {
-      content: 'SERVER_AUTHORITY_REQUIRED',
-      error: {
-        code: 'SERVER_AUTHORITY_REQUIRED',
-        message: 'Local-system calls must be dispatched by the authenticated server gateway.',
-      },
-      state: { code: 'SERVER_AUTHORITY_REQUIRED' },
-      success: false,
-    };
+    return this.executeToolCall(
+      params.apiName,
+      params.args,
+      params.executionContext,
+      params.trace,
+      params.purpose,
+    );
   }
 
   // ─── Auto Connect ───
@@ -459,9 +459,33 @@ export default class GatewayConnectionCtr extends ControllerModule {
     args: unknown,
     executionContext?: GatewayToolCallExecutionContext,
     trace?: ExecutionBoundaryTrace,
+    purpose?: 'skill-command' | 'skill-script',
   ): Promise<BuiltinServerRuntimeOutput> {
     const runtime = this.getLocalSystemRuntime();
     const normalized = LEGACY_API_ALIASES[apiName] ?? apiName;
+    let resolvedExecutionContext = executionContext?.envRef
+      ? {
+          ...executionContext,
+          // A renderer may carry only the reference. If it also supplied
+          // values, ignore them: the authenticated server response is the
+          // sole authority for managed environment values.
+          env: await this.app.getService(ExecutionEnvService).resolve(executionContext.envRef),
+        }
+      : executionContext;
+    if (resolvedExecutionContext && purpose) {
+      const workspaceDir =
+        resolvedExecutionContext.workspaceRootPath ?? resolvedExecutionContext.cwd;
+      resolvedExecutionContext = {
+        ...resolvedExecutionContext,
+        env: {
+          ...resolvedExecutionContext.env,
+          ...(purpose === 'skill-script' && resolvedExecutionContext.cwd
+            ? { SKILL_DIR: resolvedExecutionContext.cwd }
+            : {}),
+          ...(workspaceDir ? { WORKSPACE_DIR: workspaceDir } : {}),
+        },
+      };
+    }
     let prepared: PreparedToolCallExecution;
     try {
       prepared = await prepareToolCallExecution({
@@ -471,24 +495,25 @@ export default class GatewayConnectionCtr extends ControllerModule {
         allowedMountRoots: this.app.storeManager.get('localFileWorkspaceRoots', []),
         apiName: normalized,
         args: args as Record<string, any>,
-        context: executionContext,
+        context: resolvedExecutionContext,
         trace,
       });
     } catch (error) {
       if (error instanceof ExecutionBoundaryError) {
         const pathConsent =
           error.code === 'INTERVENTION_REQUIRED' &&
-          executionContext &&
+          resolvedExecutionContext &&
           trace?.deviceId &&
           trace.operationId &&
           trace.topicId &&
           error.scopeAudit.length > 0
             ? {
-                actualCwd: executionContext.cwd ?? '',
+                actualCwd: resolvedExecutionContext.cwd ?? '',
                 deviceId: trace.deviceId,
                 modes: [...new Set(error.scopeAudit.map(({ mode }) => mode))],
                 operationId: trace.operationId,
-                primaryCwd: executionContext.workspaceRootPath ?? executionContext.cwd ?? '',
+                primaryCwd:
+                  resolvedExecutionContext.workspaceRootPath ?? resolvedExecutionContext.cwd ?? '',
                 requestedPath: error.scopeAudit[0]!.path,
                 topicId: trace.topicId,
                 version: 1 as const,

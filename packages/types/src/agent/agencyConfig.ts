@@ -60,6 +60,8 @@ export interface LobeAgentAgencyConfig {
    * hetero agents `openclaw` / `hermes`).
    */
   boundDeviceId?: string;
+  /** Formal workspace default per device. Legacy cwd strings are migrated into this map. */
+  defaultWorkspaceByDevice?: Record<string, string>;
   /** Non-secret environment applied to every run. Secrets belong in user/workspace env. */
   env?: Record<string, string>;
   /**

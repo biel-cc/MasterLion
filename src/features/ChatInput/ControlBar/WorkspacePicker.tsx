@@ -340,17 +340,16 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
 
     const content = (
       <Flexbox data-testid="workspace-picker" gap={4} style={{ minWidth: 300 }}>
-        <div className={styles.sectionTitle}>
-          {pickerTitle}
-        </div>
+        <div className={styles.sectionTitle}>{pickerTitle}</div>
         {!seamAvailable && (
           <div className={styles.note}>{tw('workspaceRuntime.picker.seamUnavailable')}</div>
         )}
-        {effective.loading ? (
+        {effective.loading && (
           <div className={styles.note} data-testid="workspace-picker-loading" role="status">
             {tw('workspaceRuntime.picker.loading')}
           </div>
-        ) : effective.loadError ? (
+        )}
+        {!!effective.loadError && (
           <div className={styles.error} data-testid="workspace-picker-load-error" role="alert">
             {tw('workspaceRuntime.picker.loadError')}
             <button
@@ -361,7 +360,8 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
               {tw('workspaceRuntime.picker.retry')}
             </button>
           </div>
-        ) : unavailable ? (
+        )}
+        {unavailable ? (
           <div className={styles.note} data-testid="workspace-picker-unavailable">
             {unavailable}
           </div>
@@ -407,7 +407,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
                   </Flexbox>
                 );
               })}
-              {rows.length === 0 && (
+              {rows.length === 0 && !effective.loading && (
                 <div className={styles.note}>{tw('workspaceRuntime.picker.empty')}</div>
               )}
             </div>

@@ -16,6 +16,7 @@ import { LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 
+import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { localFileService } from '@/services/electron/localFileService';
 
 import { LocalSystemIdentifier } from '../../types';
@@ -47,6 +48,58 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   protected readonly apiEnum = LocalSystemApiEnum;
 
   private runtime = new LocalSystemExecutionRuntime(localFileService);
+
+  private async executeOnDesktopBoundary(
+    apiName: string,
+    args: Record<string, unknown>,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult | undefined> {
+    const executionContext = ctx?.executionContext;
+    if (!executionContext) return;
+    if (executionContext.plan.kind !== 'device' || executionContext.plan.target !== 'local') {
+      return {
+        content: 'DEVICE_UNROUTED',
+        error: {
+          message: 'Remote-device execution cannot fall back to the local desktop runtime.',
+          type: 'PluginServerError',
+        },
+        success: false,
+      };
+    }
+
+    const operationId = executionContext.operationId ?? ctx.operationId;
+    const topicId = ctx.topicId ?? undefined;
+    if (!operationId || !topicId || !ctx.agentId || !ctx.toolCallId)
+      return this.workspaceRequired({
+        messageId: ctx.messageId,
+        operationId: ctx.operationId,
+      });
+
+    const output = await gatewayConnectionService.executeLocalToolCall({
+      apiName,
+      args,
+      executionContext: {
+        accessRoots: executionContext.accessRoots,
+        cwd: executionContext.cwd,
+        envFiles: executionContext.envFiles,
+        envRef: {
+          agentId: ctx.agentId,
+          topicId,
+          workspaceId: executionContext.workspace?.id,
+        },
+        workspaceKind: executionContext.workspace?.kind,
+        workspaceRootPath: executionContext.workspace?.rootPath,
+      },
+      trace: {
+        deviceId: executionContext.plan.deviceId,
+        operationId,
+        toolCallId: ctx.toolCallId,
+        topicId,
+      },
+    });
+
+    return this.toResult(output);
+  }
 
   private workspaceRequired(ctx?: BuiltinToolContext): BuiltinToolResult | undefined {
     if (!ctx || ctx.workingDirectory) return;
@@ -100,6 +153,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('listFiles', params as any, ctx);
+      if (boundary) return boundary;
       const resolved = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       const result = await this.runtime.listFiles({
         directoryPath: resolved.path,
@@ -120,6 +175,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('readFile', params as any, ctx);
+      if (boundary) return boundary;
       const resolved = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       const result = await this.runtime.readFile({
         endLine: resolved.loc?.[1],
@@ -139,6 +196,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('readFiles', params as any, ctx);
+      if (boundary) return boundary;
       const paths = params.paths.map(
         (filePath) => resolveArgsWithScope({ path: filePath }, 'path', ctx?.workingDirectory).path,
       );
@@ -156,6 +215,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('searchFiles', params as any, ctx);
+      if (boundary) return boundary;
       const resolvedParams = resolveArgsWithScope(params, 'directory', ctx?.workingDirectory);
       const result = await this.runtime.searchFiles({
         ...resolvedParams,
@@ -174,6 +235,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('moveFiles', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.moveFiles({
         operations: params.items.map((item) => ({
           destination: resolveArgsWithScope({ path: item.newPath }, 'path', ctx?.workingDirectory)
@@ -194,6 +257,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('writeFile', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.writeFile(
         resolveArgsWithScope(params, 'path', ctx?.workingDirectory),
       );
@@ -210,6 +275,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('editFile', params as any, ctx);
+      if (boundary) return boundary;
       const resolved = resolveArgsWithScope(params, 'file_path', ctx?.workingDirectory);
       const result = await this.runtime.editFile({
         all: resolved.replace_all,
@@ -232,6 +299,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('runCommand', params as any, ctx);
+      if (boundary) return boundary;
       // The manifest exposes `run_in_background`, but ComputerRuntime's RunCommandState
       // reads `args.background` for the `isBackground` field — without this normalize
       // the UI/state would always say foreground even for background commands.
@@ -259,8 +328,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  getCommandOutput = async (params: GetCommandOutputParams): Promise<BuiltinToolResult> => {
+  getCommandOutput = async (
+    params: GetCommandOutputParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
+      const boundary = await this.executeOnDesktopBoundary('getCommandOutput', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.getCommandOutput({
         commandId: params.shell_id,
         filter: params.filter,
@@ -271,8 +345,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  killCommand = async (params: KillCommandParams): Promise<BuiltinToolResult> => {
+  killCommand = async (
+    params: KillCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
+      const boundary = await this.executeOnDesktopBoundary('killCommand', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.killCommand({
         commandId: params.shell_id,
       });
@@ -291,6 +370,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     const blocked = this.workspaceRequired(ctx);
     if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('grepContent', params as any, ctx);
+      if (boundary) return boundary;
       const resolvedParams = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       // Forward the full IPC params (glob / output_mode / -i / -A / -B / -C / -n /
       // multiline / head_limit / type / tool) instead of stripping to {directory, pattern}.
@@ -318,6 +399,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
       };
     }
     try {
+      const boundary = await this.executeOnDesktopBoundary('globFiles', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.globFiles({
         directory: params.scope ?? ctx?.workingDirectory,
         pattern: params.pattern,

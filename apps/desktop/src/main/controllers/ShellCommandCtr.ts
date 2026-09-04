@@ -31,7 +31,11 @@ export default class ShellCommandCtr extends ControllerModule {
       if (cliCtr) {
         const args = params.command.slice(prefixMatch[0].length).trim();
         logger.debug('Routing lh command to CliCtr.runCliCommand:', args);
-        const result = await cliCtr.runCliCommand(args);
+        const executionOptions =
+          params.cwd || params.env ? { cwd: params.cwd, env: params.env } : undefined;
+        const result = executionOptions
+          ? await cliCtr.runCliCommand(args, executionOptions)
+          : await cliCtr.runCliCommand(args);
         return {
           exit_code: result.exitCode,
           output: result.stdout + result.stderr,

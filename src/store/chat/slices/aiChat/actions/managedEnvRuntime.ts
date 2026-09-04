@@ -13,15 +13,11 @@ interface ManagedEnvAuthority {
 
 /**
  * Keep workspace coordination and encrypted env out of the renderer while
- * making every desktop entry point fail closed. Every native client run passes
- * through the server coordinator because LocalSystem may be injected from its
- * device-capable plan even when absent from the static plugin list. This is
- * also the only production path that can lazily create/bind scratch after the
- * first cwd-dependent tool succeeds while leaving explicit absolute-path reads
- * unbound. Gateway preserves the frozen local target and dispatches tools back
- * to its bound device; this never means "fall back to sandbox". Desktop
- * heterogeneous CLIs keep their in-process path unless the server reports
- * managed user/workspace env that requires server-side resolution.
+ * keeping the existing runtime choice for ordinary renderer execution. Desktop
+ * heterogeneous CLIs are promoted only when server-owned user/workspace env
+ * requires server-side resolution. Gateway selection for regular client runs
+ * remains owned by `selectRuntimeType`; workspace coordination must not turn an
+ * otherwise local chat into a hard dependency on an optional Gateway URL.
  */
 export const routeDesktopWorkspaceRuntime = async (
   runtimeType: AgentRuntimeType,
@@ -30,13 +26,7 @@ export const routeDesktopWorkspaceRuntime = async (
   isDesktop = defaultIsDesktop,
 ): Promise<AgentRuntimeType> => {
   if (!isDesktop || runtimeType === 'gateway') return runtimeType;
-  // LocalSystem can be injected dynamically from a device-capable execution
-  // plan even when it is absent from agentConfig.plugins. Renderer-local
-  // execution therefore cannot reliably prove a run is plain chat, and lacks
-  // the server-authored consent/grants/full frozen context when it is not.
-  // Route every native client run through the coordinator; the frozen target
-  // remains local and never falls back to sandbox.
-  if (runtimeType === 'client') return 'gateway';
+  if (runtimeType === 'client') return runtimeType;
 
   // Heterogeneous IPC already receives its permitted agent env. Promote it
   // only when server-owned user/workspace env must be resolved out of process.

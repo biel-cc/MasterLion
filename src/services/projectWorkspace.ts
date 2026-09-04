@@ -167,49 +167,8 @@ export const isProjectWorkspaceSeamUnavailableError = (error: unknown): boolean 
     typeof error === 'object' &&
     (error as { code?: unknown }).code === PROJECT_WORKSPACE_SEAM_UNAVAILABLE);
 
-interface RawProcedure<TInput, TOutput> {
-  mutate: (input: TInput) => Promise<TOutput>;
-  query: (input: TInput) => Promise<TOutput>;
-}
-
-/**
- * Structural shape of the A1 router as seen from the browser. Kept private so
- * the only `as unknown` cast in the codebase lives in this file. Integrate
- * wiring: once `projectWorkspaceRouter` is registered on `LambdaRouter`, delete
- * this interface and read `lambdaClient.projectWorkspace` directly.
- */
-interface RawProjectWorkspaceRouter {
-  bindTopic: RawProcedure<BindTopicWorkspaceInput, BindTopicWorkspaceResult>;
-  captureTarget: RawProcedure<CaptureTopicTargetInput, TopicExecutionSnapshot>;
-  getManagedEnvSummary: RawProcedure<
-    { topicId?: string; workspaceId?: string },
-    ManagedEnvSummary
-  >;
-  getOrCreate: RawProcedure<GetOrCreateDeviceWorkspaceInput, ProjectWorkspaceItem>;
-  getTopicState: RawProcedure<{ topicId: string }, TopicWorkspaceState | undefined>;
-  grant: RawProcedure<GrantTopicAccessInput, WorkspaceAccessGrant>;
-  list: RawProcedure<
-    { deviceId?: string; kind?: WorkspaceKind } | undefined,
-    ProjectWorkspaceItem[]
-  >;
-  listEnv: RawProcedure<{ workspaceId: string }, WorkspaceEnvEntrySummary[]>;
-  listGrants: RawProcedure<{ deviceId: string; topicId: string }, WorkspaceAccessGrant[]>;
-  listUserEnv: RawProcedure<undefined, WorkspaceEnvEntrySummary[]>;
-  resolveRealPath: RawProcedure<{ deviceId: string; path: string }, { path: string }>;
-  revoke: RawProcedure<TopicGrantRefInput, WorkspaceAccessGrant>;
-  revokeEnv: RawProcedure<{ key: string; workspaceId: string }, void>;
-  revokeUserEnv: RawProcedure<{ key: string }, void>;
-  saveEnv: RawProcedure<SaveWorkspaceEnvEntryInput & { workspaceId: string }, void>;
-  saveUserEnv: RawProcedure<SaveWorkspaceEnvEntryInput, void>;
-  update: RawProcedure<UpdateProjectWorkspaceInput & { id: string }, ProjectWorkspaceItem>;
-}
-
 const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
-  const router = (lambdaClient as unknown as { projectWorkspace?: RawProjectWorkspaceRouter })
-    .projectWorkspace;
-  // tRPC proxy clients materialize any property lazily, so also require the
-  // procedure to be callable before treating the seam as wired.
-  if (!router || typeof router.list?.query !== 'function') return undefined;
+  const router = lambdaClient.projectWorkspace;
 
   return {
     bindTopic: (input) => router.bindTopic.mutate(input),
@@ -230,6 +189,23 @@ const resolveDefaultClient = (): ProjectWorkspaceClient | undefined => {
     saveUserEnv: (input) => router.saveUserEnv.mutate(input),
     update: (input) => router.update.mutate(input),
   };
+};
+
+const isMissingProjectWorkspaceProcedure = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as {
+    data?: { code?: unknown };
+    message?: unknown;
+    shape?: { data?: { code?: unknown } };
+  };
+  const code = candidate.data?.code ?? candidate.shape?.data?.code;
+  const message = typeof candidate.message === 'string' ? candidate.message : '';
+  return (
+    code === 'NOT_FOUND' &&
+    /(?:no\s+["']?(?:query|mutation)["']?-?procedure|no\s+procedure\s+found).*projectWorkspace\./i.test(
+      message,
+    )
+  );
 };
 
 const rethrowKnown = (error: unknown): never => {
@@ -258,82 +234,94 @@ export class ProjectWorkspaceService {
     return client;
   }
 
+  private async call<T>(operation: (client: ProjectWorkspaceClient) => Promise<T>): Promise<T> {
+    try {
+      return await operation(this.client());
+    } catch (error) {
+      if (isMissingProjectWorkspaceProcedure(error)) {
+        throw new ProjectWorkspaceSeamUnavailableError();
+      }
+      throw error;
+    }
+  }
+
   list(input?: { deviceId?: string; kind?: WorkspaceKind }) {
-    return this.client().list(input);
+    return this.call((client) => client.list(input));
   }
 
   /** Value-free browser projection: names and secret flags only. */
   listEnv(workspaceId: string) {
-    return this.client().listEnv({ workspaceId });
+    return this.call((client) => client.listEnv({ workspaceId }));
   }
 
   /** Server-authoritative, value-free routing probe. Failure must be treated as managed/unknown. */
   getManagedEnvSummary(input: { topicId?: string; workspaceId?: string }) {
-    return this.client().getManagedEnvSummary(input);
+    return this.call((client) => client.getManagedEnvSummary(input));
   }
 
   listUserEnv() {
-    return this.client().listUserEnv();
+    return this.call((client) => client.listUserEnv());
   }
 
   getTopicState(topicId: string) {
-    return this.client().getTopicState({ topicId });
+    return this.call((client) => client.getTopicState({ topicId }));
   }
 
   /** Formal device workspace get-or-create. Never binds a topic by itself. */
   getOrCreateDeviceWorkspace(input: GetOrCreateDeviceWorkspaceInput) {
-    return this.client().getOrCreate(input);
+    return this.call((client) => client.getOrCreate(input));
   }
 
   async bindTopic(input: BindTopicWorkspaceInput): Promise<BindTopicWorkspaceResult> {
     try {
-      return await this.client().bindTopic(input);
+      return await this.call((client) => client.bindTopic(input));
     } catch (error) {
       return rethrowKnown(error);
     }
   }
 
   captureTarget(input: CaptureTopicTargetInput) {
-    return this.client().captureTarget(input);
+    return this.call((client) => client.captureTarget(input));
   }
 
   listGrants(input: { deviceId: string; topicId: string }) {
-    return this.client().listGrants(input);
+    return this.call((client) => client.listGrants(input));
   }
 
   grant(input: GrantTopicAccessInput) {
-    return this.client().grant(input);
+    return this.call((client) => client.grant(input));
   }
 
   revoke(input: TopicGrantRefInput) {
-    return this.client().revoke(input);
+    return this.call((client) => client.revoke(input));
   }
 
   /** Device-authoritative canonicalization for remote path-consent decisions. */
   resolveRealPath(input: { deviceId: string; path: string }) {
-    const resolveRealPath = this.client().resolveRealPath;
-    if (!resolveRealPath) throw new ProjectWorkspaceSeamUnavailableError();
-    return resolveRealPath(input);
+    return this.call((client) => {
+      if (!client.resolveRealPath) throw new ProjectWorkspaceSeamUnavailableError();
+      return client.resolveRealPath(input);
+    });
   }
 
   saveEnv(workspaceId: string, entry: SaveWorkspaceEnvEntryInput) {
-    return this.client().saveEnv({ ...entry, workspaceId });
+    return this.call((client) => client.saveEnv({ ...entry, workspaceId }));
   }
 
   revokeEnv(workspaceId: string, key: string) {
-    return this.client().revokeEnv({ key, workspaceId });
+    return this.call((client) => client.revokeEnv({ key, workspaceId }));
   }
 
   saveUserEnv(entry: SaveWorkspaceEnvEntryInput) {
-    return this.client().saveUserEnv(entry);
+    return this.call((client) => client.saveUserEnv(entry));
   }
 
   revokeUserEnv(key: string) {
-    return this.client().revokeUserEnv({ key });
+    return this.call((client) => client.revokeUserEnv({ key }));
   }
 
   updateWorkspace(id: string, value: UpdateProjectWorkspaceInput) {
-    return this.client().update({ id, ...value });
+    return this.call((client) => client.update({ id, ...value }));
   }
 }
 

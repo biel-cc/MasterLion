@@ -25,7 +25,7 @@ describe('resolveSkillScriptExecutionRoute', () => {
         verifyDevicePaths,
       }),
     ).resolves.toEqual({
-      cwd: '/real/repo',
+      cwd: '/real/repo/.agents/skills/release-writer',
       deviceId: 'device-1',
       env: {
         SKILL_DIR: '/real/repo/.agents/skills/release-writer',
@@ -39,6 +39,28 @@ describe('resolveSkillScriptExecutionRoute', () => {
       deviceId: 'device-1',
       skillDir: '/repo/.agents/skills/release-writer',
       workspaceRoot: '/repo',
+    });
+  });
+
+  it('allows a device-verified managed skill cache while keeping the workspace identity', async () => {
+    await expect(
+      resolveSkillScriptExecutionRoute({
+        allowExternalSkillDir: true,
+        context: deviceContext(),
+        skillDir: '/managed/skills/hash-a',
+        verifyDevicePaths: async () => ({
+          skillDir: '/real/managed/skills/hash-a',
+          workspaceRoot: '/real/repo',
+        }),
+      }),
+    ).resolves.toMatchObject({
+      cwd: '/real/managed/skills/hash-a',
+      env: {
+        SKILL_DIR: '/real/managed/skills/hash-a',
+        WORKSPACE_DIR: '/real/repo',
+      },
+      kind: 'device',
+      ok: true,
     });
   });
 
@@ -136,7 +158,7 @@ describe('resolveSkillScriptExecutionRoute', () => {
         }),
       }),
     ).resolves.toMatchObject({
-      cwd: 'C:/REAL-REPO',
+      cwd: 'C:/real-repo/.agents/skills/deploy',
       env: {
         SKILL_DIR: 'C:/real-repo/.agents/skills/deploy',
         TOKEN: 'safe-value',

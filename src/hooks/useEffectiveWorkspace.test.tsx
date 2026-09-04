@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   devices: [] as Array<{ defaultCwd: string | null; deviceId: string; online: boolean }>,
   isDesktop: true,
   isDevicesInit: true,
+  legacyLocalPath: undefined as string | undefined,
   topic: undefined as Record<string, any> | undefined,
 }));
 
@@ -28,7 +29,12 @@ vi.mock('@lobechat/const', () => ({
 }));
 
 vi.mock('@/store/agent', () => ({
-  useAgentStore: (selector: (state: any) => unknown) => selector({}),
+  useAgentStore: (selector: (state: any) => unknown) =>
+    selector({
+      localAgentWorkingDirectoryMap: mocks.legacyLocalPath
+        ? { 'agent-1': mocks.legacyLocalPath }
+        : {},
+    }),
 }));
 vi.mock('@/store/agent/selectors', () => ({
   agentByIdSelectors: { getAgencyConfigById: () => () => mocks.agencyConfig },
@@ -94,6 +100,7 @@ describe('useEffectiveWorkspace', () => {
     mocks.devices = [{ defaultCwd: '/Users/me/Desktop', deviceId: 'desktop-1', online: true }];
     mocks.isDesktop = true;
     mocks.isDevicesInit = true;
+    mocks.legacyLocalPath = undefined;
     mocks.topic = undefined;
     resetProjectWorkspaceStore();
   });
@@ -157,6 +164,15 @@ describe('useEffectiveWorkspace', () => {
       deviceDefault: '/Users/me/Desktop',
       deviceId: 'desktop-1',
     });
+  });
+
+  it('keeps a legacy localStorage cwd visible as a migration recommendation', () => {
+    mocks.legacyLocalPath = '/Users/me/legacy-project';
+
+    const { result } = renderHook(() => useEffectiveWorkspace('agent-1'));
+
+    expect(result.current.cwd).toBeUndefined();
+    expect(result.current.recommendation.agentDefault).toBe('/Users/me/legacy-project');
   });
 
   it('never falls back to home, Desktop or process.cwd for an unbound native topic', () => {
