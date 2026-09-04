@@ -465,6 +465,10 @@ export default class GatewayConnectionCtr extends ControllerModule {
     let prepared: PreparedToolCallExecution;
     try {
       prepared = await prepareToolCallExecution({
+        // This list is populated only after a native folder-picker approval and
+        // stored on the device. Keep it out of the server-authored context so a
+        // remote caller cannot nominate its own mount allowlist.
+        allowedMountRoots: this.app.storeManager.get('localFileWorkspaceRoots', []),
         apiName: normalized,
         args: args as Record<string, any>,
         context: executionContext,

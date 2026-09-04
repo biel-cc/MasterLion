@@ -125,8 +125,22 @@ export type ScopeVerdict = 'denied' | 'primary' | `consent:${string}` | `grant:$
 export interface ScopeAuditEntry extends ExecutionBoundaryTrace {
   cwdOverridden?: boolean;
   mode: PathAccessMode;
+  /** The access target this call actually resolved to, canonicalized. */
   path: string;
+  /**
+   * Device-canonical realpath of the access root that authorized `path`. `path` is
+   * the target and is usually a descendant of it, so anything that re-authorizes
+   * (a topic grant, for one) must use this root and never the target. Absent on a
+   * denial.
+   */
+  rootPath?: string;
   scopeVerdict: ScopeVerdict;
+  /**
+   * Source of the root that authorized this path. `consent:` alone cannot tell an
+   * auto-allowed direct-user-message root from an explicitly approved one, so the
+   * source travels with the verdict. Absent on a denial.
+   */
+  source?: DeviceExecutionAccessRoot['source'];
 }
 
 export interface PreparedToolCallExecution<T extends Record<string, any> = Record<string, any>> {

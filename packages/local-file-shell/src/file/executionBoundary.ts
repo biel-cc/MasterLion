@@ -62,6 +62,13 @@ interface PathRequest {
 }
 
 interface PrepareToolCallExecutionOptions {
+  /**
+   * Device-local mount containers approved by the native client. These are
+   * deliberately not carried in the server-authored execution context: the
+   * device remains the authority for whether an explicit direct-message path
+   * outside HOME belongs to one of its trusted mounts.
+   */
+  allowedMountRoots?: readonly string[];
   apiName: string;
   args: Record<string, any>;
   context?: DeviceToolCallExecutionContext;
@@ -146,6 +153,47 @@ const isSensitiveRoot = (root: string, homeDir: string): boolean => {
   return SENSITIVE_ROOT_SEGMENTS.some((needle) => containsSegments(segments, needle));
 };
 
+const SENSITIVE_SYSTEM_ROOTS = new Set([
+  '/Applications',
+  '/Library',
+  '/System',
+  '/bin',
+  '/boot',
+  '/dev',
+  '/etc',
+  '/lib',
+  '/lib64',
+  '/private',
+  '/proc',
+  '/root',
+  '/sbin',
+  '/sys',
+  '/usr',
+  '/var',
+]);
+
+/**
+ * Canonicalize the device-owned mount allowlist before it participates in an
+ * authorization decision. Invalid, missing, relative, over-broad, and
+ * sensitive roots fail closed by being omitted.
+ */
+const normalizeAllowedMountRoots = async (
+  roots: readonly string[],
+  homeDir: string,
+): Promise<string[]> => {
+  const normalized = await Promise.all(
+    roots.map(async (root) => {
+      if (typeof root !== 'string' || !path.isAbsolute(root)) return;
+      const canonical = await realpath(root).catch(() => undefined);
+      if (!canonical || isSensitiveRoot(canonical, homeDir)) return;
+      if (SENSITIVE_SYSTEM_ROOTS.has(path.resolve(canonical))) return;
+      return path.resolve(canonical);
+    }),
+  );
+
+  return [...new Set(normalized.filter((root): root is string => Boolean(root)))];
+};
+
 const isCredentialPath = (target: string): boolean => {
   const normalized = target.replaceAll('\\', '/');
   const basename = path.basename(target).toLowerCase();
@@ -205,6 +253,7 @@ const authorizePath = async ({
   homeDir,
   mode,
   now,
+  allowedMountRoots,
   target,
   trace,
 }: {
@@ -213,6 +262,7 @@ const authorizePath = async ({
   homeDir: string;
   mode: PathAccessMode;
   now: Date;
+  allowedMountRoots: readonly string[];
   target: string;
   trace: ExecutionBoundaryTrace;
 }): Promise<ScopeAuditEntry> => {
@@ -234,6 +284,8 @@ const authorizePath = async ({
   }
 
   const candidates: Array<{
+    /** Device-canonical realpath of the root, not the declared/lexical value. */
+    realRoot: string;
     root: DeviceExecutionAccessRoot;
     verdict: ScopeVerdict;
   }> = [];
@@ -246,12 +298,12 @@ const authorizePath = async ({
     } catch {
       continue;
     }
-    if (
-      root.scope === 'operation' &&
-      root.source === 'direct-user-message' &&
-      !isWithin(realRoot, homeDir)
-    ) {
-      continue;
+    if (root.scope === 'operation' && root.source === 'direct-user-message') {
+      const isHomeDescendant = realRoot !== homeDir && isWithin(realRoot, homeDir);
+      const isAllowedMountDescendant = allowedMountRoots.some(
+        (mountRoot) => realRoot !== mountRoot && isWithin(realRoot, mountRoot),
+      );
+      if (!isHomeDescendant && !isAllowedMountDescendant) continue;
     }
     if (isSensitiveRoot(realRoot, homeDir) || !isWithin(target, realRoot)) continue;
     if (
@@ -272,7 +324,7 @@ const authorizePath = async ({
     }
 
     const verdict = verdictForRoot(root, trace, now);
-    if (verdict) candidates.push({ root, verdict });
+    if (verdict) candidates.push({ realRoot, root, verdict });
     else if (root.scope !== 'primary') rejectedScopedRoot = true;
   }
 
@@ -283,7 +335,14 @@ const authorizePath = async ({
     if (!approved) {
       throw new ExecutionBoundaryError('INTERVENTION_REQUIRED', [deniedAudit(trace, mode, target)]);
     }
-    return { ...trace, mode, path: target, scopeVerdict: approved.verdict };
+    return {
+      ...trace,
+      mode,
+      path: target,
+      rootPath: approved.realRoot,
+      scopeVerdict: approved.verdict,
+      source: approved.root.source,
+    };
   }
 
   const preferred =
@@ -304,7 +363,14 @@ const authorizePath = async ({
       deniedAudit(trace, mode, target),
     ]);
   }
-  return { ...trace, mode, path: target, scopeVerdict: preferred.verdict };
+  return {
+    ...trace,
+    mode,
+    path: target,
+    rootPath: preferred.realRoot,
+    scopeVerdict: preferred.verdict,
+    source: preferred.root.source,
+  };
 };
 
 const setField = (field: string) => (args: Record<string, any>, value: string) => {
@@ -419,6 +485,7 @@ const collectPathRequests = (
  * context-bearing calls never fall back to process.cwd(), home, or Desktop.
  */
 export const prepareToolCallExecution = async <T extends Record<string, any>>({
+  allowedMountRoots = [],
   apiName,
   args,
   context,
@@ -437,6 +504,7 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
   }
   const resolvedHomeDir = homeDir ?? os.homedir();
   const realHomeDir = await realpath(resolvedHomeDir).catch(() => path.resolve(resolvedHomeDir));
+  const realAllowedMountRoots = await normalizeAllowedMountRoots(allowedMountRoots, realHomeDir);
   const declaredCwd = context.cwd?.trim();
   if (declaredCwd && !path.isAbsolute(expandHome(declaredCwd, resolvedHomeDir))) {
     throw new ExecutionBoundaryError('WORKSPACE_REQUIRED');
@@ -507,6 +575,7 @@ export const prepareToolCallExecution = async <T extends Record<string, any>>({
       homeDir: realHomeDir,
       mode: request.mode,
       now,
+      allowedMountRoots: realAllowedMountRoots,
       target: realTarget,
       trace,
     });

@@ -68,7 +68,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     handleRunCommand,
   } as unknown as ShellCommandCtr;
 
-  const makeController = () =>
+  const makeController = (allowedMountRoots: string[] = []) =>
     new GatewayConnectionCtr({
       appStoragePath: path.join(tempRoot, 'app-storage'),
       getController: (Controller: unknown) => {
@@ -82,6 +82,10 @@ describe('GatewayConnectionCtr execution context boundary', () => {
         }
         if (Controller === HeterogeneousAgentCtr) return { spawnLhHeteroExec };
         return {};
+      },
+      storeManager: {
+        get: (key: string, fallback: unknown) =>
+          key === 'localFileWorkspaceRoots' ? allowedMountRoots : fallback,
       },
     } as any);
 
@@ -296,5 +300,43 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       success: false,
     });
     expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('uses the device-local approved mount list for a gateway direct-message read', async () => {
+    const mountRoot = path.join(tempRoot, 'Volumes');
+    const project = path.join(mountRoot, 'ExternalDisk', 'project');
+    const file = path.join(project, 'note.txt');
+    await mkdir(project, { recursive: true });
+    await writeFile(file, 'mounted');
+    const canonicalFile = await realpath(file);
+    const controller = makeController([mountRoot]);
+
+    const result = await (controller as any).executeToolCall(
+      'readFile',
+      { path: file },
+      {
+        accessRoots: [
+          {
+            modes: ['read'],
+            operationId: 'op-mounted',
+            rootPath: project,
+            scope: 'operation',
+            source: 'direct-user-message',
+          },
+        ],
+      },
+      {
+        deviceId: 'device-1',
+        operationId: 'op-mounted',
+        toolCallId: 'call-mounted',
+        topicId: 'topic-1',
+      },
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ path: canonicalFile }));
+    expect(result.state.scopeAudit).toEqual([
+      expect.objectContaining({ scopeVerdict: 'consent:op-mounted' }),
+    ]);
   });
 });

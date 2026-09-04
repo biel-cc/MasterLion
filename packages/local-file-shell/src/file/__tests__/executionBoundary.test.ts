@@ -190,6 +190,106 @@ describe('prepareToolCallExecution', () => {
     ).rejects.toMatchObject({ code: 'SCOPE_DENIED' });
   });
 
+  it('records which root source and canonical root authorized a successful read', async () => {
+    const outside = path.join(homeDir, 'shared');
+    const nested = path.join(outside, 'deep');
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, 'note.txt'), 'shared');
+    const realOutside = await realpath(outside);
+    const roots = (source: 'direct-user-message' | 'user-approval') => [
+      ...primaryContext().accessRoots!,
+      {
+        modes: ['read' as const],
+        operationId: 'op-1',
+        rootPath: outside,
+        scope: 'operation' as const,
+        source,
+      },
+    ];
+    // The tool reads a file below the authorized root; the audit has to name both.
+    const args = { path: path.join(nested, 'note.txt') };
+    const trace = { operationId: 'op-1' };
+
+    // `consent:op-1` alone is ambiguous, so the UI needs the source to tell an
+    // auto-allowed direct-message root from an explicitly approved one.
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args,
+        context: { ...primaryContext(), accessRoots: roots('direct-user-message') },
+        homeDir,
+        trace,
+      }),
+    ).resolves.toMatchObject({
+      scopeAudit: [
+        {
+          path: await realpath(path.join(nested, 'note.txt')),
+          rootPath: realOutside,
+          scopeVerdict: 'consent:op-1',
+          source: 'direct-user-message',
+        },
+      ],
+    });
+
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args,
+        context: { ...primaryContext(), accessRoots: roots('user-approval') },
+        homeDir,
+        trace,
+      }),
+    ).resolves.toMatchObject({
+      scopeAudit: [
+        { rootPath: realOutside, scopeVerdict: 'consent:op-1', source: 'user-approval' },
+      ],
+    });
+
+    // A read inside the primary workspace is never an auto-allowed extra root.
+    await expect(
+      prepareToolCallExecution({
+        apiName: 'readFile',
+        args: { path: path.join(workspace, 'README.md') },
+        context: primaryContext(),
+        homeDir,
+        trace,
+      }),
+    ).resolves.toMatchObject({
+      scopeAudit: [{ rootPath: workspace, scopeVerdict: 'primary', source: 'workspace' }],
+    });
+  });
+
+  it('names one shared root for several targets read under it', async () => {
+    const outside = path.join(homeDir, 'shared');
+    await mkdir(path.join(outside, 'deep'), { recursive: true });
+    await writeFile(path.join(outside, 'a.txt'), 'a');
+    await writeFile(path.join(outside, 'deep', 'b.txt'), 'b');
+    const realOutside = await realpath(outside);
+
+    const result = await prepareToolCallExecution({
+      apiName: 'readFiles',
+      args: { paths: [path.join(outside, 'a.txt'), path.join(outside, 'deep', 'b.txt')] },
+      context: {
+        ...primaryContext(),
+        accessRoots: [
+          ...primaryContext().accessRoots!,
+          {
+            modes: ['read'],
+            operationId: 'op-1',
+            rootPath: outside,
+            scope: 'operation',
+            source: 'direct-user-message',
+          },
+        ],
+      },
+      homeDir,
+      trace: { operationId: 'op-1' },
+    });
+
+    expect(result.scopeAudit.map(({ rootPath }) => rootPath)).toEqual([realOutside, realOutside]);
+    expect(new Set(result.scopeAudit.map(({ path: target }) => target)).size).toBe(2);
+  });
+
   it('does not auto-consent to direct-message roots outside the user home', async () => {
     const outsideHome = path.join(tempRoot, 'system-mount');
     await mkdir(outsideHome);
@@ -213,6 +313,103 @@ describe('prepareToolCallExecution', () => {
         },
         homeDir,
         trace: { operationId: 'op-outside' },
+      }),
+    ).rejects.toMatchObject({ code: 'INTERVENTION_REQUIRED' });
+  });
+
+  it('allows a direct-message read below a device-approved mount container', async () => {
+    const mountRoot = path.join(tempRoot, 'Volumes');
+    const project = path.join(mountRoot, 'ExternalDisk', 'project');
+    const target = path.join(project, 'note.txt');
+    await mkdir(project, { recursive: true });
+    await writeFile(target, 'mounted');
+
+    await expect(
+      prepareToolCallExecution({
+        allowedMountRoots: [mountRoot],
+        apiName: 'readFile',
+        args: { path: target },
+        context: {
+          accessRoots: [
+            {
+              modes: ['read'],
+              operationId: 'op-mounted',
+              rootPath: project,
+              scope: 'operation',
+              source: 'direct-user-message',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-mounted' },
+      }),
+    ).resolves.toMatchObject({
+      args: { path: await realpath(target) },
+      scopeAudit: [expect.objectContaining({ scopeVerdict: 'consent:op-mounted' })],
+    });
+  });
+
+  it.each([
+    ['the mount container itself', (mountRoot: string) => mountRoot],
+    ['a sibling outside the mount container', (_mountRoot: string, outside: string) => outside],
+  ])('rejects direct-message consent rooted at %s', async (_label, rootForCase) => {
+    const mountRoot = path.join(tempRoot, 'Volumes');
+    const outside = path.join(tempRoot, 'outside-mount');
+    await mkdir(mountRoot);
+    await mkdir(outside);
+    const directRoot = rootForCase(mountRoot, outside);
+    const target = path.join(directRoot, 'note.txt');
+    await writeFile(target, 'not-authorized');
+
+    await expect(
+      prepareToolCallExecution({
+        allowedMountRoots: [mountRoot],
+        apiName: 'readFile',
+        args: { path: target },
+        context: {
+          accessRoots: [
+            {
+              modes: ['read'],
+              operationId: 'op-rejected',
+              rootPath: directRoot,
+              scope: 'operation',
+              source: 'direct-user-message',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-rejected' },
+      }),
+    ).rejects.toMatchObject({ code: 'INTERVENTION_REQUIRED' });
+  });
+
+  it('realpaths traversal before checking an approved mount container', async () => {
+    const mountRoot = path.join(tempRoot, 'Volumes');
+    const project = path.join(mountRoot, 'ExternalDisk', 'project');
+    const outside = path.join(tempRoot, 'outside-mount');
+    await mkdir(project, { recursive: true });
+    await mkdir(outside);
+    const target = path.join(outside, 'secret.txt');
+    await writeFile(target, 'secret');
+
+    await expect(
+      prepareToolCallExecution({
+        allowedMountRoots: [mountRoot],
+        apiName: 'readFile',
+        args: { path: path.join(project, '..', '..', '..', 'outside-mount', 'secret.txt') },
+        context: {
+          accessRoots: [
+            {
+              modes: ['read'],
+              operationId: 'op-traversal',
+              rootPath: project,
+              scope: 'operation',
+              source: 'direct-user-message',
+            },
+          ],
+        },
+        homeDir,
+        trace: { operationId: 'op-traversal' },
       }),
     ).rejects.toMatchObject({ code: 'INTERVENTION_REQUIRED' });
   });

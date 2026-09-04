@@ -3,7 +3,10 @@ import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ShellProcessManager } from '@lobechat/local-file-shell';
+import {
+  type DeviceToolCallExecutionContext,
+  ShellProcessManager,
+} from '@lobechat/local-file-shell';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { executeToolCall } from './index';
@@ -19,9 +22,26 @@ vi.mock('../utils/logger', () => ({
 
 describe('executeToolCall', () => {
   const tmpDir = path.join(os.tmpdir(), 'cli-tool-dispatch-test-' + process.pid);
+  let workspaceContext: DeviceToolCallExecutionContext;
+
+  const executeWorkspaceTool = (apiName: string, args: Record<string, unknown>, timeout?: number) =>
+    executeToolCall(apiName, JSON.stringify(args), timeout, workspaceContext);
 
   beforeEach(async () => {
     await mkdir(tmpDir, { recursive: true });
+    const canonicalTmpDir = await realpath(tmpDir);
+    workspaceContext = {
+      accessRoots: [
+        {
+          modes: ['read', 'write', 'exec'],
+          rootPath: canonicalTmpDir,
+          scope: 'primary',
+          source: 'workspace',
+        },
+      ],
+      cwd: canonicalTmpDir,
+      workspaceRootPath: canonicalTmpDir,
+    };
   });
 
   afterEach(() => {
@@ -32,7 +52,7 @@ describe('executeToolCall', () => {
     const filePath = path.join(tmpDir, 'test.txt');
     await writeFile(filePath, 'hello world');
 
-    const result = await executeToolCall('readFile', JSON.stringify({ path: filePath }));
+    const result = await executeWorkspaceTool('readFile', { path: filePath });
 
     expect(result.success).toBe(true);
     // content is now the formatted prompt text, not raw JSON
@@ -44,13 +64,10 @@ describe('executeToolCall', () => {
   it('should dispatch writeFile', async () => {
     const filePath = path.join(tmpDir, 'new.txt');
 
-    const result = await executeToolCall(
-      'writeFile',
-      JSON.stringify({ content: 'written', path: filePath }),
-    );
+    const result = await executeWorkspaceTool('writeFile', { content: 'written', path: filePath });
 
     expect(result.success).toBe(true);
-    expect((result.state as { path: string }).path).toBe(filePath);
+    expect((result.state as { path: string }).path).toBe(await realpath(filePath));
     expect(fs.readFileSync(filePath, 'utf8')).toBe('written');
   });
 
@@ -58,17 +75,14 @@ describe('executeToolCall', () => {
     const filePath = path.join(tmpDir, 'legacy.txt');
     await writeFile(filePath, 'legacy hello');
 
-    const result = await executeToolCall('readLocalFile', JSON.stringify({ path: filePath }));
+    const result = await executeWorkspaceTool('readLocalFile', { path: filePath });
 
     expect(result.success).toBe(true);
     expect((result.state as { content: string }).content).toContain('legacy hello');
   });
 
   it('should dispatch runCommand', async () => {
-    const result = await executeToolCall(
-      'runCommand',
-      JSON.stringify({ command: 'echo dispatched' }),
-    );
+    const result = await executeWorkspaceTool('runCommand', { command: 'echo dispatched' });
 
     expect(result.success).toBe(true);
     expect(result.content).toContain('dispatched');
@@ -110,7 +124,7 @@ describe('executeToolCall', () => {
   it('should dispatch listFiles', async () => {
     await writeFile(path.join(tmpDir, 'a.txt'), 'a');
 
-    const result = await executeToolCall('listFiles', JSON.stringify({ path: tmpDir }));
+    const result = await executeWorkspaceTool('listFiles', { path: tmpDir });
 
     expect(result.success).toBe(true);
     expect((result.state as { totalCount: number }).totalCount).toBeGreaterThan(0);
@@ -119,10 +133,7 @@ describe('executeToolCall', () => {
   it('should dispatch globFiles', async () => {
     await writeFile(path.join(tmpDir, 'test.ts'), 'code');
 
-    const result = await executeToolCall(
-      'globFiles',
-      JSON.stringify({ cwd: tmpDir, pattern: '*.ts' }),
-    );
+    const result = await executeWorkspaceTool('globFiles', { cwd: tmpDir, pattern: '*.ts' });
 
     expect(result.success).toBe(true);
     expect((result.state as { files: string[] }).files).toContain('test.ts');
@@ -132,14 +143,11 @@ describe('executeToolCall', () => {
     const filePath = path.join(tmpDir, 'edit.txt');
     await writeFile(filePath, 'old content');
 
-    const result = await executeToolCall(
-      'editFile',
-      JSON.stringify({
-        file_path: filePath,
-        new_string: 'new content',
-        old_string: 'old content',
-      }),
-    );
+    const result = await executeWorkspaceTool('editFile', {
+      file_path: filePath,
+      new_string: 'new content',
+      old_string: 'old content',
+    });
 
     expect(result.success).toBe(true);
     expect((result.state as { replacements: number }).replacements).toBeGreaterThan(0);
@@ -157,7 +165,7 @@ describe('executeToolCall', () => {
     const filePath = path.join(tmpDir, 'str.txt');
     await writeFile(filePath, 'content');
 
-    const result = await executeToolCall('readFile', JSON.stringify({ path: filePath }));
+    const result = await executeWorkspaceTool('readFile', { path: filePath });
 
     expect(result.success).toBe(true);
     expect(result.state).toBeDefined();
@@ -174,10 +182,7 @@ describe('executeToolCall', () => {
   it('should dispatch grepContent', async () => {
     await writeFile(path.join(tmpDir, 'grep.txt'), 'findme here');
 
-    const result = await executeToolCall(
-      'grepContent',
-      JSON.stringify({ cwd: tmpDir, pattern: 'findme' }),
-    );
+    const result = await executeWorkspaceTool('grepContent', { cwd: tmpDir, pattern: 'findme' });
 
     expect(result.success).toBe(true);
     expect(result.state).toBeDefined();
@@ -186,10 +191,10 @@ describe('executeToolCall', () => {
   it('should dispatch searchFiles', async () => {
     await writeFile(path.join(tmpDir, 'search_target.txt'), 'found');
 
-    const result = await executeToolCall(
-      'searchFiles',
-      JSON.stringify({ directory: tmpDir, keywords: 'search_target' }),
-    );
+    const result = await executeWorkspaceTool('searchFiles', {
+      directory: tmpDir,
+      keywords: 'search_target',
+    });
 
     expect(result.success).toBe(true);
     expect(result.state).toBeDefined();
