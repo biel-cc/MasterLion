@@ -868,8 +868,36 @@ export class GeneralChatAgent implements Agent {
       case 'error': {
         const { error } = context.payload as { error: any };
         const providerError = parseExceededContextWindowError(error);
-        if (providerError && (this.config.compressionConfig?.enabled ?? true)) {
+        if (providerError) {
           const runtimeInput = getRuntimeContextBudgetInput(context.payload, state.metadata);
+          if (providerError.observedLimitTokens && this.config.onContextWindowObserved) {
+            const snapshot =
+              runtimeInput.catalogSnapshot ??
+              (state.metadata
+                ?.modelCatalogSnapshot as RuntimeContextBudgetInput['catalogSnapshot']);
+            const modelId = snapshot?.entry.modelId ?? this.config.modelRuntimeConfig?.model;
+            const providerId =
+              snapshot?.entry.providerId ?? this.config.modelRuntimeConfig?.provider;
+            if (modelId && providerId) {
+              try {
+                await this.config.onContextWindowObserved({
+                  contextWindowRejectionTokens: providerError.observedLimitTokens,
+                  modelId,
+                  modelVersion: snapshot?.entry.modelVersion,
+                  providerId,
+                });
+              } catch {
+                // Evidence persistence is a side channel and must not block recovery.
+              }
+            }
+          }
+          if (!(this.config.compressionConfig?.enabled ?? true)) {
+            return {
+              reason: 'error_recovery',
+              reasonDetail: error?.message || 'Unknown error occurred',
+              type: 'finish',
+            };
+          }
           return this.toLLMCall(
             {
               messages: state.messages,

@@ -9,6 +9,14 @@ import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 
 import { POST } from './route';
 
+const mockRecordContextWindowRejection = vi.hoisted(() => vi.fn());
+
+vi.mock('@/database/models/aiModel', () => ({
+  AiModelModel: vi.fn().mockImplementation(() => ({
+    recordContextWindowRejection: mockRecordContextWindowRejection,
+  })),
+}));
+
 vi.mock('@/app/(backend)/middleware/auth/utils', () => ({
   checkAuthMethod: vi.fn(),
 }));
@@ -102,6 +110,7 @@ describe('POST handler', () => {
 
       expect(response).toEqual(mockChatResponse);
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
+        callback: { onError: expect.any(Function) },
         headers: expect.objectContaining({ 'x-request-id': expect.any(String) }),
         metadata: {
           operationId: expect.any(String),
@@ -150,6 +159,35 @@ describe('POST handler', () => {
           traceId: expect.any(String),
         },
         errorType: 500,
+      });
+    });
+
+    it('persists structured context-window evidence emitted by the provider stream', async () => {
+      const mockParams = Promise.resolve({ provider: 'newapi' });
+      request = new Request(new URL('https://test.com'), {
+        body: JSON.stringify({ messages: [], model: 'company-chat' }),
+        method: 'POST',
+      });
+      mockRecordContextWindowRejection.mockResolvedValueOnce(true);
+      const mockChatResponse = new Response('rejected-stream');
+      const mockRuntime: LobeRuntimeAI = {
+        baseURL: 'abc',
+        chat: vi.fn().mockImplementation(async (_payload, options) => {
+          await options?.callback?.onError?.({
+            code: 'ExceededContextWindow',
+            contextWindowTokens: 32_000,
+          });
+          return mockChatResponse;
+        }),
+      };
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+
+      await POST(request, { params: mockParams });
+
+      expect(mockRecordContextWindowRejection).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 32_000,
+        modelId: 'company-chat',
+        providerId: 'newapi',
       });
     });
 

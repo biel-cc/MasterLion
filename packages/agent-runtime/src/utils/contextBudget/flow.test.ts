@@ -106,11 +106,13 @@ describe('runContextBudgetedCall', () => {
         payload: reducedPayload(payload),
       }),
     );
+    const onContextWindowObserved = vi.fn();
 
     const result = await runContextBudgetedCall({
       ...base,
       callProvider,
       compress,
+      onContextWindowObserved,
       payload: { messages: [assistant('old', 20_000), user('latest', 'go')] },
     });
 
@@ -118,6 +120,13 @@ describe('runContextBudgetedCall', () => {
     expect(callProvider).toHaveBeenCalledTimes(2);
     expect(compress).toHaveBeenCalledTimes(1);
     expect(result.evaluations.some((item) => item.window.source === 'observed')).toBe(true);
+    expect(onContextWindowObserved).toHaveBeenCalledTimes(2);
+    expect(onContextWindowObserved).toHaveBeenNthCalledWith(1, {
+      contextWindowRejectionTokens: 32_000,
+      modelId: 'model-a',
+      modelVersion: undefined,
+      providerId: 'provider-a',
+    });
   });
 
   it('discards each failed provider attempt before retrying or returning exhausted', async () => {

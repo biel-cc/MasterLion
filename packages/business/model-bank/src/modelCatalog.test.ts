@@ -6,6 +6,8 @@ import {
   filterAiProviderChatEligibleModels,
   isAiProviderModelChatEligible,
   mergeModelCatalogEntry,
+  readPersistedModelCatalog,
+  recordContextWindowRejectionEvidence,
 } from './modelCatalog';
 
 const fixtureIds = ['qwen3-vl-rerank', 'bge-reranker-v2', 'text-embedding-3-small'];
@@ -207,6 +209,80 @@ describe('model catalog classifier and evidence merge', () => {
         settings: { modelCatalog: refreshed },
       }),
     ).toBe(false);
+  });
+
+  it('invalidates observed context evidence when the provider model version changes', () => {
+    const refreshed = mergeModelCatalogEntry({
+      modelId: 'versioned-chat',
+      now: '2026-09-03T00:00:00.000Z',
+      observed: {
+        contextWindowRejectionTokens: 32_000,
+        modelVersion: 'v1',
+        verifiedAt: '2026-09-02T00:00:00.000Z',
+      },
+      providerId: 'newapi',
+      providerMetadata: { contextWindowTokens: 128_000, modelVersion: 'v2' },
+    });
+
+    expect(refreshed.entry).toMatchObject({
+      contextWindowSource: 'provider-meta',
+      contextWindowTokens: 128_000,
+      modelVersion: 'v2',
+    });
+  });
+
+  it('expires a persisted rejection after 30 days and restores the candidate window', () => {
+    const initial = mergeModelCatalogEntry({
+      modelId: 'expiring-chat',
+      now: '2026-09-01T00:00:00.000Z',
+      providerId: 'newapi',
+      providerMetadata: { contextWindowTokens: 128_000, modelVersion: 'v1' },
+    });
+    const observed = recordContextWindowRejectionEvidence(initial, {
+      contextWindowRejectionTokens: 32_000,
+      modelVersion: 'v1',
+      verifiedAt: '2026-09-02T00:00:00.000Z',
+    });
+
+    expect(
+      readPersistedModelCatalog(observed, new Date('2026-09-15T00:00:00.000Z'))?.entry,
+    ).toMatchObject({ contextWindowSource: 'observed', contextWindowTokens: 32_000 });
+    expect(
+      readPersistedModelCatalog(observed, new Date('2026-10-03T00:00:00.001Z'))?.entry,
+    ).toMatchObject({
+      contextWindowSource: 'provider-meta',
+      contextWindowTokens: 128_000,
+      modelVersion: 'v1',
+    });
+  });
+
+  it('does not weaken a fresh lower rejection for the same model version', () => {
+    const initial = mergeModelCatalogEntry({
+      modelId: 'conservative-chat',
+      now: '2026-09-01T00:00:00.000Z',
+      providerId: 'newapi',
+      providerMetadata: { contextWindowTokens: 128_000, modelVersion: 'v1' },
+    });
+    const lower = recordContextWindowRejectionEvidence(initial, {
+      contextWindowRejectionTokens: 32_000,
+      modelVersion: 'v1',
+      verifiedAt: '2026-09-02T00:00:00.000Z',
+    });
+    const laterHigher = recordContextWindowRejectionEvidence(lower, {
+      contextWindowRejectionTokens: 64_000,
+      modelVersion: 'v1',
+      verifiedAt: '2026-09-03T00:00:00.000Z',
+    });
+
+    expect(laterHigher.entry).toMatchObject({
+      contextWindowSource: 'observed',
+      contextWindowTokens: 32_000,
+    });
+    expect(laterHigher.observed).toMatchObject({
+      contextWindowRejectionTokens: 32_000,
+      modelVersion: 'v1',
+      verifiedAt: '2026-09-02T00:00:00.000Z',
+    });
   });
 
   it('serializes the same catalog entry into an operation snapshot without sharing maps', () => {

@@ -4,6 +4,7 @@ import {
   type GlobalInterventionAuditConfig,
   type MessageToolCall,
 } from '@lobechat/types';
+import type { ContextWindowRejectionObservation } from '@lobechat/types/src/modelCatalog';
 
 export interface GeneralAgentCallLLMInstructionPayload {
   /** Force create a new assistant message (e.g., after compression) */
@@ -107,6 +108,8 @@ export interface GeneralAgentConfig {
     model: string;
     provider: string;
   };
+  /** Persist a provider-authored context rejection as model evidence. */
+  onContextWindowObserved?: (input: ContextWindowRejectionObservation) => Promise<void> | void;
   operationId: string;
   userId?: string;
 }

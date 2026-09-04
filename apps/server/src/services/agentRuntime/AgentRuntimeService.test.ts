@@ -7,6 +7,7 @@ import type { MockInstance } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentOperationModel } from '@/database/models/agentOperation';
+import type { AiModelModel } from '@/database/models/aiModel';
 
 import { AgentRuntimeService } from './AgentRuntimeService';
 import { hookDispatcher } from './hooks';
@@ -537,6 +538,69 @@ describe('AgentRuntimeService', () => {
           }),
         }),
       );
+    });
+
+    it('wires structured context-window evidence to the persisted model catalog', async () => {
+      vi.mocked(getModelPropertyWithFallback).mockResolvedValueOnce(128_000);
+      let capturedConfig: any;
+      const serviceWithFactory = new AgentRuntimeService(mockDb, mockUserId, {
+        agentFactory: (config) => {
+          capturedConfig = config;
+          return { runner: vi.fn() } as any;
+        },
+      });
+      const recordContextWindowRejection = vi
+        .spyOn(
+          (serviceWithFactory as any).aiModelModel as AiModelModel,
+          'recordContextWindowRejection',
+        )
+        .mockResolvedValueOnce(true);
+      const modelCatalogSnapshot = {
+        capturedAt: '2026-09-03T00:00:00.000Z',
+        entry: {
+          abilitySources: {},
+          contextWindowSource: 'provider-meta',
+          contextWindowTokens: 128_000,
+          inputModalities: {
+            audio: 'unknown',
+            file: 'unknown',
+            image: 'unknown',
+            text: 'supported',
+            video: 'unknown',
+          },
+          kind: 'chat',
+          kindSource: 'provider-meta',
+          modelId: 'company-chat',
+          modelVersion: '2026-08-31',
+          providerId: 'newapi',
+        },
+        operationId: 'test-operation-1',
+        version: 1,
+      } as const;
+
+      await (serviceWithFactory as any).createAgentRuntime({
+        metadata: {
+          modelCatalogSnapshot,
+          modelRuntimeConfig: { model: 'company-chat', provider: 'newapi' },
+        },
+        operationId: 'test-operation-1',
+        stepIndex: 1,
+      });
+      await capturedConfig.onContextWindowObserved({
+        contextWindowRejectionTokens: 32_000,
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+      });
+
+      expect(recordContextWindowRejection).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 32_000,
+        modelCatalogSnapshot,
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+      });
+      recordContextWindowRejection.mockRestore();
     });
 
     it('should fall back to undefined maxWindowToken when model lookup misses', async () => {

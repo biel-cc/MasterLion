@@ -1,5 +1,5 @@
 import { type ChatToolPayload, type GlobalInterventionAuditConfig } from '@lobechat/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { type AgentRuntimeContext, type AgentState } from '../../types';
 import { GeneralChatAgent } from '../GeneralChatAgent';
@@ -1351,12 +1351,38 @@ describe('GeneralChatAgent', () => {
     });
 
     it('should parse an observed context limit and request one provider-error compression', async () => {
+      const onContextWindowObserved = vi.fn();
       const agent = new GeneralChatAgent({
         agentConfig: { maxSteps: 100 },
         operationId: 'test-session',
+        onContextWindowObserved,
         modelRuntimeConfig: mockModelRuntimeConfig,
       });
       const state = createMockState({
+        metadata: {
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-03T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'provider-meta',
+              contextWindowTokens: 128_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'provider-meta',
+              modelId: 'gpt-4o-mini',
+              modelVersion: '2026-08-31',
+              providerId: 'openai',
+            },
+            operationId: 'test-session',
+            version: 1,
+          },
+        },
         messages: [
           { ...oversizedHistoryMessage, metadata: { usage: { totalOutputTokens: 20_000 } } },
           { content: 'continue', id: 'latest-user', role: 'user' },
@@ -1380,6 +1406,38 @@ describe('GeneralChatAgent', () => {
           type: 'compress_context',
         }),
       );
+      expect(onContextWindowObserved).toHaveBeenCalledOnce();
+      expect(onContextWindowObserved).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 32_000,
+        modelId: 'gpt-4o-mini',
+        modelVersion: '2026-08-31',
+        providerId: 'openai',
+      });
+    });
+
+    it('records structured context-window evidence even when compression is disabled', async () => {
+      const onContextWindowObserved = vi.fn();
+      const agent = new GeneralChatAgent({
+        compressionConfig: { enabled: false },
+        modelRuntimeConfig: mockModelRuntimeConfig,
+        onContextWindowObserved,
+        operationId: 'test-session',
+      });
+
+      const result = await agent.runner(
+        createMockContext('error', {
+          error: { code: 'ExceededContextWindow', contextWindowTokens: 32_000 },
+        }),
+        createMockState(),
+      );
+
+      expect(onContextWindowObserved).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 32_000,
+        modelId: 'gpt-4o-mini',
+        modelVersion: undefined,
+        providerId: 'openai',
+      });
+      expect(result).toMatchObject({ reason: 'error_recovery', type: 'finish' });
     });
 
     it('should stop a second provider context error with RETRY_EXHAUSTED', async () => {

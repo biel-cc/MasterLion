@@ -98,13 +98,26 @@ export interface ModelCatalogMergeInput {
   providerMetadata?: ModelCatalogProviderMetadata;
 }
 
+interface ContextWindowCandidate {
+  source: Exclude<ContextWindowSource, 'observed'>;
+  tokens: number;
+  verifiedAt?: string;
+}
+
 export interface PersistedModelCatalog {
+  contextWindowCandidate?: ContextWindowCandidate;
   denied: boolean;
   drift: ModelCatalogDrift[];
   entry: ModelCatalogEntry;
   manual?: ModelCatalogManualOverride;
   observed?: ModelCatalogObservedEvidence;
   version: 1;
+}
+
+export interface ContextWindowRejectionEvidenceInput {
+  contextWindowRejectionTokens: number;
+  modelVersion?: string;
+  verifiedAt: string;
 }
 
 interface KindEvidence {
@@ -425,8 +438,12 @@ const resolveContextWindow = ({
   inferred?: number;
   observed?: ModelCatalogObservedEvidence;
   provider?: number;
-}): { source: ContextWindowSource; tokens: number } => {
-  const candidates: Array<{ source: ContextWindowSource; tokens: number }> = [
+}): {
+  candidate: ContextWindowCandidate;
+  source: ContextWindowSource;
+  tokens: number;
+} => {
+  const candidates: ContextWindowCandidate[] = [
     ...(isPositiveNumber(activeManual?.contextWindowTokens)
       ? [{ source: 'manual' as const, tokens: activeManual.contextWindowTokens }]
       : []),
@@ -434,7 +451,8 @@ const resolveContextWindow = ({
     ...(isPositiveNumber(catalog) ? [{ source: 'catalog' as const, tokens: catalog }] : []),
     ...(isPositiveNumber(inferred) ? [{ source: 'inferred' as const, tokens: inferred }] : []),
   ];
-  let selected = candidates[0] ?? ({ source: 'unknown', tokens: 32_000 } as const);
+  const candidate = candidates[0] ?? ({ source: 'unknown', tokens: 32_000 } as const);
+  let selected: { source: ContextWindowSource; tokens: number } = candidate;
 
   if (
     isPositiveNumber(observed?.contextWindowRejectionTokens) &&
@@ -461,7 +479,7 @@ const resolveContextWindow = ({
     }
   }
 
-  return selected;
+  return { ...selected, candidate };
 };
 
 /**
@@ -498,6 +516,12 @@ export const mergeModelCatalogEntry = (input: ModelCatalogMergeInput): Persisted
   });
 
   return {
+    contextWindowCandidate: {
+      ...contextWindow.candidate,
+      ...(contextWindow.candidate.source === 'provider-meta' && input.providerMetadata?.verifiedAt
+        ? { verifiedAt: input.providerMetadata.verifiedAt }
+        : {}),
+    },
     denied: Boolean(activeManual?.denyChat),
     drift,
     entry: {
@@ -510,6 +534,7 @@ export const mergeModelCatalogEntry = (input: ModelCatalogMergeInput): Persisted
       maxOutput:
         activeManual?.maxOutput ?? input.providerMetadata?.maxOutput ?? input.catalog?.maxOutput,
       modelId: input.modelId,
+      modelVersion: input.providerMetadata?.modelVersion,
       providerId: input.providerId,
       verifiedAt: input.providerMetadata?.verifiedAt ?? observed?.verifiedAt,
     },
@@ -519,7 +544,138 @@ export const mergeModelCatalogEntry = (input: ModelCatalogMergeInput): Persisted
   };
 };
 
-export const readPersistedModelCatalog = (value: unknown): PersistedModelCatalog | undefined => {
+/** Apply a provider-authored rejection without rebuilding unrelated catalog evidence. */
+export const recordContextWindowRejectionEvidence = (
+  catalog: PersistedModelCatalog,
+  input: ContextWindowRejectionEvidenceInput,
+): PersistedModelCatalog => {
+  if (!isPositiveNumber(input.contextWindowRejectionTokens)) {
+    throw new RangeError('contextWindowRejectionTokens must be a positive number');
+  }
+
+  const verifiedAt = new Date(input.verifiedAt);
+  if (!Number.isFinite(verifiedAt.getTime())) throw new RangeError('verifiedAt must be valid');
+
+  const modelVersion = input.modelVersion ?? catalog.entry.modelVersion;
+  const freshExisting = isObservedEvidenceFresh(catalog.observed, modelVersion, verifiedAt)
+    ? catalog.observed
+    : undefined;
+  const preserveLowerExisting =
+    isPositiveNumber(freshExisting?.contextWindowRejectionTokens) &&
+    freshExisting.contextWindowRejectionTokens <= input.contextWindowRejectionTokens;
+  const observed: ModelCatalogObservedEvidence = preserveLowerExisting
+    ? freshExisting
+    : {
+        ...catalog.observed,
+        contextWindowRejectionTokens: input.contextWindowRejectionTokens,
+        ...(modelVersion ? { modelVersion } : {}),
+        verifiedAt: verifiedAt.toISOString(),
+      };
+  return refreshContextWindowEvidence({ ...catalog, observed }, verifiedAt, modelVersion);
+};
+
+const CONTEXT_WINDOW_CANDIDATE_SOURCES = new Set<ContextWindowCandidate['source']>([
+  'catalog',
+  'inferred',
+  'manual',
+  'provider-meta',
+  'unknown',
+]);
+
+const getContextWindowCandidate = (catalog: PersistedModelCatalog): ContextWindowCandidate => {
+  if (
+    catalog.contextWindowCandidate &&
+    isPositiveNumber(catalog.contextWindowCandidate.tokens) &&
+    CONTEXT_WINDOW_CANDIDATE_SOURCES.has(catalog.contextWindowCandidate.source)
+  ) {
+    return catalog.contextWindowCandidate;
+  }
+  if (
+    catalog.entry.contextWindowSource !== 'observed' &&
+    isPositiveNumber(catalog.entry.contextWindowTokens)
+  ) {
+    return {
+      source: catalog.entry.contextWindowSource,
+      tokens: catalog.entry.contextWindowTokens,
+      ...(catalog.entry.verifiedAt ? { verifiedAt: catalog.entry.verifiedAt } : {}),
+    };
+  }
+
+  // Compatibility for catalog documents written before the candidate was
+  // stored explicitly. Context-window drift retains the selected candidate.
+  const previousCandidate = catalog.drift.find(
+    ({ conflictingSource, conflictingValue, field }) =>
+      field === 'contextWindowTokens' &&
+      conflictingSource !== 'observed' &&
+      CONTEXT_WINDOW_CANDIDATE_SOURCES.has(conflictingSource as ContextWindowCandidate['source']) &&
+      isPositiveNumber(conflictingValue),
+  );
+  return previousCandidate
+    ? {
+        source: previousCandidate.conflictingSource as ContextWindowCandidate['source'],
+        tokens: previousCandidate.conflictingValue as number,
+      }
+    : ({ source: 'unknown', tokens: 32_000 } as const);
+};
+
+const refreshContextWindowEvidence = (
+  catalog: PersistedModelCatalog,
+  now: Date,
+  providerModelVersion = catalog.entry.modelVersion,
+): PersistedModelCatalog => {
+  const candidate = getContextWindowCandidate(catalog);
+  const activeManual = isManualOverrideActive(catalog.manual, now) ? catalog.manual : undefined;
+  const observed = isObservedEvidenceFresh(catalog.observed, providerModelVersion, now)
+    ? catalog.observed
+    : undefined;
+  const forcedManualTokens =
+    activeManual?.forceContextWindow && isPositiveNumber(activeManual.contextWindowTokens)
+      ? activeManual.contextWindowTokens
+      : undefined;
+  const selectsObserved =
+    !forcedManualTokens &&
+    isPositiveNumber(observed?.contextWindowRejectionTokens) &&
+    observed.contextWindowRejectionTokens < candidate.tokens;
+  const effective = forcedManualTokens
+    ? { source: 'manual' as const, tokens: forcedManualTokens }
+    : selectsObserved
+      ? {
+          source: 'observed' as const,
+          tokens: observed.contextWindowRejectionTokens!,
+        }
+      : candidate;
+
+  return {
+    ...catalog,
+    contextWindowCandidate: candidate,
+    drift: [
+      ...catalog.drift.filter(({ field }) => field !== 'contextWindowTokens'),
+      ...(candidate.tokens !== effective.tokens
+        ? [
+            {
+              conflictingSource: candidate.source,
+              conflictingValue: candidate.tokens,
+              field: 'contextWindowTokens' as const,
+              selectedSource: effective.source,
+              selectedValue: effective.tokens,
+            },
+          ]
+        : []),
+    ],
+    entry: {
+      ...catalog.entry,
+      contextWindowSource: effective.source,
+      contextWindowTokens: effective.tokens,
+      ...(providerModelVersion ? { modelVersion: providerModelVersion } : {}),
+      verifiedAt: effective.source === 'observed' ? observed?.verifiedAt : candidate.verifiedAt,
+    },
+  };
+};
+
+export const readPersistedModelCatalog = (
+  value: unknown,
+  now = new Date(),
+): PersistedModelCatalog | undefined => {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.entry)) return undefined;
   const entry = value.entry;
   const inputModalities = entry.inputModalities;
@@ -534,7 +690,7 @@ export const readPersistedModelCatalog = (value: unknown): PersistedModelCatalog
     return undefined;
   }
 
-  return value as unknown as PersistedModelCatalog;
+  return refreshContextWindowEvidence(value as unknown as PersistedModelCatalog, now);
 };
 
 export const getModelCatalogFromSettings = (settings: unknown) => {

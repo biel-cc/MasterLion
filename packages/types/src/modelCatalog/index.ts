@@ -29,6 +29,8 @@ export interface ModelCatalogEntry {
   kindSource: ModelKindSource;
   maxOutput?: number;
   modelId: string;
+  /** Exact upstream model revision when the provider exposes one. */
+  modelVersion?: string;
   providerId: string;
   verifiedAt?: string;
 }
@@ -39,6 +41,14 @@ export interface ModelCatalogSnapshot {
   entry: ModelCatalogEntry;
   operationId: string;
   version: 1;
+}
+
+/** Redacted evidence emitted only after a structured provider context rejection. */
+export interface ContextWindowRejectionObservation {
+  contextWindowRejectionTokens: number;
+  modelId: string;
+  modelVersion?: string;
+  providerId: string;
 }
 
 export interface InputModalityEvidence {

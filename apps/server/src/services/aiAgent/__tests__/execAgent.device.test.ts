@@ -576,7 +576,9 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
       expect(createOpArgs.agentConfig.systemRole).toContain(
         '<directory path="/approved/additional" modes="read,write" scope="topic" />',
       );
-      expect(createOpArgs.agentConfig.systemRole).not.toMatch(/grant-private-id|device-001|topic-1/);
+      expect(createOpArgs.agentConfig.systemRole).not.toMatch(
+        /grant-private-id|device-001|topic-1/,
+      );
     });
 
     it('rejects a reranker even when an exact persisted catalog mislabeled it as chat', async () => {
@@ -636,6 +638,66 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
         service.execAgent({ agentId: 'agent-1', prompt: 'Use the builtin chat model' }),
       ).resolves.toMatchObject({ success: true });
       expect(mockCreateOperation).toHaveBeenCalledOnce();
+    });
+
+    it('uses persisted context-window rejection evidence in the next operation snapshot', async () => {
+      mockFindAiModel.mockResolvedValue({
+        contextWindowTokens: 32_000,
+        settings: {
+          modelCatalog: {
+            denied: false,
+            drift: [
+              {
+                conflictingSource: 'provider-meta',
+                conflictingValue: 128_000,
+                field: 'contextWindowTokens',
+                selectedSource: 'observed',
+                selectedValue: 32_000,
+              },
+            ],
+            entry: {
+              abilitySources: { text: 'provider-meta:chat-kind' },
+              contextWindowSource: 'observed',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'provider-meta',
+              modelId: 'gpt-4',
+              modelVersion: '2026-08-31',
+              providerId: 'openai',
+              verifiedAt: '2026-09-03T12:00:01.000Z',
+            },
+            observed: {
+              contextWindowRejectionTokens: 32_000,
+              modelVersion: '2026-08-31',
+              verifiedAt: '2026-09-03T12:00:01.000Z',
+            },
+            version: 1,
+          },
+        },
+        type: 'chat',
+      });
+
+      await service.execAgent({ agentId: 'agent-1', prompt: 'Continue after recovery' });
+
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelCatalogSnapshot: expect.objectContaining({
+            entry: expect.objectContaining({
+              contextWindowSource: 'observed',
+              contextWindowTokens: 32_000,
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            }),
+          }),
+        }),
+      );
     });
 
     it('freezes an unknown main model as the compatible unverified chat fallback', async () => {

@@ -638,6 +638,7 @@ describe('RuntimeExecutors', () => {
     });
 
     it('discards a partial provider attempt before context compression retry commits final output', async () => {
+      const onContextWindowObserved = vi.fn();
       const staleToolCall = [
         {
           function: { arguments: '{"path":"stale"}', name: 'filesystem____write' },
@@ -689,9 +690,7 @@ describe('RuntimeExecutors', () => {
       mockUploadBase64.mockResolvedValue({ url: 'https://files.example/stale.png' });
       mockCreateCompressionGroup.mockResolvedValue({
         messageGroupId: 'provider-recovery-group',
-        messagesToSummarize: [
-          { content: 'x'.repeat(40_000), id: 'old-history', role: 'user' },
-        ],
+        messagesToSummarize: [{ content: 'x'.repeat(40_000), id: 'old-history', role: 'user' }],
         success: true,
       });
       mockFinalizeCompression.mockResolvedValue({
@@ -741,7 +740,7 @@ describe('RuntimeExecutors', () => {
         },
       });
 
-      const result = await createRuntimeExecutors(ctx).call_llm!(
+      const result = await createRuntimeExecutors({ ...ctx, onContextWindowObserved }).call_llm!(
         {
           payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
           type: 'call_llm' as const,
@@ -750,6 +749,12 @@ describe('RuntimeExecutors', () => {
       );
 
       expect(mainAttempt).toBe(2);
+      expect(onContextWindowObserved).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 16_000,
+        modelId: 'gpt-4',
+        modelVersion: undefined,
+        providerId: 'openai',
+      });
       expect(result.nextContext?.payload).toMatchObject({
         hasToolsCalling: false,
         result: { content: 'final only', tool_calls: [] },

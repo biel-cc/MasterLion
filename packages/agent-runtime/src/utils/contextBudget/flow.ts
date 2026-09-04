@@ -4,6 +4,7 @@ import type {
   ContextCompressionOutcome,
 } from '@lobechat/types/src/contextBudget';
 import { canContinueAfterCompression } from '@lobechat/types/src/contextBudget';
+import type { ContextWindowRejectionObservation } from '@lobechat/types/src/modelCatalog';
 
 import { evaluateContextBudget, failureAfterCompression } from './preflight';
 import { parseExceededContextWindowError } from './providerError';
@@ -27,6 +28,7 @@ export interface RunContextBudgetedCallInput<
     payload: TPayload,
     evaluation: ContextBudgetEvaluation,
   ) => Promise<ContextBudgetCompressionResult<TPayload>>;
+  onContextWindowObserved?: (input: ContextWindowRejectionObservation) => Promise<void> | void;
   /**
    * Called after a provider attempt reports a context-window error and before
    * the attempt is retried (or surfaced as exhausted). Streaming consumers use
@@ -105,6 +107,23 @@ export const runContextBudgetedCall = async <TPayload extends FinalContextPayloa
     evaluations,
     kind: 'fail',
   });
+
+  const observeContextWindow = async (contextWindowRejectionTokens?: number) => {
+    if (!contextWindowRejectionTokens || !input.onContextWindowObserved) return;
+    const snapshotMatches =
+      input.catalogSnapshot?.entry.modelId === input.modelId &&
+      input.catalogSnapshot.entry.providerId === input.providerId;
+    try {
+      await input.onContextWindowObserved({
+        contextWindowRejectionTokens,
+        modelId: input.modelId,
+        modelVersion: snapshotMatches ? input.catalogSnapshot?.entry.modelVersion : undefined,
+        providerId: input.providerId,
+      });
+    } catch {
+      // Evidence persistence must not replace the provider recovery result.
+    }
+  };
 
   const compressAndPreflight = async (
     evaluation: ContextBudgetEvaluation,
@@ -193,6 +212,7 @@ export const runContextBudgetedCall = async <TPayload extends FinalContextPayloa
   } catch (error) {
     const providerError = parseExceededContextWindowError(error);
     if (!providerError) throw error;
+    await observeContextWindow(providerError.observedLimitTokens);
 
     const recovery = evaluate('provider-error', providerError.observedLimitTokens);
     if (isFailure(recovery.decision)) {
@@ -216,6 +236,7 @@ export const runContextBudgetedCall = async <TPayload extends FinalContextPayloa
     } catch (retryError) {
       const retryProviderError = parseExceededContextWindowError(retryError);
       if (!retryProviderError) throw retryError;
+      await observeContextWindow(retryProviderError.observedLimitTokens);
       await input.onProviderAttemptDiscard?.({ attempt: 2, error: retryError, willRetry: false });
       const exhausted = evaluate(
         'provider-error',

@@ -37,6 +37,7 @@ import debug from 'debug';
 import urlJoin from 'url-join';
 
 import { AgentOperationModel } from '@/database/models/agentOperation';
+import { AiModelModel } from '@/database/models/aiModel';
 import { MessageModel } from '@/database/models/message';
 import { type LobeChatDatabase } from '@/database/type';
 import { appEnv } from '@/envs/app';
@@ -269,6 +270,7 @@ export interface AgentRuntimeServiceOptions {
  * ```
  */
 export class AgentRuntimeService {
+  private aiModelModel: AiModelModel;
   private agentFactory?: (config: GeneralAgentConfig) => Agent;
   private completionLifecycle: CompletionLifecycle;
   private coordinator: AgentRuntimeCoordinator;
@@ -328,6 +330,7 @@ export class AgentRuntimeService {
     this.userId = userId;
     this.workspaceId = options?.workspaceId;
     const workspaceId = this.workspaceId;
+    this.aiModelModel = new AiModelModel(db, this.userId);
     this.messageModel = new MessageModel(db, this.userId, workspaceId);
     this.completionLifecycle = new CompletionLifecycle(db, userId, workspaceId);
     this.humanIntervention = new HumanInterventionHandler(db, this.messageModel);
@@ -2417,6 +2420,14 @@ export class AgentRuntimeService {
             metadata.modelRuntimeConfig.provider,
           )
         : undefined;
+    const onContextWindowObserved: NonNullable<
+      GeneralAgentConfig['onContextWindowObserved']
+    > = async (input) => {
+      await this.aiModelModel.recordContextWindowRejection({
+        ...input,
+        modelCatalogSnapshot: metadata?.modelCatalogSnapshot,
+      });
+    };
 
     // Create Agent instance — use custom factory if provided, otherwise default to GeneralChatAgent
     const generalConfig = {
@@ -2430,6 +2441,7 @@ export class AgentRuntimeService {
         ...workspacePathInterventionAudits,
       },
       modelRuntimeConfig: metadata?.modelRuntimeConfig,
+      onContextWindowObserved,
       operationId,
       userId: metadata?.userId,
     };
@@ -2454,6 +2466,7 @@ export class AgentRuntimeService {
       hookDispatcher,
       loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,
+      onContextWindowObserved,
       operationId,
       serverDB: this.serverDB,
       stepIndex,

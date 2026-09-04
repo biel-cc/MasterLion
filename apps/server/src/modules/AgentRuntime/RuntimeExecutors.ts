@@ -80,7 +80,10 @@ import type {
   ExecutionContext,
   ToolCallExecutionContext,
 } from '@lobechat/types/src/executionContext';
-import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
+import type {
+  ContextWindowRejectionObservation,
+  ModelCatalogSnapshot,
+} from '@lobechat/types/src/modelCatalog';
 import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import {
   isLocalOrPrivateUrl,
@@ -1015,6 +1018,7 @@ export interface RuntimeExecutorContext {
   hookDispatcher?: HookDispatcher;
   loadAgentState?: (operationId: string) => Promise<AgentState | null>;
   messageModel: MessageModel;
+  onContextWindowObserved?: (input: ContextWindowRejectionObservation) => Promise<void> | void;
   operationId: string;
   serverDB: LobeChatDatabase;
   stepIndex: number;
@@ -2609,6 +2613,7 @@ export const createRuntimeExecutors = (
                 compress: compressFinalPayload,
                 configuredWindowTokens: resolvedContextWindowTokens,
                 modelId: model,
+                onContextWindowObserved: ctx.onContextWindowObserved,
                 onProviderAttemptDiscard: async ({ attempt: providerAttempt, willRetry }) => {
                   discardProviderAttempt();
                   if (!willRetry) return;

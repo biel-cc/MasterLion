@@ -1,4 +1,9 @@
 // @vitest-environment node
+import {
+  createModelCatalogSnapshot,
+  getModelCatalogFromSettings,
+  mergeModelCatalogEntry,
+} from '@lobechat/business-model-bank';
 import { eq } from 'drizzle-orm';
 import type { AiProviderModelListItem } from 'model-bank';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -187,6 +192,85 @@ describe('AiModelModel', () => {
         contextWindowTokens: 3000,
         userId,
       });
+    });
+  });
+
+  describe('recordContextWindowRejection', () => {
+    it('persists exact observed evidence while preserving the existing catalog', async () => {
+      const manual = {
+        createdAt: '2026-09-01T00:00:00.000Z',
+        inputModalities: { image: 'unsupported' as const },
+        owner: 'model-ops',
+        reason: 'verified text-only deployment',
+      };
+      const catalog = mergeModelCatalogEntry({
+        manual,
+        modelId: 'company-chat',
+        now: '2026-09-03T00:00:00.000Z',
+        providerId: 'newapi',
+        providerMetadata: {
+          contextWindowTokens: 128_000,
+          modelVersion: '2026-08-31',
+        },
+      });
+      await aiProviderModel.create({
+        contextWindowTokens: 128_000,
+        id: 'company-chat',
+        providerId: 'newapi',
+        settings: { disabledParams: ['temperature'], modelCatalog: catalog },
+      });
+
+      const recorded = await aiProviderModel.recordContextWindowRejection({
+        contextWindowRejectionTokens: 32_000,
+        modelCatalogSnapshot: createModelCatalogSnapshot(
+          catalog.entry,
+          'operation-1',
+          '2026-09-03T12:00:00.000Z',
+        ),
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+        verifiedAt: '2026-09-03T12:00:01.000Z',
+      });
+
+      const persisted = await aiProviderModel.findByIdAndProvider('company-chat', 'newapi');
+      expect(recorded).toBe(true);
+      expect(getModelCatalogFromSettings(persisted?.settings)).toMatchObject({
+        entry: {
+          contextWindowSource: 'observed',
+          contextWindowTokens: 32_000,
+          modelId: 'company-chat',
+          modelVersion: '2026-08-31',
+          providerId: 'newapi',
+        },
+        manual,
+        observed: {
+          contextWindowRejectionTokens: 32_000,
+          modelVersion: '2026-08-31',
+          verifiedAt: '2026-09-03T12:00:01.000Z',
+        },
+      });
+      expect(persisted?.settings?.disabledParams).toEqual(['temperature']);
+
+      await aiProviderModel.recordContextWindowRejection({
+        contextWindowRejectionTokens: 64_000,
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+        verifiedAt: '2026-09-03T12:00:02.000Z',
+      });
+      const afterHigherRejection = await aiProviderModel.findByIdAndProvider(
+        'company-chat',
+        'newapi',
+      );
+      expect(getModelCatalogFromSettings(afterHigherRejection?.settings)).toMatchObject({
+        entry: { contextWindowSource: 'observed', contextWindowTokens: 32_000 },
+        observed: {
+          contextWindowRejectionTokens: 32_000,
+          verifiedAt: '2026-09-03T12:00:01.000Z',
+        },
+      });
+      expect(afterHigherRejection?.settings?.disabledParams).toEqual(['temperature']);
     });
   });
 
