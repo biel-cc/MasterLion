@@ -20,7 +20,7 @@ describe('dispatchNonHeteroSubAgent workspace routing', () => {
     getManagedEnvSummary.mockResolvedValue({ hasManagedEnv: false });
   });
 
-  it('keeps an unbound desktop child on its parent local intent via gateway coordination', async () => {
+  it('keeps an unbound desktop child in the parent client runtime', async () => {
     const executeClientAgent = vi.fn();
     const executeGatewayAgent = vi.fn().mockResolvedValue(undefined);
 
@@ -39,21 +39,24 @@ describe('dispatchNonHeteroSubAgent workspace routing', () => {
       { executeClientAgent, executeGatewayAgent } as any,
     );
 
-    expect(executeGatewayAgent).toHaveBeenCalledWith({
+    expect(executeClientAgent).toHaveBeenCalledWith({
       context: {
-        agentId: 'child-agent',
+        agentId: 'parent-agent',
         scope: 'sub_agent',
         subAgentId: 'child-agent',
         topicId: 'topic-1',
       },
-      message: 'inspect the current task',
+      inPortalThread: undefined,
+      messages: [],
+      parentMessageId: 'tool-1',
+      parentMessageType: 'tool',
       parentOperationId: undefined,
     });
-    expect(executeClientAgent).not.toHaveBeenCalled();
+    expect(executeGatewayAgent).not.toHaveBeenCalled();
     expect(getManagedEnvSummary).not.toHaveBeenCalled();
   });
 
-  it('routes an already-bound desktop child through gateway because tools can be injected', async () => {
+  it('keeps an already-bound desktop child in the renderer client runtime', async () => {
     const executeClientAgent = vi.fn();
     const executeGatewayAgent = vi.fn().mockResolvedValue(undefined);
 
@@ -73,17 +76,20 @@ describe('dispatchNonHeteroSubAgent workspace routing', () => {
       { executeClientAgent, executeGatewayAgent } as any,
     );
 
-    expect(executeGatewayAgent).toHaveBeenCalledWith({
+    expect(executeClientAgent).toHaveBeenCalledWith({
       context: {
-        agentId: 'child-agent',
+        agentId: 'parent-agent',
         scope: 'sub_agent',
         subAgentId: 'child-agent',
         topicId: 'topic-1',
       },
-      message: 'inspect the workspace',
+      inPortalThread: undefined,
+      messages: [],
+      parentMessageId: 'tool-1',
+      parentMessageType: 'tool',
       parentOperationId: undefined,
     });
-    expect(executeClientAgent).not.toHaveBeenCalled();
+    expect(executeGatewayAgent).not.toHaveBeenCalled();
     expect(getManagedEnvSummary).not.toHaveBeenCalled();
   });
 });

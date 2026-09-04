@@ -180,7 +180,7 @@ describe('Generation Actions', () => {
   });
 
   describe('continueGeneration', () => {
-    it('routes an unbound Electron continuation through the gateway coordinator', async () => {
+    it('keeps an unbound Electron continuation in the client runtime', async () => {
       mockConstEnv.isDesktop = true;
       vi.spyOn(agentSelectors, 'getAgentConfigById').mockReturnValue(
         () => ({ agencyConfig: {} }) as any,
@@ -215,10 +215,10 @@ describe('Generation Actions', () => {
         await store.getState().continueGenerationMessage('msg-1', 'msg-1');
       });
 
-      expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ context, message: '', parentMessageId: 'msg-1' }),
+      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ context, parentMessageId: 'msg-1' }),
       );
-      expect(mockExecuteClientAgent).not.toHaveBeenCalled();
+      expect(mockExecuteGatewayAgent).not.toHaveBeenCalled();
     });
 
     it('should continue generation from assistantGroup message with last child as blockId', async () => {
@@ -1043,7 +1043,7 @@ describe('Generation Actions', () => {
       expect(mockExecuteClientAgent).toHaveBeenCalled();
     });
 
-    it('routes an unbound Electron regeneration through the gateway coordinator', async () => {
+    it('keeps an unbound Electron regeneration in the client runtime', async () => {
       mockConstEnv.isDesktop = true;
       vi.spyOn(agentSelectors, 'getAgentConfigById').mockReturnValue(
         () => ({ agencyConfig: {} }) as any,
@@ -1079,10 +1079,10 @@ describe('Generation Actions', () => {
         await store.getState().regenerateUserMessage('msg-1');
       });
 
-      expect(mockExecuteGatewayAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ context, message: 'retry me', parentMessageId: 'msg-1' }),
+      expect(mockExecuteClientAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ context, parentMessageId: 'msg-1' }),
       );
-      expect(mockExecuteClientAgent).not.toHaveBeenCalled();
+      expect(mockExecuteGatewayAgent).not.toHaveBeenCalled();
     });
 
     it('should not regenerate if message is already loading', async () => {

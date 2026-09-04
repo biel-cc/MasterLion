@@ -590,6 +590,31 @@ describe('createServerAgentToolsEngine', () => {
 
       expect(result.enabledToolIds).not.toContain(LocalSystemManifest.identifier);
     });
+
+    it('should prefer the formal desktop target over a conflicting legacy target', () => {
+      const context = createMockContext();
+      const engine = createServerAgentToolsEngine(context, {
+        agentConfig: {
+          agencyConfig: {
+            executionTarget: 'local',
+            executionTargetByPlatform: { desktop: 'sandbox' },
+          },
+          plugins: [LocalSystemManifest.identifier],
+        },
+        canUseDevice: true,
+        deviceContext: { autoActivated: true, deviceOnline: true, gatewayConfigured: true },
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+
+      const result = engine.generateToolsDetailed({
+        model: 'gpt-4',
+        provider: 'openai',
+        toolIds: [LocalSystemManifest.identifier],
+      });
+
+      expect(result.enabledToolIds).not.toContain(LocalSystemManifest.identifier);
+    });
   });
 
   describe('RemoteDevice tool enable rules', () => {
@@ -676,6 +701,30 @@ describe('createServerAgentToolsEngine', () => {
         provider: 'openai',
       });
 
+      expect(result.enabledToolIds).not.toContain(RemoteDeviceManifest.identifier);
+    });
+
+    it('should not let explicit activation bypass a non-device execution target', () => {
+      const context = createMockContext();
+      const engine = createServerAgentToolsEngine(context, {
+        agentConfig: {
+          agencyConfig: { executionTargetByPlatform: { desktop: 'none' } },
+          plugins: [LocalSystemManifest.identifier, RemoteDeviceManifest.identifier],
+        },
+        canUseDevice: true,
+        deviceContext: { gatewayConfigured: true },
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+
+      const result = engine.generateToolsDetailed({
+        context: { isExplicitActivation: true },
+        model: 'gpt-4',
+        provider: 'openai',
+        toolIds: [LocalSystemManifest.identifier, RemoteDeviceManifest.identifier],
+      });
+
+      expect(result.enabledToolIds).not.toContain(LocalSystemManifest.identifier);
       expect(result.enabledToolIds).not.toContain(RemoteDeviceManifest.identifier);
     });
 

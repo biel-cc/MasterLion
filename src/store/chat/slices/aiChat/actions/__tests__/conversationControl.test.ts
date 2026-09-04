@@ -1069,7 +1069,7 @@ describe('ConversationControl actions', () => {
         executeGatewayAgentSpy.mockRestore();
       });
 
-      it('resumes an unbound desktop local topic through gateway even without an old server op', async () => {
+      it('resumes an unbound desktop local topic in the client runtime', async () => {
         mockConstEnv.isDesktop = true;
         const { result } = renderHook(() => useChatStore());
         const agentId = 'local-agent';
@@ -1098,21 +1098,24 @@ describe('ConversationControl actions', () => {
         const executeClientAgent = vi
           .spyOn(result.current, 'executeClientAgent')
           .mockResolvedValue(undefined);
+        vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+          agentConfig: createMockResolvedAgentConfig(),
+          context: { phase: 'init' } as any,
+          state: {} as any,
+        });
 
         await act(async () => {
           await result.current.approveToolCalling('tool-msg-unbound', 'group-1');
         });
 
-        expect(executeGatewayAgent).toHaveBeenCalledWith(
+        expect(executeClientAgent).toHaveBeenCalledWith(
           expect.objectContaining({
             context: expect.objectContaining({ agentId, topicId }),
-            resumeApproval: expect.objectContaining({
-              decision: 'approved',
-              toolCallId: 'call_unbound',
-            }),
+            parentMessageId: 'tool-msg-unbound',
+            parentMessageType: 'tool',
           }),
         );
-        expect(executeClientAgent).not.toHaveBeenCalled();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
       });
 
       it('resolves the running server op in a group scope context (scope/groupId forwarded to the lookup)', async () => {
@@ -1310,7 +1313,7 @@ describe('ConversationControl actions', () => {
   });
 
   describe('submitToolInteraction', () => {
-    it('routes a desktop tool-result-only submit through the Gateway resume contract', async () => {
+    it('routes a desktop tool-result-only submit through the client resume contract', async () => {
       mockConstEnv.isDesktop = true;
       const { result } = renderHook(() => useChatStore());
       const agentId = 'desktop-agent';
@@ -1345,6 +1348,11 @@ describe('ConversationControl actions', () => {
       const executeClientAgent = vi
         .spyOn(result.current, 'executeClientAgent')
         .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
 
       await act(async () => {
         await result.current.submitToolInteraction(
@@ -1355,21 +1363,18 @@ describe('ConversationControl actions', () => {
         );
       });
 
-      expect(executeGatewayAgent).toHaveBeenCalledWith(
+      expect(executeClientAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           context: expect.objectContaining({ agentId, topicId }),
-          message: '',
+          initialContext: expect.objectContaining({ phase: 'tool_result' }),
           parentMessageId: toolMessage.id,
-          resumeInteraction: {
-            parentMessageId: toolMessage.id,
-            phase: 'tool_result',
-          },
+          parentMessageType: 'tool',
         }),
       );
-      expect(executeClientAgent).not.toHaveBeenCalled();
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
     });
 
-    it('routes a desktop submit with a synthetic user message through Gateway user-input resume', async () => {
+    it('routes a desktop submit with a synthetic user message through the client runtime', async () => {
       mockConstEnv.isDesktop = true;
       const { result } = renderHook(() => useChatStore());
       const agentId = 'desktop-agent';
@@ -1399,22 +1404,23 @@ describe('ConversationControl actions', () => {
       const executeClientAgent = vi
         .spyOn(result.current, 'executeClientAgent')
         .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
 
       await act(async () => {
         await result.current.submitToolInteraction(toolMessage.id, { answer: 'yes' });
       });
 
-      expect(executeGatewayAgent).toHaveBeenCalledWith(
+      expect(executeClientAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: '',
           parentMessageId: 'submitted-user-msg',
-          resumeInteraction: {
-            parentMessageId: 'submitted-user-msg',
-            phase: 'user_input',
-          },
+          parentMessageType: 'user',
         }),
       );
-      expect(executeClientAgent).not.toHaveBeenCalled();
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
     });
 
     it('should create a user message and resume runtime from that user message', async () => {
@@ -1723,7 +1729,7 @@ describe('ConversationControl actions', () => {
   });
 
   describe('skipToolInteraction', () => {
-    it('routes a desktop skip through Gateway user-input resume', async () => {
+    it('routes a desktop skip through the client runtime', async () => {
       mockConstEnv.isDesktop = true;
       const { result } = renderHook(() => useChatStore());
       const agentId = 'desktop-agent';
@@ -1753,22 +1759,23 @@ describe('ConversationControl actions', () => {
       const executeClientAgent = vi
         .spyOn(result.current, 'executeClientAgent')
         .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
 
       await act(async () => {
         await result.current.skipToolInteraction(toolMessage.id, 'later');
       });
 
-      expect(executeGatewayAgent).toHaveBeenCalledWith(
+      expect(executeClientAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: '',
           parentMessageId: 'skipped-user-msg',
-          resumeInteraction: {
-            parentMessageId: 'skipped-user-msg',
-            phase: 'user_input',
-          },
+          parentMessageType: 'user',
         }),
       );
-      expect(executeClientAgent).not.toHaveBeenCalled();
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
     });
 
     it('should create a user message and resume runtime from that user message', async () => {
