@@ -10,6 +10,7 @@ import HeterogeneousChatInput from './index';
 const mocks = vi.hoisted(() => ({
   chatInputProps: [] as Array<Record<string, any>>,
   deviceGuardOptions: [] as Array<Record<string, unknown>>,
+  deviceGuardStatus: 'ok' as string,
   effective: {
     context: { plan: { kind: 'local', target: 'local' } },
     state: 'bound',
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
     unroutedReason: undefined,
   } as Record<string, any>,
   focusWorkspacePicker: vi.fn(),
+  isConfigured: true,
 }));
 
 vi.mock('@lobechat/heterogeneous-agents', () => ({
@@ -42,7 +44,10 @@ vi.mock('@lobehub/ui', () => ({
       {action}
     </div>
   ),
-  Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Flexbox: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
+    <div data-testid={props['data-testid'] as string | undefined}>{children}</div>
+  ),
+  Skeleton: { Button: () => <span data-testid="skeleton" /> },
 }));
 vi.mock('@lobehub/ui/base-ui', () => ({
   Button: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => (
@@ -60,7 +65,7 @@ vi.mock('react-router-dom', () => ({
 }));
 vi.mock('url-join', () => ({ default: (...parts: string[]) => parts.join('/') }));
 vi.mock('@/business/client/hooks/useHeteroAgentCloudConfig', () => ({
-  useHeteroAgentCloudConfig: () => ({ goToConfig: vi.fn(), isConfigured: true }),
+  useHeteroAgentCloudConfig: () => ({ goToConfig: vi.fn(), isConfigured: mocks.isConfigured }),
 }));
 vi.mock('@/const/version', () => ({ isDesktop: true }));
 vi.mock('@/features/ChatInput', () => ({}));
@@ -93,7 +98,7 @@ vi.mock('@/hooks/useEffectiveWorkspace', () => ({
 vi.mock('@/hooks/useRemoteAgentDeviceGuard', () => ({
   useRemoteAgentDeviceGuard: (options: Record<string, unknown>) => {
     mocks.deviceGuardOptions.push(options);
-    return { refresh: vi.fn(), status: 'ok' };
+    return { refresh: vi.fn(), status: mocks.deviceGuardStatus };
   },
 }));
 vi.mock('@/store/agent', () => ({
@@ -119,7 +124,9 @@ describe('HeterogeneousChatInput workspace gate', () => {
   beforeEach(() => {
     mocks.chatInputProps.length = 0;
     mocks.deviceGuardOptions.length = 0;
+    mocks.deviceGuardStatus = 'ok';
     mocks.focusWorkspacePicker.mockClear();
+    mocks.isConfigured = true;
     mocks.effective = {
       context: { plan: { kind: 'local', target: 'local' } },
       state: 'bound',
@@ -150,7 +157,9 @@ describe('HeterogeneousChatInput workspace gate', () => {
 
   it('disables send with the unrouted reason', () => {
     mocks.effective = {
-      context: { plan: { kind: 'device-unrouted', reason: 'bound-device-offline', target: 'device' } },
+      context: {
+        plan: { kind: 'device-unrouted', reason: 'bound-device-offline', target: 'device' },
+      },
       state: 'unrouted',
       target: 'device',
       targetDeviceId: 'device-topic',
@@ -199,6 +208,72 @@ describe('HeterogeneousChatInput workspace gate', () => {
     expect(screen.getByTestId('send')).not.toBeDisabled();
     expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(false);
     expect(mocks.chatInputProps.at(-1)?.sendButtonProps.onDisabledSend).toBeUndefined();
+  });
+
+  it('shows a loading placeholder instead of a gate while the projection is loading', () => {
+    // Provisional `unbound` reported by the first render, before the device /
+    // workspace evidence has landed.
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      loading: true,
+      state: 'unbound',
+      target: 'local',
+    };
+    render(<HeterogeneousChatInput />);
+
+    expect(screen.queryByTestId('hetero-workspace-guard')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByTestId('hetero-workspace-resolving')).toBeInTheDocument();
+    // Nothing can be sent before the target is known.
+    expect(screen.getByTestId('send')).toBeDisabled();
+    expect(mocks.chatInputProps.at(-1)?.disableSend).toBe(true);
+    // A disabled send during load must not yank the picker open.
+    expect(mocks.chatInputProps.at(-1)?.sendButtonProps.onDisabledSend).toBeUndefined();
+  });
+
+  it('does not flash the cloud-config gate while the projection is loading', () => {
+    mocks.isConfigured = false;
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      loading: true,
+      state: 'unbound',
+      target: 'local',
+    };
+    render(<HeterogeneousChatInput />);
+
+    expect(screen.queryByText('heteroAgent.cloudNotConfigured.title')).not.toBeInTheDocument();
+    expect(screen.getByTestId('hetero-workspace-resolving')).toBeInTheDocument();
+  });
+
+  it('does not flash the device gate while the projection is loading', () => {
+    mocks.deviceGuardStatus = 'device-offline';
+    mocks.effective = {
+      context: { plan: { deviceId: 'device-topic', kind: 'device', target: 'device' } },
+      loading: true,
+      state: 'unrouted',
+      target: 'device',
+      targetDeviceId: 'device-topic',
+      unroutedReason: 'bound-device-offline',
+    };
+    render(<HeterogeneousChatInput />);
+
+    expect(
+      screen.queryByText('platformAgent.deviceGuard.deviceOffline.title'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId('hetero-workspace-resolving')).toBeInTheDocument();
+  });
+
+  it('shows the gate once the projection resolves to an unbound workspace', () => {
+    mocks.effective = {
+      context: { plan: { kind: 'local', target: 'local' } },
+      loading: false,
+      state: 'unbound',
+      target: 'local',
+    };
+    render(<HeterogeneousChatInput />);
+
+    expect(screen.queryByTestId('hetero-workspace-resolving')).not.toBeInTheDocument();
+    expect(screen.getByTestId('hetero-workspace-guard')).toBeInTheDocument();
   });
 
   it('guards the topic-scoped device even when the agent default resolves elsewhere', () => {

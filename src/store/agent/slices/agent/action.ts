@@ -2,7 +2,14 @@ import { isDesktop } from '@lobechat/const';
 import { type AgentContextDocument } from '@lobechat/context-engine';
 import { isChatGroupSessionId } from '@lobechat/types';
 import { getSingletonAnalyticsOptional } from '@lobehub/analytics';
-import { get as getAtPath, set as setAtPath } from 'es-toolkit/compat';
+import {
+  get as getAtPath,
+  has as hasAtPath,
+  isPlainObject,
+  set as setAtPath,
+  toPath,
+  unset as unsetAtPath,
+} from 'es-toolkit/compat';
 import isEqual from 'fast-deep-equal';
 import { produce } from 'immer';
 import type { SWRResponse } from 'swr';
@@ -54,6 +61,100 @@ export interface AgentConfigUpdateOptions {
    */
   throwOnError?: boolean;
 }
+
+type AgentMap = Record<string, PartialDeep<AgentItem>>;
+
+/**
+ * Paths this update actually writes through the deep merge. Arrays and scalars
+ * are leaves because `merge` replaces them wholesale; `undefined` writes
+ * nothing and an empty object merges to a no-op, so neither owns a path.
+ */
+const collectWrittenPaths = (value: unknown, prefix: string[], out: string[][]): void => {
+  if (isPlainObject(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      collectWrittenPaths(child, [...prefix, key], out);
+    }
+    return;
+  }
+
+  if (value === undefined || prefix.length === 0) return;
+
+  out.push(prefix);
+};
+
+const isPathPrefix = (prefix: string[], path: string[]): boolean =>
+  prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment);
+
+/**
+ * The paths a failed update owns: every replaced subtree (the whole subtree is
+ * one unit, so leaves under it are dropped) plus the deep-merged leaves.
+ */
+const resolveWrittenPaths = (
+  data: PartialDeep<LobeAgentConfig>,
+  replacePaths?: string[],
+): string[][] => {
+  // Mirrors internal_dispatchAgentMap: a replace path with no value in the
+  // payload is skipped there, so it never wrote anything to undo.
+  const replaced = (replacePaths ?? [])
+    .filter((path) => getAtPath(data, path) !== undefined)
+    .map((path) => toPath(path));
+
+  const merged: string[][] = [];
+  collectWrittenPaths(data, [], merged);
+
+  return [
+    ...replaced,
+    ...merged.filter((path) => !replaced.some((prefix) => isPathPrefix(prefix, path))),
+  ];
+};
+
+/**
+ * Undo only the paths this update wrote. Restoring the whole pre-update agent
+ * would discard any concurrent successful write — e.g. a meta update that
+ * landed while this config save was still in flight.
+ */
+const rollbackWrittenPaths = (
+  agentMap: AgentMap,
+  id: string,
+  previousAgent: PartialDeep<AgentItem> | undefined,
+  paths: string[][],
+): AgentMap =>
+  produce(agentMap, (draft) => {
+    const current = draft[id];
+    // A newer write already dropped the entry; it owns the state now.
+    if (!current) return;
+
+    for (const path of paths) {
+      // `has`, not a value check: it is what separates "was `undefined`" from
+      // "was absent", so a key this update created is deleted rather than left
+      // behind as an explicit `undefined`.
+      if (previousAgent !== undefined && hasAtPath(previousAgent, path)) {
+        setAtPath(current, path, getAtPath(previousAgent, path));
+        continue;
+      }
+
+      unsetAtPath(current, path);
+
+      // Drop the empty object husks this update created on the way to the leaf,
+      // stopping at the first ancestor that existed before it.
+      for (let depth = path.length - 1; depth > 0; depth -= 1) {
+        const ancestorPath = path.slice(0, depth);
+        if (previousAgent !== undefined && hasAtPath(previousAgent, ancestorPath)) break;
+
+        // Checked structurally rather than via `isPlainObject` because this
+        // reads through an immer draft proxy.
+        const ancestor: unknown = getAtPath(current, ancestorPath);
+        if (typeof ancestor !== 'object' || ancestor === null) break;
+        if (Array.isArray(ancestor) || Object.keys(ancestor).length > 0) break;
+
+        unsetAtPath(current, ancestorPath);
+      }
+    }
+
+    // The entry only existed because of this update, and nothing else has
+    // written to it since.
+    if (previousAgent === undefined && Object.keys(current).length === 0) delete draft[id];
+  });
 
 /**
  * Agent Slice Actions
@@ -528,12 +629,15 @@ export class AgentSliceActionImpl {
 
       // The write never landed, so the optimistic value must not stay on screen. An abort
       // means a newer write already owns that state, so leave the map to the newer write.
-      // Restore only this agent so an unrelated update cannot be overwritten by the rollback.
+      // Roll back only the paths this update touched: restoring the whole agent would
+      // clobber a concurrent successful write (e.g. a meta update) on other fields.
       if (!aborted) {
-        const agentMap = produce(this.#get().agentMap, (draft) => {
-          if (previousAgent === undefined) delete draft[id];
-          else draft[id] = previousAgent;
-        });
+        const agentMap = rollbackWrittenPaths(
+          this.#get().agentMap,
+          id,
+          previousAgent,
+          resolveWrittenPaths(data, options?.replacePaths),
+        );
         this.#set({ agentMap }, false, 'rollbackAgentConfig');
       }
 

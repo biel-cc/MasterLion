@@ -628,6 +628,156 @@ describe('AgentSlice Actions', () => {
       consoleError.mockRestore();
     });
 
+    it('rolls back only the paths it wrote, keeping a concurrent meta update', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': {
+              chatConfig: { historyCount: 10 },
+              model: 'gpt-3.5-turbo',
+              title: 'Old Title',
+            } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        // A meta save for the same agent lands while the config save is in flight.
+        result.current.internal_dispatchAgentMap('agent-1', { title: 'New Title' } as any);
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({
+        chatConfig: { historyCount: 10 },
+        // rolled back
+        model: 'gpt-3.5-turbo',
+        // preserved
+        title: 'New Title',
+      });
+      consoleError.mockRestore();
+    });
+
+    it('rolls back a nested leaf without discarding its siblings', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { chatConfig: { historyCount: 10 } } as any },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', {
+          chatConfig: { historyCount: 99 },
+        } as any);
+        result.current.internal_dispatchAgentMap('agent-1', {
+          chatConfig: { enableReasoning: true },
+        } as any);
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({
+        chatConfig: { enableReasoning: true, historyCount: 10 },
+      });
+      consoleError.mockRestore();
+    });
+
+    it('deletes keys the failed update created instead of leaving them undefined', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'gpt-4' } as any },
+        });
+      });
+
+      await act(async () => {
+        await result.current.optimisticUpdateAgentConfig('agent-1', {
+          agencyConfig: { env: { ADDED: 'x' } },
+        } as any);
+      });
+
+      // No `agencyConfig: { env: {} }` husk left behind.
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4' });
+      expect(Object.keys(result.current.agentMap['agent-1'] as object)).toEqual(['model']);
+      consoleError.mockRestore();
+    });
+
+    it('restores a replaced subtree wholesale, including entries it removed', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': {
+              agencyConfig: { env: { KEEP: 'yes', REMOVED: 'old' } },
+              model: 'gpt-4',
+            } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig(
+          'agent-1',
+          { agencyConfig: { env: { KEEP: 'yes' } } } as any,
+          undefined,
+          { replacePaths: ['agencyConfig.env'] },
+        );
+        result.current.internal_dispatchAgentMap('agent-1', { title: 'Renamed' } as any);
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({
+        // the deleted entry is restored, not merged away
+        agencyConfig: { env: { KEEP: 'yes', REMOVED: 'old' } },
+        model: 'gpt-4',
+        title: 'Renamed',
+      });
+      consoleError.mockRestore();
+    });
+
+    it('keeps a concurrently created entry when the failed update created the agent', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({ activeAgentId: 'agent-1', agentMap: {} });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        result.current.internal_dispatchAgentMap('agent-1', { title: 'New Title' } as any);
+        await pending;
+      });
+
+      // The entry survives because another write owns `title`, but the failed
+      // config write leaves nothing behind.
+      expect(result.current.agentMap['agent-1']).toEqual({ title: 'New Title' });
+      consoleError.mockRestore();
+    });
+
     it('keeps the newer optimistic write when an in-flight request is aborted', async () => {
       const { result } = renderHook(() => useAgentStore());
       const aborted = Object.assign(new Error('aborted'), { name: 'AbortError' });

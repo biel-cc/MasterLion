@@ -2,7 +2,7 @@
 
 import { Accordion, Flexbox, Text } from '@lobehub/ui';
 import { MoreHorizontal, RefreshCwIcon, TriangleAlertIcon } from 'lucide-react';
-import { memo, useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import urlJoin from 'url-join';
@@ -51,11 +51,21 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
     s.updateSystemStatus,
   ]);
 
+  // Grouping only changes meaning when the sort key changes, so only a real
+  // change clears the persisted selection. Running this on mount would wipe the
+  // user's collapse/expand choice every time the sidebar remounts (route change,
+  // panel toggle) or this effect re-runs.
+  const lastTopicSortBy = useRef(topicSortBy);
   useEffect(() => {
+    if (lastTopicSortBy.current === topicSortBy) return;
+
+    lastTopicSortBy.current = topicSortBy;
     updateSystemStatus({ expandTopicGroupKeys: undefined });
   }, [topicSortBy, updateSystemStatus]);
 
-  const expandedKeys = useMemo(() => topicGroupKeys || groupIds, [topicGroupKeys, groupIds]);
+  // No stored selection means "all groups open"; an explicit empty array is a
+  // deliberate "all collapsed" and must survive.
+  const expandedKeys = useMemo(() => topicGroupKeys ?? groupIds, [topicGroupKeys, groupIds]);
   const hasNavigation = navigation.workspaceGroups.length > 0 || navigation.recent.length > 0;
 
   if (loading && !hasNavigation) return <SkeletonList rows={4} />;

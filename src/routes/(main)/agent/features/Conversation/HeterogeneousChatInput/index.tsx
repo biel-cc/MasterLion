@@ -4,7 +4,7 @@ import {
   HETEROGENEOUS_TYPE_LABELS,
   isRemoteHeterogeneousType,
 } from '@lobechat/heterogeneous-agents';
-import { Alert, Flexbox } from '@lobehub/ui';
+import { Alert, Flexbox, Skeleton } from '@lobehub/ui';
 import { Button } from '@lobehub/ui/base-ui';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -61,6 +61,13 @@ const HeterogeneousChatInput = memo(() => {
   // disagree with the target switcher and the eventual dispatcher.
   const effective = useEffectiveWorkspace(agentId);
 
+  // Until the first evidence requests (devices, gateway, workspaces, topic
+  // state) settle, the projection reports a provisional `unbound`/`unrouted`
+  // that is indistinguishable from a real one. Showing a gate here would flash
+  // an error the user never caused and that disappears on its own a tick later,
+  // so hold a deterministic placeholder instead.
+  const isResolvingWorkspace = Boolean(effective.loading);
+
   // A run goes to an `lh connect` device when the provider is a remote-only type
   // (openclaw / hermes) OR a local-CLI type (claude-code / codex) resolves to a
   // bound device (including desktop "local" opened from web). Either way the
@@ -82,7 +89,7 @@ const HeterogeneousChatInput = memo(() => {
   // straight from the accepted execution context; native chat input never
   // applies this gate.
   const focusWorkspacePicker = useProjectWorkspaceStore((s) => s.focusWorkspacePicker);
-  const workspaceBlocked = effective.state !== 'bound';
+  const workspaceBlocked = !isResolvingWorkspace && effective.state !== 'bound';
   const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
 
   const goToAgentProfile = () => {
@@ -90,6 +97,7 @@ const HeterogeneousChatInput = memo(() => {
   };
 
   const deviceBlocked =
+    !isResolvingWorkspace &&
     isDeviceExecution &&
     (status === 'device-offline' || status === 'platform-unavailable' || status === 'no-device');
 
@@ -137,8 +145,13 @@ const HeterogeneousChatInput = memo(() => {
     );
   };
 
+  // `isDeviceExecution` is derived from the same provisional plan, so the cloud
+  // gate has to wait for the projection too — otherwise a device-bound agent
+  // flashes "configure your cloud credentials" before routing resolves.
+  const cloudConfigBlocked = !isResolvingWorkspace && !isConfigured && !isDeviceExecution;
+
   const renderCloudConfigGuard = () => {
-    if (isDeviceExecution || isConfigured) return null;
+    if (!cloudConfigBlocked) return null;
 
     return (
       <WideScreenContainer>
@@ -197,13 +210,33 @@ const HeterogeneousChatInput = memo(() => {
     );
   };
 
+  const renderResolvingPlaceholder = () => {
+    if (!isResolvingWorkspace) return null;
+
+    return (
+      <WideScreenContainer>
+        <Flexbox
+          align={'center'}
+          data-testid="hetero-workspace-resolving"
+          paddingBlock={'0 8px'}
+          paddingInline={12}
+        >
+          <Skeleton.Button active block size={'small'} style={{ maxWidth: 880 }} />
+        </Flexbox>
+      </WideScreenContainer>
+    );
+  };
+
   // Device execution doesn't use the cloud sandbox, so it doesn't need cloud
-  // credentials — only the sandbox path gates on `isConfigured`.
-  const inputDisabled = (!isConfigured && !isDeviceExecution) || deviceBlocked || workspaceBlocked;
-  const hasGuard = deviceBlocked || (!isConfigured && !isDeviceExecution) || workspaceBlocked;
+  // credentials — only the sandbox path gates on `isConfigured`. Sending is held
+  // while the projection resolves: the target is not known yet.
+  const inputDisabled =
+    isResolvingWorkspace || cloudConfigBlocked || deviceBlocked || workspaceBlocked;
+  const hasGuard = isResolvingWorkspace || deviceBlocked || cloudConfigBlocked || workspaceBlocked;
 
   return (
     <Flexbox>
+      {renderResolvingPlaceholder()}
       {renderCloudConfigGuard()}
       {renderDeviceGuard()}
       {renderWorkspaceGuard()}

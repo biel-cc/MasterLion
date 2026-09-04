@@ -12,6 +12,9 @@ import RecentSection from './RecentSection';
 import WorkspaceGroupItem from './WorkspaceGroupItem';
 
 const mocks = vi.hoisted(() => ({
+  accordionProps: [] as Array<Record<string, any>>,
+  topicGroupKeys: undefined as string[] | undefined,
+  topicSortBy: 'updatedAt' as string,
   navigation: {
     placementById: {},
     recent: [] as any[],
@@ -33,9 +36,10 @@ vi.mock('@lobechat/const', async (importOriginal) => {
   return { ...original, isDesktop: true };
 });
 vi.mock('@lobehub/ui', () => ({
-  Accordion: ({ children }: { children?: ReactNode }) => (
-    <div data-testid="accordion">{children}</div>
-  ),
+  Accordion: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => {
+    mocks.accordionProps.push(props);
+    return <div data-testid="accordion">{children}</div>;
+  },
   AccordionItem: ({
     action,
     children,
@@ -102,7 +106,7 @@ vi.mock('./useWorkspaceTopicNavigation', () => ({
     loadError: mocks.loadError,
     loading: mocks.loading,
     reload: mocks.reload,
-    topicSortBy: 'updatedAt',
+    topicSortBy: mocks.topicSortBy,
   }),
 }));
 vi.mock('@/store/agent', () => ({
@@ -149,7 +153,7 @@ vi.mock('@/store/global', () => ({
     selector({ updateSystemStatus: mocks.updateSystemStatus }),
 }));
 vi.mock('@/store/global/selectors', () => ({
-  systemStatusSelectors: { topicGroupKeys: () => undefined },
+  systemStatusSelectors: { topicGroupKeys: () => mocks.topicGroupKeys },
 }));
 
 const topic = (id: string) => ({ createdAt: 1, id, title: id, updatedAt: 1 });
@@ -173,6 +177,10 @@ const TopicItemStub = (props: Record<string, unknown>) => {
 describe('WorkspaceMode sidebar', () => {
   beforeEach(() => {
     mocks.topicItems.length = 0;
+    mocks.accordionProps.length = 0;
+    mocks.topicGroupKeys = undefined;
+    mocks.topicSortBy = 'updatedAt';
+    mocks.updateSystemStatus.mockClear();
     mocks.switchTopic.mockClear();
     mocks.loadError = undefined;
     mocks.loading = false;
@@ -234,6 +242,63 @@ describe('WorkspaceMode sidebar', () => {
     render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
 
     expect(screen.queryByText('workspaceRuntime.sidebar.recentEmpty')).not.toBeInTheDocument();
+  });
+
+  describe('expanded group state', () => {
+    // WorkspaceMode is memo'd and `TopicItemComponent` is a stable reference, so
+    // an unused varying prop is what makes `rerender` actually re-render it.
+    const modeElement = (nonce = 0) => (
+      <WorkspaceMode {...({ nonce } as any)} TopicItemComponent={TopicItemStub as any} />
+    );
+
+    it('defaults to every group expanded when nothing is stored', () => {
+      render(modeElement());
+
+      expect(mocks.accordionProps.at(-1)?.expandedKeys).toEqual(['ws-app']);
+      expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+    });
+
+    it('keeps a stored collapse selection across rerenders and remounts', () => {
+      // The user collapsed every workspace group.
+      mocks.topicGroupKeys = [];
+
+      const view = render(modeElement(0));
+      view.rerender(modeElement(1));
+      view.unmount();
+      render(modeElement(0));
+
+      expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+      expect(mocks.accordionProps.at(-1)?.expandedKeys).toEqual([]);
+    });
+
+    it('keeps a partial expand selection across a remount', () => {
+      mocks.navigation.workspaceGroups = [
+        { topics: [topic('bound')], workspace, workspaceId: 'ws-app' },
+        { topics: [topic('other')], workspace, workspaceId: 'ws-api' },
+      ];
+      mocks.topicGroupKeys = ['ws-api'];
+
+      const view = render(modeElement());
+      view.unmount();
+      render(modeElement());
+
+      expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+      expect(mocks.accordionProps.at(-1)?.expandedKeys).toEqual(['ws-api']);
+    });
+
+    it('resets the selection only when the sort key actually changes', () => {
+      mocks.topicGroupKeys = [];
+
+      const view = render(modeElement(0));
+      view.rerender(modeElement(1));
+      expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+
+      mocks.topicSortBy = 'createdAt';
+      view.rerender(modeElement(2));
+
+      expect(mocks.updateSystemStatus).toHaveBeenCalledWith({ expandTopicGroupKeys: undefined });
+      expect(mocks.updateSystemStatus).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('surfaces workspace load errors with a retry action', () => {
