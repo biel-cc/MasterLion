@@ -3,7 +3,6 @@ import type { LobeAgentAgencyConfig } from '@lobechat/types';
 import { useEffect } from 'react';
 
 import type { ProjectWorkspaceItem } from '@/services/projectWorkspace';
-import { projectWorkspaceService } from '@/services/projectWorkspace';
 import { useAgentStore } from '@/store/agent';
 import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
@@ -57,6 +56,26 @@ export const migrateLegacyAgentWorkspace = async (
 
 const migrations = new Map<string, Promise<unknown>>();
 
+export interface LegacyWorkspaceMigrationGate {
+  agentId?: string;
+  deviceId?: string;
+  hasLegacy: boolean;
+  isDesktopRuntime: boolean;
+  isWorkspacesInit: boolean;
+  seamAvailable: boolean;
+}
+
+/** Migration is destructive, so wait until the formal workspace seam is positively available. */
+export const shouldRunLegacyWorkspaceMigration = ({
+  agentId,
+  deviceId,
+  hasLegacy,
+  isDesktopRuntime,
+  isWorkspacesInit,
+  seamAvailable,
+}: LegacyWorkspaceMigrationGate): boolean =>
+  isDesktopRuntime && isWorkspacesInit && seamAvailable && !!agentId && !!deviceId && hasLegacy;
+
 export const useLegacyWorkspaceMigration = (
   agentId: string | undefined,
   agencyConfig: LobeAgentAgencyConfig | undefined,
@@ -69,19 +88,30 @@ export const useLegacyWorkspaceMigration = (
   const updateAgentRuntimeEnvConfigById = useAgentStore(
     (state) => state.updateAgentRuntimeEnvConfigById,
   );
+  const getOrCreateDeviceWorkspace = useProjectWorkspaceStore(
+    (state) => state.getOrCreateDeviceWorkspace,
+  );
+  const isWorkspacesInit = useProjectWorkspaceStore((state) => state.isWorkspacesInit);
+  const seamAvailable = useProjectWorkspaceStore((state) => state.seamAvailable);
   const upsertWorkspaces = useProjectWorkspaceStore((state) => state.upsertWorkspaces);
 
   useEffect(() => {
+    const hasLegacy = !!agencyConfig?.workingDirByDevice?.[deviceId ?? ''] || !!localPath;
     if (
-      !isDesktop ||
-      !agentId ||
-      !deviceId ||
+      !shouldRunLegacyWorkspaceMigration({
+        agentId,
+        deviceId,
+        hasLegacy,
+        isDesktopRuntime: isDesktop,
+        isWorkspacesInit,
+        seamAvailable,
+      }) ||
       typeof updateAgentConfigById !== 'function' ||
       typeof updateAgentRuntimeEnvConfigById !== 'function'
     )
       return;
-    const hasLegacy = !!agencyConfig?.workingDirByDevice?.[deviceId] || !!localPath;
-    if (!hasLegacy) return;
+    // `shouldRunLegacyWorkspaceMigration` checks both ids; repeat the narrow for TypeScript.
+    if (!agentId || !deviceId) return;
 
     const key = `${agentId}:${deviceId}`;
     if (migrations.has(key)) return;
@@ -90,7 +120,11 @@ export const useLegacyWorkspaceMigration = (
       {
         clearLocalPath: () =>
           updateAgentRuntimeEnvConfigById(agentId, { workingDirectory: undefined }),
-        getOrCreate: (input) => projectWorkspaceService.getOrCreateDeviceWorkspace(input),
+        getOrCreate: async (input) => {
+          const outcome = await getOrCreateDeviceWorkspace(input);
+          if (!outcome.ok) throw new Error(outcome.message ?? outcome.code);
+          return outcome.value;
+        },
         updateAgencyConfig: (nextAgencyConfig) =>
           updateAgentConfigById(
             agentId,
@@ -115,7 +149,10 @@ export const useLegacyWorkspaceMigration = (
     agencyConfig,
     agentId,
     deviceId,
+    getOrCreateDeviceWorkspace,
+    isWorkspacesInit,
     localPath,
+    seamAvailable,
     updateAgentConfigById,
     updateAgentRuntimeEnvConfigById,
     upsertWorkspaces,

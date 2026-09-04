@@ -168,6 +168,39 @@ describe('buildWorkspaceTopicNavigation', () => {
     ]);
   });
 
+  it('restores raw legacy directory groups only when the old-server compatibility mode is active', () => {
+    const legacyWithDevice = topic('legacy-device', {
+      metadata: { boundDeviceId: 'device-1', workingDirectory: '/legacy/app/' },
+      updatedAt: 20,
+    });
+    const legacyWithoutDevice = topic('legacy-no-device', {
+      metadata: { workingDirectory: '/legacy/app' },
+      updatedAt: 10,
+    });
+
+    const navigation = buildWorkspaceTopicNavigation(
+      [legacyWithDevice, legacyWithoutDevice, topic('plain')],
+      {
+        allowLegacyPathGroups: true,
+        topicStatesById: {},
+        workspacesById: {},
+      },
+    );
+
+    expect(navigation.workspaceGroups).toHaveLength(1);
+    expect(navigation.workspaceGroups[0]).toMatchObject({
+      legacyWorkingDirectory: '/legacy/app',
+      topics: [{ id: 'legacy-device' }, { id: 'legacy-no-device' }],
+      workspace: { kind: 'device', rootPath: '/legacy/app' },
+    });
+    expect(navigation.workspaceGroups[0].workspaceId).toMatch(/^legacy-directory:/);
+    expect(navigation.placementById['legacy-device']).toEqual({
+      kind: 'legacy-directory',
+      workingDirectory: '/legacy/app',
+    });
+    expect(navigation.recent.map((entry) => entry.topic.id)).toEqual(['plain']);
+  });
+
   it('sorts recent by updatedAt with favorites pinned first', () => {
     const navigation = buildWorkspaceTopicNavigation(
       [

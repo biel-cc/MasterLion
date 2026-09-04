@@ -9,6 +9,8 @@ import type { ProjectWorkspaceItem, TopicWorkspaceState } from '@/services/proje
  * via `consumeDraftIntent`). Recommendations never populate this record.
  */
 export interface WorkspaceDraftIntent {
+  /** Old-server fallback only; never represents a formal binding. */
+  legacyWorkingDirectory?: string;
   /** Topic referenced by "start a new topic in this directory". */
   referenceTopicId?: string;
   target?: DeviceExecutionTarget;

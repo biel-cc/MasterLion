@@ -237,6 +237,29 @@ describe('useEffectiveWorkspace', () => {
     expect(result.current.draftKey).toBe('draft::agent-1');
   });
 
+  it('uses an explicit legacy draft cwd for execution without inventing a formal workspace id', () => {
+    useProjectWorkspaceStore.setState({
+      draftByConversationKey: {
+        'draft::agent-1': {
+          legacyWorkingDirectory: '/projects/legacy',
+          target: 'local',
+          targetDeviceId: 'desktop-1',
+          updatedAt: 1,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useEffectiveWorkspace('agent-1'));
+
+    expect(result.current.cwd).toBe('/projects/legacy');
+    expect(result.current.workspace).toMatchObject({
+      deviceId: 'desktop-1',
+      kind: 'device',
+      rootPath: '/projects/legacy',
+    });
+    expect(result.current.workspace?.id).toBeUndefined();
+  });
+
   it('scopes draft intent by agent and group', () => {
     mocks.activeGroupId = 'group-1';
     useProjectWorkspaceStore.setState({

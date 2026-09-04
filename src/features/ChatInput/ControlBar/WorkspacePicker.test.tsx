@@ -3,7 +3,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 
@@ -71,6 +71,14 @@ const effective = {
 } as EffectiveWorkspace;
 
 describe('WorkspacePicker', () => {
+  beforeEach(() => {
+    storeState.currentDeviceId = 'device-1';
+    storeState.pickerFocusNonce = 0;
+    storeState.recents = [];
+    storeState.seamAvailable = true;
+    storeState.workspaces = [];
+  });
+
   it('renders the controlled base-ui popover and closes after a successful selection', async () => {
     const onOpenChange = vi.fn();
     const select = vi.fn().mockResolvedValue(true);
@@ -147,5 +155,21 @@ describe('WorkspacePicker', () => {
     expect(reload).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: /app/i })).toBeInTheDocument();
     expect(screen.getByTestId('workspace-picker-choose-folder')).toBeInTheDocument();
+  });
+
+  it('does not claim a recommendation will bind a workspace on an old server', () => {
+    storeState.seamAvailable = false;
+    const bind = {
+      clearError: vi.fn(),
+      deviceId: 'device-1',
+      pending: false,
+      select: vi.fn(),
+      startReferencedTopic: vi.fn(),
+    } as unknown as BindWorkspaceOnce;
+
+    render(<WorkspacePicker open bind={bind} effective={effective} />);
+
+    expect(screen.getByText('workspaceRuntime.picker.seamUnavailable')).toBeInTheDocument();
+    expect(screen.queryByText('workspaceRuntime.picker.recommendedNote')).not.toBeInTheDocument();
   });
 });

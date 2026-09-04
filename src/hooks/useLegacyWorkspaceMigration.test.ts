@@ -1,8 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { migrateLegacyAgentWorkspace } from './useLegacyWorkspaceMigration';
+import {
+  migrateLegacyAgentWorkspace,
+  shouldRunLegacyWorkspaceMigration,
+} from './useLegacyWorkspaceMigration';
 
 describe('migrateLegacyAgentWorkspace', () => {
+  it('waits for workspace capability discovery and never migrates against an old server', () => {
+    const ready = {
+      agentId: 'agent-a',
+      deviceId: 'device-a',
+      hasLegacy: true,
+      isDesktopRuntime: true,
+      isWorkspacesInit: true,
+      seamAvailable: true,
+    };
+
+    expect(shouldRunLegacyWorkspaceMigration(ready)).toBe(true);
+    expect(shouldRunLegacyWorkspaceMigration({ ...ready, isWorkspacesInit: false })).toBe(false);
+    expect(shouldRunLegacyWorkspaceMigration({ ...ready, seamAvailable: false })).toBe(false);
+  });
+
   it('creates a formal workspace, stores its id, and removes both legacy cwd slots', async () => {
     const clearLocalPath = vi.fn(async () => {});
     const getOrCreate = vi.fn(async () => ({

@@ -56,9 +56,10 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
 
     const isHeterogeneous = useAgentStore(agentByIdSelectors.isAgentHeterogeneousById(agentId));
     const effective = useEffectiveWorkspace(agentId);
-    const bind = useBindWorkspaceOnce(effective);
+    const bind = useBindWorkspaceOnce(effective, agentId);
 
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
+    const seamAvailable = useProjectWorkspaceStore((s) => s.seamAvailable);
     const setDraftTargetIntent = useProjectWorkspaceStore((s) => s.setDraftTargetIntent);
     const captureTopicTarget = useProjectWorkspaceStore((s) => s.captureTopicTarget);
     const [targetError, setTargetError] = useState<ProjectWorkspaceErrorCode>();
@@ -122,7 +123,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         return null;
       }
 
-      if (effective.state === 'bound' || effective.state === 'scratch') {
+      if (seamAvailable && (effective.state === 'bound' || effective.state === 'scratch')) {
         return (
           <>
             <WorkspaceChip bind={bind} effective={effective} repoType={repoType} />

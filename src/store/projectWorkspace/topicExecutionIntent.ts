@@ -63,7 +63,7 @@ export const resolvePendingTopicExecutionIntent = async (params: {
     : undefined;
   let targetDeviceId =
     topicSnapshot?.boundDeviceId ??
-    (draft?.target === 'device'
+    (draft?.targetDeviceId && (draft.target === 'device' || draft.target === 'local')
       ? draft.targetDeviceId
       : (workspace?.deviceId ?? (target === 'device' ? agencyConfig?.boundDeviceId : undefined)));
 

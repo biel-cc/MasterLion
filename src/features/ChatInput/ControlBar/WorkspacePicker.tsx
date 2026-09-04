@@ -374,7 +374,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
                 return (
                   <Flexbox gap={2} key={key}>
                     <div className={styles.sectionTitle}>{title}</div>
-                    {key === 'recommendation' && (
+                    {key === 'recommendation' && seamAvailable && (
                       <div className={styles.note}>
                         {tw('workspaceRuntime.picker.recommendedNote')}
                       </div>

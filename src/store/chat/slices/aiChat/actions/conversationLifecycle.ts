@@ -499,9 +499,27 @@ export class ConversationLifecycleActionImpl {
     const workspaceItem = frozenWorkspaceId
       ? projectWorkspaceState.workspacesById[frozenWorkspaceId]
       : undefined;
-    const frozenWorkspace = topicWorkspaceState?.workspace ?? workspaceItem;
+    const legacyDraftWorkingDirectory = !projectWorkspaceState.seamAvailable
+      ? draftIntent?.legacyWorkingDirectory
+      : undefined;
     const frozenWorkingDirectory =
-      frozenWorkspace?.rootPath ?? existingTopic?.metadata?.workingDirectory;
+      topicWorkspaceState?.workspace?.rootPath ??
+      workspaceItem?.rootPath ??
+      legacyDraftWorkingDirectory ??
+      existingTopic?.metadata?.workingDirectory;
+    const legacyDeviceId =
+      pendingExecution?.intent.targetDeviceId ??
+      existingTopic?.metadata?.boundDeviceId ??
+      agentConfig?.agencyConfig?.boundDeviceId;
+    const legacyWorkspace =
+      !frozenWorkspaceId && frozenWorkingDirectory && legacyDeviceId
+        ? {
+            deviceId: legacyDeviceId,
+            kind: 'device' as const,
+            rootPath: frozenWorkingDirectory,
+          }
+        : undefined;
+    const frozenWorkspace = topicWorkspaceState?.workspace ?? workspaceItem ?? legacyWorkspace;
     const frozenSkillContext = {
       agentId,
       skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
@@ -580,7 +598,14 @@ export class ConversationLifecycleActionImpl {
           }
         : agentConfig?.agencyConfig?.executionTargetByPlatform,
       initialTopicMetadata:
-        !context.topicId && frozenWorkspaceId ? { workspaceId: frozenWorkspaceId } : undefined,
+        !context.topicId && (legacyDraftWorkingDirectory || frozenWorkspaceId)
+          ? {
+              ...(legacyDraftWorkingDirectory
+                ? { workingDirectory: legacyDraftWorkingDirectory }
+                : {}),
+              ...(frozenWorkspaceId ? { workspaceId: frozenWorkspaceId } : {}),
+            }
+          : undefined,
       isDesktop,
       isHetero: !!heterogeneousProvider,
       operationId,
@@ -709,6 +734,9 @@ export class ConversationLifecycleActionImpl {
             newTopic: !operationContext.topicId
               ? {
                   executionIntent: pendingExecution?.intent,
+                  metadata: legacyDraftWorkingDirectory
+                    ? { workingDirectory: legacyDraftWorkingDirectory }
+                    : undefined,
                   title: markdownToTxt(message).slice(0, 80) || t('defaultTitle', { ns: 'topic' }),
                   topicMessageIds: messages.map((m) => m.id),
                 }
@@ -966,6 +994,9 @@ export class ConversationLifecycleActionImpl {
           newTopic: !topicId
             ? {
                 executionIntent: pendingExecution?.intent,
+                metadata: legacyDraftWorkingDirectory
+                  ? { workingDirectory: legacyDraftWorkingDirectory }
+                  : undefined,
                 topicMessageIds: forceNewTopicFromExisting ? [] : messages.map((m) => m.id),
                 title: newTopicTitle,
               }

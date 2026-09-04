@@ -39,7 +39,7 @@ const MainChatInput = memo(() => {
   const isAgentConfigLoading = useAgentStore(agentByIdSelectors.isAgentConfigLoadingById(agentId));
   const supportsImageOutput = useModelSupportImageOutput(model, provider);
   const effectiveWorkspace = useEffectiveWorkspace(agentId);
-  const workspaceBinding = useBindWorkspaceOnce(effectiveWorkspace);
+  const workspaceBinding = useBindWorkspaceOnce(effectiveWorkspace, agentId);
   const confirmWorkspaceBinding = useWorkspaceBindingIntentConfirmation(
     effectiveWorkspace,
     workspaceBinding,

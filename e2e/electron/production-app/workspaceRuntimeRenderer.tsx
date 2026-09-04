@@ -7,8 +7,8 @@ import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router-dom';
 
-import WorkspaceChip from '@/features/ChatInput/ControlBar/WorkspaceChip';
 import { useBindWorkspaceOnce } from '@/features/ChatInput/ControlBar/useBindWorkspaceOnce';
+import WorkspaceChip from '@/features/ChatInput/ControlBar/WorkspaceChip';
 import { ConversationProvider } from '@/features/Conversation/ConversationProvider';
 import ContextBudgetErrorCard from '@/features/Conversation/Error/ContextBudgetError/ContextBudgetErrorCard';
 import Intervention from '@/features/Conversation/Messages/AssistantGroup/Tool/Detail/Intervention';
@@ -26,9 +26,9 @@ import { useChatStore } from '@/store/chat';
 import { useElectronStore } from '@/store/electron';
 import { buildDraftConversationKey } from '@/store/projectWorkspace';
 
-import type { ElectronAcceptanceResultMap } from './workspaceRuntimeSeams';
 import { createWorkspaceRuntimeI18n } from './workspaceRuntimeI18n';
 import { ModelCapabilityRows } from './workspaceRuntimeModels';
+import type { ElectronAcceptanceResultMap } from './workspaceRuntimeSeams';
 import { AGENT_ID, DEVICE_ID } from './workspaceRuntimeTrpcClient';
 
 const i18n = createWorkspaceRuntimeI18n();
@@ -186,7 +186,7 @@ const BindOnceChip = ({ row }: { row: ElectronAcceptanceResultMap['AC-W08'] }) =
     topicId: row.topicId,
     workspace: context.workspace,
   };
-  const bind = useBindWorkspaceOnce(effective);
+  const bind = useBindWorkspaceOnce(effective, AGENT_ID);
 
   return (
     <div data-bound-workspace-id={row.boundWorkspaceIdAfter} data-cwd={context.cwd}>
@@ -202,7 +202,7 @@ const BindOnceSection = () => {
   const { failure, row } = useAcceptanceRow('AC-W08');
 
   return (
-    <section data-testid="workspace-bind-once" data-state={row ? 'ready' : (failure ?? 'loading')}>
+    <section data-state={row ? 'ready' : (failure ?? 'loading')} data-testid="workspace-bind-once">
       {row && <BindOnceChip row={row} />}
       {failure && <p role="alert">{failure}</p>}
     </section>

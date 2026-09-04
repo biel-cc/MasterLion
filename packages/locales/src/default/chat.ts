@@ -1295,7 +1295,7 @@ export default {
   'workspaceRuntime.picker.sandboxFixed':
     'Sandbox must be selected explicitly from the execution target menu.',
   'workspaceRuntime.picker.seamUnavailable':
-    "Workspace service isn't connected yet. Your selection has not been applied.",
+    'This server uses legacy directory settings. You can select a directory, but it will not appear as a locked workspace.',
   'workspaceRuntime.picker.selectWorkspace': 'Select workspace',
   'workspaceRuntime.picker.targetNone':
     'This chat has no execution target and does not need a workspace.',

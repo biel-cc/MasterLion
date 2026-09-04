@@ -336,6 +336,37 @@ describe('WorkspaceMode sidebar', () => {
     expect(mocks.updateAgentRuntimeEnvConfigById).not.toHaveBeenCalled();
   });
 
+  it('legacy directory group "+" creates an old-server draft without inventing a workspace id', () => {
+    render(
+      <WorkspaceGroupItem
+        expanded
+        TopicItemComponent={TopicItemStub as any}
+        activeTopicId="t-1"
+        group={{
+          legacyWorkingDirectory: '/legacy/app',
+          topics: [topic('legacy')],
+          workspace: { deviceId: 'device-1', kind: 'device', rootPath: '/legacy/app' },
+          workspaceId: 'legacy-directory:%2Flegacy%2Fapp',
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addTopicInWorkspace' }),
+    );
+
+    const key = buildDraftConversationKey({ agentId: 'agent-1' });
+    expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({
+      legacyWorkingDirectory: '/legacy/app',
+      target: 'local',
+      targetDeviceId: 'device-1',
+    });
+    expect(
+      useProjectWorkspaceStore.getState().draftByConversationKey[key]?.workspaceId,
+    ).toBeUndefined();
+    expect(mocks.switchTopic).toHaveBeenCalledWith(null, { skipRefreshMessage: true });
+  });
+
   it('RecentSection passes scratch root only for scratch placements', () => {
     render(
       <RecentSection

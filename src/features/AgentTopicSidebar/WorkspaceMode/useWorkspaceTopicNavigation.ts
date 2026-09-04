@@ -27,7 +27,8 @@ export interface WorkspaceTopicNavigationView {
 /**
  * Derives the fixed sidebar navigation from the page-sliced, completed-filtered
  * topic list (`displayTopicsForSidebar`) and server workspace evidence.
- * Group ids are always `project_workspaces` ids.
+ * Group ids are `project_workspaces` ids on a new server. Once the A1 router is
+ * proven absent, old topics regain their legacy path groups with opaque UI keys.
  */
 export const useWorkspaceTopicNavigation = (): WorkspaceTopicNavigationView => {
   const topicPageSize = useGlobalStore(systemStatusSelectors.topicPageSize);
@@ -44,15 +45,17 @@ export const useWorkspaceTopicNavigation = (): WorkspaceTopicNavigationView => {
   );
   const topicStatesById = useProjectWorkspaceStore((s) => s.topicStatesById);
   const workspacesById = useProjectWorkspaceStore((s) => s.workspacesById);
+  const seamAvailable = useProjectWorkspaceStore((s) => s.seamAvailable);
 
   const navigation = useMemo(
     () =>
       buildWorkspaceTopicNavigation(topics ?? [], {
+        allowLegacyPathGroups: !seamAvailable,
         sortBy: topicSortBy,
         topicStatesById,
         workspacesById,
       }),
-    [topics, topicSortBy, topicStatesById, workspacesById],
+    [seamAvailable, topics, topicSortBy, topicStatesById, workspacesById],
   );
 
   const groupIds = useMemo(

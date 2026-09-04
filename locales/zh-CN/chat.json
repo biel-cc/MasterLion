@@ -1178,7 +1178,7 @@
   "workspaceRuntime.picker.referenceTitle": "在此目录新建引用话题",
   "workspaceRuntime.picker.retry": "重试",
   "workspaceRuntime.picker.sandboxFixed": "Sandbox 必须由你在执行目标菜单中主动选择。",
-  "workspaceRuntime.picker.seamUnavailable": "工作空间服务尚未接通，你的选择尚未生效。",
+  "workspaceRuntime.picker.seamUnavailable": "当前服务器使用旧版目录设置。你仍可选择目录，但这里不会显示为已锁定的工作空间。",
   "workspaceRuntime.picker.selectWorkspace": "选择工作空间",
   "workspaceRuntime.picker.targetNone": "此聊天没有执行目标，不需要工作空间。",
   "workspaceRuntime.picker.title": "选择工作空间",

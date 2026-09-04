@@ -53,14 +53,14 @@ export interface WorkspaceGroupItemProps {
 }
 
 /**
- * One formal workspace group. Its "+" only records a draft intent for the
- * current conversation container and opens a fresh draft; it never writes
- * agent defaults, device defaults or agency config.
+ * One formal workspace group, or an old-server legacy directory group. Its "+"
+ * only records a draft intent for the current conversation container and opens
+ * a fresh draft; it never writes agent defaults, device defaults or agency config.
  */
 const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
   ({ group, activeTopicId, activeThreadId, expanded, TopicItemComponent }) => {
     const { t } = useTranslation('chat');
-    const { workspaceId, workspace, topics } = group;
+    const { legacyWorkingDirectory, workspaceId, workspace, topics } = group;
 
     const title = workspace?.displayName || getDirName(workspace?.rootPath ?? workspaceId);
     const rootPath = workspace?.rootPath;
@@ -79,13 +79,20 @@ const WorkspaceGroupItem = memo<WorkspaceGroupItemProps>(
             : 'device';
       setDraftWorkspaceIntent(
         buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId }),
-        { target, targetDeviceId: workspace?.deviceId, workspaceId },
+        legacyWorkingDirectory
+          ? {
+              legacyWorkingDirectory,
+              target,
+              targetDeviceId: workspace?.deviceId ?? currentDeviceId,
+            }
+          : { target, targetDeviceId: workspace?.deviceId, workspaceId },
       );
       useChatStore.getState().switchTopic(null, { skipRefreshMessage: true });
     }, [
       activeAgentId,
       activeGroupId,
       currentDeviceId,
+      legacyWorkingDirectory,
       setDraftWorkspaceIntent,
       workspace,
       workspaceId,

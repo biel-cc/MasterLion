@@ -131,6 +131,7 @@ export const useEffectiveWorkspace = (
   );
   const workspacesById = useProjectWorkspaceStore((s) => s.workspacesById);
   const grantsByTopicDevice = useProjectWorkspaceStore((s) => s.grantsByTopicDevice);
+  const seamAvailable = useProjectWorkspaceStore((s) => s.seamAvailable);
   const reload = useCallback(async () => {
     const requests = [devicesRequest, gatewayRequest, workspacesRequest, topicRequest];
     await Promise.allSettled(requests.map((request) => request?.mutate?.()));
@@ -203,7 +204,14 @@ export const useEffectiveWorkspace = (
     }
 
     const initialTopicMetadata =
-      isDraft && draft?.workspaceId ? { workspaceId: draft.workspaceId } : undefined;
+      isDraft && (draft?.workspaceId || (!seamAvailable && draft?.legacyWorkingDirectory))
+        ? {
+            ...(!seamAvailable && draft?.legacyWorkingDirectory
+              ? { workingDirectory: draft.legacyWorkingDirectory }
+              : {}),
+            ...(draft?.workspaceId ? { workspaceId: draft.workspaceId } : {}),
+          }
+        : undefined;
 
     const baseInput = {
       agencyConfig,
@@ -286,6 +294,7 @@ export const useEffectiveWorkspace = (
     loading,
     reload,
     resolvedTopicId,
+    seamAvailable,
     topic,
     topicState,
     workspacesById,

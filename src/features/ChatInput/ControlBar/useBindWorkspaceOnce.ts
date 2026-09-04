@@ -5,6 +5,7 @@ import { useChatStore } from '@/store/chat';
 import { useDeviceStore } from '@/store/device';
 import { type ProjectWorkspaceErrorCode, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
+import { useCommitWorkingDirectory } from './useCommitWorkingDirectory';
 import { selectWorkspaceOnce, type WorkspaceSelection } from './workspaceBindingActions';
 
 export type { WorkspaceSelection } from './workspaceBindingActions';
@@ -25,25 +26,33 @@ export interface BindWorkspaceError {
  *   directory is `startReferencedTopic`, which opens a new draft that
  *   references the current topic.
  *
- * Nothing here touches agent defaults, agency config or device defaults.
+ * The formal path never touches agent defaults, agency config or device
+ * defaults. When the server has no workspace seam, selection deliberately
+ * delegates to the pre-A1 working-directory writer instead.
  */
-export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
+export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: string) => {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<BindWorkspaceError>();
 
   const getOrCreateDeviceWorkspace = useProjectWorkspaceStore((s) => s.getOrCreateDeviceWorkspace);
   const bindTopicWorkspace = useProjectWorkspaceStore((s) => s.bindTopicWorkspace);
   const setDraftWorkspaceIntent = useProjectWorkspaceStore((s) => s.setDraftWorkspaceIntent);
+  const seamAvailable = useProjectWorkspaceStore((s) => s.seamAvailable);
   const updateDeviceCwd = useDeviceStore((s) => s.updateDeviceCwd);
+  const { commit: commitLegacyWorkingDirectory } = useCommitWorkingDirectory(agentId);
 
   const deviceId = effective.targetDeviceId ?? effective.recommendation.deviceId;
   const isDeviceTarget = effective.target === 'local' || effective.target === 'device';
   const bindTarget = effective.target === 'device' ? 'device' : 'local';
 
   /** Picker is offered only while the topic (or draft) is still unbound on a device target. */
-  const canSelect = effective.state === 'unbound' && isDeviceTarget && !!deviceId;
+  const canSelect =
+    (effective.state === 'unbound' || (!seamAvailable && effective.state === 'bound')) &&
+    isDeviceTarget &&
+    !!deviceId;
   /** Bound and scratch topics only expose the "new referenced topic" path. */
   const canStartReferencedTopic =
+    seamAvailable &&
     (effective.state === 'bound' || effective.state === 'scratch') &&
     isDeviceTarget &&
     !!deviceId &&
@@ -64,12 +73,39 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
     [deviceId, updateDeviceCwd],
   );
 
+  const commitLegacySelection = useCallback(
+    async (selection: WorkspaceSelection) => {
+      if (!deviceId) return false;
+      await commitLegacyWorkingDirectory(selection);
+      if (effective.isDraft || !effective.topicId) {
+        setDraftWorkspaceIntent(effective.draftKey, {
+          legacyWorkingDirectory: selection.path,
+          target: bindTarget,
+          targetDeviceId: deviceId,
+        });
+      }
+      return true;
+    },
+    [
+      bindTarget,
+      commitLegacyWorkingDirectory,
+      deviceId,
+      effective.draftKey,
+      effective.isDraft,
+      effective.topicId,
+      setDraftWorkspaceIntent,
+    ],
+  );
+
   const select = useCallback(
     async (selection: WorkspaceSelection): Promise<boolean> => {
       if (!deviceId || !canSelect) return false;
       setPending(true);
       setError(undefined);
       try {
+        if (!seamAvailable) {
+          return commitLegacySelection(selection);
+        }
         const result = await selectWorkspaceOnce({
           effective,
           ports: {
@@ -81,6 +117,9 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
           selection,
         });
         if (!result.ok) {
+          if (result.code === 'SEAM_UNAVAILABLE') {
+            return commitLegacySelection(selection);
+          }
           if (result.code) setError({ code: result.code, message: result.message });
           return false;
         }
@@ -92,11 +131,12 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace) => {
     [
       bindTopicWorkspace,
       canSelect,
+      commitLegacySelection,
       deviceId,
       effective,
       getOrCreateDeviceWorkspace,
       rememberRecent,
-      setDraftWorkspaceIntent,
+      seamAvailable,
     ],
   );
 

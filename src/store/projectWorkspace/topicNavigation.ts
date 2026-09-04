@@ -18,8 +18,11 @@ import type { ChatTopic, TopicSortBy } from '@/types/topic';
 export type TopicRecentPlacement = Extract<TopicPlacement, { kind: 'recent' }>;
 
 export interface TopicNavigationWorkspaceGroup {
+  /** Old-server UI grouping only. Never use this value as formal workspace identity. */
+  legacyWorkingDirectory?: string;
   topics: ChatTopic[];
   workspace?: ProjectWorkspaceItem | WorkspaceRef;
+  /** Formal workspace id, or an opaque UI key for a legacy directory group. */
   workspaceId: string;
 }
 
@@ -31,12 +34,18 @@ export interface TopicNavigationRecentEntry {
 }
 
 export interface WorkspaceTopicNavigation {
-  placementById: Record<string, TopicPlacement>;
+  placementById: Record<string, TopicNavigationPlacement>;
   recent: TopicNavigationRecentEntry[];
   workspaceGroups: TopicNavigationWorkspaceGroup[];
 }
 
+export type TopicNavigationPlacement =
+  | TopicPlacement
+  | { kind: 'legacy-directory'; workingDirectory: string };
+
 export interface TopicNavigationContext {
+  /** Restore pre-A1 path grouping only after the new router is proven absent. */
+  allowLegacyPathGroups?: boolean;
   sortBy?: TopicSortBy;
   topicStatesById: Record<string, TopicWorkspaceState | undefined>;
   workspacesById: Record<string, ProjectWorkspaceItem | undefined>;
@@ -201,6 +210,9 @@ const sortTopics = (topics: ChatTopic[], field: 'createdAt' | 'updatedAt'): Chat
   return [...favorites, ...rest];
 };
 
+const buildLegacyDirectoryGroupKey = (workingDirectory: string): string =>
+  `legacy-directory:${encodeURIComponent(workingDirectory)}`;
+
 export const assertDisjointTopicNavigation = (navigation: WorkspaceTopicNavigation): void => {
   const seen = new Set<string>();
   const check = (id: string, where: string) => {
@@ -228,7 +240,7 @@ export const buildWorkspaceTopicNavigation = (
   const field: 'createdAt' | 'updatedAt' =
     context.sortBy === 'createdAt' ? 'createdAt' : 'updatedAt';
   const scopeIndex = buildScopeIndex(context.workspacesById);
-  const placementById: Record<string, TopicPlacement> = {};
+  const placementById: Record<string, TopicNavigationPlacement> = {};
   const groups = new Map<string, TopicNavigationWorkspaceGroup>();
   const recent: TopicNavigationRecentEntry[] = [];
 
@@ -244,6 +256,30 @@ export const buildWorkspaceTopicNavigation = (
       };
       group.topics.push(topic);
       groups.set(placement.workspaceId, group);
+      continue;
+    }
+
+    const metadata = readTransitionalMetadata(topic);
+    if (
+      context.allowLegacyPathGroups &&
+      metadata.workingDirectory &&
+      isAbsoluteFilesystemPath(metadata.workingDirectory)
+    ) {
+      const workingDirectory = normalizeRootPath(metadata.workingDirectory);
+      const groupKey = buildLegacyDirectoryGroupKey(workingDirectory);
+      const group = groups.get(groupKey) ?? {
+        legacyWorkingDirectory: workingDirectory,
+        topics: [],
+        workspace: {
+          deviceId: metadata.boundDeviceId,
+          kind: 'device' as const,
+          rootPath: workingDirectory,
+        },
+        workspaceId: groupKey,
+      };
+      group.topics.push(topic);
+      groups.set(groupKey, group);
+      placementById[topic.id] = { kind: 'legacy-directory', workingDirectory };
       continue;
     }
 

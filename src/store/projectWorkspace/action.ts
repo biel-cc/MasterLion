@@ -103,7 +103,15 @@ export class ProjectWorkspaceActionImpl {
   ): SWRResponse<ProjectWorkspaceItem[]> =>
     useClientDataSWR<ProjectWorkspaceItem[]>(
       enabled && this.#get().seamAvailable ? projectWorkspaceSwrKeys.list(filter.deviceId) : null,
-      () => this.#service.list(filter),
+      async () => {
+        try {
+          return await this.#service.list(filter);
+        } catch (error) {
+          if (!isProjectWorkspaceSeamUnavailableError(error)) throw error;
+          this.#set({ seamAvailable: false }, false, 'disableUnavailableSeam');
+          return [];
+        }
+      },
       {
         fallbackData: [],
         onSuccess: (data) => {
@@ -164,8 +172,14 @@ export class ProjectWorkspaceActionImpl {
     useClientDataSWR<TopicWorkspaceState | undefined>(
       topicId && this.#get().seamAvailable ? projectWorkspaceSwrKeys.topicState(topicId) : null,
       async () => {
-        const state = await this.#service.getTopicState(topicId!);
-        return state ?? undefined;
+        try {
+          const state = await this.#service.getTopicState(topicId!);
+          return state ?? undefined;
+        } catch (error) {
+          if (!isProjectWorkspaceSeamUnavailableError(error)) throw error;
+          this.#set({ seamAvailable: false }, false, 'disableUnavailableSeam');
+          return undefined;
+        }
       },
       {
         onSuccess: (state) => {
@@ -327,7 +341,15 @@ export class ProjectWorkspaceActionImpl {
       topicId && deviceId && this.#get().seamAvailable
         ? projectWorkspaceSwrKeys.grants(topicId, deviceId)
         : null,
-      () => this.#service.listGrants({ deviceId: deviceId!, topicId: topicId! }),
+      async () => {
+        try {
+          return await this.#service.listGrants({ deviceId: deviceId!, topicId: topicId! });
+        } catch (error) {
+          if (!isProjectWorkspaceSeamUnavailableError(error)) throw error;
+          this.#set({ seamAvailable: false }, false, 'disableUnavailableSeam');
+          return [];
+        }
+      },
       {
         fallbackData: [],
         onSuccess: (grants) => this.setTopicGrants(topicId!, deviceId!, grants),
@@ -409,7 +431,10 @@ export class ProjectWorkspaceActionImpl {
   #recordError(outcome: ProjectWorkspaceOutcome<never>, topicId?: string): void {
     if (outcome.ok) return;
     this.#set(
-      { lastError: { at: Date.now(), code: outcome.code, message: outcome.message, topicId } },
+      {
+        lastError: { at: Date.now(), code: outcome.code, message: outcome.message, topicId },
+        ...(outcome.code === 'SEAM_UNAVAILABLE' ? { seamAvailable: false } : {}),
+      },
       false,
       'recordError',
     );

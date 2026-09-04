@@ -1133,6 +1133,58 @@ describe('ConversationLifecycle actions', () => {
         );
       });
 
+      it('runs an old-server draft from its explicit legacy cwd and persists the compatibility mirror', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        const draftKey = buildDraftConversationKey({ agentId: TEST_IDS.SESSION_ID });
+        useProjectWorkspaceStore.setState({
+          draftByConversationKey: {
+            [draftKey]: {
+              legacyWorkingDirectory: '/Users/me/legacy-project',
+              target: 'local',
+              targetDeviceId: 'device-local',
+              updatedAt: Date.now(),
+            },
+          },
+          seamAvailable: false,
+        });
+
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        executeHeterogeneousAgentMock.mockResolvedValue(undefined);
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            message: TEST_CONTENT.USER_MESSAGE,
+            context: createTestContext(),
+          });
+        });
+
+        expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            newTopic: expect.objectContaining({
+              executionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local',
+              },
+              metadata: { workingDirectory: '/Users/me/legacy-project' },
+            }),
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({ workingDirectory: '/Users/me/legacy-project' }),
+        );
+      });
+
       it('loads a missing existing-topic binding before freezing hetero cwd and intent', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
@@ -1327,6 +1379,60 @@ describe('ConversationLifecycle actions', () => {
         expect(executeGatewayAgent).not.toHaveBeenCalled();
         expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
         expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
+      });
+
+      it('keeps native desktop legacy cwd on the client runtime when the server is old', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: { executionTargetByPlatform: { desktop: 'local', web: 'sandbox' } },
+          },
+        });
+        const draftKey = buildDraftConversationKey({ agentId: TEST_IDS.SESSION_ID });
+        useProjectWorkspaceStore.setState({
+          draftByConversationKey: {
+            [draftKey]: {
+              legacyWorkingDirectory: '/Users/me/legacy-project',
+              target: 'local',
+              targetDeviceId: 'device-local',
+              updatedAt: Date.now(),
+            },
+          },
+          seamAvailable: false,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => useChatStore.setState({ executeClientAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            newTopic: expect.objectContaining({
+              metadata: { workingDirectory: '/Users/me/legacy-project' },
+            }),
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/legacy-project',
+              workspace: expect.objectContaining({
+                deviceId: 'device-local',
+                kind: 'device',
+                rootPath: '/Users/me/legacy-project',
+              }),
+            }),
+            workingDirectory: '/Users/me/legacy-project',
+          }),
+        );
       });
 
       it('keeps an unbound desktop local topic on client runtime and freezes it unresolved', async () => {

@@ -10,6 +10,15 @@ import {
 import { buildDraftConversationKey } from './draftKey';
 import { createProjectWorkspaceStore } from './store';
 
+const swrMocks = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  useClientDataSWR: vi.fn<
+    (key: unknown, fetcher: () => Promise<unknown>, options?: unknown) => { data: unknown[] }
+  >(() => ({ data: [] })),
+}));
+
+vi.mock('@/libs/swr', () => swrMocks);
+
 const deviceWorkspace: ProjectWorkspaceItem = {
   deviceId: 'device-1',
   id: 'ws-project',
@@ -48,10 +57,57 @@ describe('projectWorkspace store actions', () => {
   let store: ReturnType<typeof createProjectWorkspaceStore>;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    swrMocks.useClientDataSWR.mockReturnValue({ data: [] });
     client = createClient();
     store = createProjectWorkspaceStore(
       createProjectWorkspaceService(client as unknown as ProjectWorkspaceClient),
     );
+  });
+
+  describe('workspace evidence reads', () => {
+    it('treats an old server without the workspace router as legacy mode, not a load failure', async () => {
+      client.list.mockRejectedValue({
+        data: { code: 'NOT_FOUND' },
+        message: 'No procedure found on path "projectWorkspace.list"',
+      });
+
+      store.getState().useFetchWorkspaces(true);
+
+      const [key, fetcher] = swrMocks.useClientDataSWR.mock.calls[0];
+      expect(key).toEqual(['projectWorkspace:list', '']);
+      await expect(fetcher()).resolves.toEqual([]);
+      expect(store.getState().seamAvailable).toBe(false);
+      expect(store.getState().lastError).toBeUndefined();
+    });
+
+    it('does not leak the missing-router error from an existing topic evidence read', async () => {
+      client.getTopicState.mockRejectedValue({
+        data: { code: 'NOT_FOUND' },
+        message: 'No procedure found on path "projectWorkspace.getTopicState"',
+      });
+
+      store.getState().useFetchTopicState('topic-1');
+
+      const [, fetcher] = swrMocks.useClientDataSWR.mock.calls[0];
+      await expect(fetcher()).resolves.toBeUndefined();
+      expect(store.getState().seamAvailable).toBe(false);
+      expect(store.getState().lastError).toBeUndefined();
+    });
+
+    it('uses an empty grant list when an old server has no grant procedure', async () => {
+      client.listGrants.mockRejectedValue({
+        data: { code: 'NOT_FOUND' },
+        message: 'No procedure found on path "projectWorkspace.listGrants"',
+      });
+
+      store.getState().useFetchTopicGrants('topic-1', 'device-1');
+
+      const [, fetcher] = swrMocks.useClientDataSWR.mock.calls[0];
+      await expect(fetcher()).resolves.toEqual([]);
+      expect(store.getState().seamAvailable).toBe(false);
+      expect(store.getState().lastError).toBeUndefined();
+    });
   });
 
   describe('draft intent', () => {
@@ -124,6 +180,20 @@ describe('projectWorkspace store actions', () => {
       expect(outcome).toMatchObject({ code: 'SEAM_UNAVAILABLE', ok: false });
       expect(unwired.getState().seamAvailable).toBe(false);
       expect(unwired.getState().lastError?.code).toBe('SEAM_UNAVAILABLE');
+    });
+
+    it('disables a client seam after the old server rejects the first workspace mutation', async () => {
+      client.getOrCreate.mockRejectedValue({
+        data: { code: 'NOT_FOUND' },
+        message: 'No procedure found on path "projectWorkspace.getOrCreate"',
+      });
+
+      const outcome = await store
+        .getState()
+        .getOrCreateDeviceWorkspace({ deviceId: 'device-1', rootPath: '/projects/app' });
+
+      expect(outcome).toMatchObject({ code: 'SEAM_UNAVAILABLE', ok: false });
+      expect(store.getState().seamAvailable).toBe(false);
     });
   });
 
