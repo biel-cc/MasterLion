@@ -176,6 +176,16 @@ vi.mock('@/utils/logger', () => ({
 
 vi.mock('@lobechat/local-file-shell', async (importOriginal) => ({
   ...(await importOriginal<typeof LocalFileShell>()),
+  // This suite owns gateway routing and response envelopes. The real execution
+  // boundary (including context-required failures and device mount roots) is
+  // covered by GatewayConnectionCtr.executionContext.test.ts, so keep routing
+  // fixtures independent of real filesystem paths here.
+  prepareToolCallExecution: vi.fn(async ({ args }) => ({
+    args,
+    legacy: false,
+    scopeAudit: [],
+    warnings: [],
+  })),
   resolveLoginShellPath: vi.fn().mockResolvedValue('/mock/login/bin'),
 }));
 
