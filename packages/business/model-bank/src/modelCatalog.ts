@@ -667,7 +667,6 @@ const refreshContextWindowEvidence = (
       contextWindowSource: effective.source,
       contextWindowTokens: effective.tokens,
       ...(providerModelVersion ? { modelVersion: providerModelVersion } : {}),
-      verifiedAt: effective.source === 'observed' ? observed?.verifiedAt : candidate.verifiedAt,
     },
   };
 };
