@@ -1,0 +1,127 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "native-gw0--native-gw1",
+      "source": "native-gw0",
+      "target": "native-gw1",
+      "route": [
+        [
+          456,
+          197.0
+        ],
+        [
+          556,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "native-gw1--native-gw2",
+      "source": "native-gw1",
+      "target": "native-gw2",
+      "route": [
+        [
+          942,
+          197.0
+        ],
+        [
+          1042,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "native-client0--native-client1",
+      "source": "native-client0",
+      "target": "native-client1",
+      "route": [
+        [
+          456,
+          362.0
+        ],
+        [
+          556,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "native-client1--native-client2",
+      "source": "native-client1",
+      "target": "native-client2",
+      "route": [
+        [
+          942,
+          362.0
+        ],
+        [
+          1042,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "hetero-local0--hetero-local1",
+      "source": "hetero-local0",
+      "target": "hetero-local1",
+      "route": [
+        [
+          456,
+          527.0
+        ],
+        [
+          556,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "hetero-local1--hetero-local2",
+      "source": "hetero-local1",
+      "target": "hetero-local2",
+      "route": [
+        [
+          942,
+          527.0
+        ],
+        [
+          1042,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "hetero-gw0--hetero-gw1",
+      "source": "hetero-gw0",
+      "target": "hetero-gw1",
+      "route": [
+        [
+          456,
+          692.0
+        ],
+        [
+          556,
+          692.0
+        ]
+      ]
+    },
+    {
+      "id": "hetero-gw1--hetero-gw2",
+      "source": "hetero-gw1",
+      "target": "hetero-gw2",
+      "route": [
+        [
+          942,
+          692.0
+        ],
+        [
+          1042,
+          692.0
+        ]
+      ]
+    }
+  ]
+}

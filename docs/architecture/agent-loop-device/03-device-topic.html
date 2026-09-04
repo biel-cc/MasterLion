@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:">
+  <title>03  Device、Agent、Topic、Operation 的关系</title>
+  <style>
+    :root { color-scheme: dark; --page:#0f0f1a; --panel:#0f172a; --border:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#a855f7; }
+    html[data-theme="light"] { color-scheme:light; --page:#f8fafc; --panel:#fff; --border:#cbd5e1; --text:#0f172a; --muted:#475569; --accent:#7c3aed; }
+    * { box-sizing:border-box; }
+    html,body { width:100%; height:100%; margin:0; overflow:hidden; background:linear-gradient(135deg,var(--page),#1a1a2e); color:var(--text); font-family:'SF Mono','Fira Code',ui-monospace,monospace; }
+    body { display:grid; grid-template-rows:auto 1fr; }
+    .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:color-mix(in srgb,var(--panel) 92%,transparent); border-bottom:1px solid var(--border); z-index:2; }
+    .title { margin-right:auto; font-size:13px; font-weight:700; }
+    button,select { min-height:34px; padding:6px 10px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:8px; font:inherit; cursor:pointer; }
+    button:hover,button:focus-visible,select:focus-visible { border-color:var(--accent); outline:2px solid color-mix(in srgb,var(--accent) 35%,transparent); outline-offset:1px; }
+    #stage { position:relative; overflow:hidden; touch-action:none; cursor:grab; }
+    #stage.dragging { cursor:grabbing; }
+    #canvas { width:100%; height:100%; display:grid; place-items:center; transform-origin:0 0; will-change:transform; }
+    #canvas svg { max-width:calc(100vw - 40px); max-height:calc(100vh - 92px); width:auto; height:auto; filter:drop-shadow(0 22px 60px rgba(0,0,0,.28)); user-select:none; }
+    #status { min-width:76px; color:var(--muted); font-size:12px; text-align:center; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
+  </style>
+</head>
+<body>
+  <header class="toolbar" aria-label="Diagram controls">
+    <span class="title">03  Device、Agent、Topic、Operation 的关系</span>
+    <button type="button" data-action="zoom-out" aria-label="Zoom out">−</button>
+    <button type="button" data-action="reset" aria-label="Reset view">Reset</button>
+    <button type="button" data-action="zoom-in" aria-label="Zoom in">+</button>
+    <span id="status" aria-live="polite">100%</span>
+    <button type="button" data-action="theme" aria-label="Toggle theme">Theme</button>
+    <button type="button" data-action="copy" aria-label="Copy SVG source">Copy SVG</button>
+    <select id="scale" aria-label="Raster export scale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4×</option></select>
+    <select id="format" aria-label="Export format"><option>SVG</option><option>PNG</option><option>JPEG</option><option>WebP</option></select>
+    <button type="button" data-action="download">Export</button>
+  </header>
+  <main id="stage" tabindex="0" aria-label="Interactive diagram. Drag to pan; use plus and minus to zoom.">
+    <div id="canvas"><svg xmlns="http://www.w3.org/2000/svg" width="1500" height="790" viewBox="0 0 1500 790" data-generator="fireworks-tech-graph" data-authoring-mode="explicit-python-list" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-quality-profile="showcase" data-semantic-profile="generic" role="img" focusable="false">
+<defs>
+<style>text{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif}</style>
+<marker id="arrow-data" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb" /></marker>
+<marker id="arrow-feedback" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#9333ea" /></marker>
+<marker id="arrow-read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#16a34a" /></marker>
+</defs>
+<rect width="1500" height="790" fill="#fff" />
+<g data-graph-role="reserved" data-graph-bounds="40,22,1460,103"><text x="60" y="55" font-size="28" font-weight="700">03  Device、Agent、Topic、Operation 的关系</text><text x="60" y="86" font-size="15" fill="#64748b">本图的箭头表示引用 / 归属，不表示时间顺序；以单 agent 会话为主。</text></g>
+<path id="agent--device" data-graph-role="edge" data-edge-id="agent--device" data-source="agent" data-target="device" data-flow="read" d="M 565 219.0 L 450 219.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="topic--agent" data-graph-role="edge" data-edge-id="topic--agent" data-source="topic" data-target="agent" data-flow="read" d="M 1050 219.0 L 935 219.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="op--topic" data-graph-role="edge" data-edge-id="op--topic" data-source="op" data-target="topic" data-flow="read" d="M 1235.0 460 L 1235.0 263" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="op--plan" data-graph-role="edge" data-edge-id="op--plan" data-source="op" data-target="plan" data-flow="data" d="M 1050 504.0 L 935 504.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="plan--channels" data-graph-role="edge" data-edge-id="plan--channels" data-source="plan" data-target="channels" data-flow="data" d="M 565 504.0 L 450 504.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="channels--device" data-graph-role="edge" data-edge-id="channels--device" data-source="channels" data-target="device" data-flow="read" d="M 265.0 460 L 265.0 263" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<g id="node-device" data-graph-role="node" data-node-id="device" data-graph-bounds="80,175,450,263"><rect x="80" y="175" width="370" height="88" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="265.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Device：一台机器 + 一个用户</text>
+<text x="265.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">deviceId；defaultCwd；workingDirs[]</text>
+</g>
+<g id="node-agent" data-graph-role="node" data-node-id="agent" data-graph-bounds="565,175,935,263"><rect x="565" y="175" width="370" height="88" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="750.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Agent：可复用配置</text>
+<text x="750.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">executionTarget / boundDeviceId / 目录映射</text>
+</g>
+<g id="node-topic" data-graph-role="node" data-node-id="topic" data-graph-bounds="1050,175,1420,263"><rect x="1050" y="175" width="370" height="88" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="1235.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Topic：长期会话容器</text>
+<text x="1235.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">workingDirectory / heteroSessionId / messages</text>
+</g>
+<g id="node-channels" data-graph-role="node" data-node-id="channels" data-graph-bounds="80,460,450,548"><rect x="80" y="460" width="370" height="88" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="265.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">在线连接 channels</text>
+<text x="265.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">Electron 与 lh connect 可属于同一 device</text>
+</g>
+<g id="node-plan" data-graph-role="node" data-node-id="plan" data-graph-bounds="565,460,935,548"><rect x="565" y="460" width="370" height="88" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" />
+<text x="750.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">本轮设备决定</text>
+<text x="750.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">ExecutionPlan  &gt;  activeDeviceId</text>
+</g>
+<g id="node-op" data-graph-role="node" data-node-id="op" data-graph-bounds="1050,460,1420,548"><rect x="1050" y="460" width="370" height="88" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5" />
+<rect x="1055" y="465" width="360" height="78" rx="5" fill="none" stroke="#c4b5fd" stroke-width="1" />
+<text x="1235.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">Operation：一次运行</text>
+<text x="1235.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">operationId；多 step；同一个 topicId</text>
+</g>
+<g data-graph-role="label" data-owner="agent--device" data-graph-bounds="460.46,193.0,554.54,209.0"><text x="507.5" y="206.0" font-size="12" text-anchor="middle" fill="#16a34a">按 deviceId 引用</text></g>
+<g data-graph-role="label" data-owner="topic--agent" data-graph-bounds="960.94,193.0,1024.06,209.0"><text x="992.5" y="206.0" font-size="12" text-anchor="middle" fill="#16a34a">归属 agent</text></g>
+<g data-graph-role="label" data-owner="op--topic" data-graph-bounds="1249.0,348.5,1291.48,364.5"><text x="1249.0" y="361.5" font-size="12" text-anchor="start" fill="#16a34a">topicId</text></g>
+<g data-graph-role="label" data-owner="op--plan" data-graph-bounds="968.5,478.0,1016.5,494.0"><text x="992.5" y="491.0" font-size="12" text-anchor="middle" fill="#2563eb">携带路由</text></g>
+<g data-graph-role="label" data-owner="plan--channels" data-graph-bounds="477.5,478.0,537.5,494.0"><text x="507.5" y="491.0" font-size="12" text-anchor="middle" fill="#2563eb">选在线通道</text></g>
+<g data-graph-role="label" data-owner="channels--device" data-graph-bounds="279.0,348.5,356.76,364.5"><text x="279.0" y="361.5" font-size="12" text-anchor="start" fill="#16a34a">相同 deviceId</text></g>
+<g data-graph-role="reserved" data-graph-bounds="50,685,760,720">
+<line x1="60" y1="701" x2="92" y2="701" stroke="#2563eb" stroke-width="2" /><text x="104" y="705" font-size="13" fill="#64748b">传递 / 引用</text>
+<line x1="285" y1="701" x2="317" y2="701" stroke="#9333ea" stroke-width="2" /><text x="329" y="705" font-size="13" fill="#64748b">循环 / 反馈</text>
+<line x1="510" y1="701" x2="542" y2="701" stroke="#16a34a" stroke-width="2" /><text x="554" y="705" font-size="13" fill="#64748b">读取 / 上下文</text>
+</g>
+<g data-graph-role="reserved" data-graph-bounds="50,741,1470,776"><text x="60" y="761" font-size="12" fill="#64748b">Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪</text></g>
+</svg></div>
+    <p class="sr-only">Keyboard shortcuts: plus and minus zoom, zero resets, T toggles theme, S exports.</p>
+  </main>
+  <script>
+  (() => {
+    'use strict';
+    const metadata = {"slug": "03-device-topic"};
+    const stage = document.getElementById('stage');
+    const canvas = document.getElementById('canvas');
+    const svg = canvas.querySelector('svg');
+    const status = document.getElementById('status');
+    const scaleSelect = document.getElementById('scale');
+    const formatSelect = document.getElementById('format');
+    let view = { x:0, y:0, scale:1 };
+    let drag = null;
+    const clamp = value => Math.max(.2, Math.min(8, value));
+    const render = () => {
+      canvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
+      status.textContent = `${Math.round(view.scale * 100)}%`;
+    };
+    const zoom = (factor, originX=stage.clientWidth/2, originY=stage.clientHeight/2) => {
+      const next = clamp(view.scale * factor);
+      const ratio = next / view.scale;
+      view.x = originX - (originX - view.x) * ratio;
+      view.y = originY - (originY - view.y) * ratio;
+      view.scale = next; render();
+    };
+    const reset = () => { view = {x:0,y:0,scale:1}; render(); };
+    stage.addEventListener('wheel', event => { event.preventDefault(); const rect=stage.getBoundingClientRect(); zoom(event.deltaY < 0 ? 1.12 : .89, event.clientX-rect.left, event.clientY-rect.top); }, {passive:false});
+    stage.addEventListener('pointerdown', event => { drag={id:event.pointerId,x:event.clientX,y:event.clientY,vx:view.x,vy:view.y}; stage.setPointerCapture(event.pointerId); stage.classList.add('dragging'); });
+    stage.addEventListener('pointermove', event => { if(!drag||drag.id!==event.pointerId)return; view.x=drag.vx+event.clientX-drag.x; view.y=drag.vy+event.clientY-drag.y; render(); });
+    const endDrag = () => { drag=null; stage.classList.remove('dragging'); };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    const source = () => new XMLSerializer().serializeToString(svg);
+    const saveBlob = (blob, extension) => { const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${(metadata.slug||'fireworks-tech-graph')}.${extension}`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
+    const copySource = async () => {
+      const value=source();
+      try { await navigator.clipboard.writeText(value); status.textContent='Copied'; return; } catch {}
+      const area=document.createElement('textarea'); area.value=value; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select();
+      status.textContent=document.execCommand('copy')?'Copied':'Copy failed'; area.remove();
+    };
+    const exportDiagram = async () => {
+      const format = formatSelect.value.toLowerCase();
+      if(format==='svg') { saveBlob(new Blob([source()],{type:'image/svg+xml;charset=utf-8'}),'svg'); return; }
+      const scale = Math.max(1,Math.min(4,Number(scaleSelect.value)||2));
+      const box = svg.viewBox.baseVal; const width=box.width||svg.clientWidth; const height=box.height||svg.clientHeight;
+      const image = new Image(); const url=URL.createObjectURL(new Blob([source()],{type:'image/svg+xml'}));
+      await new Promise((resolve,reject)=>{ image.onload=resolve; image.onerror=reject; image.src=url; });
+      const raster=document.createElement('canvas'); raster.width=Math.round(width*scale); raster.height=Math.round(height*scale);
+      const ctx=raster.getContext('2d'); if(format==='jpeg'){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,raster.width,raster.height);} ctx.drawImage(image,0,0,raster.width,raster.height); URL.revokeObjectURL(url);
+      const mime=format==='jpeg'?'image/jpeg':format==='webp'?'image/webp':'image/png';
+      const blob=await new Promise(resolve=>raster.toBlob(resolve,mime,.94)); if(blob) saveBlob(blob,format==='jpeg'?'jpg':format);
+    };
+    document.querySelector('.toolbar').addEventListener('click', async event => {
+      const action=event.target.closest('[data-action]')?.dataset.action; if(!action)return;
+      if(action==='zoom-in')zoom(1.2); else if(action==='zoom-out')zoom(.83); else if(action==='reset')reset();
+      else if(action==='theme')document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
+      else if(action==='download')await exportDiagram();
+      else if(action==='copy') await copySource();
+    });
+    document.addEventListener('keydown', event => {
+      if(event.target.matches('select'))return;
+      if(event.key==='+'||event.key==='=')zoom(1.2); else if(event.key==='-')zoom(.83); else if(event.key==='0'||event.key.toLowerCase()==='r')reset();
+      else if(event.key.toLowerCase()==='t')document.querySelector('[data-action=theme]').click(); else if(event.key.toLowerCase()==='s'){event.preventDefault();exportDiagram();}
+    });
+    render();
+  })();
+  </script>
+</body>
+</html>

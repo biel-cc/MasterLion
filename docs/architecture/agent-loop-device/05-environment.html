@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:">
+  <title>05  环境变量如何进入子进程</title>
+  <style>
+    :root { color-scheme: dark; --page:#0f0f1a; --panel:#0f172a; --border:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#a855f7; }
+    html[data-theme="light"] { color-scheme:light; --page:#f8fafc; --panel:#fff; --border:#cbd5e1; --text:#0f172a; --muted:#475569; --accent:#7c3aed; }
+    * { box-sizing:border-box; }
+    html,body { width:100%; height:100%; margin:0; overflow:hidden; background:linear-gradient(135deg,var(--page),#1a1a2e); color:var(--text); font-family:'SF Mono','Fira Code',ui-monospace,monospace; }
+    body { display:grid; grid-template-rows:auto 1fr; }
+    .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:color-mix(in srgb,var(--panel) 92%,transparent); border-bottom:1px solid var(--border); z-index:2; }
+    .title { margin-right:auto; font-size:13px; font-weight:700; }
+    button,select { min-height:34px; padding:6px 10px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:8px; font:inherit; cursor:pointer; }
+    button:hover,button:focus-visible,select:focus-visible { border-color:var(--accent); outline:2px solid color-mix(in srgb,var(--accent) 35%,transparent); outline-offset:1px; }
+    #stage { position:relative; overflow:hidden; touch-action:none; cursor:grab; }
+    #stage.dragging { cursor:grabbing; }
+    #canvas { width:100%; height:100%; display:grid; place-items:center; transform-origin:0 0; will-change:transform; }
+    #canvas svg { max-width:calc(100vw - 40px); max-height:calc(100vh - 92px); width:auto; height:auto; filter:drop-shadow(0 22px 60px rgba(0,0,0,.28)); user-select:none; }
+    #status { min-width:76px; color:var(--muted); font-size:12px; text-align:center; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
+  </style>
+</head>
+<body>
+  <header class="toolbar" aria-label="Diagram controls">
+    <span class="title">05  环境变量如何进入子进程</span>
+    <button type="button" data-action="zoom-out" aria-label="Zoom out">−</button>
+    <button type="button" data-action="reset" aria-label="Reset view">Reset</button>
+    <button type="button" data-action="zoom-in" aria-label="Zoom in">+</button>
+    <span id="status" aria-live="polite">100%</span>
+    <button type="button" data-action="theme" aria-label="Toggle theme">Theme</button>
+    <button type="button" data-action="copy" aria-label="Copy SVG source">Copy SVG</button>
+    <select id="scale" aria-label="Raster export scale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4×</option></select>
+    <select id="format" aria-label="Export format"><option>SVG</option><option>PNG</option><option>JPEG</option><option>WebP</option></select>
+    <button type="button" data-action="download">Export</button>
+  </header>
+  <main id="stage" tabindex="0" aria-label="Interactive diagram. Drag to pan; use plus and minus to zoom.">
+    <div id="canvas"><svg xmlns="http://www.w3.org/2000/svg" width="1660" height="880" viewBox="0 0 1660 880" data-generator="fireworks-tech-graph" data-authoring-mode="explicit-python-list" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-quality-profile="showcase" data-semantic-profile="generic" role="img" focusable="false">
+<defs>
+<style>text{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif}</style>
+<marker id="arrow-data" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb" /></marker>
+<marker id="arrow-feedback" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#9333ea" /></marker>
+<marker id="arrow-read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#16a34a" /></marker>
+</defs>
+<rect width="1660" height="880" fill="#fff" />
+<g data-graph-role="reserved" data-graph-bounds="40,22,1620,103"><text x="60" y="55" font-size="28" font-weight="700">05  环境变量如何进入子进程</text><text x="60" y="86" font-size="15" fill="#64748b">左侧是继承来源，右侧同名变量覆盖左侧；不同执行路径有不同的拼装规则。</text></g>
+<g id="shellenv" data-graph-role="container" data-graph-bounds="40,120,1620,254"><rect x="40" y="120" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,128,1608,152"><text x="60" y="145" font-size="14" font-weight="600" fill="#526176">A · 普通 local-system.runCommand</text></g></g>
+<g id="localenv" data-graph-role="container" data-graph-bounds="40,285,1620,419"><rect x="40" y="285" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,293,1608,317"><text x="60" y="310" font-size="14" font-weight="600" fill="#526176">B · 桌面 local 的 Claude Code / Codex</text></g></g>
+<g id="gatewayenv" data-graph-role="container" data-graph-bounds="40,450,1620,584"><rect x="40" y="450" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,458,1608,482"><text x="60" y="475" font-size="14" font-weight="600" fill="#526176">C · Gateway 下发到 Electron 的外部 CLI</text></g></g>
+<g id="prompt" data-graph-role="container" data-graph-bounds="40,615,1620,749"><rect x="40" y="615" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,623,1608,647"><text x="60" y="640" font-size="14" font-weight="600" fill="#526176">D · 提示词上下文：是模型输入文本，不是操作系统环境变量</text></g></g>
+<path id="shellenv0--shellenv1" data-graph-role="edge" data-edge-id="shellenv0--shellenv1" data-source="shellenv0" data-target="shellenv1" data-flow="data" d="M 397 197.0 L 467 197.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="shellenv1--shellenv2" data-graph-role="edge" data-edge-id="shellenv1--shellenv2" data-source="shellenv1" data-target="shellenv2" data-flow="data" d="M 794 197.0 L 864 197.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="shellenv2--shellenv3" data-graph-role="edge" data-edge-id="shellenv2--shellenv3" data-source="shellenv2" data-target="shellenv3" data-flow="data" d="M 1191 197.0 L 1261 197.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="localenv0--localenv1" data-graph-role="edge" data-edge-id="localenv0--localenv1" data-source="localenv0" data-target="localenv1" data-flow="data" d="M 397 362.0 L 467 362.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="localenv1--localenv2" data-graph-role="edge" data-edge-id="localenv1--localenv2" data-source="localenv1" data-target="localenv2" data-flow="data" d="M 794 362.0 L 864 362.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="localenv2--localenv3" data-graph-role="edge" data-edge-id="localenv2--localenv3" data-source="localenv2" data-target="localenv3" data-flow="data" d="M 1191 362.0 L 1261 362.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="gatewayenv0--gatewayenv1" data-graph-role="edge" data-edge-id="gatewayenv0--gatewayenv1" data-source="gatewayenv0" data-target="gatewayenv1" data-flow="data" d="M 397 527.0 L 467 527.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="gatewayenv1--gatewayenv2" data-graph-role="edge" data-edge-id="gatewayenv1--gatewayenv2" data-source="gatewayenv1" data-target="gatewayenv2" data-flow="data" d="M 794 527.0 L 864 527.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="gatewayenv2--gatewayenv3" data-graph-role="edge" data-edge-id="gatewayenv2--gatewayenv3" data-source="gatewayenv2" data-target="gatewayenv3" data-flow="data" d="M 1191 527.0 L 1261 527.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="prompt0--prompt1" data-graph-role="edge" data-edge-id="prompt0--prompt1" data-source="prompt0" data-target="prompt1" data-flow="read" d="M 510 692.0 L 610 692.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="prompt1--prompt2" data-graph-role="edge" data-edge-id="prompt1--prompt2" data-source="prompt1" data-target="prompt2" data-flow="read" d="M 1050 692.0 L 1150 692.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<g id="node-shellenv0" data-graph-role="node" data-node-id="shellenv0" data-graph-bounds="70,162,397,232"><rect x="70" y="162" width="327" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="233.5" y="192.0" text-anchor="middle" font-size="18" font-weight="600">Electron process.env</text>
+<text x="233.5" y="214.0" text-anchor="middle" font-size="12" fill="#526176">启动环境 + fixPath + bundled bin</text>
+</g>
+<g id="node-shellenv1" data-graph-role="node" data-node-id="shellenv1" data-graph-bounds="467,162,794,232"><rect x="467" y="162" width="327" height="70" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" />
+<text x="630.5" y="192.0" text-anchor="middle" font-size="18" font-weight="600">单次 params.env</text>
+<text x="630.5" y="214.0" text-anchor="middle" font-size="12" fill="#526176">模型工具参数 / 调用方传入</text>
+</g>
+<g id="node-shellenv2" data-graph-role="node" data-node-id="shellenv2" data-graph-bounds="864,162,1191,232"><rect x="864" y="162" width="327" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="1027.5" y="192.0" text-anchor="middle" font-size="18" font-weight="600">childEnv</text>
+<text x="1027.5" y="214.0" text-anchor="middle" font-size="12" fill="#526176">{ ...process.env, ...extraEnv }</text>
+</g>
+<g id="node-shellenv3" data-graph-role="node" data-node-id="shellenv3" data-graph-bounds="1261,162,1588,232"><rect x="1261" y="162" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1424.5" y="192.0" text-anchor="middle" font-size="18" font-weight="600">新 shell 进程</text>
+<text x="1424.5" y="214.0" text-anchor="middle" font-size="12" fill="#526176">/bin/sh -c；Windows 为 cmd.exe /c</text>
+</g>
+<g id="node-localenv0" data-graph-role="node" data-node-id="localenv0" data-graph-bounds="70,327,397,397"><rect x="70" y="327" width="327" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="233.5" y="357.0" text-anchor="middle" font-size="18" font-weight="600">清理后的父环境</text>
+<text x="233.5" y="379.0" text-anchor="middle" font-size="12" fill="#526176">移除 3 个 ANTHROPIC_* 认证变量</text>
+</g>
+<g id="node-localenv1" data-graph-role="node" data-node-id="localenv1" data-graph-bounds="467,327,794,397"><rect x="467" y="327" width="327" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="630.5" y="357.0" text-anchor="middle" font-size="18" font-weight="600">PATH + 代理配置</text>
+<text x="630.5" y="379.0" text-anchor="middle" font-size="12" fill="#526176">CLI 检测 PATH；buildProxyEnv</text>
+</g>
+<g id="node-localenv2" data-graph-role="node" data-node-id="localenv2" data-graph-bounds="864,327,1191,397"><rect x="864" y="327" width="327" height="70" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" />
+<text x="1027.5" y="357.0" text-anchor="middle" font-size="18" font-weight="600">session.env</text>
+<text x="1027.5" y="379.0" text-anchor="middle" font-size="12" fill="#526176">heterogeneousProvider.env 最后覆盖</text>
+</g>
+<g id="node-localenv3" data-graph-role="node" data-node-id="localenv3" data-graph-bounds="1261,327,1588,397"><rect x="1261" y="327" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1424.5" y="357.0" text-anchor="middle" font-size="18" font-weight="600">CLI 子进程</text>
+<text x="1424.5" y="379.0" text-anchor="middle" font-size="12" fill="#526176">spawnEnv 与 cwd 分别传给 spawn</text>
+</g>
+<g id="node-gatewayenv0" data-graph-role="node" data-node-id="gatewayenv0" data-graph-bounds="70,492,397,562"><rect x="70" y="492" width="327" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="233.5" y="522.0" text-anchor="middle" font-size="18" font-weight="600">Electron process.env</text>
+<text x="233.5" y="544.0" text-anchor="middle" font-size="12" fill="#526176">此路径未使用本地 CLI 的清理函数</text>
+</g>
+<g id="node-gatewayenv1" data-graph-role="node" data-node-id="gatewayenv1" data-graph-bounds="467,492,794,562"><rect x="467" y="492" width="327" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="630.5" y="522.0" text-anchor="middle" font-size="18" font-weight="600">应用代理设置</text>
+<text x="630.5" y="544.0" text-anchor="middle" font-size="12" fill="#526176">HTTP(S)_PROXY / ALL_PROXY / NO_PROXY</text>
+</g>
+<g id="node-gatewayenv2" data-graph-role="node" data-node-id="gatewayenv2" data-graph-bounds="864,492,1191,562"><rect x="864" y="492" width="327" height="70" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" />
+<text x="1027.5" y="522.0" text-anchor="middle" font-size="18" font-weight="600">运行认证变量</text>
+<text x="1027.5" y="544.0" text-anchor="middle" font-size="12" fill="#526176">LOBEHUB_JWT / LOBEHUB_SERVER</text>
+</g>
+<g id="node-gatewayenv3" data-graph-role="node" data-node-id="gatewayenv3" data-graph-bounds="1261,492,1588,562"><rect x="1261" y="492" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1424.5" y="522.0" text-anchor="middle" font-size="18" font-weight="600">lh  &gt;  外部 CLI</text>
+<text x="1424.5" y="544.0" text-anchor="middle" font-size="12" fill="#526176">CLI spawn 再继承它的 process.env</text>
+</g>
+<g id="node-prompt0" data-graph-role="node" data-node-id="prompt0" data-graph-bounds="70,657,510,727"><rect x="70" y="657" width="440" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="290.0" y="687.0" text-anchor="middle" font-size="18" font-weight="600">设备 / 项目资料</text>
+<text x="290.0" y="709.0" text-anchor="middle" font-size="12" fill="#526176">systemInfo + AGENTS.md + Skill metadata</text>
+</g>
+<g id="node-prompt1" data-graph-role="node" data-node-id="prompt1" data-graph-bounds="610,657,1050,727"><rect x="610" y="657" width="440" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5" />
+<text x="830.0" y="687.0" text-anchor="middle" font-size="18" font-weight="600">模板与上下文引擎</text>
+<text x="830.0" y="709.0" text-anchor="middle" font-size="12" fill="#526176">{{workingDirectory}} 等占位符</text>
+</g>
+<g id="node-prompt2" data-graph-role="node" data-node-id="prompt2" data-graph-bounds="1150,657,1590,727"><rect x="1150" y="657" width="440" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5" />
+<text x="1370.0" y="687.0" text-anchor="middle" font-size="18" font-weight="600">发送给模型的消息</text>
+<text x="1370.0" y="709.0" text-anchor="middle" font-size="12" fill="#526176">改变模型所见信息；不会自动 export 或 chdir</text>
+</g>
+<g data-graph-role="label" data-owner="shellenv0--shellenv1" data-graph-bounds="408.0,171.0,456.0,187.0"><text x="432.0" y="184.0" font-size="12" text-anchor="middle" fill="#2563eb">覆盖合并</text></g>
+<g data-graph-role="label" data-owner="shellenv1--shellenv2" data-graph-bounds="817.0,171.0,841.0,187.0"><text x="829.0" y="184.0" font-size="12" text-anchor="middle" fill="#2563eb">得到</text></g>
+<g data-graph-role="label" data-owner="shellenv2--shellenv3" data-graph-bounds="1208.6,171.0,1243.3999999999999,187.0"><text x="1226.0" y="184.0" font-size="12" text-anchor="middle" fill="#2563eb">spawn</text></g>
+<g data-graph-role="label" data-owner="localenv0--localenv1" data-graph-bounds="420.0,336.0,444.0,352.0"><text x="432.0" y="349.0" font-size="12" text-anchor="middle" fill="#2563eb">补充</text></g>
+<g data-graph-role="label" data-owner="localenv1--localenv2" data-graph-bounds="817.0,336.0,841.0,352.0"><text x="829.0" y="349.0" font-size="12" text-anchor="middle" fill="#2563eb">覆盖</text></g>
+<g data-graph-role="label" data-owner="localenv2--localenv3" data-graph-bounds="1208.6,336.0,1243.3999999999999,352.0"><text x="1226.0" y="349.0" font-size="12" text-anchor="middle" fill="#2563eb">spawn</text></g>
+<g data-graph-role="label" data-owner="gatewayenv0--gatewayenv1" data-graph-bounds="420.0,501.0,444.0,517.0"><text x="432.0" y="514.0" font-size="12" text-anchor="middle" fill="#2563eb">覆盖</text></g>
+<g data-graph-role="label" data-owner="gatewayenv1--gatewayenv2" data-graph-bounds="817.0,501.0,841.0,517.0"><text x="829.0" y="514.0" font-size="12" text-anchor="middle" fill="#2563eb">覆盖</text></g>
+<g data-graph-role="label" data-owner="gatewayenv2--gatewayenv3" data-graph-bounds="1214.0,501.0,1238.0,517.0"><text x="1226.0" y="514.0" font-size="12" text-anchor="middle" fill="#2563eb">继承</text></g>
+<g data-graph-role="label" data-owner="prompt0--prompt1" data-graph-bounds="548.0,666.0,572.0,682.0"><text x="560.0" y="679.0" font-size="12" text-anchor="middle" fill="#16a34a">读取</text></g>
+<g data-graph-role="label" data-owner="prompt1--prompt2" data-graph-bounds="1076.0,666.0,1124.0,682.0"><text x="1100.0" y="679.0" font-size="12" text-anchor="middle" fill="#16a34a">注入文本</text></g>
+<g data-graph-role="reserved" data-graph-bounds="50,775,760,810">
+<line x1="60" y1="791" x2="92" y2="791" stroke="#2563eb" stroke-width="2" /><text x="104" y="795" font-size="13" fill="#64748b">传递 / 引用</text>
+<line x1="285" y1="791" x2="317" y2="791" stroke="#9333ea" stroke-width="2" /><text x="329" y="795" font-size="13" fill="#64748b">循环 / 反馈</text>
+<line x1="510" y1="791" x2="542" y2="791" stroke="#16a34a" stroke-width="2" /><text x="554" y="795" font-size="13" fill="#64748b">读取 / 上下文</text>
+</g>
+<g data-graph-role="reserved" data-graph-bounds="50,831,1630,866"><text x="60" y="851" font-size="12" fill="#64748b">Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪</text></g>
+</svg></div>
+    <p class="sr-only">Keyboard shortcuts: plus and minus zoom, zero resets, T toggles theme, S exports.</p>
+  </main>
+  <script>
+  (() => {
+    'use strict';
+    const metadata = {"slug": "05-environment"};
+    const stage = document.getElementById('stage');
+    const canvas = document.getElementById('canvas');
+    const svg = canvas.querySelector('svg');
+    const status = document.getElementById('status');
+    const scaleSelect = document.getElementById('scale');
+    const formatSelect = document.getElementById('format');
+    let view = { x:0, y:0, scale:1 };
+    let drag = null;
+    const clamp = value => Math.max(.2, Math.min(8, value));
+    const render = () => {
+      canvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
+      status.textContent = `${Math.round(view.scale * 100)}%`;
+    };
+    const zoom = (factor, originX=stage.clientWidth/2, originY=stage.clientHeight/2) => {
+      const next = clamp(view.scale * factor);
+      const ratio = next / view.scale;
+      view.x = originX - (originX - view.x) * ratio;
+      view.y = originY - (originY - view.y) * ratio;
+      view.scale = next; render();
+    };
+    const reset = () => { view = {x:0,y:0,scale:1}; render(); };
+    stage.addEventListener('wheel', event => { event.preventDefault(); const rect=stage.getBoundingClientRect(); zoom(event.deltaY < 0 ? 1.12 : .89, event.clientX-rect.left, event.clientY-rect.top); }, {passive:false});
+    stage.addEventListener('pointerdown', event => { drag={id:event.pointerId,x:event.clientX,y:event.clientY,vx:view.x,vy:view.y}; stage.setPointerCapture(event.pointerId); stage.classList.add('dragging'); });
+    stage.addEventListener('pointermove', event => { if(!drag||drag.id!==event.pointerId)return; view.x=drag.vx+event.clientX-drag.x; view.y=drag.vy+event.clientY-drag.y; render(); });
+    const endDrag = () => { drag=null; stage.classList.remove('dragging'); };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    const source = () => new XMLSerializer().serializeToString(svg);
+    const saveBlob = (blob, extension) => { const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${(metadata.slug||'fireworks-tech-graph')}.${extension}`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
+    const copySource = async () => {
+      const value=source();
+      try { await navigator.clipboard.writeText(value); status.textContent='Copied'; return; } catch {}
+      const area=document.createElement('textarea'); area.value=value; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select();
+      status.textContent=document.execCommand('copy')?'Copied':'Copy failed'; area.remove();
+    };
+    const exportDiagram = async () => {
+      const format = formatSelect.value.toLowerCase();
+      if(format==='svg') { saveBlob(new Blob([source()],{type:'image/svg+xml;charset=utf-8'}),'svg'); return; }
+      const scale = Math.max(1,Math.min(4,Number(scaleSelect.value)||2));
+      const box = svg.viewBox.baseVal; const width=box.width||svg.clientWidth; const height=box.height||svg.clientHeight;
+      const image = new Image(); const url=URL.createObjectURL(new Blob([source()],{type:'image/svg+xml'}));
+      await new Promise((resolve,reject)=>{ image.onload=resolve; image.onerror=reject; image.src=url; });
+      const raster=document.createElement('canvas'); raster.width=Math.round(width*scale); raster.height=Math.round(height*scale);
+      const ctx=raster.getContext('2d'); if(format==='jpeg'){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,raster.width,raster.height);} ctx.drawImage(image,0,0,raster.width,raster.height); URL.revokeObjectURL(url);
+      const mime=format==='jpeg'?'image/jpeg':format==='webp'?'image/webp':'image/png';
+      const blob=await new Promise(resolve=>raster.toBlob(resolve,mime,.94)); if(blob) saveBlob(blob,format==='jpeg'?'jpg':format);
+    };
+    document.querySelector('.toolbar').addEventListener('click', async event => {
+      const action=event.target.closest('[data-action]')?.dataset.action; if(!action)return;
+      if(action==='zoom-in')zoom(1.2); else if(action==='zoom-out')zoom(.83); else if(action==='reset')reset();
+      else if(action==='theme')document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
+      else if(action==='download')await exportDiagram();
+      else if(action==='copy') await copySource();
+    });
+    document.addEventListener('keydown', event => {
+      if(event.target.matches('select'))return;
+      if(event.key==='+'||event.key==='=')zoom(1.2); else if(event.key==='-')zoom(.83); else if(event.key==='0'||event.key.toLowerCase()==='r')reset();
+      else if(event.key.toLowerCase()==='t')document.querySelector('[data-action=theme]').click(); else if(event.key.toLowerCase()==='s'){event.preventDefault();exportDiagram();}
+    });
+    render();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,182 @@
+{
+  "slug": "03-device-topic",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1500,
+  "height": 790,
+  "title": "03  Device、Agent、Topic、Operation 的关系",
+  "subtitle": "本图的箭头表示引用 / 归属，不表示时间顺序；以单 agent 会话为主。",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "device",
+      "kind": "rect",
+      "x": 80,
+      "y": 175,
+      "width": 370,
+      "height": 88,
+      "label": "Device：一台机器 + 一个用户",
+      "sublabel": "deviceId；defaultCwd；workingDirs[]",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "agent",
+      "kind": "rect",
+      "x": 565,
+      "y": 175,
+      "width": 370,
+      "height": 88,
+      "label": "Agent：可复用配置",
+      "sublabel": "executionTarget / boundDeviceId / 目录映射",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "topic",
+      "kind": "rect",
+      "x": 1050,
+      "y": 175,
+      "width": 370,
+      "height": 88,
+      "label": "Topic：长期会话容器",
+      "sublabel": "workingDirectory / heteroSessionId / messages",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "channels",
+      "kind": "rect",
+      "x": 80,
+      "y": 460,
+      "width": 370,
+      "height": 88,
+      "label": "在线连接 channels",
+      "sublabel": "Electron 与 lh connect 可属于同一 device",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "plan",
+      "kind": "rect",
+      "x": 565,
+      "y": 460,
+      "width": 370,
+      "height": 88,
+      "label": "本轮设备决定",
+      "sublabel": "ExecutionPlan → activeDeviceId",
+      "fill": "#fff7ed",
+      "stroke": "#fdba74",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "op",
+      "kind": "double_rect",
+      "x": 1050,
+      "y": 460,
+      "width": 370,
+      "height": 88,
+      "label": "Operation：一次运行",
+      "sublabel": "operationId；多 step；同一个 topicId",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "agent--device",
+      "source": "agent",
+      "target": "device",
+      "label": "按 deviceId 引用",
+      "flow": "read",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "topic--agent",
+      "source": "topic",
+      "target": "agent",
+      "label": "归属 agent",
+      "flow": "read",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "op--topic",
+      "source": "op",
+      "target": "topic",
+      "label": "topicId",
+      "flow": "read",
+      "source_port": "top",
+      "target_port": "bottom",
+      "label_style": "offset"
+    },
+    {
+      "id": "op--plan",
+      "source": "op",
+      "target": "plan",
+      "label": "携带路由",
+      "flow": "data",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "plan--channels",
+      "source": "plan",
+      "target": "channels",
+      "label": "选在线通道",
+      "flow": "data",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "channels--device",
+      "source": "channels",
+      "target": "device",
+      "label": "相同 deviceId",
+      "flow": "read",
+      "source_port": "top",
+      "target_port": "bottom",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 700,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 760
+}

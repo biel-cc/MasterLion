@@ -1,0 +1,97 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "userdisk0--userdisk1",
+      "source": "userdisk0",
+      "target": "userdisk1",
+      "route": [
+        [
+          510,
+          207.0
+        ],
+        [
+          610,
+          207.0
+        ]
+      ]
+    },
+    {
+      "id": "userdisk1--userdisk2",
+      "source": "userdisk1",
+      "target": "userdisk2",
+      "route": [
+        [
+          1050,
+          207.0
+        ],
+        [
+          1150,
+          207.0
+        ]
+      ]
+    },
+    {
+      "id": "appdisk0--appdisk1",
+      "source": "appdisk0",
+      "target": "appdisk1",
+      "route": [
+        [
+          510,
+          382.0
+        ],
+        [
+          610,
+          382.0
+        ]
+      ]
+    },
+    {
+      "id": "appdisk1--appdisk2",
+      "source": "appdisk1",
+      "target": "appdisk2",
+      "route": [
+        [
+          1050,
+          382.0
+        ],
+        [
+          1150,
+          382.0
+        ]
+      ]
+    },
+    {
+      "id": "clisession0--clisession1",
+      "source": "clisession0",
+      "target": "clisession1",
+      "route": [
+        [
+          510,
+          557.0
+        ],
+        [
+          610,
+          557.0
+        ]
+      ]
+    },
+    {
+      "id": "clisession1--clisession2",
+      "source": "clisession1",
+      "target": "clisession2",
+      "route": [
+        [
+          1050,
+          557.0
+        ],
+        [
+          1150,
+          557.0
+        ]
+      ]
+    }
+  ]
+}

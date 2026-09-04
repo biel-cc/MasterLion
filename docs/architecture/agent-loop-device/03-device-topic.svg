@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="790" viewBox="0 0 1500 790" data-generator="fireworks-tech-graph" data-authoring-mode="explicit-python-list" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-quality-profile="showcase" data-semantic-profile="generic">
+<defs>
+<style>text{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif}</style>
+<marker id="arrow-data" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
+<marker id="arrow-feedback" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#9333ea"/></marker>
+<marker id="arrow-read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#16a34a"/></marker>
+</defs>
+<rect width="1500" height="790" fill="#fff"/>
+<g data-graph-role="reserved" data-graph-bounds="40,22,1460,103"><text x="60" y="55" font-size="28" font-weight="700">03  Device、Agent、Topic、Operation 的关系</text><text x="60" y="86" font-size="15" fill="#64748b">本图的箭头表示引用 / 归属，不表示时间顺序；以单 agent 会话为主。</text></g>
+<path id="agent--device" data-graph-role="edge" data-edge-id="agent--device" data-source="agent" data-target="device" data-flow="read" d="M 565 219.0 L 450 219.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="topic--agent" data-graph-role="edge" data-edge-id="topic--agent" data-source="topic" data-target="agent" data-flow="read" d="M 1050 219.0 L 935 219.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="op--topic" data-graph-role="edge" data-edge-id="op--topic" data-source="op" data-target="topic" data-flow="read" d="M 1235.0 460 L 1235.0 263" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="op--plan" data-graph-role="edge" data-edge-id="op--plan" data-source="op" data-target="plan" data-flow="data" d="M 1050 504.0 L 935 504.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="plan--channels" data-graph-role="edge" data-edge-id="plan--channels" data-source="plan" data-target="channels" data-flow="data" d="M 565 504.0 L 450 504.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="channels--device" data-graph-role="edge" data-edge-id="channels--device" data-source="channels" data-target="device" data-flow="read" d="M 265.0 460 L 265.0 263" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<g id="node-device" data-graph-role="node" data-node-id="device" data-graph-bounds="80,175,450,263"><rect x="80" y="175" width="370" height="88" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="265.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Device：一台机器 + 一个用户</text>
+<text x="265.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">deviceId；defaultCwd；workingDirs[]</text>
+</g>
+<g id="node-agent" data-graph-role="node" data-node-id="agent" data-graph-bounds="565,175,935,263"><rect x="565" y="175" width="370" height="88" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="750.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Agent：可复用配置</text>
+<text x="750.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">executionTarget / boundDeviceId / 目录映射</text>
+</g>
+<g id="node-topic" data-graph-role="node" data-node-id="topic" data-graph-bounds="1050,175,1420,263"><rect x="1050" y="175" width="370" height="88" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="1235.0" y="214.0" text-anchor="middle" font-size="18" font-weight="600">Topic：长期会话容器</text>
+<text x="1235.0" y="236.0" text-anchor="middle" font-size="12" fill="#526176">workingDirectory / heteroSessionId / messages</text>
+</g>
+<g id="node-channels" data-graph-role="node" data-node-id="channels" data-graph-bounds="80,460,450,548"><rect x="80" y="460" width="370" height="88" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="265.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">在线连接 channels</text>
+<text x="265.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">Electron 与 lh connect 可属于同一 device</text>
+</g>
+<g id="node-plan" data-graph-role="node" data-node-id="plan" data-graph-bounds="565,460,935,548"><rect x="565" y="460" width="370" height="88" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="750.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">本轮设备决定</text>
+<text x="750.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">ExecutionPlan  &gt;  activeDeviceId</text>
+</g>
+<g id="node-op" data-graph-role="node" data-node-id="op" data-graph-bounds="1050,460,1420,548"><rect x="1050" y="460" width="370" height="88" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<rect x="1055" y="465" width="360" height="78" rx="5" fill="none" stroke="#c4b5fd" stroke-width="1"/>
+<text x="1235.0" y="499.0" text-anchor="middle" font-size="18" font-weight="600">Operation：一次运行</text>
+<text x="1235.0" y="521.0" text-anchor="middle" font-size="12" fill="#526176">operationId；多 step；同一个 topicId</text>
+</g>
+<g data-graph-role="label" data-owner="agent--device" data-graph-bounds="460.46,193.0,554.54,209.0"><text x="507.5" y="206.0" font-size="12" text-anchor="middle" fill="#16a34a">按 deviceId 引用</text></g>
+<g data-graph-role="label" data-owner="topic--agent" data-graph-bounds="960.94,193.0,1024.06,209.0"><text x="992.5" y="206.0" font-size="12" text-anchor="middle" fill="#16a34a">归属 agent</text></g>
+<g data-graph-role="label" data-owner="op--topic" data-graph-bounds="1249.0,348.5,1291.48,364.5"><text x="1249.0" y="361.5" font-size="12" text-anchor="start" fill="#16a34a">topicId</text></g>
+<g data-graph-role="label" data-owner="op--plan" data-graph-bounds="968.5,478.0,1016.5,494.0"><text x="992.5" y="491.0" font-size="12" text-anchor="middle" fill="#2563eb">携带路由</text></g>
+<g data-graph-role="label" data-owner="plan--channels" data-graph-bounds="477.5,478.0,537.5,494.0"><text x="507.5" y="491.0" font-size="12" text-anchor="middle" fill="#2563eb">选在线通道</text></g>
+<g data-graph-role="label" data-owner="channels--device" data-graph-bounds="279.0,348.5,356.76,364.5"><text x="279.0" y="361.5" font-size="12" text-anchor="start" fill="#16a34a">相同 deviceId</text></g>
+<g data-graph-role="reserved" data-graph-bounds="50,685,760,720">
+<line x1="60" y1="701" x2="92" y2="701" stroke="#2563eb" stroke-width="2"/><text x="104" y="705" font-size="13" fill="#64748b">传递 / 引用</text>
+<line x1="285" y1="701" x2="317" y2="701" stroke="#9333ea" stroke-width="2"/><text x="329" y="705" font-size="13" fill="#64748b">循环 / 反馈</text>
+<line x1="510" y1="701" x2="542" y2="701" stroke="#16a34a" stroke-width="2"/><text x="554" y="705" font-size="13" fill="#64748b">读取 / 上下文</text>
+</g>
+<g data-graph-role="reserved" data-graph-bounds="50,741,1470,776"><text x="60" y="761" font-size="12" fill="#64748b">Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪</text></g>
+</svg>

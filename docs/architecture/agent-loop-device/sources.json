@@ -1,0 +1,299 @@
+{
+  "commit": "73e2ea9a09cca9194131b54887c48c15c3755a81",
+  "sources": [
+    {
+      "file": "src/store/chat/slices/aiChat/actions/agentDispatcher.ts",
+      "line": 94,
+      "anchor": "export const selectRuntimeType",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/chat/slices/aiChat/actions/agentDispatcher.ts#L94"
+    },
+    {
+      "file": "src/store/chat/slices/aiChat/actions/gateway.ts",
+      "line": 275,
+      "anchor": "isGatewayModeEnabled =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/chat/slices/aiChat/actions/gateway.ts#L275"
+    },
+    {
+      "file": "src/store/chat/slices/aiChat/actions/streamingExecutor.ts",
+      "line": 597,
+      "anchor": "Agent runtime loop start",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/chat/slices/aiChat/actions/streamingExecutor.ts#L597"
+    },
+    {
+      "file": "src/helpers/executionTarget.ts",
+      "line": 192,
+      "anchor": "export const resolveExecutionPlan",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/helpers/executionTarget.ts#L192"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/GatewayConnectionCtr.ts",
+      "line": 282,
+      "anchor": "private async executeAgentRun",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/GatewayConnectionCtr.ts#L282"
+    },
+    {
+      "file": "packages/agent-runtime/src/core/runtime.ts",
+      "line": 81,
+      "anchor": "async step(",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/agent-runtime/src/core/runtime.ts#L81"
+    },
+    {
+      "file": "packages/agent-runtime/src/agents/GeneralChatAgent.ts",
+      "line": 436,
+      "anchor": "async runner(",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/agent-runtime/src/agents/GeneralChatAgent.ts#L436"
+    },
+    {
+      "file": "apps/server/src/services/agentRuntime/AgentRuntimeService.ts",
+      "line": 525,
+      "anchor": "// Save initial state",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/agentRuntime/AgentRuntimeService.ts#L525"
+    },
+    {
+      "file": "apps/server/src/services/agentRuntime/AgentRuntimeService.ts",
+      "line": 1009,
+      "anchor": "// Decide whether to schedule next step",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/agentRuntime/AgentRuntimeService.ts#L1009"
+    },
+    {
+      "file": "apps/server/src/services/toolExecution/serverRuntimes/localSystem.ts",
+      "line": 8,
+      "anchor": "factory: (context)",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/toolExecution/serverRuntimes/localSystem.ts#L8"
+    },
+    {
+      "file": "packages/local-file-shell/src/shell/runner.ts",
+      "line": 16,
+      "anchor": "export async function runCommand",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/local-file-shell/src/shell/runner.ts#L16"
+    },
+    {
+      "file": "packages/device-identity/src/index.ts",
+      "line": 59,
+      "anchor": "const deviceId = createHash",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/device-identity/src/index.ts#L59"
+    },
+    {
+      "file": "apps/desktop/src/main/services/gatewayConnectionSrv.ts",
+      "line": 247,
+      "anchor": "getConnectionId()",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/services/gatewayConnectionSrv.ts#L247"
+    },
+    {
+      "file": "src/features/ChatInput/ControlBar/useCommitWorkingDirectory.ts",
+      "line": 45,
+      "anchor": "const writeCwd =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/features/ChatInput/ControlBar/useCommitWorkingDirectory.ts#L45"
+    },
+    {
+      "file": "packages/types/src/device.ts",
+      "line": 60,
+      "anchor": "export interface WorkingDirEntry",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/types/src/device.ts#L60"
+    },
+    {
+      "file": "apps/server/src/services/aiAgent/index.ts",
+      "line": 990,
+      "anchor": "const topicBoundDeviceId = requestedDeviceId",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/aiAgent/index.ts#L990"
+    },
+    {
+      "file": "src/helpers/executionTarget.ts",
+      "line": 224,
+      "anchor": "const boundDeviceId = requestedDeviceId",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/helpers/executionTarget.ts#L224"
+    },
+    {
+      "file": "src/hooks/useEffectiveWorkingDirectory.ts",
+      "line": 48,
+      "anchor": "const fallback =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/hooks/useEffectiveWorkingDirectory.ts#L48"
+    },
+    {
+      "file": "src/helpers/agentWorkingDirectory.ts",
+      "line": 31,
+      "anchor": "export const resolveAgentWorkingDirectory",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/helpers/agentWorkingDirectory.ts#L31"
+    },
+    {
+      "file": "apps/server/src/services/aiAgent/resolveDeviceWorkingDirectory.ts",
+      "line": 20,
+      "anchor": "export const resolveDeviceWorkingDirectory",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/aiAgent/resolveDeviceWorkingDirectory.ts#L20"
+    },
+    {
+      "file": "src/store/agent/selectors/agentByIdSelectors.ts",
+      "line": 134,
+      "anchor": "const getAgentWorkingDirectoryById",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/agent/selectors/agentByIdSelectors.ts#L134"
+    },
+    {
+      "file": "src/store/agent/selectors/selectors.ts",
+      "line": 286,
+      "anchor": "const currentAgentWorkingDirectory",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/agent/selectors/selectors.ts#L286"
+    },
+    {
+      "file": "apps/desktop/src/main/services/gatewayConnectionSrv.ts",
+      "line": 611,
+      "anchor": "workingDirectory: process.cwd()",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/services/gatewayConnectionSrv.ts#L611"
+    },
+    {
+      "file": "apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts",
+      "line": 1469,
+      "anchor": "...state.metadata?.deviceSystemInfo",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/modules/AgentRuntime/RuntimeExecutors.ts#L1469"
+    },
+    {
+      "file": "packages/builtin-tool-local-system/src/manifest.ts",
+      "line": 230,
+      "anchor": "name: LocalSystemApiName.runCommand",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/builtin-tool-local-system/src/manifest.ts#L230"
+    },
+    {
+      "file": "packages/local-file-shell/src/shell/runner.ts",
+      "line": 39,
+      "anchor": "const childProcess = spawn",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/local-file-shell/src/shell/runner.ts#L39"
+    },
+    {
+      "file": "apps/desktop/src/main/index.ts",
+      "line": 9,
+      "anchor": "fixPath();",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/index.ts#L9"
+    },
+    {
+      "file": "apps/desktop/src/main/core/App.ts",
+      "line": 100,
+      "anchor": "process.env.PATH =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/core/App.ts#L100"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts",
+      "line": 60,
+      "anchor": "const STRIPPED_INHERITED_ENV_KEYS",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts#L60"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts",
+      "line": 967,
+      "anchor": "spawnEnv =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts#L967"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts",
+      "line": 1472,
+      "anchor": "spawnLhHeteroExec(params:",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts#L1472"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/CliCtr.ts",
+      "line": 22,
+      "anchor": "async runCliCommand",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/CliCtr.ts#L22"
+    },
+    {
+      "file": "apps/desktop/src/main/modules/networkProxy/envBuilder.ts",
+      "line": 15,
+      "anchor": "export const buildProxyEnv",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/modules/networkProxy/envBuilder.ts#L15"
+    },
+    {
+      "file": "packages/heterogeneous-agents/src/spawn/spawnAgent.ts",
+      "line": 260,
+      "anchor": "const childEnv =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/heterogeneous-agents/src/spawn/spawnAgent.ts#L260"
+    },
+    {
+      "file": "src/services/electron/desktopSkillRuntime.ts",
+      "line": 35,
+      "anchor": "async resolveExecutionDirectory",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/services/electron/desktopSkillRuntime.ts#L35"
+    },
+    {
+      "file": "src/store/tool/slices/builtin/executors/lobe-skills.desktop.ts",
+      "line": 19,
+      "anchor": "execScript: async",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/tool/slices/builtin/executors/lobe-skills.desktop.ts#L19"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/LocalFileCtr.ts",
+      "line": 494,
+      "anchor": "async handlePrepareSkillDirectory",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/LocalFileCtr.ts#L494"
+    },
+    {
+      "file": "packages/device-control/src/workspace.ts",
+      "line": 181,
+      "anchor": "export const initWorkspace",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/device-control/src/workspace.ts#L181"
+    },
+    {
+      "file": "apps/server/src/services/aiAgent/workspaceInitCache.ts",
+      "line": 4,
+      "anchor": "export const WORKSPACE_INIT_TTL_MS",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/aiAgent/workspaceInitCache.ts#L4"
+    },
+    {
+      "file": "apps/server/src/services/aiAgent/index.ts",
+      "line": 369,
+      "anchor": "private async resolveWorkspaceInit",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/aiAgent/index.ts#L369"
+    },
+    {
+      "file": "apps/server/src/services/toolExecution/serverRuntimes/skills.ts",
+      "line": 139,
+      "anchor": "execScript = async",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/toolExecution/serverRuntimes/skills.ts#L139"
+    },
+    {
+      "file": "apps/desktop/src/main/const/dir.ts",
+      "line": 23,
+      "anchor": "export const appStorageDir",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/const/dir.ts#L23"
+    },
+    {
+      "file": "apps/desktop/src/main/const/heteroAgent.ts",
+      "line": 11,
+      "anchor": "export const HETERO_AGENT_DIR",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/const/heteroAgent.ts#L11"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts",
+      "line": 526,
+      "anchor": "private resolveTraceRootDir",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts#L526"
+    },
+    {
+      "file": "apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts",
+      "line": 750,
+      "anchor": "const tmpConfigPath =",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/desktop/src/main/controllers/HeterogeneousAgentCtr.ts#L750"
+    },
+    {
+      "file": "src/store/chat/slices/aiChat/actions/conversationLifecycle.ts",
+      "line": 553,
+      "anchor": "const workingDirectory = existingTopic",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/chat/slices/aiChat/actions/conversationLifecycle.ts#L553"
+    },
+    {
+      "file": "src/store/chat/slices/aiChat/actions/heteroResume.ts",
+      "line": 26,
+      "anchor": "export const resolveHeteroResume",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/src/store/chat/slices/aiChat/actions/heteroResume.ts#L26"
+    },
+    {
+      "file": "apps/server/src/services/heterogeneousAgent/sandboxRunner.ts",
+      "line": 143,
+      "anchor": "const cwd = params.cwd ?? '/workspace'",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/apps/server/src/services/heterogeneousAgent/sandboxRunner.ts#L143"
+    },
+    {
+      "file": "packages/types/src/topic/topic.ts",
+      "line": 184,
+      "anchor": "workingDirectory?: string",
+      "url": "https://github.com/chaaak6/Masterino/blob/73e2ea9a09cca9194131b54887c48c15c3755a81/packages/types/src/topic/topic.ts#L184"
+    }
+  ]
+}

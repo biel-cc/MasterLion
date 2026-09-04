@@ -1,0 +1,249 @@
+{
+  "slug": "07-disk-map",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1660,
+  "height": 850,
+  "title": "07  磁盘目录地图：哪些长期存在，哪些按运行变化",
+  "subtitle": "以下为代码中的路径规则；用户目录使用符号值，不代表已读取当前机器或线上配置。",
+  "containers": [
+    {
+      "id": "userdisk",
+      "x": 40,
+      "y": 130,
+      "width": 1580,
+      "height": 134,
+      "label": "用户资料与项目 · 随用户与所选机器变化"
+    },
+    {
+      "id": "appdisk",
+      "x": 40,
+      "y": 305,
+      "width": 1580,
+      "height": 134,
+      "label": "应用数据 · 应用维护缓存，不是项目工作区"
+    },
+    {
+      "id": "clisession",
+      "x": 40,
+      "y": 480,
+      "width": 1580,
+      "height": 134,
+      "label": "外部 CLI 会话 · topic 与磁盘会话通过 sessionId 联系"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "userdisk0",
+      "kind": "rect",
+      "x": 70,
+      "y": 172,
+      "width": 440,
+      "height": 70,
+      "label": "homePath / desktopPath",
+      "sublabel": "Electron app.getPath(...)",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "userdisk1",
+      "kind": "rect",
+      "x": 610,
+      "y": 172,
+      "width": 440,
+      "height": 70,
+      "label": "用户项目目录",
+      "sublabel": "例如 /Users/me/projects/demo",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "userdisk2",
+      "kind": "rect",
+      "x": 1150,
+      "y": 172,
+      "width": 440,
+      "height": 70,
+      "label": "代码与项目约定",
+      "sublabel": "文件 / .git / AGENTS.md / .agents/skills",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "appdisk0",
+      "kind": "rect",
+      "x": 70,
+      "y": 347,
+      "width": 440,
+      "height": 70,
+      "label": "userDataPath",
+      "sublabel": "app.getPath(\"userData\")",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "appdisk1",
+      "kind": "rect",
+      "x": 610,
+      "y": 347,
+      "width": 440,
+      "height": 70,
+      "label": "appStoragePath",
+      "sublabel": "userData/lobehub-storage",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "appdisk2",
+      "kind": "rect",
+      "x": 1150,
+      "y": 347,
+      "width": 440,
+      "height": 70,
+      "label": "缓存 / trace",
+      "sublabel": "file-storage/skills；heteroAgent/files、tracing",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "clisession0",
+      "kind": "rect",
+      "x": 70,
+      "y": 522,
+      "width": 440,
+      "height": 70,
+      "label": "Topic metadata",
+      "sublabel": "workingDirectory + heteroSessionId",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "clisession1",
+      "kind": "rect",
+      "x": 610,
+      "y": 522,
+      "width": 440,
+      "height": 70,
+      "label": "CLI 的恢复参数",
+      "sublabel": "Claude --resume / Codex exec resume",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "clisession2",
+      "kind": "rect",
+      "x": 1150,
+      "y": 522,
+      "width": 440,
+      "height": 70,
+      "label": "CLI 自身会话存储",
+      "sublabel": "Claude 按 cwd 组织；由 CLI 管理",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "userdisk0--userdisk1",
+      "source": "userdisk0",
+      "target": "userdisk1",
+      "label": "用户可选择其下目录",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "userdisk1--userdisk2",
+      "source": "userdisk1",
+      "target": "userdisk2",
+      "label": "包含",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "appdisk0--appdisk1",
+      "source": "appdisk0",
+      "target": "appdisk1",
+      "label": "派生",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "appdisk1--appdisk2",
+      "source": "appdisk1",
+      "target": "appdisk2",
+      "label": "存放",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "clisession0--clisession1",
+      "source": "clisession0",
+      "target": "clisession1",
+      "label": "下一轮读取",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "clisession1--clisession2",
+      "source": "clisession1",
+      "target": "clisession2",
+      "label": "加载会话",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 760,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 820
+}

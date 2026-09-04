@@ -1,0 +1,182 @@
+{
+  "slug": "02-native-loop",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1500,
+  "height": 800,
+  "title": "02  原生 agent：一轮模型调用之后发生什么",
+  "subtitle": "以 Gateway + Electron 工具为例；Client 复用相同的 AgentRuntime / GeneralChatAgent 核心。",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "llm",
+      "kind": "double_rect",
+      "x": 100,
+      "y": 180,
+      "width": 340,
+      "height": 88,
+      "label": "① 调用模型",
+      "sublabel": "call_llm；先组装上下文，必要时压缩",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "brain",
+      "kind": "double_rect",
+      "x": 580,
+      "y": 180,
+      "width": 340,
+      "height": 88,
+      "label": "② 决定下一步",
+      "sublabel": "llm_result：无 tool_calls 就 finish",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "exec",
+      "kind": "rect",
+      "x": 1060,
+      "y": 180,
+      "width": 340,
+      "height": 88,
+      "label": "③ 处理工具指令",
+      "sublabel": "审批 / 阻塞策略 → call_tools_batch",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "device",
+      "kind": "rect",
+      "x": 1060,
+      "y": 480,
+      "width": 340,
+      "height": 88,
+      "label": "④ Electron 执行工具",
+      "sublabel": "GatewayConnectionCtr → 文件 / shell",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "result",
+      "kind": "rect",
+      "x": 580,
+      "y": 480,
+      "width": 340,
+      "height": 88,
+      "label": "⑤ 返回工具结果",
+      "sublabel": "content / state / success；写 tool 消息",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "save",
+      "kind": "rect",
+      "x": 100,
+      "y": 480,
+      "width": 340,
+      "height": 88,
+      "label": "⑥ 保存并推进",
+      "sublabel": "newState + events + nextContext",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "llm--brain",
+      "source": "llm",
+      "target": "brain",
+      "label": "模型结果",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "brain--exec",
+      "source": "brain",
+      "target": "exec",
+      "label": "有工具调用",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "exec--device",
+      "source": "exec",
+      "target": "device",
+      "label": "设备请求",
+      "flow": "data",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label_style": "offset"
+    },
+    {
+      "id": "device--result",
+      "source": "device",
+      "target": "result",
+      "label": "工具结果",
+      "flow": "data",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "result--save",
+      "source": "result",
+      "target": "save",
+      "label": "持久化结果",
+      "flow": "data",
+      "source_port": "left",
+      "target_port": "right",
+      "label_style": "offset"
+    },
+    {
+      "id": "save--llm",
+      "source": "save",
+      "target": "llm",
+      "label": "下一 step",
+      "flow": "feedback",
+      "source_port": "top",
+      "target_port": "bottom",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 710,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 770
+}

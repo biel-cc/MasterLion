@@ -1,0 +1,297 @@
+{
+  "slug": "06-skills-workspace",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1660,
+  "height": 805,
+  "title": "06  Skill 执行目录与项目目录是两条链路",
+  "subtitle": "桌面 execScript 会显式选择 Skill 解压目录；项目 workspace init 则只准备模型上下文。",
+  "containers": [
+    {
+      "id": "skillzip",
+      "x": 40,
+      "y": 135,
+      "width": 1580,
+      "height": 134,
+      "label": "A · 桌面 lobe-skills.execScript：下载型 Skill"
+    },
+    {
+      "id": "project",
+      "x": 40,
+      "y": 325,
+      "width": 1580,
+      "height": 134,
+      "label": "B · 设备项目 workspace init：在服务端原生运行准备阶段"
+    },
+    {
+      "id": "cloudskill",
+      "x": 40,
+      "y": 515,
+      "width": 1580,
+      "height": 134,
+      "label": "C · 服务端 SkillsService 的脚本路径"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "skillzip0",
+      "kind": "rect",
+      "x": 70,
+      "y": 177,
+      "width": 327,
+      "height": 70,
+      "label": "首个 activatedSkill",
+      "sublabel": "resolveExecutionDirectory",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "skillzip1",
+      "kind": "rect",
+      "x": 467,
+      "y": 177,
+      "width": 327,
+      "height": 70,
+      "label": "按 zipHash 准备缓存",
+      "sublabel": "下载 zip → extracted/{zipHash}",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "skillzip2",
+      "kind": "rect",
+      "x": 864,
+      "y": 177,
+      "width": 327,
+      "height": 70,
+      "label": "解压目录作为 cwd",
+      "sublabel": "localFileService.runCommand({ cwd })",
+      "fill": "#fff7ed",
+      "stroke": "#fdba74",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "skillzip3",
+      "kind": "rect",
+      "x": 1261,
+      "y": 177,
+      "width": 327,
+      "height": 70,
+      "label": "脚本子进程",
+      "sublabel": "相对资源路径从此目录解析",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "project0",
+      "kind": "rect",
+      "x": 70,
+      "y": 367,
+      "width": 327,
+      "height": 70,
+      "label": "解析项目根目录",
+      "sublabel": "Topic / Agent per-device / Device default",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "project1",
+      "kind": "rect",
+      "x": 467,
+      "y": 367,
+      "width": 327,
+      "height": 70,
+      "label": "设备扫描 + 缓存",
+      "sublabel": "AGENTS.md / CLAUDE.md / skills",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "project2",
+      "kind": "rect",
+      "x": 864,
+      "y": 367,
+      "width": 327,
+      "height": 70,
+      "label": "模型上下文",
+      "sublabel": "指令正文 + project Skill 元数据",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "project3",
+      "kind": "rect",
+      "x": 1261,
+      "y": 367,
+      "width": 327,
+      "height": 70,
+      "label": "按需读取 Skill",
+      "sublabel": "readFile / globFiles 指向绝对路径",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "cloudskill0",
+      "kind": "rect",
+      "x": 70,
+      "y": 557,
+      "width": 440,
+      "height": 70,
+      "label": "runCommand / execScript",
+      "sublabel": "要求 topicId",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "cloudskill1",
+      "kind": "rect",
+      "x": 610,
+      "y": 557,
+      "width": 440,
+      "height": 70,
+      "label": "createSandboxService",
+      "sublabel": "以 userId + topicId 构造服务",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "cloudskill2",
+      "kind": "rect",
+      "x": 1150,
+      "y": 557,
+      "width": 440,
+      "height": 70,
+      "label": "sandbox.callTool",
+      "sublabel": "下载型 Skill 的 zip URL 随参数传入",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "skillzip0--skillzip1",
+      "source": "skillzip0",
+      "target": "skillzip1",
+      "label": "查找 Skill",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "skillzip1--skillzip2",
+      "source": "skillzip1",
+      "target": "skillzip2",
+      "label": "返回 extractedDir",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "skillzip2--skillzip3",
+      "source": "skillzip2",
+      "target": "skillzip3",
+      "label": "spawn",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "project0--project1",
+      "source": "project0",
+      "target": "project1",
+      "label": "initWorkspace RPC",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "project1--project2",
+      "source": "project1",
+      "target": "project2",
+      "label": "注入",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "project2--project3",
+      "source": "project2",
+      "target": "project3",
+      "label": "激活时读取",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "cloudskill0--cloudskill1",
+      "source": "cloudskill0",
+      "target": "cloudskill1",
+      "label": "绑定 topic",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "cloudskill1--cloudskill2",
+      "source": "cloudskill1",
+      "target": "cloudskill2",
+      "label": "云工具",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 715,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 775
+}
