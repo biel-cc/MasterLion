@@ -788,6 +788,65 @@ describe('topic action', () => {
       expect(refreshTopicSpy).toHaveBeenCalled();
     });
   });
+  describe('updateTopicStatus', () => {
+    it('persists status transitions for the same topic in invocation order', async () => {
+      const agentId = 'agent-id';
+      const topicId = 'topic-id';
+      let releaseRunningWrite: (() => void) | undefined;
+      const runningWrite = new Promise<void>((resolve) => {
+        releaseRunningWrite = resolve;
+      });
+      const updateTopicSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockImplementationOnce(() => runningWrite as any)
+        .mockResolvedValueOnce(undefined as any);
+
+      useChatStore.setState({
+        activeAgentId: agentId,
+        topicDataMap: {
+          [topicMapKey({ agentId })]: {
+            currentPage: 1,
+            hasMore: false,
+            isLoadingMore: false,
+            items: [
+              {
+                createdAt: 0,
+                favorite: false,
+                id: topicId,
+                status: 'active',
+                title: 'Topic',
+                updatedAt: 0,
+              },
+            ],
+            pageSize: 20,
+            total: 1,
+          },
+        },
+      } as any);
+
+      const { result } = renderHook(() => useChatStore());
+      let markRunning!: Promise<void>;
+      let markActive!: Promise<void>;
+
+      act(() => {
+        markRunning = result.current.updateTopicStatus({ agentId, status: 'running', topicId });
+        markActive = result.current.updateTopicStatus({ agentId, status: 'active', topicId });
+      });
+
+      await Promise.resolve();
+      expect(updateTopicSpy).toHaveBeenCalledTimes(1);
+      expect(updateTopicSpy).toHaveBeenNthCalledWith(1, topicId, { status: 'running' });
+
+      releaseRunningWrite?.();
+      await Promise.all([markRunning, markActive]);
+
+      expect(updateTopicSpy).toHaveBeenCalledTimes(2);
+      expect(updateTopicSpy).toHaveBeenNthCalledWith(2, topicId, { status: 'active' });
+      expect(useChatStore.getState().topicDataMap[topicMapKey({ agentId })].items[0].status).toBe(
+        'active',
+      );
+    });
+  });
   describe('switchTopic', () => {
     it('should update activeTopicId and call refreshMessages', async () => {
       const topicId = 'topic-id';

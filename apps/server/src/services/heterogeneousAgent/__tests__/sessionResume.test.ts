@@ -16,6 +16,68 @@ describe('HeterogeneousAgentService — phase 2c session id persistence + resume
   afterEach(() => __resetOperationStatesForTesting());
 
   describe('heteroFinish persists sessionId via TopicModel.updateMetadata', () => {
+    it.each([
+      ['success', 'active'],
+      ['error', 'failed'],
+    ] as const)(
+      'persists the terminal topic status for a %s result',
+      async (result, expectedStatus) => {
+        const completeRunningOperation = vi.fn(async () => undefined);
+        const findById = vi.fn(async () => ({
+          agentId: null,
+          id: 'topic-terminal',
+          metadata: {
+            runningOperation: {
+              assistantMessageId: 'asst-terminal',
+              operationId: 'op-terminal',
+            },
+          },
+        }));
+        const updateMetadata = vi.fn(async () => undefined);
+        const topicModel = { completeRunningOperation, findById, updateMetadata } as any;
+        const handler = new HeterogeneousPersistenceHandler({
+          messageModel: {
+            findById: vi.fn(async () => null),
+            listMessagePluginsByTopic: vi.fn(async () => []),
+            update: vi.fn(async () => ({ success: true })),
+          } as any,
+          threadModel: {} as any,
+          topicModel,
+        });
+        await handler.ingest({
+          events: [
+            {
+              data: {},
+              operationId: 'op-terminal',
+              stepIndex: 0,
+              timestamp: 1,
+              type: 'agent_runtime_end',
+            },
+          ],
+          operationId: 'op-terminal',
+          topicId: 'topic-terminal',
+        });
+        const service = new HeterogeneousAgentService({} as any, 'user-1', {
+          persistenceHandler: handler,
+          streamEventManager: createSilentStreamManager(),
+          topicModel,
+        });
+
+        await service.heteroFinish({
+          agentType: 'claude-code',
+          operationId: 'op-terminal',
+          result,
+          topicId: 'topic-terminal',
+        });
+
+        expect(completeRunningOperation).toHaveBeenCalledWith(
+          'topic-terminal',
+          'op-terminal',
+          expectedStatus,
+        );
+      },
+    );
+
     it('writes the CLI session id to topic.metadata.heteroSessionId', async () => {
       const updateMetadata = vi.fn(async () => undefined);
       const findById = vi.fn(async () => ({

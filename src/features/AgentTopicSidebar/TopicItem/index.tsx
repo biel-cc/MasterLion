@@ -27,6 +27,7 @@ import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
 import { useElectronStore } from '@/store/electron';
+import { isTopicRunActive } from '@/utils/client/topic';
 
 import Actions from './Actions';
 import Editing from './Editing';
@@ -270,7 +271,7 @@ const TopicItem = memo<TopicItemProps>(
 
     const isCompleted = status === 'completed';
     const isFailed = status === 'failed';
-    const isRunning = status === 'running';
+    const isRunning = isTopicRunActive({ metadata, status }, isLoading);
     const isWaitingForHuman = status === 'waitingForHuman';
 
     // By-status grouping mixes topics from different projects, so surface each
@@ -364,7 +365,7 @@ const TopicItem = memo<TopicItemProps>(
             if (isWaitingForHuman) {
               return <Icon icon={Hand} size={'small'} style={{ color: cssVar.colorInfo }} />;
             }
-            if (isLoading || isRunning) {
+            if (isRunning) {
               return (
                 <RingLoadingIcon
                   ringColor={loadingRingColor}

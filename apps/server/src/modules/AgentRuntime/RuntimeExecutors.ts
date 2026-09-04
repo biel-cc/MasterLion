@@ -104,6 +104,10 @@ import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { type ExecutionPlan, isDeviceCapablePlan } from '@/helpers/executionTarget';
 import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering';
 import { type EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
+import type {
+  createTraceOptions as CreateTraceOptionsFn,
+  initModelRuntimeFromDB as InitModelRuntimeFromDBFn,
+} from '@/server/modules/ModelRuntime';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import type { HookDispatcher } from '@/server/services/agentRuntime/hooks/HookDispatcher';
 import type {
@@ -976,8 +980,8 @@ const buildToolDiscoveryConfig = (operationToolSet: OperationToolSet, enabledToo
   return { availableTools };
 };
 
-type InitModelRuntime = (typeof import('@/server/modules/ModelRuntime'))['initModelRuntimeFromDB'];
-type CreateTraceOptions = (typeof import('@/server/modules/ModelRuntime'))['createTraceOptions'];
+type InitModelRuntime = typeof InitModelRuntimeFromDBFn;
+type CreateTraceOptions = typeof CreateTraceOptionsFn;
 
 export interface RuntimeExecutorContext {
   agentConfig?: any;
@@ -990,6 +994,12 @@ export interface RuntimeExecutorContext {
   }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
   botContext?: unknown;
   botPlatformContext?: BotPlatformContext;
+  /** Persist the operation-scoped terminal topic state. */
+  completeTopicOperation?: (params: {
+    operationId: string;
+    status: 'active' | 'failed';
+    topicId: string;
+  }) => Promise<unknown>;
   /** External trace-export boundary, wired by AgentRuntimeService in production. */
   createTraceOptions?: CreateTraceOptions;
   discordContext?: any;
@@ -5398,13 +5408,23 @@ export const createRuntimeExecutors = (
 
     log('[%s:%d] Finishing execution: (%s)', operationId, stepIndex, reason);
 
-    // Clear runningOperation from topic metadata so reconnect doesn't trigger after completion
+    // Persist the terminal status on the server as well as clearing the
+    // reconnect pointer. The renderer may have refreshed or disconnected, so
+    // its best-effort terminal write cannot be the source of truth.
     if (ctx.topicId && ctx.userId) {
       try {
-        const topicModel = new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId);
-        await topicModel.updateMetadata(ctx.topicId, { runningOperation: null });
+        if (ctx.completeTopicOperation) {
+          await ctx.completeTopicOperation({
+            operationId,
+            status: 'active',
+            topicId: ctx.topicId,
+          });
+        } else {
+          const topicModel = new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId);
+          await topicModel.completeRunningOperation(ctx.topicId, operationId, 'active');
+        }
       } catch (e) {
-        log('[%s] Failed to clear runningOperation metadata: %O', operationId, e);
+        log('[%s] Failed to persist terminal topic state: %O', operationId, e);
       }
     }
 

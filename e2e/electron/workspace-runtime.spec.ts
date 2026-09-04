@@ -40,7 +40,9 @@ test('AC-W05 production renderer keeps Topic and flat Recent independent from Ta
   // Exactly the two unbound/scratch rows — the workspace-bound row belongs to
   // the group above, and the system-owned rows must never have been fetched.
   await expect(recent.getByTestId('topic-item')).toHaveCount(2);
-  await expect(recent.getByTestId('topic-item').filter({ hasText: 'Pure chat' })).toHaveCount(1);
+  const pureChat = recent.getByTestId('topic-item').filter({ hasText: 'Pure chat' });
+  await expect(pureChat).toHaveCount(1);
+  await expect(pureChat.locator('animateTransform')).toHaveCount(0);
   await expect(recent).not.toContainText(/Task|T-\d+/i);
 
   const order = await sidebar.evaluate((node) => {

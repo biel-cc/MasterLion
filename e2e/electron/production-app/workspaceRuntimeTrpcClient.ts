@@ -78,7 +78,10 @@ const TOPIC_ROWS: TopicRow[] = [
   topic('topic-scratch', 'Temporary work', '2026-09-04T02:00:00.000Z', {
     metadata: { executionSnapshot: executionSnapshot(SCRATCH_WORKSPACE_ID, 'scratch') },
   }),
-  topic('topic-unbound', 'Pure chat', '2026-09-04T01:00:00.000Z'),
+  // Historical residue: older clients could leave status=running behind even
+  // though there is no reconnectable operation. The production sidebar must
+  // render this as idle rather than an infinite spinner.
+  topic('topic-unbound', 'Pure chat', '2026-09-04T01:00:00.000Z', { status: 'running' }),
 ];
 
 const WORKSPACE_ROWS: ProjectWorkspaceItem[] = [

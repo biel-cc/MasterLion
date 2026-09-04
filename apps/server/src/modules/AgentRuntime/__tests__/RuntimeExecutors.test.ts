@@ -339,6 +339,37 @@ describe('RuntimeExecutors', () => {
     });
   });
 
+  describe('finish executor', () => {
+    it('persists the terminal topic state even when no renderer is connected', async () => {
+      const completeTopicOperation = vi.fn().mockResolvedValue(undefined);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        completeTopicOperation,
+        topicId: 'topic-123',
+      } as RuntimeExecutorContext);
+      const state = {
+        cost: createMockCost(),
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        maxSteps: 10,
+        messages: [],
+        operationId: 'op-123',
+        status: 'running',
+        stepCount: 0,
+        toolManifestMap: {},
+        usage: createMockUsage(),
+      } as AgentState;
+
+      await executors.finish!({ reason: 'completed', type: 'finish' }, state);
+
+      expect(completeTopicOperation).toHaveBeenCalledWith({
+        operationId: 'op-123',
+        status: 'active',
+        topicId: 'topic-123',
+      });
+    });
+  });
+
   describe('call_llm executor', () => {
     const createMockState = (overrides?: Partial<AgentState>): AgentState => ({
       cost: createMockCost(),

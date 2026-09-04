@@ -9,6 +9,7 @@ import TopicItem from './index';
 
 const useTopicNavigationMock = vi.hoisted(() => vi.fn());
 const runningStartTimeMock = vi.hoisted(() => ({ value: undefined as number | undefined }));
+const topicLoadingIdsMock = vi.hoisted(() => ({ value: [] as string[] }));
 
 vi.mock('@lobehub/ui', () => ({
   Flexbox: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
@@ -54,6 +55,9 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/const/version', () => ({ isDesktop: false }));
+vi.mock('@/components/RingLoading', () => ({
+  default: () => <div data-testid="topic-running-spinner" />,
+}));
 vi.mock('@/const/url', () => ({
   SESSION_CHAT_TOPIC_URL: (agentId: string, topicId: string) => `/agent/${agentId}/${topicId}`,
 }));
@@ -62,14 +66,17 @@ vi.mock('@/features/NavPanel/components/NavItem', () => ({
     active,
     extra,
     href,
+    icon,
     title,
   }: {
     active?: boolean;
     extra?: ReactNode;
     href?: string;
+    icon?: ReactNode;
     title?: ReactNode;
   }) => (
     <div data-active={String(active)} data-href={href} data-testid="nav-item">
+      {icon}
       {title}
       {extra}
     </div>
@@ -91,7 +98,7 @@ vi.mock('@/store/agent', () => ({
 vi.mock('@/store/chat', () => ({
   useChatStore: (
     selector: (state: { topicLoadingIds: string[]; topicRenamingId: string }) => unknown,
-  ) => selector({ topicLoadingIds: [], topicRenamingId: '' }),
+  ) => selector({ topicLoadingIds: topicLoadingIdsMock.value, topicRenamingId: '' }),
 }));
 vi.mock('@/store/chat/selectors', () => ({
   operationSelectors: {
@@ -122,6 +129,7 @@ const ThreadListStub = ({ topicId }: { topicId: string }) => (
 describe('TopicItem active state', () => {
   afterEach(() => {
     runningStartTimeMock.value = undefined;
+    topicLoadingIdsMock.value = [];
     vi.useRealTimers();
   });
 
@@ -135,12 +143,7 @@ describe('TopicItem active state', () => {
     });
 
     render(
-      <TopicItem
-        ThreadListComponent={ThreadListStub}
-        active={false}
-        id="tpc_test"
-        title="Topic"
-      />,
+      <TopicItem ThreadListComponent={ThreadListStub} active={false} id="tpc_test" title="Topic" />,
     );
 
     expect(screen.getByTestId('nav-item')).toHaveAttribute('data-active', 'true');
@@ -192,5 +195,55 @@ describe('TopicItem active state', () => {
     render(<TopicItem id="tpc_test" status="running" title="Topic" />);
 
     expect(screen.getByText('00:33')).toBeInTheDocument();
+  });
+
+  it('does not show a permanent spinner for a stale persisted running status', () => {
+    useTopicNavigationMock.mockReturnValue({
+      isInAgentSubRoute: false,
+      isInTopicContextRoute: false,
+      navigateToTopic: vi.fn(),
+      routeTopicId: undefined,
+    });
+
+    render(<TopicItem id="tpc_test" status="running" title="Topic" />);
+
+    expect(screen.queryByTestId('topic-running-spinner')).not.toBeInTheDocument();
+    expect(screen.getByTestId('topic-item-icon')).toBeInTheDocument();
+  });
+
+  it('shows the spinner when a persisted gateway operation can be resumed', () => {
+    useTopicNavigationMock.mockReturnValue({
+      isInAgentSubRoute: false,
+      isInTopicContextRoute: false,
+      navigateToTopic: vi.fn(),
+      routeTopicId: undefined,
+    });
+
+    render(
+      <TopicItem
+        id="tpc_test"
+        status="running"
+        title="Topic"
+        metadata={{
+          runningOperation: { assistantMessageId: 'msg_1', operationId: 'op_1' },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('topic-running-spinner')).toBeInTheDocument();
+  });
+
+  it('shows the spinner for an active local run even before persistence catches up', () => {
+    topicLoadingIdsMock.value = ['tpc_test'];
+    useTopicNavigationMock.mockReturnValue({
+      isInAgentSubRoute: false,
+      isInTopicContextRoute: false,
+      navigateToTopic: vi.fn(),
+      routeTopicId: undefined,
+    });
+
+    render(<TopicItem id="tpc_test" status="active" title="Topic" />);
+
+    expect(screen.getByTestId('topic-running-spinner')).toBeInTheDocument();
   });
 });

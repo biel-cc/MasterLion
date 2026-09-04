@@ -1,4 +1,5 @@
 import { type ChatTopic } from '@/types/topic';
+import { isTopicRunActive } from '@/utils/client/topic';
 
 export interface ProjectTopicStatusCounts {
   failed: number;
@@ -23,7 +24,7 @@ export const getProjectTopicStatusCounts = (
         return counts;
       }
 
-      if (loadingTopicIds.has(topic.id) || topic.status === 'running') {
+      if (isTopicRunActive(topic, loadingTopicIds.has(topic.id))) {
         counts.loading += 1;
         return counts;
       }

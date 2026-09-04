@@ -91,6 +91,12 @@ export class ChatTopicActionImpl {
   // clobber the newer topic (see ).
   #switchTopicEpoch = 0;
 
+  // Status callers intentionally don't block the runtime lifecycle, so start
+  // and terminal writes can overlap. Serialize per topic to guarantee that a
+  // slower `running` request can never land after the later `active` request
+  // and leave a completed conversation spinning forever after reload.
+  #topicStatusWriteQueues = new Map<string, Promise<void>>();
+
   constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
     void _api;
     this.#set = set;
@@ -366,9 +372,20 @@ export class ChatTopicActionImpl {
       groupId,
     });
 
-    await topicService.updateTopic(topicId, { status }).catch((err) => {
-      console.error('[updateTopicStatus] persist failed:', err);
-    });
+    const previousWrite = this.#topicStatusWriteQueues.get(topicId) ?? Promise.resolve();
+    const currentWrite = previousWrite
+      .then(() => topicService.updateTopic(topicId, { status }))
+      .catch((err) => {
+        console.error('[updateTopicStatus] persist failed:', err);
+      })
+      .then(() => undefined);
+
+    this.#topicStatusWriteQueues.set(topicId, currentWrite);
+    await currentWrite;
+
+    if (this.#topicStatusWriteQueues.get(topicId) === currentWrite) {
+      this.#topicStatusWriteQueues.delete(topicId);
+    }
   };
 
   autoRenameTopicTitle = async (id: string): Promise<void> => {

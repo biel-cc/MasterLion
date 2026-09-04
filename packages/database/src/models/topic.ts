@@ -956,6 +956,39 @@ export class TopicModel {
   };
 
   /**
+   * Finish one persisted runtime without racing a newer run on the same topic.
+   *
+   * The operation-id predicate and both terminal mutations live in one UPDATE:
+   * an older completion therefore cannot clear the reconnect pointer or status
+   * of a newer operation that started while it was winding down.
+   */
+  completeRunningOperation = async (
+    id: string,
+    operationId: string,
+    status: Extract<ChatTopicStatus, 'active' | 'failed'>,
+  ) =>
+    this.db
+      .update(topics)
+      .set({
+        metadata: sql<ChatTopicMetadata>`jsonb_set(
+          COALESCE(${topics.metadata}, '{}'::jsonb),
+          '{runningOperation}',
+          'null'::jsonb,
+          true
+        )`,
+        status,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(topics.id, id),
+          this.ownership(),
+          eq(sql<string>`${topics.metadata}->'runningOperation'->>'operationId'`, operationId),
+        ),
+      )
+      .returning();
+
+  /**
    * Move multiple topics (and all their messages) to another agent.
    *
    * Reassigns ownership purely through the `agentId` foreign key (the new data
