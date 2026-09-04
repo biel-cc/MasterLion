@@ -1237,6 +1237,13 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
     },
   };
 
+  // The renderer mounts several acceptance surfaces at once. Their runs share
+  // the counted provider/device ports, so overlapping executions would make a
+  // row's before/after deltas include calls from a different row. Keep the
+  // main-process scenarios deterministic while still memoizing each row in the
+  // preload bridge.
+  let acceptanceQueue: Promise<void> = Promise.resolve();
+
   return {
     close: async () => {
       try {
@@ -1251,7 +1258,13 @@ export const createWorkspaceRuntimeAcceptanceRuntime = async (options: {
       if (!isElectronAcceptanceId(acceptanceId)) {
         throw new Error(`${String(acceptanceId)} is not an Electron acceptance row`);
       }
-      return acceptance[acceptanceId]() as never;
+
+      const result = acceptanceQueue.then(() => acceptance[acceptanceId]());
+      acceptanceQueue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result as never;
     },
   };
 };
