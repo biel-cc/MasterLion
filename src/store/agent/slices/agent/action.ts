@@ -113,16 +113,100 @@ const resolveWrittenPaths = (
 };
 
 /**
+ * A monotonic stamp handed to one dispatch. Ownership is identified by stamp,
+ * never by value: two writes that happen to set the same value are different
+ * writes, so the older one must not be able to claim the newer one's state.
+ */
+let lastWriteTicket = 0;
+const nextWriteTicket = (): number => {
+  lastWriteTicket += 1;
+
+  return lastWriteTicket;
+};
+
+/** Which dispatch last landed on one path. */
+interface PathWriteRecord {
+  path: string[];
+  ticket: number;
+}
+
+/**
+ * The write ledger of one agent: path -> the dispatch that last wrote it.
+ *
+ * Deliberately kept out of `agentMap`, which is persisted and handed to the
+ * browser as agent config — a version stamp stored there would show up in the
+ * user's saved config and travel to the server. Its lifetime is instead tied to
+ * the agent entry: {@link AgentSliceActionImpl} drops an agent's ledger as soon
+ * as the agent leaves the map, so a deleted agent leaves nothing behind.
+ */
+type AgentWriteLedger = Map<string, PathWriteRecord>;
+
+const pathKey = (path: string[]): string => JSON.stringify(path);
+
+const arePathsOverlapping = (a: string[], b: string[]): boolean =>
+  isPathPrefix(a, b) || isPathPrefix(b, a);
+
+/**
+ * Record that this dispatch now owns every path it wrote.
+ *
+ * A write at `agencyConfig.env` lands on everything under it, so the records of
+ * those descendants are dropped: their owners have already lost to this ticket,
+ * and this record answers for them. Ancestor records are kept — they hold an
+ * older ticket, so they still lose to this one, and they still own their other
+ * branches. That also bounds the ledger to the agent's own path set.
+ */
+const claimWrittenPaths = (ledger: AgentWriteLedger, paths: string[][], ticket: number): void => {
+  for (const path of paths) {
+    for (const [key, record] of ledger) {
+      if (record.path.length > path.length && isPathPrefix(path, record.path)) ledger.delete(key);
+    }
+
+    ledger.set(pathKey(path), { path, ticket });
+  }
+};
+
+/**
+ * Whether the dispatch holding `ticket` is still the writer of `path`.
+ *
+ * Losing the record at all — overwritten by a same-path write, swept away with
+ * a replaced ancestor, or dropped with the agent — means someone else took the
+ * path over. Overlap counts as a takeover in both directions: a later leaf write
+ * owns part of what an earlier subtree replace wrote, so that subtree can no
+ * longer be undone as one unit, and a later subtree replace covers an earlier
+ * leaf.
+ */
+const stillOwnsWrittenPath = (
+  ledger: AgentWriteLedger | undefined,
+  path: string[],
+  ticket: number,
+): boolean => {
+  if (!ledger) return false;
+
+  const record = ledger.get(pathKey(path));
+  if (!record || record.ticket !== ticket) return false;
+
+  for (const other of ledger.values()) {
+    if (other.ticket > ticket && arePathsOverlapping(other.path, path)) return false;
+  }
+
+  return true;
+};
+
+/**
  * What this update left at one path once its optimistic write landed: the
- * value plus whether the path exists at all. Rollback compares the live map
- * against this snapshot, so a path some later write has already changed is
- * recognised as no longer ours.
+ * value plus whether the path exists at all.
  */
 interface OptimisticWrite {
   /** Whether the path exists, so a later deletion is not mistaken for our value. */
   present: boolean;
   path: string[];
   value: unknown;
+}
+
+/** One request's optimistic writes, together with the ticket that owns them. */
+interface OptimisticWriteBatch {
+  ticket: number;
+  writes: OptimisticWrite[];
 }
 
 /**
@@ -141,17 +225,13 @@ const snapshotOptimisticWrites = (
   }));
 
 /**
- * Compare-and-swap guard: this update may only undo a path that still carries
- * the value it wrote. Without it, two saves racing on one path let the loser's
- * rollback overwrite the winner with a value older than either — a silent data
- * loss the user never sees.
- *
- * Equivalence is by value, not by identity: another write that re-set the same
- * value is indistinguishable here and its path is rolled back. That is the
- * price of keeping this local; the alternative is a per-path writer token
- * threaded through every dispatch.
+ * Secondary guard, on top of the ledger: the value must also still be the one
+ * we wrote. The ledger only sees writes that go through `internal_dispatchAgentMap`,
+ * so this catches a path changed by something that sets `agentMap` directly.
+ * It is a backstop, not the ownership test — a same-value write is caught by the
+ * ticket, which this check cannot see.
  */
-const stillHoldsOptimisticWrite = (
+const stillHoldsOptimisticValue = (
   current: PartialDeep<AgentItem>,
   { path, present, value }: OptimisticWrite,
 ): boolean => {
@@ -164,21 +244,34 @@ const stillHoldsOptimisticWrite = (
 /**
  * Undo only the paths this update wrote and still owns. Restoring the whole
  * pre-update agent would discard any concurrent successful write — e.g. a meta
- * update that landed while this config save was still in flight.
+ * update that landed while this config save was still in flight — and undoing a
+ * path a later write took over would overwrite the winner with a value older
+ * than either, a silent data loss the user never sees.
+ *
+ * Consumes the records it undoes: a rolled-back write no longer exists, so it
+ * should not keep a path (an env key the user has since deleted, say) on the
+ * ledger for the rest of the session.
  */
 const rollbackWrittenPaths = (
   agentMap: AgentMap,
   id: string,
   previousAgent: PartialDeep<AgentItem> | undefined,
-  writes: OptimisticWrite[],
+  { ticket, writes }: OptimisticWriteBatch,
+  ledger: AgentWriteLedger | undefined,
 ): AgentMap => {
   const currentAgent = agentMap[id];
   // A newer write already dropped the entry; it owns the state now.
   if (!currentAgent) return agentMap;
 
   const paths = writes
-    .filter((write) => stillHoldsOptimisticWrite(currentAgent, write))
+    .filter(
+      (write) =>
+        stillOwnsWrittenPath(ledger, write.path, ticket) &&
+        stillHoldsOptimisticValue(currentAgent, write),
+    )
     .map((write) => write.path);
+
+  for (const path of paths) ledger?.delete(pathKey(path));
 
   return produce(agentMap, (draft) => {
     const current = draft[id];
@@ -230,6 +323,8 @@ export class AgentSliceActionImpl {
   readonly #get: () => AgentStore;
   readonly #set: Setter;
   readonly #pendingAgentDocuments = new Map<string, Promise<AgentContextDocument[] | undefined>>();
+  /** agent id -> its write ledger; see {@link AgentWriteLedger} for why it lives here. */
+  readonly #writeLedgers = new Map<string, AgentWriteLedger>();
 
   constructor(set: Setter, get: () => AgentStore, _api?: unknown) {
     void _api;
@@ -632,11 +727,55 @@ export class AgentSliceActionImpl {
     return request;
   };
 
+  /**
+   * A write ledger only means anything while its agent is in the map, so an
+   * agent that has been deleted — here or by any other slice — takes its ledger
+   * with it. Without this the ledgers would grow for the lifetime of the tab.
+   */
+  #releaseLedgersForMissingAgents = (agentMap: AgentMap): void => {
+    for (const id of this.#writeLedgers.keys()) {
+      if (!(id in agentMap)) this.#writeLedgers.delete(id);
+    }
+  };
+
+  #claimPathsForDispatch = (id: string, paths: string[][]): number => {
+    const ticket = nextWriteTicket();
+    // A dispatch that writes nothing owns nothing, and must not open a ledger.
+    if (paths.length === 0) return ticket;
+
+    let ledger = this.#writeLedgers.get(id);
+    if (!ledger) {
+      ledger = new Map();
+      this.#writeLedgers.set(id, ledger);
+    }
+
+    claimWrittenPaths(ledger, paths, ticket);
+
+    return ticket;
+  };
+
+  /**
+   * @returns the ticket this dispatch claimed for the paths it wrote, so an
+   * optimistic caller can later ask whether it still owns them.
+   */
   internal_dispatchAgentMap = (
     id: string,
     config: PartialDeep<LobeAgentConfig>,
     options?: Pick<AgentConfigUpdateOptions, 'replacePaths'>,
-  ): void => {
+  ): number => {
+    // Swept against the map as it is now, before this dispatch can re-create a
+    // deleted agent: an entry that is gone takes the ownership of every request
+    // still in flight against it with it.
+    this.#releaseLedgersForMissingAgents(this.#get().agentMap);
+
+    // Claimed before the no-op check below: re-writing the value a pending request
+    // already put there is still a write, and it has to take the path over, or that
+    // request could later roll the value back out from under it.
+    const ticket = this.#claimPathsForDispatch(
+      id,
+      resolveWrittenPaths(config, options?.replacePaths),
+    );
+
     const agentMap = produce(this.#get().agentMap, (draft) => {
       if (!draft[id]) {
         draft[id] = config;
@@ -651,9 +790,11 @@ export class AgentSliceActionImpl {
       }
     });
 
-    if (isEqual(this.#get().agentMap, agentMap)) return;
+    if (isEqual(this.#get().agentMap, agentMap)) return ticket;
 
     this.#set({ agentMap }, false, 'dispatchAgentMap');
+
+    return ticket;
   };
 
   optimisticUpdateAgentConfig = async (
@@ -666,15 +807,19 @@ export class AgentSliceActionImpl {
     const previousAgent = this.#get().agentMap[id];
 
     // 1. Optimistic update (instant UI feedback)
-    internal_dispatchAgentMap(id, data, options);
+    const ticket = internal_dispatchAgentMap(id, data, options);
     updateSaveStatus('saving');
 
-    // Snapshot what this request just wrote, so a later rollback can tell its
-    // own optimistic value apart from one a concurrent write has since landed.
-    const optimisticWrites = snapshotOptimisticWrites(
-      this.#get().agentMap[id],
-      resolveWrittenPaths(data, options?.replacePaths),
-    );
+    // Snapshot what this request just wrote, under the ticket that owns it, so a
+    // later rollback can tell its own write apart from a concurrent one — even
+    // when the concurrent write happens to have set the same value.
+    const optimisticWrites: OptimisticWriteBatch = {
+      ticket,
+      writes: snapshotOptimisticWrites(
+        this.#get().agentMap[id],
+        resolveWrittenPaths(data, options?.replacePaths),
+      ),
+    };
 
     try {
       // 2. API call returns updated agent data
@@ -699,15 +844,18 @@ export class AgentSliceActionImpl {
       // means a newer write already owns that state, so leave the map to the newer write.
       // Roll back only the paths this update touched and still owns: restoring the whole
       // agent would clobber a concurrent successful write (e.g. a meta update) on other
-      // fields, and restoring a path another write has since changed would clobber it there.
+      // fields, and restoring a path a later write took over would clobber it there.
       if (!aborted) {
         const agentMap = rollbackWrittenPaths(
           this.#get().agentMap,
           id,
           previousAgent,
           optimisticWrites,
+          this.#writeLedgers.get(id),
         );
         this.#set({ agentMap }, false, 'rollbackAgentConfig');
+        // The rollback may have removed the agent it created.
+        this.#releaseLedgersForMissingAgents(agentMap);
       }
 
       if (options?.throwOnError) throw error;

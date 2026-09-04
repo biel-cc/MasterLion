@@ -853,6 +853,185 @@ describe('AgentSlice Actions', () => {
       consoleError.mockRestore();
     });
 
+    it('leaves a path alone when a later write re-set the value this one wrote', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'gpt-3.5-turbo' } },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        // A second save lands on the same field with the same value. Nothing in the
+        // map changes, so it is invisible to a value comparison — but it owns
+        // `model` now, and its write is the one the server confirmed.
+        result.current.internal_dispatchAgentMap('agent-1', { model: 'gpt-4' });
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4' });
+      consoleError.mockRestore();
+    });
+
+    it('leaves a path alone when later writes cycled it back to the value it wrote', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'gpt-3.5-turbo' } },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        // A → B → A: the value is back to the one this update wrote, but two other
+        // writes have owned the path since.
+        result.current.internal_dispatchAgentMap('agent-1', { model: 'gpt-4o' });
+        result.current.internal_dispatchAgentMap('agent-1', { model: 'gpt-4' });
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4' });
+      consoleError.mockRestore();
+    });
+
+    it('leaves a replaced subtree alone when a later write landed on a leaf inside it', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': { agencyConfig: { env: { KEEP: 'yes', REMOVED: 'old' } } } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig(
+          'agent-1',
+          { agencyConfig: { env: { KEEP: 'yes' } } } as any,
+          undefined,
+          { replacePaths: ['agencyConfig.env'] },
+        );
+        // A leaf write inside the replaced subtree: the subtree is no longer this
+        // update's to undo as one unit, even though its own value is untouched.
+        result.current.internal_dispatchAgentMap('agent-1', {
+          agencyConfig: { env: { KEEP: 'yes' } },
+        } as any);
+        await pending;
+      });
+
+      // Restoring the subtree would resurrect `REMOVED`, which the leaf writer saw gone.
+      expect((result.current.agentMap['agent-1'] as any).agencyConfig.env).toEqual({ KEEP: 'yes' });
+      consoleError.mockRestore();
+    });
+
+    it('leaves a leaf alone when a later replace rewrote the subtree around it', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: {
+            'agent-1': { agencyConfig: { env: { FOO: 'old', KEEP: 'yes' } } } as any,
+          },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', {
+          agencyConfig: { env: { FOO: 'new' } },
+        } as any);
+        // A wholesale replace of the enclosing subtree, which happens to keep this
+        // update's leaf value while dropping `KEEP`.
+        result.current.internal_dispatchAgentMap(
+          'agent-1',
+          { agencyConfig: { env: { FOO: 'new' } } } as any,
+          { replacePaths: ['agencyConfig.env'] },
+        );
+        await pending;
+      });
+
+      // Undoing the leaf would put `FOO: 'old'` back inside the winner's subtree.
+      expect((result.current.agentMap['agent-1'] as any).agencyConfig.env).toEqual({ FOO: 'new' });
+      consoleError.mockRestore();
+    });
+
+    it('releases its ownership when the agent is deleted, even if the id comes back', async () => {
+      const { result } = renderHook(() => useAgentStore());
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(agentService.updateAgentConfig).mockRejectedValue(new Error('offline'));
+
+      act(() => {
+        useAgentStore.setState({
+          activeAgentId: 'agent-1',
+          agentMap: { 'agent-1': { model: 'gpt-3.5-turbo' } },
+        });
+      });
+
+      await act(async () => {
+        const pending = result.current.optimisticUpdateAgentConfig('agent-1', { model: 'gpt-4' });
+        // The agent is deleted while the save is in flight. The next dispatch — for
+        // any agent — drops the bookkeeping it left behind, so it neither outlives
+        // the agent nor follows the id into whatever is created under it next.
+        useAgentStore.setState({ agentMap: {} });
+        result.current.internal_dispatchAgentMap('agent-2', { model: 'unrelated' });
+        useAgentStore.setState((state) => ({
+          agentMap: { ...state.agentMap, 'agent-1': { model: 'gpt-4' } },
+        }));
+        await pending;
+      });
+
+      expect(result.current.agentMap['agent-1']).toEqual({ model: 'gpt-4' });
+      consoleError.mockRestore();
+    });
+
+    it('keeps its write bookkeeping out of the stored agent config', async () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      vi.mocked(agentService.updateAgentConfig).mockResolvedValue({
+        agent: { agencyConfig: { env: { KEEP: 'yes' } }, id: 'agent-1', model: 'gpt-4' },
+        success: true,
+      } as any);
+
+      act(() => {
+        useAgentStore.setState({ activeAgentId: 'agent-1', agentMap: {} });
+      });
+
+      await act(async () => {
+        await result.current.optimisticUpdateAgentConfig('agent-1', {
+          agencyConfig: { env: { KEEP: 'yes' } },
+          model: 'gpt-4',
+        } as any);
+      });
+
+      // Ownership is tracked outside the map: what is stored — and later persisted
+      // and sent to the server — is exactly the config, at every level.
+      expect(result.current.agentMap['agent-1']).toEqual({
+        agencyConfig: { env: { KEEP: 'yes' } },
+        id: 'agent-1',
+        model: 'gpt-4',
+      });
+    });
+
     it('keeps a concurrently created entry when the failed update created the agent', async () => {
       const { result } = renderHook(() => useAgentStore());
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
