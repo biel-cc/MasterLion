@@ -7,7 +7,12 @@ on:
       - '.github/actions/desktop-upload-artifacts/**'
       - '.github/workflows/build-desktop-test.yml'
       - 'apps/desktop/**'
-      - 'packages/device-gateway-client/**'
+      - 'src/**'
+      - 'packages/**'
+      - 'locales/**'
+      - 'plugins/vite/**'
+      - 'package.json'
+      - 'tsconfig.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
   workflow_dispatch: {}
