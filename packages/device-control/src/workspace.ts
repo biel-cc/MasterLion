@@ -125,9 +125,15 @@ const readRegularContainedFile = async (
     } finally {
       await file.close();
     }
-  } catch {
+  } catch (error) {
+    rethrowScanFailure(error);
     return undefined;
   }
+};
+
+const rethrowScanFailure = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'ELOOP') throw error;
 };
 
 const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
@@ -139,7 +145,8 @@ const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
     let entries;
     try {
       entries = await readdir(current, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      rethrowScanFailure(error);
       continue;
     }
     for (const entry of entries) {
@@ -152,7 +159,8 @@ const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
           if (entryStat.isDirectory() && isPathContained(dir, canonicalEntry)) {
             stack.push(canonicalEntry);
           }
-        } catch {
+        } catch (error) {
+          rethrowScanFailure(error);
           // Entry disappeared or was swapped while scanning; ignore it.
         }
       } else if (entry.isFile()) {
@@ -167,7 +175,8 @@ const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
             results.push(toPosixRelativePath(path.relative(dir, canonicalEntry)));
             if (results.length >= MAX_SKILL_FILE_COUNT) break;
           }
-        } catch {
+        } catch (error) {
+          rethrowScanFailure(error);
           // Entry disappeared or was swapped while scanning; ignore it.
         }
       }
@@ -206,7 +215,7 @@ const parseSkillFrontmatter = (raw: string): Record<string, string> => {
 /**
  * Scan one skill source directory (e.g. `.agents/skills`) under `root` and
  * return parsed frontmatter for each `SKILL.md`. Returns `[]` when the source
- * directory is absent or unreadable. Unsorted — callers sort/merge.
+ * directory is absent; I/O failures propagate. Unsorted — callers sort/merge.
  */
 const scanSkillsInSource = async (
   root: string,
@@ -219,7 +228,8 @@ const scanSkillsInSource = async (
     dir = await realpath(requestedDir);
     if (!isPathContained(root, dir) || !(await stat(dir)).isDirectory()) return [];
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    rethrowScanFailure(error);
     return [];
   }
 
@@ -252,7 +262,8 @@ const scanSkillsInSource = async (
             skillDir,
             source,
           };
-        } catch {
+        } catch (error) {
+          rethrowScanFailure(error);
           return null;
         }
       }),
@@ -295,7 +306,7 @@ export const listProjectSkills = async (
 ): Promise<ListProjectSkillsResult> => {
   const root = params.scope;
   const scanRoot = await resolveScanRoot(root);
-  if (!scanRoot) return { root, skills: [], source: null };
+  if (!scanRoot) throw new Error('Workspace scan root is unavailable');
 
   for (const source of SKILL_SOURCES) {
     const skills = (await scanSkillsInSource(scanRoot, source)).sort((a, b) =>
@@ -324,7 +335,7 @@ export const initWorkspace = async (
 ): Promise<InitWorkspaceResult> => {
   const root = params.scope;
   const scanRoot = await resolveScanRoot(root);
-  if (!scanRoot) return { instructions: [], root, skills: [] };
+  if (!scanRoot) throw new Error('Workspace scan root is unavailable');
 
   const seen = new Set<string>();
   const skills: ProjectSkillItem[] = [];

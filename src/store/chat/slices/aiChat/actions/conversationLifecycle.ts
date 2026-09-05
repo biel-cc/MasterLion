@@ -525,7 +525,7 @@ export class ConversationLifecycleActionImpl {
       skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
       userId: 'client-user',
       workspace: frozenWorkspace,
-      workspaceInit: workspaceItem?.scan,
+      workspaceInit: undefined,
     };
 
     // Preserve renderer-local execution for ordinary Electron chat. Only
@@ -610,7 +610,7 @@ export class ConversationLifecycleActionImpl {
       isHetero: !!heterogeneousProvider,
       operationId,
       requestedDeviceId: pendingExecution?.intent.targetDeviceId,
-      snapshot: existingTopic?.metadata?.executionSnapshot ?? topicWorkspaceState?.snapshot,
+      snapshot: topicWorkspaceState?.snapshot ?? existingTopic?.metadata?.executionSnapshot,
       topicGrants: Object.values(projectWorkspaceState.grantsByTopicDevice).flat(),
       topicId: context.topicId ?? undefined,
       topic: existingTopic
@@ -1307,6 +1307,7 @@ export class ConversationLifecycleActionImpl {
 
           await executeClientAgent({
             context: execContext,
+            directUserMessageId: data.userMessageId,
             executionContext: frozenExecutionContext,
             initialContext: mergedAgentRuntimeInitialContext,
             metadata: requestMetadata,

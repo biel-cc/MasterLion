@@ -102,7 +102,7 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   }
 
   private workspaceRequired(ctx?: BuiltinToolContext): BuiltinToolResult | undefined {
-    if (!ctx || ctx.workingDirectory) return;
+    if (!ctx || ctx.workingDirectory || ctx.executionContext) return;
     return {
       content: 'WORKSPACE_REQUIRED',
       error: { message: 'WORKSPACE_REQUIRED', type: 'PluginServerError' },

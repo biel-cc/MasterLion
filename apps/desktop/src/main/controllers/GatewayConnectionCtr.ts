@@ -31,6 +31,7 @@ import type {
 } from '@lobechat/electron-client-ipc';
 import {
   composeChildProcessEnv,
+  toolNeedsDefaultCwd,
   ExecutionBoundaryError,
   type ExecutionBoundaryTrace,
   loadWorkspaceEnvFiles,
@@ -165,6 +166,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
   /** Maps topicId → hermes session_id for multi-turn conversation continuity. */
   private readonly hermesSessionMap = new Map<string, string>();
 
+  private readonly localScratchExecutions = new Map<
+    string,
+    { at: number; deviceId: string; root: string; output: BuiltinServerRuntimeOutput }
+  >();
+
+  private readonly pendingLocalToolCalls = new Map<string, Promise<BuiltinServerRuntimeOutput>>();
+
   private localSystemRuntime: LocalSystemExecutionRuntime | null = null;
 
   // ─── Service Accessor ───
@@ -297,13 +305,109 @@ export default class GatewayConnectionCtr extends ControllerModule {
     purpose?: 'skill-command' | 'skill-script';
     trace?: ExecutionBoundaryTrace;
   }): Promise<BuiltinServerRuntimeOutput> {
-    return this.executeToolCall(
+    const { trace } = params;
+    if (!trace?.topicId || !trace.operationId || !trace.toolCallId) {
+      return this.executeLocalToolCallOnce(params);
+    }
+    const key = JSON.stringify([
+      trace.deviceId,
+      trace.topicId,
+      trace.operationId,
+      trace.toolCallId,
+    ]);
+    const pending = this.pendingLocalToolCalls.get(key);
+    if (pending) return pending;
+    const execution = this.executeLocalToolCallOnce(params);
+    this.pendingLocalToolCalls.set(key, execution);
+    try {
+      return await execution;
+    } finally {
+      this.pendingLocalToolCalls.delete(key);
+    }
+  }
+
+  private async executeLocalToolCallOnce(
+    params: Parameters<GatewayConnectionCtr['executeLocalToolCall']>[0],
+  ): Promise<BuiltinServerRuntimeOutput> {
+    const { trace } = params;
+    let context = params.executionContext;
+    const key = JSON.stringify([trace?.topicId, trace?.operationId, trace?.toolCallId]);
+    const previous = this.localScratchExecutions.get(key);
+    if (
+      previous &&
+      previous.deviceId === trace?.deviceId &&
+      previous.deviceId === this.service.getDeviceId()
+    ) {
+      // Replaying a known success renews its evidence without running the command again.
+      previous.at = Date.now();
+      return previous.output;
+    }
+    let scratchRoot: string | undefined;
+    if (
+      context &&
+      !context.cwd &&
+      !params.purpose &&
+      toolNeedsDefaultCwd(params.apiName, params.args)
+    ) {
+      if (
+        !trace?.topicId ||
+        !trace.operationId ||
+        !trace.toolCallId ||
+        trace.deviceId !== this.service.getDeviceId()
+      ) {
+        return { content: 'WORKSPACE_REQUIRED', success: false };
+      }
+      const prepared = (await this.executeDeviceRpc('ensureScratchWorkspace', {
+        topicId: trace.topicId,
+      })) as { root: string };
+      scratchRoot = prepared.root;
+      context = {
+        ...context,
+        cwd: scratchRoot,
+        workspaceKind: 'scratch',
+        workspaceRootPath: scratchRoot,
+        accessRoots: [
+          ...(context.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+          {
+            rootPath: scratchRoot,
+            modes: ['read', 'write', 'exec'],
+            scope: 'primary',
+            source: 'workspace',
+          },
+        ],
+      };
+    }
+    const result = await this.executeToolCall(
       params.apiName,
       params.args,
-      params.executionContext,
-      params.trace,
+      context,
+      trace,
       params.purpose,
     );
+    const commandFailed =
+      result.state &&
+      typeof result.state === 'object' &&
+      'success' in result.state &&
+      result.state.success === false;
+    if (!scratchRoot || !result.success || commandFailed) return result;
+    const output = {
+      ...result,
+      state: {
+        ...(typeof result.state === 'object' && result.state
+          ? result.state
+          : { result: result.state }),
+        localScratch: { root: scratchRoot },
+      },
+    };
+    // Retain unacknowledged successes for this main-process lifetime. Evicting
+    // one on another topic's activity could replay a command with side effects.
+    this.localScratchExecutions.set(key, {
+      at: Date.now(),
+      deviceId: this.service.getDeviceId(),
+      root: scratchRoot,
+      output,
+    });
+    return output;
   }
 
   // ─── Auto Connect ───
@@ -437,11 +541,20 @@ export default class GatewayConnectionCtr extends ControllerModule {
           logger.error(`Failed to approve project preview root ${root}:`, error);
         }
       },
+      getLocalScratchExecution: ({ topicId, operationId, toolCallId }) => {
+        const entry = this.localScratchExecutions.get(
+          JSON.stringify([topicId, operationId, toolCallId]),
+        );
+        return entry && entry.deviceId === this.service.getDeviceId()
+          ? { root: entry.root }
+          : undefined;
+      },
       getLocalFilePreview: (params) => this.localFileCtr.getLocalFilePreview(params),
       getProjectFileIndex: (params) => this.localFileCtr.getProjectFileIndex(params),
       runHeterogeneousAgent: (request) =>
         this.executeAgentRun({ ...request, type: 'agent_run_request' }),
       scratchRoot: path.join(this.app.appStoragePath, 'scratch-workspaces'),
+      skillCacheRoot: path.join(this.app.appStoragePath, 'file-storage', 'skills'),
     };
   }
 

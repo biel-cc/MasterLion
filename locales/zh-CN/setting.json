@@ -2075,8 +2075,10 @@
   "workspaceSkills.materialize.off": "不实体化",
   "workspaceSkills.materialize.project": "项目技能目录",
   "workspaceSkills.materialize.user": "个人技能目录",
+  "workspaceSkills.retry": "重试",
   "workspaceSkills.save": "保存技能策略",
   "workspaceSkills.saveError": "无法保存技能策略。",
   "workspaceSkills.saveSuccess": "技能策略已保存。",
+  "workspaceSkills.scanError": "无法扫描项目技能，请检查设备连接后重试。",
   "workspaceSkills.title": "工作空间技能"
 }

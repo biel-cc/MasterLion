@@ -12,9 +12,14 @@ const mocks = vi.hoisted(() => ({
   deviceSwitcherProps: {} as Record<string, unknown>,
   effective: {} as EffectiveWorkspace,
   seamAvailable: false,
+  desktop: true,
 }));
 
-vi.mock('@lobechat/const', () => ({ isDesktop: true }));
+vi.mock('@lobechat/const', () => ({
+  get isDesktop() {
+    return mocks.desktop;
+  },
+}));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/hooks/useEffectiveWorkspace', () => ({
   useEffectiveWorkspace: () => mocks.effective,
@@ -56,6 +61,7 @@ vi.mock('./useRepoType', () => ({ useRepoType: () => undefined }));
 
 describe('WorkspaceControls topic ownership', () => {
   beforeEach(() => {
+    mocks.desktop = true;
     mocks.deviceSwitcherProps = {};
     mocks.seamAvailable = false;
     mocks.effective = {
@@ -78,6 +84,17 @@ describe('WorkspaceControls topic ownership', () => {
       targetDeviceId: 'device-1',
       workspace: { deviceId: 'device-1', kind: 'device', rootPath: '/projects/legacy' },
     };
+  });
+
+  it('Web projects retain their device identity without directory or Git controls', () => {
+    mocks.desktop = false;
+    mocks.effective.isDraft = false;
+    render(<WorkspaceControls agentId="agent-1" />);
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('git-status')).not.toBeInTheDocument();
+    expect(mocks.deviceSwitcherProps.executionTarget).toBe('device');
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(true);
   });
 
   it('keeps a historical workspace readable but immutable on an old server', () => {

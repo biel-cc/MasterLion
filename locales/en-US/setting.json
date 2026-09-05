@@ -2075,8 +2075,10 @@
   "workspaceSkills.materialize.off": "Do not materialize",
   "workspaceSkills.materialize.project": "Project skill directory",
   "workspaceSkills.materialize.user": "Personal skill directory",
+  "workspaceSkills.retry": "Retry",
   "workspaceSkills.save": "Save skill policy",
   "workspaceSkills.saveError": "Could not save the skill policy.",
   "workspaceSkills.saveSuccess": "Skill policy saved.",
+  "workspaceSkills.scanError": "Could not scan project skills. Check the device connection and retry.",
   "workspaceSkills.title": "Workspace skills"
 }

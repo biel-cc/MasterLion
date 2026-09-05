@@ -69,6 +69,43 @@ describe('desktop skills execution', () => {
     }));
   });
 
+  it('activates and reads references using frozen project file access', async () => {
+    const skill = {
+      description: 'test',
+      identifier: 'demo',
+      key: 'project:demo',
+      location: '/workspace/project/.agents/skills/demo/SKILL.md',
+      name: 'demo',
+      scope: 'project' as const,
+      source: 'project' as const,
+    };
+    const ctx = { ...context, operationSkills: [skill] };
+    executeLocalToolCall.mockImplementation(async ({ apiName }: { apiName: string }) =>
+      apiName === 'globFiles'
+        ? { content: 'Found 1 file', state: { files: ['references/readme.md'] }, success: true }
+        : { content: 'Reference content', success: true },
+    );
+    expect((await skillsExecutor.activateSkill({ name: 'demo' }, ctx)).success).toBe(true);
+    expect(
+      (await skillsExecutor.readReference({ id: 'demo', path: 'references/readme.md' }, ctx))
+        .success,
+    ).toBe(true);
+    expect(executeLocalToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiName: 'readFile',
+        args: expect.objectContaining({
+          path: '/workspace/project/.agents/skills/demo/references/readme.md',
+        }),
+        trace: expect.objectContaining({ deviceId: 'device-a', operationId: 'operation-a' }),
+      }),
+    );
+    executeLocalToolCall.mockClear();
+    expect(
+      (await skillsExecutor.readReference({ id: 'demo', path: '../secret' }, ctx)).success,
+    ).toBe(false);
+    expect(executeLocalToolCall).not.toHaveBeenCalled();
+  });
+
   it('runs a general skill command in the frozen workspace through main process', async () => {
     await skillsExecutor.runCommand({ command: 'pwd' }, context);
 

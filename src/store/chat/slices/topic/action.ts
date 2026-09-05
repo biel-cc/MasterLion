@@ -10,7 +10,9 @@ import useSWR from 'swr';
 
 import { message } from '@/components/AntdStaticMethods';
 import { LOADING_FLAT } from '@/const/message';
+import { isDesktop } from '@/const/version';
 import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
+import { normalizeNewTopicIntent } from '@/helpers/workspacePlatform';
 import { mutate, useClientDataSWRWithSync } from '@/libs/swr';
 import { cronKeys, topicKeys } from '@/libs/swr/keys';
 import { chatService } from '@/services/chat';
@@ -54,13 +56,13 @@ type CronTopicsGroupWithJobInfo = {
 
 export type NewTopicExecutionIntent = Omit<WorkspaceDraftIntent, 'updatedAt'>;
 
-const localNewTopicIntent = (): NewTopicExecutionIntent => ({ target: 'local' });
+const localNewTopicIntent = (): NewTopicExecutionIntent => (isDesktop ? { target: 'local' } : {});
 
 const resolveInheritedProjectIntent = (
   topicId: string | undefined,
   chatState: ChatStore,
 ): NewTopicExecutionIntent => {
-  if (!topicId) return localNewTopicIntent();
+  if (!isDesktop || !topicId) return localNewTopicIntent();
 
   const workspaceState = getProjectWorkspaceStoreState();
   const topicState = workspaceState.topicStatesById[topicId];
@@ -200,7 +202,7 @@ export class ChatTopicActionImpl {
       const workspaceStore = getProjectWorkspaceStoreState();
       const key = buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId });
       workspaceStore.clearDraftIntent(key);
-      workspaceStore.setDraftWorkspaceIntent(key, intent);
+      workspaceStore.setDraftWorkspaceIntent(key, normalizeNewTopicIntent(intent, isDesktop));
     }
   };
 

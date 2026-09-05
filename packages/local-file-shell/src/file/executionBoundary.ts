@@ -484,6 +484,23 @@ const collectPathRequests = (
  * Strict v2 device adapter. Context-free calls take the explicit legacy branch;
  * context-bearing calls never fall back to process.cwd(), home, or Desktop.
  */
+/** Classify before materializing scratch, using the same path fields as the boundary. */
+export const toolNeedsDefaultCwd = (apiName: string, args: Record<string, any>): boolean => {
+  if (!LOCAL_SYSTEM_APIS.has(apiName)) return false;
+  if (apiName === 'runCommand' || apiName === 'runHeteroTask') return true;
+  const requests = collectPathRequests(apiName, args, '');
+  return requests.some(
+    ({ value }) =>
+      !value ||
+      !(
+        path.posix.isAbsolute(value) ||
+        path.win32.isAbsolute(value) ||
+        value.startsWith('~/') ||
+        value.startsWith('~\\')
+      ),
+  );
+};
+
 export const prepareToolCallExecution = async <T extends Record<string, any>>({
   allowedMountRoots = [],
   apiName,

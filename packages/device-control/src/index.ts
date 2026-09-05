@@ -3,6 +3,7 @@ export { DEVICE_RPC_METHODS, type DeviceRpcMethod, executeDeviceRpc } from './di
 export { defaultGetLocalFilePreview } from './filePreview';
 export { defaultGetProjectFileIndex } from './projectFileIndex';
 export * from './projectSkillAuthoring';
+export { prepareSkillPackage } from './skillPackage';
 export * from './types';
 export {
   cleanupScratchWorkspace,

@@ -5,6 +5,7 @@ import type {
 
 import { isDesktop } from '@/const/version';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
+import { normalizeNewTopicIntent } from '@/helpers/workspacePlatform';
 import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
@@ -35,7 +36,8 @@ export const resolvePendingTopicExecutionIntent = async (params: {
 
   const workspaceState = getProjectWorkspaceStoreState();
   const draftKey = isNewTopic ? buildDraftConversationKey({ agentId, groupId }) : undefined;
-  const draft = draftKey ? workspaceState.draftByConversationKey[draftKey] : undefined;
+  const rawDraft = draftKey ? workspaceState.draftByConversationKey[draftKey] : undefined;
+  const draft = rawDraft ? normalizeNewTopicIntent(rawDraft, isDesktop) : undefined;
   const agentConfig = agentId
     ? agentSelectors.getAgentConfigById(agentId)(getAgentStoreState())
     : undefined;
@@ -57,7 +59,8 @@ export const resolvePendingTopicExecutionIntent = async (params: {
   // rewrite topic execution identity. In particular, a desktop chat-only
   // first turn still freezes `local`, so enabling tools later cannot make the
   // cwd silently inherit a newer global default.
-  const target = configuredTarget;
+  const target =
+    isNewTopic && !isDesktop && configuredTarget === 'local' ? 'none' : configuredTarget;
 
   const workspace = draft?.workspaceId
     ? workspaceState.workspacesById[draft.workspaceId]

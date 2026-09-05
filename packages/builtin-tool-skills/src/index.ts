@@ -1,3 +1,4 @@
+export { selectActivatedSkillsFromMessages } from './activationHistory';
 export type { SkillScriptExecutionRoute } from './ExecutionRuntime/skillScriptRoute';
 export { resolveSkillScriptExecutionRoute } from './ExecutionRuntime/skillScriptRoute';
 export { SkillsManifest } from './manifest';

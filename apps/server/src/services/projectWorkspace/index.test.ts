@@ -102,6 +102,36 @@ describe('ProjectWorkspaceService', () => {
     expect(workspace.rootPath).toBe('/canonical/project');
   });
 
+  it('formalizes a half-migrated snapshot without changing its target or cwd', async () => {
+    const { bindingStore, resolveDeviceWorkspacePath, service, workspaceModel } = createService();
+    const workspace = { deviceId: 'device-a', kind: 'device' as const, rootPath: '/repo' };
+    vi.spyOn(bindingStore, 'getState').mockResolvedValue({ snapshot, workspace });
+    resolveDeviceWorkspacePath.mockResolvedValue({ rootPath: '/repo' });
+    vi.spyOn(workspaceModel, 'getOrCreate').mockResolvedValue({ id: 'pws-legacy' } as any);
+    const bind = vi
+      .spyOn(bindingStore, 'bind')
+      .mockResolvedValue({ snapshot, workspace: { ...workspace, id: 'pws-legacy' } } as any);
+    const result = await service.resolveAndMigrateTopic('legacy');
+    expect(bind).toHaveBeenCalledWith({
+      topicId: 'legacy',
+      workspaceId: 'pws-legacy',
+      target: 'local',
+    });
+    expect(result?.workspace?.rootPath).toBe('/repo');
+  });
+
+  it('retains legacy cwd evidence while the device is offline', async () => {
+    const { bindingStore, service, workspaceModel } = createService();
+    const state = {
+      snapshot,
+      workspace: { deviceId: 'device-a', kind: 'device' as const, rootPath: '/repo' },
+    };
+    vi.spyOn(bindingStore, 'getState').mockResolvedValue(state);
+    const create = vi.spyOn(workspaceModel, 'getOrCreate');
+    expect(await service.resolveAndMigrateTopic('legacy')).toBe(state);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('uses the atomic first-writer-wins target capture seam for legacy migration', async () => {
     const { bindingStore, service } = createService();
     const captureTargetIfAbsent = vi.spyOn(bindingStore, 'captureTargetIfAbsent');

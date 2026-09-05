@@ -1,6 +1,7 @@
 import type { ChatToolPayload } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { lambdaClient } from '@/libs/trpc/client';
 import { mcpService } from '@/services/mcp';
 import { messageService } from '@/services/message';
 import { archiveToolResultViaServer } from '@/services/toolResultArchive';
@@ -9,6 +10,10 @@ import { hasExecutor } from '@/store/tool/slices/builtin/executors';
 
 import { PluginTypesActionImpl } from './pluginTypes';
 import { PluginPublicApiActionImpl } from './publicApi';
+
+vi.mock('@/libs/trpc/client', () => ({
+  lambdaClient: { projectWorkspace: { finalizeLocalScratch: { mutate: vi.fn() } } },
+}));
 
 vi.mock('@/services/mcp', () => ({
   mcpService: { invokeMcpToolCall: vi.fn() },
@@ -116,6 +121,43 @@ describe('raw tool execution boundary', () => {
     expect(archiveToolResultViaServer).not.toHaveBeenCalled();
     expect(actions.optimisticUpdateToolMessage).not.toHaveBeenCalled();
     expect(messageService.updateMessageError).not.toHaveBeenCalled();
+  });
+
+  it('preserves a completed local tool when scratch synchronization fails', async () => {
+    const invokeBuiltinTool = vi.fn().mockResolvedValue({
+      content: 'command completed once',
+      success: true,
+      state: { localScratch: { root: '/scratch/topic-1' } },
+    });
+    vi.mocked(hasExecutor).mockReturnValue(true);
+    vi.mocked(useToolStore.getState).mockReturnValue({ invokeBuiltinTool } as any);
+    vi.mocked(lambdaClient.projectWorkspace.finalizeLocalScratch.mutate).mockRejectedValue(
+      new Error('gateway disconnected'),
+    );
+    const actions = createActions();
+    actions.messageOperationMap['tool-message-1'] = 'runtime-operation';
+    actions.operations['runtime-operation'] = {
+      context: { agentId: 'agent-1', topicId: 'topic-1' },
+      id: 'runtime-operation',
+      type: 'execAgentRuntime',
+      metadata: {
+        executionContext: {
+          version: 1,
+          plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+        },
+      },
+    };
+    const result = await actions.internal_executeBuiltinTool('tool-message-1', builtinPayload);
+    expect(result.success).toBe(true);
+    expect(result.content).toContain('command completed once');
+    expect(result.state.workspaceSynchronizationPending).toBe(true);
+    expect(invokeBuiltinTool).toHaveBeenCalledTimes(1);
+    expect(lambdaClient.projectWorkspace.finalizeLocalScratch.mutate).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      operationId: 'runtime-operation',
+      topicId: 'topic-1',
+      toolCallId: 'tool-call-1',
+    });
   });
 
   it('passes the root runtime frozen execution context to client tool executors', async () => {

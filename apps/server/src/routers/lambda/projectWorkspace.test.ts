@@ -41,6 +41,64 @@ describe('projectWorkspaceRouter', () => {
     vi.restoreAllMocks();
   });
 
+  it.each(['unconfirmed', 'wrong-device', 'missing-topic'])(
+    'rejects %s local scratch evidence before creating a workspace',
+    async (scenario) => {
+      const evidence = vi
+        .spyOn(DeviceGateway.prototype, 'getLocalScratchExecution')
+        .mockResolvedValue(undefined);
+      const insert = vi.fn();
+      const metadata = {
+        executionSnapshot: {
+          version: 1,
+          target: 'local',
+          targetCapturedAt: '2026-09-05T00:00:00Z',
+          boundDeviceId: 'device-a',
+        },
+      };
+      const caller = projectWorkspaceRouter.createCaller({
+        userId: 'user-a',
+        serverDB: {
+          insert,
+          select: vi.fn(() => ({
+            from: vi.fn(() => ({
+              where: vi.fn(() => ({
+                limit: vi
+                  .fn()
+                  .mockResolvedValue(scenario === 'missing-topic' ? [] : [{ metadata }]),
+              })),
+            })),
+          })),
+        },
+      } as any);
+      await expect(
+        caller.finalizeLocalScratch({
+          deviceId: scenario === 'wrong-device' ? 'device-other' : 'device-a',
+          topicId: 'topic-a',
+          operationId: 'op-a',
+          toolCallId: 'call-a',
+        }),
+      ).rejects.toMatchObject({
+        code:
+          scenario === 'missing-topic'
+            ? 'NOT_FOUND'
+            : scenario === 'wrong-device'
+              ? 'CONFLICT'
+              : 'PRECONDITION_FAILED',
+      });
+      expect(insert).not.toHaveBeenCalled();
+      if (scenario === 'unconfirmed')
+        expect(evidence).toHaveBeenCalledWith({
+          deviceId: 'device-a',
+          topicId: 'topic-a',
+          operationId: 'op-a',
+          toolCallId: 'call-a',
+          userId: 'user-a',
+        });
+      else expect(evidence).not.toHaveBeenCalled();
+    },
+  );
+
   it('uses target-device existence and realpath proof before get-or-create', async () => {
     const statPath = vi.spyOn(DeviceGateway.prototype, 'statPath').mockResolvedValue({
       exists: true,

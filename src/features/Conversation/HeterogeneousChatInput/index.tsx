@@ -12,7 +12,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import urlJoin from 'url-join';
 
 import { useHeteroAgentCloudConfig } from '@/business/client/hooks/useHeteroAgentCloudConfig';
+import { isDesktop } from '@/const/version';
 import { type ActionKeys } from '@/features/ChatInput';
+import { useBindWorkspaceOnce } from '@/features/ChatInput/ControlBar/useBindWorkspaceOnce';
+import WorkspacePicker from '@/features/ChatInput/ControlBar/WorkspacePicker';
 import WideScreenContainer from '@/features/WideScreenContainer';
 import { useEffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useRemoteAgentDeviceGuard } from '@/hooks/useRemoteAgentDeviceGuard';
@@ -60,6 +63,7 @@ const HeterogeneousChatInput = memo(() => {
   // Do not re-resolve from agent defaults here: that would make the send gate
   // disagree with the target switcher and the eventual dispatcher.
   const effective = useEffectiveWorkspace(agentId);
+  const binding = useBindWorkspaceOnce(effective, agentId);
 
   // Until the first evidence requests (devices, gateway, workspaces, topic
   // state) settle, the projection reports a provisional `unbound`/`unrouted`
@@ -184,18 +188,30 @@ const HeterogeneousChatInput = memo(() => {
             style={{ maxWidth: 880, width: '100%' }}
             type={'warning'}
             action={
-              <Button size={'small'} type={'primary'} onClick={() => focusWorkspacePicker()}>
-                {tw('workspaceRuntime.hetero.gate.action')}
-              </Button>
+              isDesktop && (binding.canSelect || binding.canStartReferencedTopic) ? (
+                effective.isDraft && effective.draftRuntimeEditable ? (
+                  <Button size={'small'} type={'primary'} onClick={() => focusWorkspacePicker()}>
+                    {tw('workspaceRuntime.hetero.gate.action')}
+                  </Button>
+                ) : (
+                  <WorkspacePicker
+                    bind={binding}
+                    effective={effective}
+                    mode={isScratch ? 'reference' : 'select'}
+                  />
+                )
+              ) : undefined
             }
             description={
-              isUnrouted
-                ? tw(
-                    `workspaceRuntime.hetero.gate.unrouted.${effective.unroutedReason ?? 'no-bound-device'}`,
-                  )
-                : isScratch
-                  ? tw('workspaceRuntime.hetero.gate.scratchDesc')
-                  : tw('workspaceRuntime.hetero.gate.desc')
+              !isDesktop
+                ? tw('workspaceRuntime.hetero.gate.webDesc')
+                : isUnrouted
+                  ? tw(
+                      `workspaceRuntime.hetero.gate.unrouted.${effective.unroutedReason ?? 'no-bound-device'}`,
+                    )
+                  : isScratch
+                    ? tw('workspaceRuntime.hetero.gate.scratchDesc')
+                    : tw('workspaceRuntime.hetero.gate.desc')
             }
             title={
               isUnrouted
@@ -248,7 +264,7 @@ const HeterogeneousChatInput = memo(() => {
         skipScrollMarginWithList={!hasGuard}
         sendButtonProps={{
           disabled: inputDisabled,
-          onDisabledSend: workspaceBlocked ? () => focusWorkspacePicker() : undefined,
+          onDisabledSend: workspaceBlocked && isDesktop ? () => focusWorkspacePicker() : undefined,
           shape: 'round',
         }}
         onEditorReady={(instance) => {

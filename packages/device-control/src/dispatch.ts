@@ -27,6 +27,7 @@ import {
   updateProjectSkillOnDevice,
   validateProjectSkillOnDevice,
 } from './projectSkillAuthoring';
+import { type PrepareDeviceSkillPackage, prepareSkillPackage } from './skillPackage';
 import type {
   CleanupScratchWorkspaceParams,
   DeviceControlDeps,
@@ -56,6 +57,8 @@ import {
  * handler, with no per-method gateway route.
  */
 export const DEVICE_RPC_METHODS = [
+  'prepareSkillPackage',
+  'getLocalScratchExecution',
   'initWorkspace',
   'ensureScratchWorkspace',
   'cleanupScratchWorkspace',
@@ -111,11 +114,21 @@ export const executeDeviceRpc = async (
   deps: DeviceControlDeps,
 ): Promise<unknown> => {
   switch (method) {
-    case 'cleanupScratchWorkspace': {
-      return cleanupScratchWorkspace(
-        params as CleanupScratchWorkspaceParams,
-        deps.scratchRoot,
+    case 'prepareSkillPackage': {
+      return prepareSkillPackage(params as PrepareDeviceSkillPackage, deps.skillCacheRoot);
+    }
+
+    case 'getLocalScratchExecution': {
+      if (!deps.getLocalScratchExecution) throw new Error('Local scratch evidence unavailable');
+      return (
+        deps.getLocalScratchExecution(
+          params as { operationId: string; toolCallId: string; topicId: string },
+        ) ?? null
       );
+    }
+
+    case 'cleanupScratchWorkspace': {
+      return cleanupScratchWorkspace(params as CleanupScratchWorkspaceParams, deps.scratchRoot);
     }
 
     case 'ensureScratchWorkspace': {

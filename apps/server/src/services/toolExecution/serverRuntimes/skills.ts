@@ -5,6 +5,7 @@ import { LocalSystemApiName, LocalSystemIdentifier } from '@lobechat/builtin-too
 import {
   type CommandResult,
   type ExecScriptActivatedSkill,
+  selectActivatedSkillsFromMessages,
   SkillsIdentifier,
 } from '@lobechat/builtin-tool-skills';
 import {
@@ -18,6 +19,7 @@ import debug from 'debug';
 
 import { AgentSkillModel } from '@/database/models/agentSkill';
 import { FileModel } from '@/database/models/file';
+import { MessageModel } from '@/database/models/message';
 import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
 import { filterBuiltinSkills } from '@/helpers/skillFilters';
@@ -408,13 +410,9 @@ export const skillsRuntime: ServerRuntimeRegistration = {
           if (!result.success) {
             throw new Error(result.error || result.content || `globFiles failed: ${dir}`);
           }
-          let payload: { files?: unknown };
-          try {
-            payload = JSON.parse(result.content) as { files?: unknown };
-          } catch {
-            throw new Error(`globFiles returned a non-JSON payload for ${dir}`);
-          }
-          if (!Array.isArray(payload.files)) return [];
+          const payload = result.state as { files?: unknown } | undefined;
+          if (!Array.isArray(payload?.files))
+            throw new Error('globFiles returned invalid file metadata');
           // Files come back as paths relative to `scope` (POSIX). Strip any
           // absolute path the engine may have emitted so the runtime can
           // compare against normalized user-supplied relative paths.
@@ -476,23 +474,24 @@ export const skillsRuntime: ServerRuntimeRegistration = {
             const gatewayContext = toGatewayExecutionContext(context);
             if (!gatewayContext) throw new Error('WORKSPACE_REQUIRED');
 
-            // runCommand deliberately ignores a model-authored cwd. For a
-            // runtime-selected skill directory, narrow the device boundary to
-            // that already-realpathed directory before dispatching the command.
+            // Script cwd is the verified skill directory. Keep project roots and
+            // env-file resolution anchored to the frozen workspace.
             const skillExecutionContext: NonNullable<ReturnType<typeof toGatewayExecutionContext>> =
               {
                 ...gatewayContext,
                 accessRoots: [
+                  ...(gatewayContext.accessRoots ?? []),
                   {
-                    modes: ['exec', 'read', 'write'],
+                    modes: ['exec', 'read'],
+                    operationId: context.operationId,
                     rootPath: skillCwd,
-                    scope: 'primary' as const,
-                    source: 'workspace' as const,
+                    scope: 'operation' as const,
+                    source: 'user-approval' as const,
                   },
                 ],
                 cwd: skillCwd,
                 env: options.env,
-                workspaceRootPath: skillCwd,
+                workspaceRootPath: gatewayContext.workspaceRootPath ?? gatewayContext.cwd,
               };
             const result = await deviceGateway.executeToolCall(
               {
@@ -520,6 +519,20 @@ export const skillsRuntime: ServerRuntimeRegistration = {
         : undefined;
 
     return new SkillsExecutionRuntime({
+      activatedSkillsResolver: async () => {
+        if (!context.topicId) return undefined;
+        const messages = await new MessageModel(
+          context.serverDB!,
+          context.userId!,
+          context.workspaceId,
+        ).query({
+          agentId: context.agentId,
+          groupId: context.groupId,
+          topicId: context.topicId,
+          threadId: context.threadId ?? null,
+        });
+        return selectActivatedSkillsFromMessages(messages);
+      },
       builtinSkills: [...filterBuiltinSkills(builtinSkills), ...agentSkillBuiltins],
       deviceFileAccess,
       deviceScriptRunner,
@@ -527,6 +540,29 @@ export const skillsRuntime: ServerRuntimeRegistration = {
       executionContext: context.executionContext,
       projectSkills,
       registryResult: context.skillRegistryResult,
+      skillDirectoryResolver: frozenDeviceId
+        ? async (activated) => {
+            const selected = activated?.[0];
+            if (!selected) return undefined;
+            const skill = await skillModel.findById(selected.id);
+            if (!skill || !skill.zipFileHash) return undefined;
+            if (skill.name !== selected.name)
+              throw new Error('Activated skill identity does not match its package');
+            const file = await fileModel.checkHash(skill.zipFileHash);
+            if (!file.isExist || !file.url) throw new Error('Skill package file is unavailable');
+            const url = await fileService.getFullFileUrl(file.url);
+            if (!url) throw new Error('Skill package download is unavailable');
+            const prepared = await deviceGateway.prepareSkillPackage({
+              deviceId: frozenDeviceId,
+              userId: context.userId!,
+              url,
+              zipHash: skill.zipFileHash,
+            });
+            if (!prepared?.extractedDir)
+              throw new Error('Could not prepare the skill package on the selected device');
+            return prepared.extractedDir;
+          }
+        : undefined,
       service,
     });
   },

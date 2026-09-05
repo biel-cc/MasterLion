@@ -35,6 +35,7 @@ import type { SkillProviderContext, WorkspaceRef } from '@lobechat/types/src/pro
 import debug from 'debug';
 
 import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
+import { buildDirectUserMessageAccessRoots } from '@/helpers/executionContext/directUserPathConsent';
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { aiAgentService } from '@/services/aiAgent';
 import { isCanUseVideo, isCanUseVision } from '@/services/chat/helper';
@@ -43,6 +44,7 @@ import { composeEnabledTools, resolveAgentConfig } from '@/services/chat/mecha';
 import { resolveClientSkills } from '@/services/chat/mecha/skillEngineering';
 import { localFileService } from '@/services/electron/localFileService';
 import { messageService } from '@/services/message';
+import { scanOperationWorkspace } from '@/services/operationWorkspaceScan';
 import { aiModelSelectors } from '@/store/aiInfra/selectors';
 import { getAiInfraStoreState } from '@/store/aiInfra/store';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
@@ -501,6 +503,8 @@ export class StreamingExecutorActionImpl {
   executeClientAgent = async (params: {
     context: ConversationContext;
     disableTools?: boolean;
+    /** The current UI submission, even when execution starts from its assistant placeholder. */
+    directUserMessageId?: string;
     /** Immutable workspace authority captured by the caller for this run. */
     executionContext?: ExecutionContext;
     initialContext?: AgentRuntimeContext;
@@ -663,7 +667,7 @@ export class StreamingExecutorActionImpl {
         : undefined;
 
       if (!frozenExecutionContext) {
-        const snapshot = topic?.metadata?.executionSnapshot ?? topicWorkspaceState?.snapshot;
+        const snapshot = topicWorkspaceState?.snapshot ?? topic?.metadata?.executionSnapshot;
         frozenExecutionContext = resolveFrozenClientExecutionContext({
           agencyConfig: agentConfig.agentConfig.agencyConfig,
           chatConfig: agentConfig.agentConfig.chatConfig,
@@ -697,6 +701,48 @@ export class StreamingExecutorActionImpl {
         });
       }
 
+      const directUserMessageId =
+        params.directUserMessageId ?? (parentMessageType === 'user' ? parentMessageId : undefined);
+      const directMessage =
+        !params.isSubAgent && directUserMessageId
+          ? originalMessages.find((item) => item.id === directUserMessageId && item.role === 'user')
+          : undefined;
+      if (
+        directMessage &&
+        topicId &&
+        frozenExecutionContext?.plan.kind === 'device' &&
+        frozenExecutionContext.plan.target === 'local'
+      ) {
+        const roots = buildDirectUserMessageAccessRoots({
+          appScope: scope,
+          botConversation: false,
+          evalRun: false,
+          hasAttachments: Boolean(
+            directMessage.fileList?.length ||
+            directMessage.imageList?.length ||
+            directMessage.videoList?.length,
+          ),
+          headless: false,
+          trigger: directMessage.metadata?.trigger,
+          operationId: frozenExecutionContext.operationId ?? operationId,
+          prompt: directMessage.content,
+          suppressUserMessage: false,
+          topicId,
+        });
+        frozenExecutionContext = {
+          ...frozenExecutionContext,
+          accessRoots: [
+            ...(frozenExecutionContext.accessRoots ?? []).filter(
+              (root) => root.source !== 'direct-user-message',
+            ),
+            ...roots,
+          ],
+        };
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
+
       // Use model/provider from resolved agentConfig
       const { agentConfig: agentConfigData } = agentConfig;
       const model = agentConfigData.model;
@@ -715,8 +761,11 @@ export class StreamingExecutorActionImpl {
         skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
         userId: 'client-user',
         workspace: topicWorkspaceState?.workspace ?? workspaceItem,
-        workspaceInit: workspaceItem?.scan,
+        workspaceInit: undefined,
       };
+      if (!params.operationSkills && !skillContext.workspaceInit) {
+        skillContext.workspaceInit = await scanOperationWorkspace(skillContext.workspace);
+      }
       const operationSkills =
         params.operationSkills ??
         (

@@ -18,6 +18,13 @@ import { type ChatTopic } from '@/types/topic';
 
 import { useChatStore } from '../../store';
 
+const platform = vi.hoisted(() => ({ desktop: true }));
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return platform.desktop;
+  },
+}));
+
 // Mock @/libs/swr mutate
 vi.mock('@/libs/swr', async () => {
   const actual = await vi.importActual('@/libs/swr');
@@ -68,6 +75,7 @@ vi.mock('i18next', () => ({
 }));
 
 beforeEach(() => {
+  platform.desktop = true;
   // Setup initial state and mocks before each test
   vi.clearAllMocks();
   useChatStore.setState(
@@ -1686,7 +1694,7 @@ describe('topic action', () => {
       });
 
       expect(createTopicSpy).toHaveBeenCalledWith({
-        executionIntent: { platform: 'web', target: 'none' },
+        executionIntent: { platform: 'desktop', target: 'local' },
         sessionId: activeAgentId,
         messages: messages.map((m) => m.id),
         title: 'defaultTitle',

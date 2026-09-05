@@ -10,6 +10,7 @@ import { useChatStore } from '@/store/chat';
 import type { SkillListItem, SkillRowAction } from './SkillsList';
 
 export interface UseProjectSkillsResult {
+  error?: unknown;
   /**
    * Per-row actions for project skills: "view" opens the SKILL.md (local only —
    * a remote device's filesystem isn't reachable by the local viewer), while
@@ -22,6 +23,7 @@ export interface UseProjectSkillsResult {
   onOpenFile: (item: SkillListItem, relativePath: string) => void;
   onOpenSkill: (item: SkillListItem) => void;
   raw: ListProjectSkillsResult | undefined;
+  retry: () => Promise<unknown>;
 }
 
 /**
@@ -45,7 +47,7 @@ export const useProjectSkills = (
   const openLocalFile = useChatStore((s) => s.openLocalFile);
   const isRemote = !!deviceId;
 
-  const { data, isLoading } = useFetchProjectSkills(workingDirectory, deviceId);
+  const { data, error, isLoading, mutate } = useFetchProjectSkills(workingDirectory, deviceId);
 
   // listProjectSkills approves `data.root` for preview. Hand that exact value
   // back to openLocalFile so LocalFileProtocolManager.createPreviewUrl's
@@ -122,5 +124,14 @@ export const useProjectSkills = (
     ];
   };
 
-  return { getRowActions, isLoading, items, onOpenFile, onOpenSkill, raw: data };
+  return {
+    error,
+    retry: () => mutate(),
+    getRowActions,
+    isLoading,
+    items,
+    onOpenFile,
+    onOpenSkill,
+    raw: data,
+  };
 };

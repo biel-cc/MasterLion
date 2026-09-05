@@ -1160,6 +1160,7 @@
   "workspaceRuntime.hetero.gate.unrouted.no-bound-device": "Choose a target device before selecting a project.",
   "workspaceRuntime.hetero.gate.unrouted.no-online-device": "No online device is available for this topic.",
   "workspaceRuntime.hetero.gate.unroutedTitle": "Execution target unavailable",
+  "workspaceRuntime.hetero.gate.webDesc": "Create a project topic in the desktop app, then continue it here.",
   "workspaceRuntime.intent.confirm": "Use as project",
   "workspaceRuntime.intent.confirmDescription": "Use {{path}} as this topic’s project? This folder will stay fixed for the topic.",
   "workspaceRuntime.intent.confirmTitle": "Use this folder as the current project?",

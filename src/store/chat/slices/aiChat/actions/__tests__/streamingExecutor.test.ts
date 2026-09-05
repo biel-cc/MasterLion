@@ -157,6 +157,54 @@ afterEach(() => {
 
 describe('StreamingExecutor actions', () => {
   describe('executeClientAgent', () => {
+    it.each([true, false])(
+      'grants absolute reads only to the explicit current UI submission (%s)',
+      async (explicitSubmission) => {
+        act(() => useChatStore.setState({ executeClientAgent: realExecAgentRuntime }));
+        const message = createMockMessage({
+          id: TEST_IDS.USER_MESSAGE_ID,
+          role: 'user',
+          content: 'Read /tmp/masterino-direct-read.txt',
+        });
+        vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
+          async ({ onFinish }) => {
+            await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+          },
+        );
+        await act(async () => {
+          await useChatStore.getState().executeClientAgent({
+            context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+            directUserMessageId: explicitSubmission ? message.id : undefined,
+            executionContext: {
+              version: 1,
+              accessRoots: [],
+              plan: { kind: 'device', target: 'local', deviceId: 'device-local' },
+            },
+            messages: [message],
+            parentMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+            parentMessageType: 'assistant',
+            skipCreateFirstMessage: true,
+          });
+        });
+        const operation = Object.values(useChatStore.getState().operations).find(
+          (op) => op.type === 'execAgentRuntime',
+        );
+        expect(operation?.metadata.executionContext?.accessRoots).toEqual(
+          explicitSubmission
+            ? [
+                expect.objectContaining({
+                  rootPath: '/tmp/masterino-direct-read.txt',
+                  modes: ['read'],
+                  scope: 'operation',
+                  source: 'direct-user-message',
+                  topicId: TEST_IDS.TOPIC_ID,
+                }),
+              ]
+            : [],
+        );
+      },
+    );
+
     it('should handle the core AI message processing', async () => {
       act(() => {
         useChatStore.setState({ executeClientAgent: realExecAgentRuntime });

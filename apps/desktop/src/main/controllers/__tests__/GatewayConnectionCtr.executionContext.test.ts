@@ -46,7 +46,10 @@ vi.mock('@/utils/logger', () => ({
 describe('GatewayConnectionCtr execution context boundary', () => {
   let tempRoot: string;
   let workspace: string;
-  const handleRunCommand = vi.fn(async () => ({ success: true, stdout: 'ok' }));
+  const handleRunCommand = vi.fn(async (_args: { cwd?: string }) => ({
+    success: true,
+    stdout: 'ok',
+  }));
   const readFile = vi.fn(async () => ({ content: 'safe' }));
   const spawnLhHeteroExec = vi.fn();
   const resolveExecutionEnv = vi.fn(async () => ({ MANAGED: 'resolved', SHARED: 'managed' }));
@@ -86,7 +89,9 @@ describe('GatewayConnectionCtr execution context boundary', () => {
         return {};
       },
       getService: (Service: unknown) =>
-        Service === ExecutionEnvService ? { resolve: resolveExecutionEnv } : {},
+        Service === ExecutionEnvService
+          ? { resolve: resolveExecutionEnv }
+          : { getDeviceId: () => 'device-1' },
       storeManager: {
         get: (key: string, fallback: unknown) =>
           key === 'localFileWorkspaceRoots' ? allowedMountRoots : fallback,
@@ -119,6 +124,100 @@ describe('GatewayConnectionCtr execution context boundary', () => {
 
   afterEach(async () => {
     await rm(tempRoot, { force: true, recursive: true });
+  });
+
+  it('lazily prepares scratch and exposes evidence only after a successful tool', async () => {
+    const controller = makeController();
+    const trace = {
+      deviceId: 'device-1',
+      operationId: 'operation-1',
+      toolCallId: 'call-1',
+      topicId: 'topic-1',
+    };
+    const result = await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: 'pwd' },
+      executionContext: { accessRoots: [] },
+      trace,
+    });
+    expect(result.success).toBe(true);
+    const cwd = handleRunCommand.mock.calls.at(-1)?.[0]?.cwd;
+    expect(cwd).toContain('scratch-workspaces');
+    expect(result.state).toMatchObject({ localScratch: { root: cwd } });
+    const evidence = await (controller as any).executeDeviceRpc('getLocalScratchExecution', trace);
+    expect(evidence).toEqual({ root: cwd });
+    expect(
+      await (controller as any).executeDeviceRpc('getLocalScratchExecution', {
+        ...trace,
+        toolCallId: 'unexecuted',
+      }),
+    ).toBeNull();
+    await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: 'pwd' },
+      executionContext: { accessRoots: [] },
+      trace,
+    });
+    expect(handleRunCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not publish scratch evidence when the command fails', async () => {
+    handleRunCommand.mockResolvedValueOnce({ success: false, stdout: 'failed' });
+    const controller = makeController();
+    const trace = {
+      deviceId: 'device-1',
+      topicId: 'topic-failed',
+      operationId: 'op',
+      toolCallId: 'call',
+    };
+    const result = await controller.executeLocalToolCall({
+      apiName: 'runCommand',
+      args: { command: 'false' },
+      executionContext: { accessRoots: [] },
+      trace,
+    });
+    expect(result.state).toMatchObject({ success: false });
+    expect(result.state).not.toHaveProperty('localScratch');
+    expect(
+      await (controller as any).executeDeviceRpc('getLocalScratchExecution', trace),
+    ).toBeNull();
+  });
+
+  it('deduplicates concurrent delivery and renews proof when replaying a delayed success', async () => {
+    const controller = makeController();
+    const trace = {
+      deviceId: 'device-1',
+      topicId: 'topic-replay',
+      operationId: 'op',
+      toolCallId: 'call',
+    };
+    const request = {
+      apiName: 'runCommand',
+      args: { command: 'pwd' },
+      executionContext: { accessRoots: [] },
+      trace,
+    };
+    await Promise.all([
+      controller.executeLocalToolCall(request),
+      controller.executeLocalToolCall(request),
+    ]);
+    expect(handleRunCommand).toHaveBeenCalledTimes(1);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 31 * 60_000);
+    try {
+      await controller.executeLocalToolCall({
+        ...request,
+        trace: { ...trace, topicId: 'another-topic' },
+      });
+      expect(handleRunCommand).toHaveBeenCalledTimes(2);
+      const replay = await controller.executeLocalToolCall(request);
+      expect(handleRunCommand).toHaveBeenCalledTimes(2);
+      expect(replay.state).toMatchObject({
+        localScratch: await (controller as any).executeDeviceRpc('getLocalScratchExecution', trace),
+      });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('executes a standalone renderer tool call through the main-process boundary', async () => {

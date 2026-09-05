@@ -410,7 +410,7 @@ export class AiAgentService {
   }): Promise<WorkspaceInitResult> {
     const empty: WorkspaceInitResult = { instructions: [], skills: [] };
     const { activeDeviceId, agencyConfig, topicId, workspaceRoot } = params;
-    if (!activeDeviceId) return empty;
+    if (!activeDeviceId || !workspaceRoot) return empty;
 
     try {
       const deviceModel = new DeviceModel(this.db, this.userId);
@@ -443,15 +443,8 @@ export class AiAgentService {
         scope: boundCwd,
         userId: this.userId,
       });
-      if (!scanned) {
-        // Scan failed (offline mid-run / parse error). Fall back to a stale
-        // cache rather than dropping the project's skills + instructions.
-        if (cached?.workspace) {
-          log('execAgent: workspace init scan failed, using stale cache for %s', boundCwd);
-          return cached.workspace;
-        }
-        return empty;
-      }
+      if (!scanned)
+        throw new Error('Project workspace scan failed. Check the device connection and retry.');
 
       // Persist the fresh scan back onto `workingDirs` (update in place or prepend
       // a new MRU entry), keeping the JSONB payload bounded.
@@ -462,7 +455,7 @@ export class AiAgentService {
       return scanned;
     } catch (error) {
       log('execAgent: resolveWorkspaceInit failed: %O', error);
-      return empty;
+      throw error;
     }
   }
 
@@ -542,11 +535,26 @@ export class AiAgentService {
     input: ResolveExecutionContextInput;
     runtimeConfig: Awaited<ReturnType<AiAgentService['resolveWorkspaceRuntimeConfig']>>;
   }> {
-    const topicWorkspaceState = await new DatabaseTopicWorkspaceBindingStore(
-      this.db,
-      this.userId,
-      this.workspaceId,
-    ).getState(params.topicId);
+    const topicWorkspaceState = await new ProjectWorkspaceService({
+      bindingStore: new DatabaseTopicWorkspaceBindingStore(this.db, this.userId, this.workspaceId),
+      workspaceModel: new ProjectWorkspaceModel(this.db, this.userId),
+      resolveDeviceWorkspacePath: async ({ deviceId, path }) => {
+        const rootPath = await deviceGateway.resolveRealPath({
+          deviceId,
+          path,
+          userId: this.userId,
+        });
+        if (!rootPath) return undefined;
+        const status = await deviceGateway.statPath({
+          deviceId,
+          path: rootPath,
+          userId: this.userId,
+        });
+        return status?.exists && status.isDirectory
+          ? { rootPath, repoType: status.repoType }
+          : undefined;
+      },
+    }).resolveAndMigrateTopic(params.topicId);
     if (!topicWorkspaceState) throw new Error(`Topic not found: ${params.topicId}`);
 
     const runtimeConfig = await this.resolveWorkspaceRuntimeConfig({
@@ -560,7 +568,7 @@ export class AiAgentService {
       ? { [topicWorkspaceState.workspace.id]: topicWorkspaceState.workspace }
       : undefined;
     const legacyTopic =
-      !topicWorkspaceState.snapshot && topicWorkspaceState.workspace
+      !topicWorkspaceState.workspace?.id && topicWorkspaceState.workspace
         ? {
             boundDeviceId: topicWorkspaceState.workspace.deviceId,
             workingDirectory: topicWorkspaceState.workspace.rootPath,
@@ -603,14 +611,6 @@ export class AiAgentService {
     skillPolicy: SkillRegistryResult['policy'];
     topicId: string;
   }): Promise<SkillRegistryResult> {
-    const fallback: SkillRegistryResult = {
-      entries: [],
-      errors: [],
-      policy: params.skillPolicy,
-      precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
-      skills: [],
-    };
-
     try {
       const skillModel = new AgentSkillModel(this.db, this.userId, this.workspaceId);
       const [{ data: dbSkills }, agentSkills, workspaceInit] = await Promise.all([
@@ -658,11 +658,10 @@ export class AiAgentService {
       );
     } catch (error) {
       log('execAgent: failed to freeze skill registry: %O', error);
-      fallback.errors.push({
-        message: 'Skill registry resolution failed during operation creation.',
-        source: 'visibility',
-      });
-      return fallback;
+      throw new Error(
+        'Skill registry resolution failed during operation creation. Check the device connection and retry.',
+        { cause: error },
+      );
     }
   }
 

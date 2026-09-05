@@ -1,3 +1,5 @@
+import './emptySkills';
+
 import { vi } from 'vitest';
 
 /**

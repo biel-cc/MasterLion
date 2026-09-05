@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   } as Record<string, any>,
   focusWorkspacePicker: vi.fn(),
   isConfigured: true,
+  isDesktop: true,
 }));
 
 vi.mock('@lobechat/heterogeneous-agents', () => ({
@@ -67,7 +68,21 @@ vi.mock('url-join', () => ({ default: (...parts: string[]) => parts.join('/') })
 vi.mock('@/business/client/hooks/useHeteroAgentCloudConfig', () => ({
   useHeteroAgentCloudConfig: () => ({ goToConfig: vi.fn(), isConfigured: mocks.isConfigured }),
 }));
-vi.mock('@/const/version', () => ({ isDesktop: true }));
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return mocks.isDesktop;
+  },
+}));
+vi.mock('@/features/ChatInput/ControlBar/useBindWorkspaceOnce', () => ({
+  useBindWorkspaceOnce: () => ({ canSelect: true, canStartReferencedTopic: true }),
+}));
+vi.mock('@/features/ChatInput/ControlBar/WorkspacePicker', () => ({
+  default: ({ mode }: { mode: string }) => (
+    <button data-testid={'recovery-' + mode} onClick={mocks.focusWorkspacePicker}>
+      workspaceRuntime.hetero.gate.action
+    </button>
+  ),
+}));
 vi.mock('@/features/ChatInput', () => ({}));
 vi.mock('../ChatInput', () => ({
   default: (props: Record<string, any>) => {
@@ -127,6 +142,7 @@ describe('HeterogeneousChatInput workspace gate', () => {
     mocks.deviceGuardStatus = 'ok';
     mocks.focusWorkspacePicker.mockClear();
     mocks.isConfigured = true;
+    mocks.isDesktop = true;
     mocks.effective = {
       context: { plan: { kind: 'local', target: 'local' } },
       state: 'bound',
@@ -192,8 +208,19 @@ describe('HeterogeneousChatInput workspace gate', () => {
       'workspaceRuntime.hetero.gate.scratchTitle',
     );
     expect(screen.getByTestId('send')).toBeDisabled();
+    expect(screen.getByTestId('recovery-reference')).toBeInTheDocument();
     fireEvent.click(screen.getByText('workspaceRuntime.hetero.gate.action'));
     expect(mocks.focusWorkspacePicker).toHaveBeenCalledTimes(1);
+  });
+
+  it('guides Web users without mounting a directory picker', () => {
+    mocks.isDesktop = false;
+    mocks.effective.state = 'unbound';
+    render(<HeterogeneousChatInput />);
+    expect(screen.getByTestId('hetero-workspace-guard')).toHaveTextContent(
+      'workspaceRuntime.hetero.gate.webDesc',
+    );
+    expect(screen.queryByTestId('recovery-select')).not.toBeInTheDocument();
   });
 
   it('allows send when bound', () => {

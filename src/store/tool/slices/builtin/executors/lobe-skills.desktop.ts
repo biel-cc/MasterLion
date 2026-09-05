@@ -15,8 +15,57 @@ import { gatewayConnectionService } from '@/services/electron/gatewayConnection'
 import { localFileService } from '@/services/electron/localFileService';
 import { agentSkillService } from '@/services/skill';
 
-const createRuntime = (ctx: BuiltinToolContext) =>
-  new SkillsExecutionRuntime({
+const createRuntime = (ctx: BuiltinToolContext) => {
+  const readFromDevice = async (apiName: string, args: Record<string, unknown>) => {
+    const execution = ctx.executionContext;
+    if (
+      !execution ||
+      execution.plan.kind !== 'device' ||
+      execution.plan.target !== 'local' ||
+      !ctx.topicId ||
+      !ctx.toolCallId ||
+      !ctx.agentId
+    ) {
+      throw new Error('DEVICE_UNROUTED');
+    }
+    const operationId = execution.operationId ?? ctx.operationId;
+    if (!operationId) throw new Error('WORKSPACE_REQUIRED');
+    const result = await gatewayConnectionService.executeLocalToolCall({
+      apiName,
+      args,
+      executionContext: {
+        accessRoots: execution.accessRoots,
+        cwd: execution.cwd,
+        workspaceRootPath: execution.workspace?.rootPath,
+        workspaceKind: execution.workspace?.kind,
+        envRef: {
+          agentId: ctx.agentId,
+          topicId: ctx.topicId,
+          workspaceId: execution.workspace?.id,
+        },
+      },
+      trace: {
+        deviceId: execution.plan.deviceId,
+        operationId,
+        topicId: ctx.topicId,
+        toolCallId: ctx.toolCallId,
+      },
+    });
+    if (!result.success) throw new Error(result.content || 'Project skill file access failed');
+    return result;
+  };
+  return new SkillsExecutionRuntime({
+    deviceFileAccess: {
+      readFile: async (path) =>
+        (await readFromDevice('readFile', { path, loc: [0, 5000] })).content,
+      listFiles: async (dir) => {
+        const result = await readFromDevice('globFiles', { pattern: '**/*', scope: dir });
+        const payload = result.state as { files?: unknown } | undefined;
+        return (Array.isArray(payload?.files) ? payload.files : [])
+          .filter((file: unknown): file is string => typeof file === 'string')
+          .map((file: string) => (file.startsWith(dir + '/') ? file.slice(dir.length + 1) : file));
+      },
+    },
     builtinSkills: filterBuiltinSkills(builtinSkills),
     deviceScriptRunner: async (command, options) => {
       const executionContext = ctx.executionContext!;
@@ -100,5 +149,6 @@ const createRuntime = (ctx: BuiltinToolContext) =>
       },
     },
   });
+};
 
 export const skillsExecutor = new SkillsExecutor(createRuntime);

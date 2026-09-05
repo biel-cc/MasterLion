@@ -17,6 +17,7 @@ import {
   resolveFrozenClientExecutionContext,
 } from '@/helpers/executionContext';
 import { resolveExecutionTarget } from '@/helpers/executionTarget';
+import { normalizeNewTopicIntent } from '@/helpers/workspacePlatform';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
@@ -99,7 +100,9 @@ export const useEffectiveWorkspace = (
   // Self-populate the stores this view depends on (SWR dedupes by key).
   const devicesRequest = useDeviceStore((s) => s.useFetchDevices)(canFetch);
   const gatewayRequest = useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
-  const workspacesRequest = useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(canFetch);
+  const workspacesRequest = useProjectWorkspaceStore((s) => s.useFetchWorkspaces)(
+    canFetch && isDesktop,
+  );
 
   const activeTopicId = useChatStore((s) => s.activeTopicId);
   const activeGroupId = useChatStore((s) => s.activeGroupId);
@@ -127,7 +130,11 @@ export const useEffectiveWorkspace = (
   );
 
   const draftKey = buildDraftConversationKey({ agentId, groupId: activeGroupId });
-  const draft = useProjectWorkspaceStore(projectWorkspaceSelectors.getDraftIntent(draftKey));
+  const rawDraft = useProjectWorkspaceStore(projectWorkspaceSelectors.getDraftIntent(draftKey));
+  const draft = useMemo(
+    () => (rawDraft ? normalizeNewTopicIntent(rawDraft, isDesktop) : undefined),
+    [rawDraft],
+  );
   const topicState = useProjectWorkspaceStore(
     projectWorkspaceSelectors.getTopicState(resolvedTopicId),
   );
@@ -170,7 +177,16 @@ export const useEffectiveWorkspace = (
     // A draft target switch only changes this draft's platform slot; it never
     // writes the agent's stored defaults.
     const platformKey: keyof ExecutionTargetByPlatform = isDesktop ? 'desktop' : 'web';
-    const newTopicTarget = draft?.target ?? (isDesktop ? 'local' : undefined);
+    const configuredDraftTarget =
+      draft?.target ??
+      (isDesktop
+        ? 'local'
+        : resolveExecutionTarget(agencyConfig, {
+            isDesktop: false,
+            executionTargetByPlatform: agencyConfig?.executionTargetByPlatform,
+          }));
+    const newTopicTarget =
+      !isDesktop && configuredDraftTarget === 'local' ? 'none' : configuredDraftTarget;
     const executionTargetByPlatform: ExecutionTargetByPlatform | undefined =
       isDraft && newTopicTarget
         ? { ...agencyConfig?.executionTargetByPlatform, [platformKey]: newTopicTarget }

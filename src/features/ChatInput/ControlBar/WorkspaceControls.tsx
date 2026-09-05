@@ -75,7 +75,12 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     const isDeviceTarget = effective.target === 'local' || effective.target === 'device';
     const isLocalDevice =
       isDesktop && !!effective.targetDeviceId && effective.targetDeviceId === currentDeviceId;
-    const displayTarget = isLocalDevice ? 'local' : effective.target;
+    const displayTarget =
+      !isDesktop && effective.target === 'local'
+        ? 'device'
+        : isLocalDevice
+          ? 'local'
+          : effective.target;
     const cwd = effective.cwd;
 
     // Local machine probes the filesystem for repoType; a remote device's repoType
@@ -90,8 +95,8 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     const renderWorkspace = () => {
       // Web has no local filesystem — cloud / heterogeneous agents browse the repo
       // through the cloud repo switcher when they are not routed to a device.
-      if (!isDesktop && !isDeviceTarget) {
-        return isHeterogeneous || alwaysShowWorkspace ? (
+      if (!isDesktop) {
+        return !isDeviceTarget && (isHeterogeneous || alwaysShowWorkspace) ? (
           <CloudRepoSwitcher agentId={agentId} />
         ) : null;
       }

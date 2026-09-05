@@ -194,23 +194,32 @@ const WorkspaceSkillsSettings = memo<WorkspaceSkillsSettingsProps>(({ deviceId, 
         )}
       </Flexbox>
 
-      <SkillSection
-        emptyText={t('workspaceSkills.empty')}
-        isEmpty={!projectSkills.isLoading && projectSkills.items.length === 0}
-        isLoading={projectSkills.isLoading}
-        sectionHeader={{
-          count: projectSkills.items.length,
-          defaultExpanded: false,
-          title: t('workspaceSkills.discovered'),
-        }}
-      >
-        <SkillsList
-          getRowActions={projectSkills.getRowActions}
-          items={projectSkills.items}
-          onOpenFile={projectSkills.onOpenFile}
-          onOpenSkill={projectSkills.onOpenSkill}
-        />
-      </SkillSection>
+      {projectSkills.error ? (
+        <Flexbox gap={8} role={'alert'}>
+          <span className={styles.error}>{t('workspaceSkills.scanError')}</span>
+          <Button onClick={() => void projectSkills.retry().catch(() => undefined)}>
+            {t('workspaceSkills.retry')}
+          </Button>
+        </Flexbox>
+      ) : (
+        <SkillSection
+          emptyText={t('workspaceSkills.empty')}
+          isEmpty={!projectSkills.isLoading && projectSkills.items.length === 0}
+          isLoading={projectSkills.isLoading}
+          sectionHeader={{
+            count: projectSkills.items.length,
+            defaultExpanded: false,
+            title: t('workspaceSkills.discovered'),
+          }}
+        >
+          <SkillsList
+            getRowActions={projectSkills.getRowActions}
+            items={projectSkills.items}
+            onOpenFile={projectSkills.onOpenFile}
+            onOpenSkill={projectSkills.onOpenSkill}
+          />
+        </SkillSection>
+      )}
     </section>
   );
 });

@@ -87,6 +87,8 @@ export interface DeviceFileAccess {
 }
 
 export interface SkillsExecutionRuntimeOptions {
+  /** Server runtimes derive activation from owned conversation history, never model arguments. */
+  activatedSkillsResolver?: () => Promise<ExecScriptParams['activatedSkills']>;
   builtinSkills?: BuiltinSkill[];
   /** Reads project skill files from the device (local-system over the gateway). */
   deviceFileAccess?: DeviceFileAccess;
@@ -165,6 +167,7 @@ export class SkillsExecutionRuntime {
   private deviceScriptRunner?: SkillsExecutionRuntimeOptions['deviceScriptRunner'];
   private executionContext?: ExecutionContext;
   private service: SkillRuntimeService;
+  private activatedSkillsResolver?: SkillsExecutionRuntimeOptions['activatedSkillsResolver'];
   private skillDirectoryResolver?: SkillsExecutionRuntimeOptions['skillDirectoryResolver'];
 
   constructor(options: SkillsExecutionRuntimeOptions) {
@@ -185,19 +188,27 @@ export class SkillsExecutionRuntime {
     this.deviceScriptRunner = options.deviceScriptRunner;
     this.executionContext = options.executionContext;
     this.skillDirectoryResolver = options.skillDirectoryResolver;
+    this.activatedSkillsResolver = options.activatedSkillsResolver;
   }
 
   async execScript(args: ExecScriptParams): Promise<BuiltinServerRuntimeOutput> {
-    const { activatedSkills, command, description } = args;
+    const { command, description } = args;
+    const activatedSkills = this.activatedSkillsResolver
+      ? await this.activatedSkillsResolver()
+      : args.activatedSkills;
 
     if (this.executionContext) {
-      const projectSkill = [...(activatedSkills ?? [])]
-        .reverse()
-        .map(({ name }) => this.projectSkills.find((skill) => skill.name === name))
-        .find(Boolean);
-      const skillDir = projectSkill
-        ? getDirname(projectSkill.location)
-        : await this.skillDirectoryResolver?.(activatedSkills ?? []);
+      let projectSkill: (typeof this.projectSkills)[number] | undefined;
+      let skillDir: string | undefined;
+      // Activation history contains builtins and document-only skills as well.
+      // Resolve the most recently activated executable skill, across both origins.
+      for (const activated of [...(activatedSkills ?? [])].reverse()) {
+        projectSkill = this.projectSkills.find((skill) => skill.name === activated.name);
+        skillDir = projectSkill
+          ? getDirname(projectSkill.location)
+          : await this.skillDirectoryResolver?.([activated]);
+        if (skillDir) break;
+      }
       const route = await resolveSkillScriptExecutionRoute({
         allowExternalSkillDir: !projectSkill,
         context: this.executionContext,

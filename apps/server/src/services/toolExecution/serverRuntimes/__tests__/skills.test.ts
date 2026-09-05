@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
     createSandboxService: vi.fn(() => sandboxService),
     deviceExecuteToolCall: vi.fn(),
     deviceVerifySkillPaths: vi.fn(),
+    prepareSkillPackage: vi.fn(),
     fileService: {
       getFullFileUrl: vi.fn(),
     },
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => {
     getSandboxProviderKind: vi.fn(() => 'onlyboxes'),
     marketService: {},
     marketServiceConstructor: vi.fn(),
+    queryMessages: vi.fn(),
     readResource: vi.fn(),
     sandboxService,
   };
@@ -47,6 +49,10 @@ vi.mock('@/database/models/agentSkill', () => ({
     findById: mocks.findById,
     findByName: mocks.findByName,
   })),
+}));
+
+vi.mock('@/database/models/message', () => ({
+  MessageModel: vi.fn(() => ({ query: mocks.queryMessages })),
 }));
 
 vi.mock('@/database/models/file', () => ({
@@ -69,6 +75,7 @@ vi.mock('@/server/services/deviceGateway', () => ({
   deviceGateway: {
     executeToolCall: mocks.deviceExecuteToolCall,
     verifySkillPaths: mocks.deviceVerifySkillPaths,
+    prepareSkillPackage: mocks.prepareSkillPackage,
   },
 }));
 
@@ -102,6 +109,12 @@ vi.mock('@/server/services/skill/resource', () => ({
   })),
 }));
 
+const activation = (id: string, name: string) => ({
+  role: 'tool',
+  plugin: { identifier: 'lobe-skills', apiName: 'activateSkill' },
+  pluginState: { id, name },
+});
+
 describe('skillsRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -122,6 +135,7 @@ describe('skillsRuntime', () => {
       return undefined;
     });
     mocks.getAgentSkills.mockResolvedValue([]);
+    mocks.queryMessages.mockResolvedValue([activation('project:deploy', 'deploy')]);
     mocks.getUserSettings.mockResolvedValue({ market: { accessToken: 'market-token' } });
     mocks.deviceVerifySkillPaths.mockImplementation(async ({ skillDir, workspaceRoot }) => ({
       skillDir,
@@ -144,6 +158,10 @@ describe('skillsRuntime', () => {
   });
 
   it('executes scripts through the sandbox service and only attaches persisted skill zips', async () => {
+    mocks.queryMessages.mockResolvedValue([
+      activation('user-skill-id', 'user-skill'),
+      activation('builtin-skill-id', 'builtin-skill'),
+    ]);
     const { skillsRuntime } = await import('../skills');
     const runtime = await skillsRuntime.factory({
       serverDB: {} as never,
@@ -177,7 +195,7 @@ describe('skillsRuntime', () => {
         },
       }),
     );
-  }, 15_000);
+  }, 60_000);
 
   it('injects the frozen device context, verifies paths, and never creates a sandbox', async () => {
     const { skillsRuntime } = await import('../skills');
@@ -250,12 +268,74 @@ describe('skillsRuntime', () => {
             TOKEN: 'value',
             WORKSPACE_DIR: '/repo',
           },
-          workspaceRootPath: '/repo/.agents/skills/deploy',
+          workspaceRootPath: '/repo',
         }),
         operationId: 'operation-1',
         toolCallId: 'tool-call-1',
       }),
       expect.objectContaining({ apiName: 'runCommand', identifier: 'lobe-local-system' }),
+      undefined,
+    );
+    expect(mocks.createSandboxService).not.toHaveBeenCalled();
+  });
+
+  it('prepares a user ZIP from persisted activations on the frozen device before executing its script', async () => {
+    mocks.queryMessages.mockResolvedValue([
+      activation('project:old', 'old-project'),
+      activation('skill-1', 'user-skill'),
+      activation('builtin:docs', 'documentation-only'),
+    ]);
+    const { skillsRuntime } = await import('../skills');
+    mocks.findById.mockImplementation(async (id: string) =>
+      id === 'skill-1' ? { id, name: 'user-skill', zipFileHash: 'hash-1' } : undefined,
+    );
+    mocks.prepareSkillPackage.mockResolvedValue({ extractedDir: '/cache/skills/hash-1' });
+    mocks.deviceVerifySkillPaths.mockResolvedValue({
+      skillDir: '/cache/skills/hash-1',
+      workspaceRoot: '/repo',
+    });
+    mocks.deviceExecuteToolCall.mockResolvedValue({ content: 'ok', success: true });
+    const runtime = await skillsRuntime.factory({
+      activeDeviceId: 'device-1',
+      userId: 'user-1',
+      serverDB: {} as any,
+      operationId: 'operation-1',
+      topicId: 'topic-1',
+      toolCallId: 'call-1',
+      projectSkills: [{ location: '/repo/.agents/skills/old/SKILL.md', name: 'old-project' }],
+      executionContext: {
+        version: 1,
+        operationId: 'operation-1',
+        plan: { kind: 'device', target: 'device', deviceId: 'device-1' },
+        cwd: '/repo',
+        workspace: { id: 'workspace-1', deviceId: 'device-1', kind: 'device', rootPath: '/repo' },
+        envFiles: ['.env'],
+      },
+    });
+    expect(
+      (
+        await runtime.execScript({
+          command: 'python scripts/check.py',
+          description: 'check',
+          activatedSkills: [{ id: 'forged', name: 'not-activated' }],
+        })
+      ).success,
+    ).toBe(true);
+    expect(mocks.prepareSkillPackage).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      userId: 'user-1',
+      zipHash: 'hash-1',
+      url: 'https://files.example.com/user-skill.zip',
+    });
+    expect(mocks.deviceExecuteToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionContext: expect.objectContaining({
+          cwd: '/cache/skills/hash-1',
+          workspaceRootPath: '/repo',
+          envFiles: ['.env'],
+        }),
+      }),
+      expect.anything(),
       undefined,
     );
     expect(mocks.createSandboxService).not.toHaveBeenCalled();

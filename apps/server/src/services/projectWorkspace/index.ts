@@ -9,7 +9,7 @@ import type {
   ProjectWorkspaceModel,
 } from '@/database/models/projectWorkspace';
 import { toProjectWorkspaceDTO } from '@/database/models/projectWorkspace';
-import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
+import { isAbsoluteFilesystemPath, normalizeRootPath } from '@/helpers/executionContext';
 
 import {
   type BindTopicWorkspaceResult,
@@ -108,6 +108,40 @@ export class ProjectWorkspaceService {
   /** Read-only resolution. It deliberately never binds or creates scratch state. */
   resolveTopic = async (topicId: string): Promise<TopicWorkspaceState | undefined> =>
     this.deps.bindingStore.getState(topicId);
+
+  /** Formalize preserved legacy evidence on access, including snapshots without workspaceId. */
+  resolveAndMigrateTopic = async (topicId: string): Promise<TopicWorkspaceState | undefined> => {
+    const state = await this.resolveTopic(topicId);
+    const legacy = state?.workspace;
+    if (
+      !legacy ||
+      legacy.id ||
+      legacy.kind !== 'device' ||
+      !legacy.deviceId ||
+      !this.deps.resolveDeviceWorkspacePath
+    )
+      return state;
+    const canonical = await this.deps.resolveDeviceWorkspacePath({
+      deviceId: legacy.deviceId,
+      path: legacy.rootPath,
+    });
+    // Offline devices retain their original evidence. They must not become scratch.
+    if (!canonical) return state;
+    if (normalizeRootPath(canonical.rootPath) !== normalizeRootPath(legacy.rootPath)) {
+      throw workspaceDirectoryUnavailable();
+    }
+    const row = await this.deps.workspaceModel.getOrCreate({
+      deviceId: legacy.deviceId,
+      kind: 'device',
+      rootPath: canonical.rootPath,
+      repoType: canonical.repoType,
+    });
+    return this.deps.bindingStore.bind({
+      topicId,
+      workspaceId: row.id,
+      target: state.snapshot?.target,
+    });
+  };
 
   captureTarget = async (params: Omit<CaptureTopicTargetParams, 'now'> & { now?: Date }) =>
     this.deps.bindingStore.captureTargetIfAbsent(params);

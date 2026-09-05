@@ -1,5 +1,9 @@
 export { editLocalFile } from './edit';
-export { ExecutionBoundaryError, prepareToolCallExecution } from './executionBoundary';
+export {
+  ExecutionBoundaryError,
+  prepareToolCallExecution,
+  toolNeedsDefaultCwd,
+} from './executionBoundary';
 export { expandTilde } from './expandTilde';
 export { globLocalFiles } from './glob';
 export { grepContent } from './grep';

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { isDesktop } from '@/const/version';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { useUserStore } from '@/store/user';
@@ -16,14 +17,18 @@ export const useAgentTopicGroupMode = () => {
   const updateAgentChatConfig = useAgentStore((s) => s.updateAgentChatConfig);
   const globalMode = useUserStore(preferenceSelectors.topicGroupMode);
 
-  const topicGroupMode = resolveAgentTopicGroupMode({
+  const storedTopicGroupMode = resolveAgentTopicGroupMode({
     agentTopicGroupMode,
     agentType,
     globalMode,
   });
 
+  const topicGroupMode =
+    !isDesktop && storedTopicGroupMode === 'byProject' ? 'byTime' : storedTopicGroupMode;
+
   const updateTopicGroupMode = useCallback(
     async (mode: TopicGroupMode) => {
+      if (!isDesktop && mode === 'byProject') return;
       await updateAgentChatConfig({ topicGroupMode: mode });
     },
     [updateAgentChatConfig],

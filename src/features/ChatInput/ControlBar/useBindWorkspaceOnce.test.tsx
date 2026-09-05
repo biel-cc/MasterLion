@@ -9,6 +9,7 @@ import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useBindWorkspaceOnce } from './useBindWorkspaceOnce';
 
 const mocks = vi.hoisted(() => ({
+  desktop: true,
   bindTopicWorkspace: vi.fn(),
   getOrCreateDeviceWorkspace: vi.fn(),
   legacyCommit: vi.fn(),
@@ -16,6 +17,12 @@ const mocks = vi.hoisted(() => ({
   setDraftWorkspaceIntent: vi.fn(),
   switchTopic: vi.fn(),
   updateDeviceCwd: vi.fn(),
+}));
+
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return mocks.desktop;
+  },
 }));
 
 vi.mock('@/store/projectWorkspace', () => ({
@@ -56,10 +63,21 @@ const workspace = {
 describe('useBindWorkspaceOnce', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.desktop = true;
     mocks.seamAvailable = true;
     mocks.getOrCreateDeviceWorkspace.mockResolvedValue({ ok: true, value: workspace });
     mocks.bindTopicWorkspace.mockResolvedValue({ ok: true, value: {} });
     mocks.updateDeviceCwd.mockResolvedValue(undefined);
+  });
+
+  it('does not bind or create device projects from Web callbacks', async () => {
+    mocks.desktop = false;
+    const { result } = renderHook(() => useBindWorkspaceOnce(effective(), 'agent-1'));
+    expect(result.current.canSelect).toBe(false);
+    await act(async () => {
+      expect(await result.current.select({ path: '/project' })).toBe(false);
+    });
+    expect(mocks.getOrCreateDeviceWorkspace).not.toHaveBeenCalled();
   });
 
   it('replaces an inherited project on the header draft without binding the topic', async () => {

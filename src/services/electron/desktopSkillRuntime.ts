@@ -35,12 +35,12 @@ class DesktopSkillRuntimeService {
   async resolveExecutionDirectory(
     activatedSkills?: ExecScriptActivatedSkill[],
   ): Promise<string | undefined> {
-    // Use the first activated skill to resolve the execution directory
-    const firstSkill = activatedSkills?.[0];
-    if (!firstSkill) return undefined;
-
-    const skill = await this.resolveSkill({ id: firstSkill.id, name: firstSkill.name });
-    return this.prepareSkillDirectoryForSkill(skill);
+    for (const activated of [...(activatedSkills ?? [])].reverse()) {
+      const skill = await this.resolveSkill({ id: activated.id, name: activated.name });
+      const directory = await this.prepareSkillDirectoryForSkill(skill);
+      if (directory) return directory;
+    }
+    return undefined;
   }
 
   async resolveReferenceFullPath(params: {

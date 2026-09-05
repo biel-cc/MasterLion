@@ -49,7 +49,8 @@ const WorkspaceExtensions = memo<WorkspaceExtensionsProps>(({ deviceId, workspac
   const { t: translate } = useTranslation('setting');
   const t = translate as unknown as (key: string) => string;
   const extensions = useWorkspaceExtensions();
-  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  // Native details hides collapsed content; retain mounted editors and their unsaved drafts.
+  const [mountedKeys, setMountedKeys] = useState<string[]>([]);
 
   return (
     <Flexbox data-testid="workspace-extensions" gap={8}>
@@ -57,17 +58,17 @@ const WorkspaceExtensions = memo<WorkspaceExtensionsProps>(({ deviceId, workspac
         className={styles.section}
         onToggle={(event) => {
           const { open } = event.currentTarget;
-          setExpandedKeys((keys) =>
-            open
-              ? [...new Set([...keys, 'environment'])]
-              : keys.filter((key) => key !== 'environment'),
-          );
+          setMountedKeys((keys) => (open ? [...new Set([...keys, 'environment'])] : keys));
         }}
       >
         <summary className={styles.summary}>{t('workspaceEnv.title')}</summary>
         <div className={styles.body}>
-          {expandedKeys.includes('environment') && (
-            <WorkspaceEnv client={workspaceEnvClient} workspaceId={workspace.id} />
+          {mountedKeys.includes('environment') && (
+            <WorkspaceEnv
+              client={workspaceEnvClient}
+              key={workspace.id}
+              workspaceId={workspace.id}
+            />
           )}
         </div>
       </details>
@@ -75,17 +76,13 @@ const WorkspaceExtensions = memo<WorkspaceExtensionsProps>(({ deviceId, workspac
         className={styles.section}
         onToggle={(event) => {
           const { open } = event.currentTarget;
-          setExpandedKeys((keys) =>
-            open
-              ? [...new Set([...keys, 'environment-files'])]
-              : keys.filter((key) => key !== 'environment-files'),
-          );
+          setMountedKeys((keys) => (open ? [...new Set([...keys, 'environment-files'])] : keys));
         }}
       >
         <summary className={styles.summary}>{t('workspaceEnvFiles.title')}</summary>
         <div className={styles.body}>
-          {expandedKeys.includes('environment-files') && (
-            <WorkspaceEnvFiles workspace={workspace} />
+          {mountedKeys.includes('environment-files') && (
+            <WorkspaceEnvFiles key={workspace.id} workspace={workspace} />
           )}
         </div>
       </details>
@@ -93,15 +90,13 @@ const WorkspaceExtensions = memo<WorkspaceExtensionsProps>(({ deviceId, workspac
         className={styles.section}
         onToggle={(event) => {
           const { open } = event.currentTarget;
-          setExpandedKeys((keys) =>
-            open ? [...new Set([...keys, 'skills'])] : keys.filter((key) => key !== 'skills'),
-          );
+          setMountedKeys((keys) => (open ? [...new Set([...keys, 'skills'])] : keys));
         }}
       >
         <summary className={styles.summary}>{t('workspaceSkills.title')}</summary>
         <div className={styles.body}>
-          {expandedKeys.includes('skills') && (
-            <WorkspaceSkillsSettings deviceId={deviceId} workspace={workspace} />
+          {mountedKeys.includes('skills') && (
+            <WorkspaceSkillsSettings deviceId={deviceId} key={workspace.id} workspace={workspace} />
           )}
         </div>
       </details>

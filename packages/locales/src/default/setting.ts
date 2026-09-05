@@ -1,4 +1,8 @@
 export default {
+  'workspaceSkills.scanError':
+    'Could not scan project skills. Check the device connection and retry.',
+  'workspaceSkills.retry': 'Retry',
+
   '_cloud.officialProvider': '{{name}} Official Model Service',
   'about.title': 'About',
   'agentImport.action': 'Copy to Workspace...',

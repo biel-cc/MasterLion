@@ -1374,6 +1374,8 @@ describe('ConversationLifecycle actions', () => {
               workspace: expect.objectContaining({ id: 'workspace-project' }),
             }),
             workingDirectory: '/Users/me/project',
+            directUserMessageId: TEST_IDS.USER_MESSAGE_ID,
+            parentMessageType: 'assistant',
           }),
         );
         expect(executeGatewayAgent).not.toHaveBeenCalled();

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { isDesktop } from '@/const/version';
 import type { EffectiveWorkspace } from '@/hooks/useEffectiveWorkspace';
 import { useChatStore } from '@/store/chat';
 import { useDeviceStore } from '@/store/device';
@@ -47,6 +48,7 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
 
   /** Picker is offered only while the topic (or draft) is still unbound on a device target. */
   const canSelect =
+    isDesktop &&
     (effective.state === 'unbound' ||
       (effective.isDraft && !effective.topicId && effective.draftRuntimeEditable) ||
       (!seamAvailable && effective.state === 'bound')) &&
@@ -54,6 +56,7 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
     !!deviceId;
   /** Bound and scratch topics only expose the "new referenced topic" path. */
   const canStartReferencedTopic =
+    isDesktop &&
     seamAvailable &&
     (effective.state === 'bound' || effective.state === 'scratch') &&
     isDeviceTarget &&
@@ -157,7 +160,7 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
 
   const startReferencedTopic = useCallback(
     async (selection: WorkspaceSelection): Promise<boolean> => {
-      if (!deviceId || !effective.topicId) return false;
+      if (!isDesktop || !deviceId || !effective.topicId) return false;
       setPending(true);
       setError(undefined);
       try {

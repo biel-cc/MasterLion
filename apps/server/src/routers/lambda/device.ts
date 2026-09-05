@@ -1,5 +1,6 @@
 import { REMOTE_HETEROGENEOUS_AGENT_CONFIGS } from '@lobechat/heterogeneous-agents';
 import type { DeviceChannel, DeviceListItem, WorkingDirEntry } from '@lobechat/types';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import { DeviceModel } from '@/database/models/device';
@@ -374,6 +375,15 @@ export const deviceRouter = router({
    * remote device, via the device's `listProjectSkills` RPC. Powers the
    * Resources tab's skills group in device mode. Returns `null` when offline.
    */
+  initWorkspace: deviceProcedure
+    .input(z.object({ deviceId: z.string().min(1), scope: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const result = await deviceGateway.initWorkspace({ ...input, userId: ctx.userId });
+      if (!result)
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Workspace scan unavailable' });
+      return result;
+    }),
+
   listProjectSkills: deviceProcedure
     .input(z.object({ deviceId: z.string(), scope: z.string() }))
     .query(async ({ ctx, input }) => {

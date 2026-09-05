@@ -1,3 +1,5 @@
+import '../_testFixtures/emptySkills';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AiAgentService } from '../index';
@@ -91,6 +93,12 @@ vi.mock('@/database/models/agent', () => ({
 vi.mock('@/server/services/agent', () => ({
   AgentService: vi.fn().mockImplementation(() => ({
     getAgentConfig: vi.fn().mockResolvedValue(heteroAgentConfig),
+  })),
+}));
+
+vi.mock('@/database/models/device', () => ({
+  DeviceModel: vi.fn().mockImplementation(() => ({
+    findByDeviceId: vi.fn().mockResolvedValue(undefined),
   })),
 }));
 

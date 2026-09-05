@@ -1,3 +1,5 @@
+import '../_testFixtures/emptySkills';
+
 import type * as ModelBankModule from 'model-bank';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +59,12 @@ vi.mock('@/libs/trusted-client', () => ({
   generateTrustedClientToken: vi.fn().mockReturnValue(undefined),
   getTrustedClientTokenForSession: vi.fn().mockResolvedValue(undefined),
   isTrustedClientEnabled: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('@/database/models/device', () => ({
+  DeviceModel: vi.fn().mockImplementation(() => ({
+    findByDeviceId: vi.fn().mockResolvedValue(undefined),
+  })),
 }));
 
 vi.mock('@/database/models/message', () => ({

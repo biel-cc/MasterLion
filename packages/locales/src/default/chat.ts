@@ -1,4 +1,7 @@
 export default {
+  'workspaceRuntime.hetero.gate.webDesc':
+    'Create a project topic in the desktop app, then continue it here.',
+
   'ModelSwitch.title': 'Model',
   'active': 'Active',
   'agentBuilder.installPlugin.authRequired': 'Cloud MCP requires sign-in to continue',

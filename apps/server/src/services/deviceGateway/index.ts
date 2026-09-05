@@ -192,6 +192,35 @@ export class DeviceGateway {
     }
   }
 
+  async prepareSkillPackage(params: {
+    deviceId: string;
+    userId: string;
+    url: string;
+    zipHash: string;
+  }): Promise<{ extractedDir: string } | undefined> {
+    const { deviceId, userId, ...input } = params;
+    const result = await this.getClient()?.invokeRpc<{ extractedDir: string }>(
+      { deviceId, userId, timeout: 60000 },
+      { method: 'prepareSkillPackage', params: input },
+    );
+    return result?.success ? (result.data ?? undefined) : undefined;
+  }
+
+  async getLocalScratchExecution(params: {
+    deviceId: string;
+    userId: string;
+    topicId: string;
+    operationId: string;
+    toolCallId: string;
+  }): Promise<{ root: string } | undefined> {
+    const { deviceId, userId, ...trace } = params;
+    const result = await this.getClient()?.invokeRpc<{ root: string }>(
+      { deviceId, userId, timeout: 8000 },
+      { method: 'getLocalScratchExecution', params: trace },
+    );
+    return result?.success ? (result.data ?? undefined) : undefined;
+  }
+
   /** Lazily create the topic-scoped scratch directory on the selected device. */
   async ensureScratchWorkspace(params: {
     deviceId: string;

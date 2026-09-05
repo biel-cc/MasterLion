@@ -204,6 +204,13 @@ export interface WorkspaceScanDeps {
 export interface DeviceControlDeps extends WorkspaceScanDeps {
   /** Read a local file preview (host-gated on desktop; disk read on CLI). */
   getLocalFilePreview: (params: LocalFilePreviewUrlParams) => Promise<LocalFilePreviewResult>;
+  /** Main-process evidence; never an agent-authored tool result. */
+  getLocalScratchExecution?: (params: {
+    operationId: string;
+    toolCallId: string;
+    topicId: string;
+  }) => { root: string } | undefined;
+
   /** Build the project file index. */
   getProjectFileIndex: (params: ProjectFileIndexParams) => Promise<ProjectFileIndexResult>;
   /** Shared start/resume implementation used by the v2 RPC and legacy WS entry. */
@@ -212,4 +219,5 @@ export interface DeviceControlDeps extends WorkspaceScanDeps {
   ) => Promise<HeterogeneousAgentRunResult>;
   /** Explicit host root used only by ensureScratchWorkspace. */
   scratchRoot?: string;
+  skillCacheRoot?: string;
 }

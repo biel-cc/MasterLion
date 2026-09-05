@@ -123,6 +123,47 @@ const envFilePathSchema = z
   );
 
 export const projectWorkspaceRouter = router({
+  finalizeLocalScratch: projectWorkspaceWriteProcedure
+    .input(
+      z.object({
+        deviceId: z.string().min(1),
+        topicId: z.string().min(1),
+        operationId: z.string().min(1),
+        toolCallId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const state = await ctx.workspaceService.resolveTopic(input.topicId);
+      if (!state) throw new TRPCError({ code: 'NOT_FOUND', message: 'Topic not found' });
+      if (
+        state.snapshot?.target !== 'local' ||
+        state.snapshot.boundDeviceId !== input.deviceId ||
+        (state.workspace && state.workspace.kind !== 'scratch')
+      ) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'WORKSPACE_ALREADY_BOUND' });
+      }
+      // Ask the owning main process for successful-tool evidence. No renderer-supplied path or success flag is accepted.
+      const evidence = await new DeviceGateway().getLocalScratchExecution({
+        ...input,
+        userId: ctx.userId,
+      });
+      if (!evidence?.root)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Scratch tool succeeded locally, but its device evidence is unavailable. Reconnect the gateway and retry finalization.',
+        });
+      requireAbsolutePath(evidence.root);
+      return ctx.workspaceService.bindScratchAfterToolSuccess({
+        deviceId: input.deviceId,
+        rootPath: evidence.root,
+        target: 'local',
+        topicId: input.topicId,
+        toolSucceeded: true,
+        workspaceId: ctx.workspaceId,
+      });
+    }),
+
   bindTopic: projectWorkspaceWriteProcedure
     .input(
       z.object({
@@ -181,7 +222,7 @@ export const projectWorkspaceRouter = router({
 
   getTopicState: projectWorkspaceProcedure
     .input(z.object({ topicId: z.string().min(1) }))
-    .query(({ ctx, input }) => ctx.workspaceService.resolveTopic(input.topicId)),
+    .query(({ ctx, input }) => ctx.workspaceService.resolveAndMigrateTopic(input.topicId)),
 
   /** Value-free authority probe used before Electron chooses an in-process runtime. */
   getManagedEnvSummary: projectWorkspaceProcedure

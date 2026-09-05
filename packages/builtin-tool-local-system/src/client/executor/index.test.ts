@@ -242,6 +242,36 @@ describe('LocalSystemExecutor', () => {
       spy.mockRestore();
     });
 
+    it.each(['readFile', 'runCommand'] as const)(
+      'dispatches an unbound %s through the main-process boundary',
+      async (apiName) => {
+        executeLocalToolCallMock.mockResolvedValue({ content: 'ok', success: true });
+        const ctx = {
+          agentId: 'agent-1',
+          topicId: 'topic-1',
+          messageId: 'message-1',
+          operationId: 'op-1',
+          toolCallId: 'call-1',
+          executionContext: {
+            version: 1 as const,
+            plan: { deviceId: 'device-1', kind: 'device' as const, target: 'local' as const },
+            accessRoots: [],
+          },
+        };
+        const result =
+          apiName === 'readFile'
+            ? await localSystemExecutor.readFile({ path: '/Users/me/explicit.txt' }, ctx)
+            : await localSystemExecutor.runCommand({ command: 'pwd' }, ctx);
+        expect(result.success).toBe(true);
+        expect(executeLocalToolCallMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            apiName,
+            executionContext: expect.objectContaining({ cwd: undefined }),
+          }),
+        );
+      },
+    );
+
     it('returns WORKSPACE_REQUIRED before invoking runtime for a context-bearing call', async () => {
       const runtime = (localSystemExecutor as any).runtime as {
         runCommand: (args: any) => Promise<unknown>;

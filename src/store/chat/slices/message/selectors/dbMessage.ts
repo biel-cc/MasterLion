@@ -1,14 +1,12 @@
 import { LobeActivatorIdentifier } from '@lobechat/builtin-tool-activator';
-import { SkillsIdentifier } from '@lobechat/builtin-tool-skills';
-import {
-  type StepActivatedSkill,
-  type StepContextTodos,
-  type UIChatMessage,
-} from '@lobechat/types';
+import { selectActivatedSkillsFromMessages } from '@lobechat/builtin-tool-skills';
+import { type StepContextTodos, type UIChatMessage } from '@lobechat/types';
 
 import { chatHelpers } from '../../../helpers';
 import { type ChatStoreState } from '../../../initialState';
 import { messageMapKey } from '../../../utils/messageMapKey';
+
+export { selectActivatedSkillsFromMessages } from '@lobechat/builtin-tool-skills';
 
 /**
  * DB Message Selectors
@@ -190,64 +188,6 @@ export const selectActivatedToolIdsFromMessages = (
 };
 
 // ============= Activated Skills Selectors ========== //
-
-/**
- * Accumulate activated skills from all activateSkill messages.
- *
- * Skills once activated remain active for the rest of the conversation.
- * Uses skill id as key to deduplicate (later calls update the entry).
- *
- * @param messages - Array of chat messages to scan
- * @returns Array of activated skills, or undefined if none
- */
-export const selectActivatedSkillsFromMessages = (
-  messages: UIChatMessage[],
-): StepActivatedSkill[] | undefined => {
-  const skillsMap = new Map<string, StepActivatedSkill>();
-
-  for (const msg of messages) {
-    if (
-      msg.role !== 'tool' ||
-      !(
-        msg.plugin?.identifier === SkillsIdentifier ||
-        msg.plugin?.identifier === LobeActivatorIdentifier
-      )
-    )
-      continue;
-
-    // Direct activateSkill calls — state has top-level id/name
-    if (msg.plugin?.apiName === 'activateSkill' && msg.pluginState?.id && msg.pluginState?.name) {
-      const id = msg.pluginState.id as string;
-      skillsMap.set(id, {
-        description: msg.pluginState.description as string | undefined,
-        id,
-        name: msg.pluginState.name as string,
-      });
-    }
-
-    // activateTools fallback — skills nested in pluginState.activatedSkills[]
-    if (
-      msg.plugin?.apiName === 'activateTools' &&
-      Array.isArray(msg.pluginState?.activatedSkills)
-    ) {
-      for (const skill of msg.pluginState.activatedSkills as Array<{
-        description?: string;
-        id?: string;
-        name?: string;
-      }>) {
-        if (skill.id && skill.name) {
-          skillsMap.set(skill.id, {
-            description: skill.description,
-            id: skill.id,
-            name: skill.name,
-          });
-        }
-      }
-    }
-  }
-
-  return skillsMap.size > 0 ? [...skillsMap.values()] : undefined;
-};
 
 // ============= Todos Selectors ========== //
 

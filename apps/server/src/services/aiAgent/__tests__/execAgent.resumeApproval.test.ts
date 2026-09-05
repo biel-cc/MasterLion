@@ -1,3 +1,5 @@
+import '../_testFixtures/emptySkills';
+
 import type { LobeChatDatabase } from '@lobechat/database';
 import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -152,6 +154,7 @@ vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
 vi.mock('@/server/services/projectWorkspace', () => ({
   ProjectWorkspaceService: vi.fn().mockImplementation(() => ({
     bindScratchAfterToolSuccess: mockBindScratch,
+    resolveAndMigrateTopic: mockGetWorkspaceState,
   })),
 }));
 

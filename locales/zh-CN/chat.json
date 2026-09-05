@@ -1160,6 +1160,7 @@
   "workspaceRuntime.hetero.gate.unrouted.no-bound-device": "请先选择目标设备，再选择项目。",
   "workspaceRuntime.hetero.gate.unrouted.no-online-device": "当前没有可用于本话题的在线设备。",
   "workspaceRuntime.hetero.gate.unroutedTitle": "执行目标不可用",
+  "workspaceRuntime.hetero.gate.webDesc": "请先在桌面端创建项目话题，再回到此处继续。",
   "workspaceRuntime.intent.confirm": "设为项目",
   "workspaceRuntime.intent.confirmDescription": "将 {{path}} 作为本话题的项目？本话题之后会固定使用这个文件夹。",
   "workspaceRuntime.intent.confirmTitle": "将此文件夹作为当前项目？",

@@ -1,12 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import WorkspaceExtensions from './WorkspaceExtensions';
 
 const { envFilesRender } = vi.hoisted(() => ({
   envFilesRender: vi.fn(({ workspace }: { workspace: { id: string } }) => (
-    <div>env files for {workspace.id}</div>
+    <DraftEditor id={workspace.id} />
   )),
 }));
 
@@ -31,6 +31,16 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+function DraftEditor({ id }: { id: string }) {
+  const [value, setValue] = useState('');
+  return (
+    <div>
+      env files for {id}
+      <input aria-label="draft" value={value} onChange={(event) => setValue(event.target.value)} />
+    </div>
+  );
+}
+
 describe('WorkspaceExtensions', () => {
   it('lazy-mounts the real env-files feature from the device workspace panel', () => {
     render(
@@ -46,6 +56,12 @@ describe('WorkspaceExtensions', () => {
     fireEvent(details, new Event('toggle'));
 
     expect(screen.getByText('env files for workspace-1')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('draft'), { target: { value: 'unsaved.env' } });
+    Object.defineProperty(details, 'open', { configurable: true, value: false });
+    fireEvent(details, new Event('toggle'));
+    Object.defineProperty(details, 'open', { configurable: true, value: true });
+    fireEvent(details, new Event('toggle'));
+    expect(screen.getByLabelText('draft')).toHaveValue('unsaved.env');
     expect(envFilesRender).toHaveBeenCalledWith(
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'workspace-1' }) }),
       undefined,
