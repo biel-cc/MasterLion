@@ -654,7 +654,12 @@ export class AiAgentService {
           workspace: params.executionContext.workspace,
           workspaceInit,
         },
-        { userId: this.userId, workspaceId: this.workspaceId },
+        {
+          userId: this.userId,
+          // Project skill ownership is the frozen filesystem workspace, not
+          // the organization workspace used to scope database rows.
+          workspaceId: params.executionContext.workspace?.id,
+        },
       );
     } catch (error) {
       log('execAgent: failed to freeze skill registry: %O', error);

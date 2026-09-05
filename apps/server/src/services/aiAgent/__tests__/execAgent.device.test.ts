@@ -223,6 +223,42 @@ describe('AiAgentService.execAgent - device auto-activation', () => {
   const mockDb = {} as any;
   const userId = 'test-user-id';
 
+  it.each([undefined, 'organization-workspace'])(
+    'keeps device project skills visible with organization scope %s',
+    async (workspaceId) => {
+      service = new AiAgentService(mockDb, userId, { workspaceId });
+      vi.spyOn(service as any, 'resolveWorkspaceInit').mockResolvedValue({
+        instructions: [],
+        skills: [{ name: 'project-probe', path: '/repo/.agents/skills/project-probe/SKILL.md' }],
+      });
+      const result = await (service as any).resolveFrozenSkillRegistry({
+        activeDeviceId: 'device-1',
+        agentId: 'agent-1',
+        agentConfig: {},
+        skillPolicy: { includeProjectSkills: true },
+        executionContext: {
+          version: 1,
+          cwd: '/repo',
+          plan: { kind: 'device', deviceId: 'device-1', target: 'local' },
+          workspace: {
+            id: 'project-workspace-1',
+            kind: 'device',
+            deviceId: 'device-1',
+            rootPath: '/repo',
+          },
+        },
+        topicId: 'topic-1',
+      });
+      expect(result.skills).toContainEqual(
+        expect.objectContaining({
+          name: 'project-probe',
+          source: 'project',
+          ownerId: 'project-workspace-1',
+        }),
+      );
+    },
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     topicMock.create.mockResolvedValue({ id: 'topic-1', metadata: undefined });
