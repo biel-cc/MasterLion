@@ -121,7 +121,14 @@ export const createChatStoreToolCallMessageAdapter = ({
             // derived pointer was absent from the original execution intent.
             result_msg_id:
               toolCall.result_msg_id === messageId ? undefined : toolCall.result_msg_id,
-            source: toolCall.source,
+            // The builtin registry supplies this on first execution; the DB
+            // plugin projection omits it on approval resume. Keep the exact
+            // local-system origin stable across both paths.
+            source:
+              toolCall.source ??
+              (toolCall.type === 'builtin' && toolCall.identifier === 'lobe-local-system'
+                ? 'builtin'
+                : undefined),
             thoughtSignature: toolCall.thoughtSignature,
             toolCallId: toolCall.id,
             type: toolCall.type,

@@ -160,6 +160,9 @@ describe('createChatStoreToolCallMessageAdapter', () => {
     ).resolves.toEqual({ disposition: 'existing', messageId: 'tool-message-existing' });
 
     expect(optimisticCreateTmpMessage).not.toHaveBeenCalled();
+    expect(vi.mocked(messageService.ensureToolMessage).mock.calls[0][0].toolCall.source).toBe(
+      'builtin',
+    );
     expect(
       vi.mocked(messageService.ensureToolMessage).mock.calls[0][0].toolCall.result_msg_id,
     ).toBeUndefined();
