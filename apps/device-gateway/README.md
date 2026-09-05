@@ -8,10 +8,11 @@ needed for the standalone server is vendored under `upstream/` because the ACR b
 download arbitrary HTTPS resources. `SOURCE_SHA256SUMS` is verified before compilation. Build it in
 Alibaba Cloud ACR; do not build or publish a local Docker image for production.
 
-Masterino carries a narrow authentication-order patch on top of the pinned source: JWT/API-key
+Masterino carries authentication-order and protocol-v2 execution-context patches on top of the pinned source: JWT/API-key
 connections are attached to a user hub only after credential verification, while service-token
 connections retain the explicit user-id requirement. The ACR build runs the vendored protocol
-tests before producing the binary.
+tests before producing the binary. The checksum manifest covers the current patched source; the
+upstream commit and blob map continue to identify the unmodified upstream baseline.
 
 `BASE_REGISTRY` defaults to `docker.io/library` and can be overridden by ACR when the cloud builder
 uses a mainland mirror. It changes only the Go and Alpine base-image registry; the upstream source
