@@ -41,6 +41,10 @@ vi.mock('@/store/user', () => ({
 }));
 
 vi.mock('@/store/user/selectors', () => ({
+  toolInterventionSelectors: {
+    approvalMode: () => 'manual',
+    allowList: () => ['lobe-skills/readReference'],
+  },
   settingsSelectors: {
     defaultAgentConfig: () => ({
       chatConfig: { disableGatewayMode: mockUserDefaultConfig.disableGatewayMode },
@@ -580,6 +584,10 @@ describe('GatewayActionImpl', () => {
         expect.objectContaining({
           parentMessageId: 'user-msg-123',
           prompt: 'Original question',
+          userInterventionConfig: {
+            approvalMode: 'manual',
+            allowList: ['lobe-skills/readReference'],
+          },
         }),
         expect.anything(),
       );

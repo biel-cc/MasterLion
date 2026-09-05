@@ -1,9 +1,9 @@
-import type { ExecAgentAppContext, ExecAgentResult } from '@lobechat/types';
+import type { ExecAgentAppContext, ExecAgentResult, UserInterventionConfig } from '@lobechat/types';
 import type { OperationPathConsentApproval } from '@lobechat/types/src/executionContext';
 
 import { lambdaClient } from '@/libs/trpc/client';
 
-export type { ExecAgentResult };
+export type { ExecAgentResult, UserInterventionConfig };
 
 /**
  * Resume instruction for an operation that hit `human_approve_required`. When
@@ -59,6 +59,8 @@ export interface ExecAgentTaskParams {
    * `agent_operations.trigger` column reflects the real source.
    */
   trigger?: string;
+  /** Interactive callers preserve the UI approval policy; background callers choose headless explicitly. */
+  userInterventionConfig?: UserInterventionConfig;
 }
 
 /**

@@ -16,6 +16,7 @@ import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
 import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
+import { resolvePendingTopicExecutionIntent } from '@/store/projectWorkspace/topicExecutionIntent';
 import { type StoreSetter } from '@/store/types';
 
 import { displayMessageSelectors, topicSelectors } from '../../../selectors';
@@ -67,11 +68,22 @@ export class ConversationControlActionImpl {
       ? (getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot?.workspaceId ??
         topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.executionSnapshot?.workspaceId)
       : undefined;
+    const topicSnapshot = topicId
+      ? (getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot ??
+        topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.executionSnapshot)
+      : undefined;
+    const pendingExecution = await resolvePendingTopicExecutionIntent({
+      agentId: context.agentId,
+      groupId: context.groupId,
+      isNewTopic: false,
+      topicId,
+      topicSnapshot,
+    });
     return (
       (await routeDesktopWorkspaceRuntime(
         selectRuntimeType({
-          boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
-          executionTarget: agentConfig?.agencyConfig?.executionTarget,
+          boundDeviceId: pendingExecution?.intent.targetDeviceId ?? agentConfig?.agencyConfig?.boundDeviceId,
+          executionTarget: pendingExecution?.intent.target ?? agentConfig?.agencyConfig?.executionTarget,
           heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
           isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
         }),

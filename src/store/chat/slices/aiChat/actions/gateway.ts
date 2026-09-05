@@ -6,6 +6,7 @@ import {
 } from '@lobechat/agent-gateway-client';
 import type { ConversationContext, ExecAgentResult, MessageMetadata } from '@lobechat/types';
 
+import { SameOriginAgentStreamClient } from '@/services/agentRuntime/SameOriginAgentStreamClient';
 import {
   aiAgentService,
   type ResumeApprovalParam,
@@ -24,7 +25,7 @@ import {
 } from '@/store/projectWorkspace';
 import type { StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
-import { settingsSelectors } from '@/store/user/selectors';
+import { settingsSelectors, toolInterventionSelectors } from '@/store/user/selectors';
 
 import { createGatewayEventHandler } from './gatewayEventHandler';
 
@@ -50,7 +51,7 @@ export interface ConnectGatewayParams {
   /**
    * Gateway WebSocket URL (e.g. https://aihub.bielcrystal.com)
    */
-  gatewayUrl: string;
+  gatewayUrl?: string;
   /**
    * Callback for each agent event received
    */
@@ -106,7 +107,9 @@ export class GatewayActionImpl {
     // Disconnect existing connection for this operation if any
     this.disconnectFromGateway(operationId);
 
-    const client = this.createClient({ gatewayUrl, operationId, resumeOnConnect, token });
+    const client = gatewayUrl
+      ? this.createClient({ gatewayUrl, operationId, resumeOnConnect, token })
+      : new SameOriginAgentStreamClient(operationId, topicId);
 
     // Track connection in store
     this.#set(
@@ -386,6 +389,10 @@ export class GatewayActionImpl {
         resumeApproval,
         resumeInteraction,
         trigger: metadata?.trigger,
+        userInterventionConfig: {
+          approvalMode: toolInterventionSelectors.approvalMode(useUserStore.getState()),
+          allowList: toolInterventionSelectors.allowList(useUserStore.getState()),
+        },
       },
       { signal: abortSignal },
     );
@@ -565,7 +572,6 @@ export class GatewayActionImpl {
 
     const agentGatewayUrl =
       window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayUrl;
-    if (!agentGatewayUrl) return;
 
     // Skip reconnect if the gateway action already established (or is establishing)
     // a fresh connection for this operation. This prevents a race on new-topic creation
@@ -587,7 +593,9 @@ export class GatewayActionImpl {
     if (topicCurrentOpId && topicCurrentOpId !== operationId) return;
 
     // Get a fresh JWT token (original expired after 5 min)
-    const { token } = await aiAgentService.refreshGatewayToken(topicId);
+    const { token } = agentGatewayUrl
+      ? await aiAgentService.refreshGatewayToken(topicId)
+      : { token: '' };
 
     // Re-check after the async token refresh: a newer executeGatewayAgent call may have
     // taken over for this topic while we were waiting. If so, bail to avoid a duplicate stream.

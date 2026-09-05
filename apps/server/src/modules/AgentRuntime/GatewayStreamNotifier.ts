@@ -120,6 +120,10 @@ export class GatewayStreamNotifier implements IStreamEventManager {
 
   // ─── Read / subscribe methods: delegate directly to inner ───
 
+  async getStreamOwner(operationId: string): Promise<string | undefined> {
+    return this.inner.getStreamOwner?.(operationId);
+  }
+
   async subscribeStreamEvents(
     operationId: string,
     lastEventId: string,

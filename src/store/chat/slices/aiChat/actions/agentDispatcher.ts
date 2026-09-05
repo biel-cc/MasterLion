@@ -120,6 +120,14 @@ export const selectRuntimeType = (
     );
     return isDesktop && target === 'local' ? 'hetero' : 'gateway';
   }
+  // Browser/device runs need the server's device tool catalog and dispatcher.
+  // A desktop-local snapshot opened on web retains its bound device identity.
+  if (
+    ctx.executionTarget === 'device' ||
+    (!isDesktop && ctx.executionTarget === 'local' && !!ctx.boundDeviceId)
+  ) {
+    return 'gateway';
+  }
   if (ctx.isGatewayMode) return 'gateway';
   return 'client';
 };

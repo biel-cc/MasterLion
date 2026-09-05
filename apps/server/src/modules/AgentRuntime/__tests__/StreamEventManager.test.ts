@@ -8,6 +8,9 @@ import {
 
 // Mock Redis client
 const mockRedis = {
+  duplicate: vi.fn(),
+  get: vi.fn(),
+  set: vi.fn(),
   del: vi.fn(),
   expire: vi.fn(),
   keys: vi.fn(),
@@ -29,6 +32,23 @@ describe('StreamEventManager', () => {
     streamManager = new StreamEventManager();
   });
 
+  it('keeps the blocking stream reader off the publisher connection and closes it on abort', async () => {
+    const abort = new AbortController();
+    const reader = {
+      disconnect: vi.fn(),
+      on: vi.fn(),
+      xread: vi.fn(async () => {
+        abort.abort();
+        return null;
+      }),
+    };
+    mockRedis.duplicate.mockReturnValue(reader);
+    await streamManager.subscribeStreamEvents('op-reader', '0', vi.fn(), abort.signal);
+    expect(reader.xread).toHaveBeenCalledTimes(1);
+    expect(mockRedis.xread).not.toHaveBeenCalled();
+    expect(reader.disconnect).toHaveBeenCalled();
+  });
+
   describe('publishAgentRuntimeInit', () => {
     it('should publish agent runtime init event with correct data', async () => {
       const operationId = 'test-operation-id';
@@ -47,6 +67,12 @@ describe('StreamEventManager', () => {
       const result = await streamManager.publishAgentRuntimeInit(operationId, metadata);
 
       expect(result).toBe('event-id-123');
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        'agent_runtime_stream_owner:test-operation-id',
+        'user-123',
+        'EX',
+        expect.any(Number),
+      );
       expect(mockRedis.xadd).toHaveBeenCalledWith(
         `agent_runtime_stream:${operationId}`,
         'MAXLEN',

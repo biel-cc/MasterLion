@@ -200,6 +200,7 @@ export class StreamEventManager {
 
       // Set expiration time
       await this.redis.expire(streamKey, this.STREAM_RETENTION);
+      await this.redis.expire(`${this.STREAM_PREFIX}_owner:${operationId}`, this.STREAM_RETENTION);
 
       log(
         'Published event %s for operation %s:%d',
@@ -242,7 +243,19 @@ export class StreamEventManager {
   /**
    * Publish Agent runtime initialization event
    */
+  async getStreamOwner(operationId: string): Promise<string | undefined> {
+    return (await this.redis.get(`${this.STREAM_PREFIX}_owner:${operationId}`)) ?? undefined;
+  }
+
   async publishAgentRuntimeInit(operationId: string, initialState: any): Promise<string> {
+    if (typeof initialState?.userId === 'string') {
+      await this.redis.set(
+        `${this.STREAM_PREFIX}_owner:${operationId}`,
+        initialState.userId,
+        'EX',
+        this.STREAM_RETENTION,
+      );
+    }
     return this.publishStreamEvent(operationId, {
       data: initialState,
       stepIndex: 0,
@@ -293,77 +306,88 @@ export class StreamEventManager {
 
     log('Starting subscription for operation %s from %s', operationId, lastEventId);
 
-    while (!signal?.aborted) {
-      try {
-        const xreadStart = Date.now();
-        const results = await this.redis.xread(
-          'BLOCK',
-          1000, // 1 second timeout
-          'STREAMS',
-          streamKey,
-          currentLastId,
-        );
-        const xreadEnd = Date.now();
+    // BLOCK must use a dedicated connection. Sharing the publisher connection
+    // queues every XADD behind XREAD and can add a second to each model chunk.
+    const reader = this.redis.duplicate();
+    const closeReader = () => reader.disconnect();
+    reader.on('error', (error) => log('Stream reader error: %O', error));
+    signal?.addEventListener('abort', closeReader, { once: true });
+    try {
+      while (!signal?.aborted) {
+        try {
+          const xreadStart = Date.now();
+          const results = await reader.xread(
+            'BLOCK',
+            1000, // 1 second timeout
+            'STREAMS',
+            streamKey,
+            currentLastId,
+          );
+          const xreadEnd = Date.now();
 
-        if (results && results.length > 0) {
-          const [, messages] = results[0];
-          const events: StreamEvent[] = [];
+          if (results && results.length > 0) {
+            const [, messages] = results[0];
+            const events: StreamEvent[] = [];
 
-          for (const [id, fields] of messages) {
-            const eventData: any = {};
+            for (const [id, fields] of messages) {
+              const eventData: any = {};
 
-            // Parse Redis Stream fields
-            for (let i = 0; i < fields.length; i += 2) {
-              const key = fields[i];
-              const value = fields[i + 1];
+              // Parse Redis Stream fields
+              for (let i = 0; i < fields.length; i += 2) {
+                const key = fields[i];
+                const value = fields[i + 1];
 
-              if (key === 'data') {
-                eventData[key] = JSON.parse(value);
-              } else if (key === 'stepIndex' || key === 'timestamp') {
-                eventData[key] = parseInt(value);
-              } else {
-                eventData[key] = value;
+                if (key === 'data') {
+                  eventData[key] = JSON.parse(value);
+                } else if (key === 'stepIndex' || key === 'timestamp') {
+                  eventData[key] = parseInt(value);
+                } else {
+                  eventData[key] = value;
+                }
               }
+
+              events.push({
+                ...eventData,
+                id, // Redis Stream event ID
+              } as StreamEvent);
+
+              currentLastId = id;
             }
 
-            events.push({
-              ...eventData,
-              id, // Redis Stream event ID
-            } as StreamEvent);
-
-            currentLastId = id;
-          }
-
-          if (events.length > 0) {
-            const now = Date.now();
-            // Calculate latency from event publication to read
-            for (const event of events) {
-              const latency = now - event.timestamp;
-              timing(
-                '[%s:%d] XREAD %s, published at %d, read at %d, latency %dms, xread took %dms',
-                operationId,
-                event.stepIndex,
-                event.type,
-                event.timestamp,
-                now,
-                latency,
-                xreadEnd - xreadStart,
-              );
+            if (events.length > 0) {
+              const now = Date.now();
+              // Calculate latency from event publication to read
+              for (const event of events) {
+                const latency = now - event.timestamp;
+                timing(
+                  '[%s:%d] XREAD %s, published at %d, read at %d, latency %dms, xread took %dms',
+                  operationId,
+                  event.stepIndex,
+                  event.type,
+                  event.timestamp,
+                  now,
+                  latency,
+                  xreadEnd - xreadStart,
+                );
+              }
+              onEvents(events);
             }
-            onEvents(events);
           }
-        }
-      } catch (error) {
-        if (signal?.aborted) {
-          break;
-        }
+        } catch (error) {
+          if (signal?.aborted) {
+            break;
+          }
 
-        console.error('[StreamEventManager] Stream subscription error:', error);
-        // Retry after brief delay
-        await new Promise((resolve) => {
-          setTimeout(resolve, 1000);
-        });
+          console.error('[StreamEventManager] Stream subscription error:', error);
+          // Retry after brief delay
+          await new Promise((resolve) => {
+            setTimeout(resolve, 1000);
+          });
+        }
       }
+    } finally {
+      signal?.removeEventListener('abort', closeReader);
+      closeReader();
     }
 
     log('Subscription ended for operation %s', operationId);
@@ -406,6 +430,7 @@ export class StreamEventManager {
    * Clean up stream data for operation
    */
   async cleanupOperation(operationId: string): Promise<void> {
+    await this.redis.del(`${this.STREAM_PREFIX}_owner:${operationId}`);
     const streamKey = `${this.STREAM_PREFIX}:${operationId}`;
 
     try {
