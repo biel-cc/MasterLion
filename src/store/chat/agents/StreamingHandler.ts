@@ -136,6 +136,8 @@ export class StreamingHandler {
    * Handle streaming finish
    */
   async handleFinish(finishData: FinishData): Promise<StreamingResult> {
+    // Providers may finish without a separate stop chunk or a text chunk after reasoning.
+    this.endReasoningIfNeeded();
     // Update traceId
     if (finishData.traceId) {
       this.msgTraceId = finishData.traceId;
@@ -354,13 +356,12 @@ export class StreamingHandler {
   }
 
   private endReasoningIfNeeded(): void {
-    if (this.thinkingStartAt && !this.thinkingDuration) {
+    if (this.thinkingStartAt !== undefined && this.thinkingDuration === undefined) {
       this.thinkingDuration = Date.now() - this.thinkingStartAt;
-
-      if (this.reasoningOperationId) {
-        this.callbacks.onReasoningComplete(this.reasoningOperationId);
-        this.reasoningOperationId = undefined;
-      }
+    }
+    if (this.reasoningOperationId) {
+      this.callbacks.onReasoningComplete(this.reasoningOperationId);
+      this.reasoningOperationId = undefined;
     }
   }
 

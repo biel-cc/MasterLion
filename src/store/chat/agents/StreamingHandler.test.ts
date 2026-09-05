@@ -405,6 +405,25 @@ describe('StreamingHandler', () => {
   });
 
   describe('handleFinish', () => {
+    it('completes reasoning when the provider finishes without a stop chunk', async () => {
+      const callbacks = createMockCallbacks();
+      const handler = new StreamingHandler(mockContext, callbacks);
+      const clock = vi.spyOn(Date, 'now');
+      clock.mockReturnValue(1000);
+      handler.handleChunk({ type: 'text', text: 'Answer' });
+      handler.handleChunk({ type: 'reasoning', text: 'Provider reasoning' });
+      clock.mockReturnValue(1200);
+
+      const result = await handler.handleFinish({ type: 'stop' });
+
+      expect(callbacks.onReasoningComplete).toHaveBeenCalledExactlyOnceWith('reasoning-op-id');
+      expect(result.metadata.reasoning?.duration).toBe(200);
+      expect(result.content).toBe('Answer');
+      handler.handleChunk({ type: 'stop' });
+      expect(callbacks.onReasoningComplete).toHaveBeenCalledTimes(1);
+      clock.mockRestore();
+    });
+
     it('should return correct result for text-only content', async () => {
       const callbacks = createMockCallbacks();
       const handler = new StreamingHandler(mockContext, callbacks);
