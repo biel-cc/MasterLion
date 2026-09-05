@@ -373,7 +373,13 @@ export default defineConfig({
           ],
         },
     watch: {
-      ignored: ['**/.codex/**', '**/.tmp*/**', '**/e2e/reports/**', '**/e2e/screenshots/**'],
+      ignored: [
+        '**/.codex/**',
+        '**/.local-dev/**',
+        '**/.tmp*/**',
+        '**/e2e/reports/**',
+        '**/e2e/screenshots/**',
+      ],
     },
   },
 });
