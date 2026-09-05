@@ -10,34 +10,52 @@ import { LobeAgentManifest } from '@lobechat/builtin-tool-lobe-agent';
 import { createPathScopeAudit } from '@lobechat/builtin-tool-local-system';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
+import {
+  createModelCatalogSnapshot,
+  getModelCatalogFromSettings,
+  mergeModelCatalogEntry,
+} from '@lobechat/business-model-bank';
 import { isDesktop } from '@lobechat/const';
-import { type ToolsEngine } from '@lobechat/context-engine';
+import {
+  DEFAULT_SKILL_POLICY,
+  type OperationSkillSet,
+  type ToolsEngine,
+} from '@lobechat/context-engine';
 import { buildTaskDetailPrompt, buildTaskListPrompt } from '@lobechat/prompts';
 import {
   type ConversationContext,
+  type ExecutionContext,
   type MessageMetadata,
   type RunSubAgentResult,
   type RuntimeInitialContext,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
+import type { SkillProviderContext, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 
+import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
+import { buildDirectUserMessageAccessRoots } from '@/helpers/executionContext/directUserPathConsent';
+import {
+  getRuntimePathConsentRequest,
+  validateOperationPathConsent,
+} from '@/helpers/executionContext/pathConsent';
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { aiAgentService } from '@/services/aiAgent';
 import { isCanUseVideo, isCanUseVision } from '@/services/chat/helper';
 import { type ResolvedAgentConfig } from '@/services/chat/mecha';
 import { composeEnabledTools, resolveAgentConfig } from '@/services/chat/mecha';
+import { resolveClientSkills } from '@/services/chat/mecha/skillEngineering';
 import { localFileService } from '@/services/electron/localFileService';
 import { messageService } from '@/services/message';
-import { getAgentStoreState } from '@/store/agent';
-import { agentSelectors } from '@/store/agent/selectors';
+import { scanOperationWorkspace } from '@/services/operationWorkspaceScan';
 import { aiModelSelectors } from '@/store/aiInfra/selectors';
 import { getAiInfraStoreState } from '@/store/aiInfra/store';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
 import { emitClientAgentSignalSourceEvent } from '@/store/chat/slices/aiChat/actions/agentSignalBridge';
 import { type ChatStore } from '@/store/chat/store';
 import { notifyDesktopHumanApprovalRequired } from '@/store/chat/utils/desktopNotification';
-import { getElectronStoreState } from '@/store/electron';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
 import { getServerConfigStoreState, serverConfigSelectors } from '@/store/serverConfig';
 import { getTaskStoreState } from '@/store/task';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
@@ -84,6 +102,29 @@ const getVisualMediaAvailability = (messages: UIChatMessage[]) => ({
   hasVideos: messages.some((message) => message.role === 'user' && !!message.videoList?.length),
 });
 
+const resolveClientModelCatalogSnapshot = (
+  modelId: string,
+  providerId: string,
+  operationId: string,
+): ModelCatalogSnapshot => {
+  const model = aiModelSelectors.getEnabledModelById(modelId, providerId)(getAiInfraStoreState());
+  const persisted = getModelCatalogFromSettings(model?.settings);
+  const entry =
+    persisted?.entry.modelId === modelId && persisted.entry.providerId === providerId
+      ? persisted.entry
+      : mergeModelCatalogEntry({
+          catalog: {
+            abilities: model?.abilities,
+            contextWindowTokens: model?.contextWindowTokens,
+          },
+          modelId,
+          providerId,
+          providerMetadata: model?.type ? { declaredKind: model.type } : undefined,
+        }).entry;
+
+  return createModelCatalogSnapshot(entry, operationId);
+};
+
 /**
  * Core streaming execution actions for AI chat
  */
@@ -113,6 +154,7 @@ export class StreamingExecutorActionImpl {
     operationId,
     subAgentId: paramSubAgentId,
     isSubAgent,
+    workingDirectory: operationWorkingDirectory,
   }: {
     messages: UIChatMessage[];
     parentMessageId: string;
@@ -130,6 +172,8 @@ export class StreamingExecutorActionImpl {
      */
     subAgentId?: string;
     isSubAgent?: boolean;
+    /** Operation-frozen cwd; agent defaults are recommendations, never authority. */
+    workingDirectory?: string;
   }): {
     state: AgentState;
     context: AgentRuntimeContext;
@@ -263,23 +307,28 @@ export class StreamingExecutorActionImpl {
     };
 
     // Build modelRuntimeConfig for compression and other runtime features
+    const compressionModelId =
+      agentConfigData.chatConfig?.compressionModelId ?? agentConfigData.model;
     const modelRuntimeConfig = {
       compressionModel: {
-        model: agentConfigData.model,
+        model: compressionModelId,
         provider: agentConfigData.provider!,
       },
       model: agentConfigData.model,
       provider: agentConfigData.provider!,
     };
 
-    const topicWorkingDirectory = topicSelectors.currentTopicWorkingDirectory(this.#get());
-    const currentDeviceId = getElectronStoreState().gatewayDeviceInfo?.deviceId;
-    const agentWorkingDirectory =
-      agentSelectors.currentAgentWorkingDirectory(currentDeviceId)(getAgentStoreState());
-    const workingDirectory = topicWorkingDirectory ?? agentWorkingDirectory;
+    const topicWorkspace = topicId
+      ? getProjectWorkspaceStoreState().topicStatesById[topicId]?.workspace
+      : undefined;
+    const topicWorkingDirectory = topicId
+      ? topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.workingDirectory
+      : undefined;
+    const workingDirectory =
+      operationWorkingDirectory ?? topicWorkspace?.rootPath ?? topicWorkingDirectory;
 
     // Create initial state or use provided state
-    const state =
+    const stateBase =
       initialState ||
       AgentRuntime.createInitialState({
         maxSteps: 400,
@@ -301,6 +350,49 @@ export class StreamingExecutorActionImpl {
         toolManifestMap,
         userInterventionConfig,
       });
+    const stateOperationId = operationId ?? agentId;
+    const existingSnapshot = stateBase.metadata?.modelCatalogSnapshot as
+      | ModelCatalogSnapshot
+      | undefined;
+    const modelCatalogSnapshot =
+      existingSnapshot?.operationId === stateOperationId &&
+      existingSnapshot.entry.modelId === modelRuntimeConfig.model &&
+      existingSnapshot.entry.providerId === modelRuntimeConfig.provider
+        ? existingSnapshot
+        : resolveClientModelCatalogSnapshot(
+            modelRuntimeConfig.model,
+            modelRuntimeConfig.provider,
+            stateOperationId,
+          );
+    const existingCompressionSnapshot = stateBase.metadata?.compressionModelCatalogSnapshot as
+      | ModelCatalogSnapshot
+      | undefined;
+    const compressionModelCatalogSnapshot =
+      modelRuntimeConfig.compressionModel.model === modelRuntimeConfig.model
+        ? modelCatalogSnapshot
+        : existingCompressionSnapshot?.operationId === stateOperationId &&
+            existingCompressionSnapshot.entry.modelId ===
+              modelRuntimeConfig.compressionModel.model &&
+            existingCompressionSnapshot.entry.providerId ===
+              modelRuntimeConfig.compressionModel.provider
+          ? existingCompressionSnapshot
+          : resolveClientModelCatalogSnapshot(
+              modelRuntimeConfig.compressionModel.model,
+              modelRuntimeConfig.compressionModel.provider,
+              stateOperationId,
+            );
+    const state = {
+      ...stateBase,
+      metadata: {
+        ...stateBase.metadata,
+        compressionModelCatalogSnapshot,
+        contextBudget: {
+          ...stateBase.metadata?.contextBudget,
+          catalogSnapshot: modelCatalogSnapshot,
+        },
+        modelCatalogSnapshot,
+      },
+    };
 
     // Build initialContext for page editor if lobe-page-agent is enabled
     let runtimeInitialContext: RuntimeInitialContext | undefined;
@@ -415,17 +507,26 @@ export class StreamingExecutorActionImpl {
   executeClientAgent = async (params: {
     context: ConversationContext;
     disableTools?: boolean;
+    /** The current UI submission, even when execution starts from its assistant placeholder. */
+    directUserMessageId?: string;
+    /** Immutable workspace authority captured by the caller for this run. */
+    executionContext?: ExecutionContext;
     initialContext?: AgentRuntimeContext;
     initialState?: AgentState;
     inPortalThread?: boolean;
     metadata?: Pick<MessageMetadata, 'trigger'>;
     messages: UIChatMessage[];
+    /** Registry winners captured by a caller that already resolved draft workspace authority. */
+    operationSkills?: OperationSkillSet['skills'];
     operationId?: string;
     parentMessageId: string;
     parentMessageType: 'user' | 'assistant' | 'tool';
     parentOperationId?: string;
     skipCreateFirstMessage?: boolean;
+    skillContext?: SkillProviderContext;
     isSubAgent?: boolean;
+    /** Cwd captured before persistence/runtime dispatch for this operation. */
+    workingDirectory?: string;
   }): Promise<{ cost?: Cost; model?: string; provider?: string; usage?: Usage } | void> => {
     const {
       disableTools,
@@ -446,6 +547,17 @@ export class StreamingExecutorActionImpl {
     // Generate message key from context
     const messageKey = messageMapKey(context);
 
+    // Reuse the parent run's immutable authority for nested/resumed client
+    // operations. If there is no parent snapshot, a fresh one is resolved
+    // below after agent configuration has been loaded.
+    let frozenExecutionContext = params.executionContext;
+    let ancestorOperationId = params.parentOperationId;
+    while (!frozenExecutionContext && ancestorOperationId) {
+      const ancestor = this.#get().operations[ancestorOperationId];
+      frozenExecutionContext = ancestor?.metadata?.executionContext;
+      ancestorOperationId = ancestor?.parentOperationId;
+    }
+
     // Create or use provided operation
     let operationId = params.operationId;
     const shouldAssociateParentMessage = !operationId;
@@ -460,12 +572,17 @@ export class StreamingExecutorActionImpl {
         parentOperationId: params.parentOperationId, // Pass parent operation ID
         label: 'AI Generation',
         metadata: {
+          executionContext: frozenExecutionContext,
           // Mark if this operation is in thread context
           // Thread operations should not affect main window UI state
           inThread: params.inPortalThread || false,
         },
       });
       operationId = newOperationId;
+    } else if (frozenExecutionContext) {
+      this.#get().updateOperationMetadata(operationId, {
+        executionContext: frozenExecutionContext,
+      });
     }
 
     const runScope: RunScope = scope === 'sub_agent' ? 'sub_agent' : 'top_level';
@@ -535,7 +652,137 @@ export class StreamingExecutorActionImpl {
         operationId,
         subAgentId, // Pass subAgentId for agent config retrieval (behavior depends on scope)
         isSubAgent, // Pass isSubAgent to filter out lobe-agent tool in sub-agent context
+        workingDirectory: params.workingDirectory,
       });
+
+      const projectWorkspaceState = getProjectWorkspaceStoreState();
+      const topicWorkspaceState = topicId
+        ? projectWorkspaceState.topicStatesById[topicId]
+        : undefined;
+      const topic = topicId ? topicSelectors.getTopicById(topicId)(this.#get()) : undefined;
+      const workspaces: Record<string, WorkspaceRef | undefined> = {
+        ...projectWorkspaceState.workspacesById,
+      };
+      if (topicWorkspaceState?.workspace?.id && !workspaces[topicWorkspaceState.workspace.id]) {
+        workspaces[topicWorkspaceState.workspace.id] = topicWorkspaceState.workspace;
+      }
+      const workspaceItem = topicWorkspaceState?.workspace?.id
+        ? projectWorkspaceState.workspacesById[topicWorkspaceState.workspace.id]
+        : undefined;
+
+      if (!frozenExecutionContext) {
+        const snapshot = topicWorkspaceState?.snapshot ?? topic?.metadata?.executionSnapshot;
+        frozenExecutionContext = resolveFrozenClientExecutionContext({
+          agencyConfig: agentConfig.agentConfig.agencyConfig,
+          chatConfig: agentConfig.agentConfig.chatConfig,
+          envFiles: workspaceItem?.envFiles,
+          initialTopicMetadata:
+            !topicId && params.workingDirectory
+              ? { workingDirectory: params.workingDirectory }
+              : undefined,
+          isDesktop,
+          isHetero: !!agentConfig.agentConfig.agencyConfig?.heterogeneousProvider,
+          operationId,
+          requestedDeviceId:
+            snapshot?.boundDeviceId ??
+            topic?.metadata?.boundDeviceId ??
+            topicWorkspaceState?.workspace?.deviceId ??
+            agentConfig.agentConfig.agencyConfig?.boundDeviceId,
+          snapshot,
+          topic: topic
+            ? {
+                boundDeviceId: topic.metadata?.boundDeviceId,
+                workingDirectory: topic.metadata?.workingDirectory,
+                workspaceId: topic.metadata?.workspaceId,
+              }
+            : undefined,
+          topicGrants: Object.values(projectWorkspaceState.grantsByTopicDevice).flat(),
+          topicId: topicId ?? undefined,
+          workspaces,
+        });
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
+
+      // A path approval resumes under a new operation. Rebind only the exact
+      // device-authored request selected by the user, never a model-provided path.
+      const pathDecision =
+        parentMessageType === 'tool' && parentMessageId
+          ? projectWorkspaceState.operationConsentByMessage[parentMessageId]
+          : undefined;
+      if (
+        pathDecision?.scope === 'operation' &&
+        topicId &&
+        frozenExecutionContext?.plan.kind === 'device' &&
+        frozenExecutionContext.plan.target === 'local'
+      ) {
+        const pendingMessage = this.#get().dbMessagesMap[messageKey]?.find(
+          (message) => message.id === parentMessageId,
+        );
+        const accessRoot = validateOperationPathConsent({
+          approval: {
+            ...pathDecision,
+            version: 1,
+            scope: 'operation',
+            sourceOperationId: pathDecision.operationId,
+          },
+          currentDeviceId: frozenExecutionContext.plan.deviceId,
+          currentOperationId: operationId,
+          currentTopicId: topicId,
+          request: getRuntimePathConsentRequest({ state: pendingMessage?.pluginState }),
+        });
+        frozenExecutionContext = {
+          ...frozenExecutionContext,
+          operationId,
+          accessRoots: [...(frozenExecutionContext.accessRoots ?? []), accessRoot],
+        };
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
+
+      const directUserMessageId =
+        params.directUserMessageId ?? (parentMessageType === 'user' ? parentMessageId : undefined);
+      const directMessage =
+        !params.isSubAgent && directUserMessageId
+          ? originalMessages.find((item) => item.id === directUserMessageId && item.role === 'user')
+          : undefined;
+      if (
+        directMessage &&
+        topicId &&
+        frozenExecutionContext?.plan.kind === 'device' &&
+        frozenExecutionContext.plan.target === 'local'
+      ) {
+        const roots = buildDirectUserMessageAccessRoots({
+          appScope: scope,
+          botConversation: false,
+          evalRun: false,
+          hasAttachments: Boolean(
+            directMessage.fileList?.length ||
+            directMessage.imageList?.length ||
+            directMessage.videoList?.length,
+          ),
+          headless: false,
+          trigger: directMessage.metadata?.trigger,
+          operationId: frozenExecutionContext.operationId ?? operationId,
+          prompt: directMessage.content,
+          suppressUserMessage: false,
+          topicId,
+        });
+        frozenExecutionContext = {
+          ...frozenExecutionContext,
+          accessRoots: [
+            ...(frozenExecutionContext.accessRoots ?? []).filter(
+              (root) => root.source !== 'direct-user-message',
+            ),
+            ...roots,
+          ],
+        };
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
 
       // Use model/provider from resolved agentConfig
       const { agentConfig: agentConfigData } = agentConfig;
@@ -545,18 +792,39 @@ export class StreamingExecutorActionImpl {
       const modelRuntimeConfig = {
         model,
         provider: provider!,
-        // TODO: Support dedicated compression model from chatConfig.compressionModelId
-        compressionModel: { model, provider: provider! },
+        compressionModel: {
+          model: agentConfigData.chatConfig?.compressionModelId ?? model,
+          provider: provider!,
+        },
       };
+      const skillContext = params.skillContext ?? {
+        agentId: effectiveAgentId || agentId || 'client-agent',
+        skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
+        userId: 'client-user',
+        workspace: topicWorkspaceState?.workspace ?? workspaceItem,
+        workspaceInit: undefined,
+      };
+      if (!params.operationSkills && !skillContext.workspaceInit) {
+        skillContext.workspaceInit = await scanOperationWorkspace(skillContext.workspace);
+      }
+      const operationSkills =
+        params.operationSkills ??
+        (
+          await resolveClientSkills(agentConfig.plugins, {
+            policy: skillContext.skillPolicy,
+            skillContext,
+          })
+        ).skills;
+      this.#get().updateOperationMetadata(operationId, { operationSkills });
       // ===========================================
       // Step 2: Create and Execute Agent Runtime
       // ===========================================
       log('[executeClientAgent] Creating agent runtime with config', modelRuntimeConfig);
 
-      const contextWindowTokens = aiModelSelectors.modelContextWindowTokens(
-        model,
-        provider!,
-      )(getAiInfraStoreState());
+      const modelCatalogSnapshot =
+        (initialAgentState.metadata?.modelCatalogSnapshot as ModelCatalogSnapshot | undefined) ??
+        resolveClientModelCatalogSnapshot(model, provider!, operationId);
+      const contextWindowTokens = modelCatalogSnapshot.entry.contextWindowTokens;
 
       const agent = new GeneralChatAgent({
         agentConfig: { maxSteps: 1000 },
@@ -576,6 +844,7 @@ export class StreamingExecutorActionImpl {
           metadata: params.metadata,
           messageKey,
           operationId,
+          operationSkills,
           parentId: params.parentMessageId,
           skipCreateFirstMessage: params.skipCreateFirstMessage,
           toolsEngine, // Pass toolsEngine for dynamic tool injection via activateTools

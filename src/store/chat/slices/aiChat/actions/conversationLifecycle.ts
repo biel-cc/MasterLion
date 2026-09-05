@@ -7,7 +7,11 @@ import {
 } from '@lobechat/builtin-tool-agent-management';
 import { ENABLE_BUSINESS_FEATURES } from '@lobechat/business-const';
 import { isDesktop, LOADING_FLAT } from '@lobechat/const';
-import { formatSelectedSkillsContext, formatSelectedToolsContext } from '@lobechat/context-engine';
+import {
+  DEFAULT_SKILL_POLICY,
+  formatSelectedSkillsContext,
+  formatSelectedToolsContext,
+} from '@lobechat/context-engine';
 import { chainCompressContext } from '@lobechat/prompts';
 import type {
   ChatImageItem,
@@ -26,18 +30,17 @@ import { t } from 'i18next';
 
 import { markUserValidAction } from '@/business/client/markUserValidAction';
 import { message as antdMessage } from '@/components/AntdStaticMethods';
+import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
 import { agentService } from '@/services/agent';
 import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
+import { resolveClientSkillRegistry } from '@/services/chat/mecha/clientSkillRegistry';
 import { resolveSelectedSkillsWithContent } from '@/services/chat/mecha/skillPreload';
 import { resolveSelectedToolsWithContent } from '@/services/chat/mecha/toolPreload';
 import { messageService } from '@/services/message';
+import { type ProjectWorkspaceItem, projectWorkspaceService } from '@/services/projectWorkspace';
 import { getAgentStoreState, useAgentStore } from '@/store/agent';
-import {
-  agentByIdSelectors,
-  agentSelectors,
-  chatConfigByIdSelectors,
-} from '@/store/agent/selectors';
+import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { agentGroupByIdSelectors, getChatGroupStoreState } from '@/store/agentGroup';
 import { selectRuntimeType } from '@/store/chat/slices/aiChat/actions/agentDispatcher';
 import { resolveHeteroResume } from '@/store/chat/slices/aiChat/actions/heteroResume';
@@ -54,9 +57,12 @@ import {
   getCompressionCandidateMessageIds,
   hasRunningCompressionOperation,
 } from '@/store/chat/utils/compression';
-import { getElectronStoreState } from '@/store/electron';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
+import {
+  getProjectWorkspaceStoreState,
+  resolvePendingTopicExecutionIntent,
+} from '@/store/projectWorkspace';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 import { type StoreSetter } from '@/store/types';
 import { useUserMemoryStore } from '@/store/userMemory';
@@ -79,6 +85,7 @@ import {
   processCommands,
 } from './commandBus';
 import { materializeLocalSystemToolSnapshots } from './localSystemToolSnapshots';
+import { routeDesktopWorkspaceRuntime } from './managedEnvRuntime';
 /**
  * Extended params for sendMessage with context
  */
@@ -250,16 +257,6 @@ export class ConversationLifecycleActionImpl {
 
     const agentConfig = agentSelectors.getAgentConfigById(agentId)(getAgentStoreState());
     const heterogeneousProvider = agentConfig?.agencyConfig?.heterogeneousProvider;
-    const runtimeType = selectRuntimeType({
-      boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
-      executionTarget: agentConfig?.agencyConfig?.executionTarget,
-      heterogeneousProvider,
-      isGatewayMode: this.#get().isGatewayModeEnabled(agentId),
-      // Callers that need to pin the runtime (e.g. task topics that were
-      // started server-side via runTask) pass `forceRuntime` to override
-      // the agent's local/cloud preference.
-      parentRuntime: forceRuntime,
-    });
 
     // ── Command Bus: extract and process built-in commands from editorData ──
     const commandOverrides: CommandSendOverrides = processCommands({
@@ -433,6 +430,130 @@ export class ConversationLifecycleActionImpl {
       return;
     }
 
+    const existingTopic = context.topicId
+      ? topicSelectors.getTopicById(context.topicId)(this.#get())
+      : undefined;
+    // Freeze the renderer-visible workspace inputs once for this operation.
+    // Agent defaults remain picker recommendations and are never a cwd.
+    let projectWorkspaceState = getProjectWorkspaceStoreState();
+    if (context.topicId && !projectWorkspaceState.topicStatesById[context.topicId]) {
+      try {
+        const loadedTopicState = await projectWorkspaceService.getTopicState(context.topicId);
+        projectWorkspaceState.setTopicState(context.topicId, loadedTopicState);
+        if (loadedTopicState?.workspace?.id) {
+          let workspaceDetails: ProjectWorkspaceItem | undefined;
+          try {
+            workspaceDetails = (
+              await projectWorkspaceService.list({
+                deviceId: loadedTopicState.workspace.deviceId,
+              })
+            ).find(({ id }) => id === loadedTopicState.workspace?.id);
+          } catch {
+            // The topic binding is still authoritative when the optional
+            // browser-safe detail list is temporarily unavailable.
+          }
+          projectWorkspaceState.upsertWorkspaces([
+            workspaceDetails ?? {
+              deviceId: loadedTopicState.workspace.deviceId,
+              displayName: loadedTopicState.workspace.displayName,
+              id: loadedTopicState.workspace.id,
+              kind: loadedTopicState.workspace.kind,
+              rootPath: loadedTopicState.workspace.rootPath,
+            },
+          ]);
+        }
+        projectWorkspaceState = getProjectWorkspaceStoreState();
+      } catch {
+        // Transitional clients may not expose the workspace router yet. The
+        // immutable topic snapshot / legacy metadata below remains the fallback.
+      }
+    }
+    const topicWorkspaceState = context.topicId
+      ? projectWorkspaceState.topicStatesById[context.topicId]
+      : undefined;
+    const pendingExecution = await resolvePendingTopicExecutionIntent({
+      agentId,
+      groupId: context.groupId,
+      isNewTopic: !context.topicId,
+      topicId: context.topicId,
+      topicSnapshot: existingTopic?.metadata?.executionSnapshot ?? topicWorkspaceState?.snapshot,
+    });
+    let runtimeType = selectRuntimeType({
+      boundDeviceId:
+        pendingExecution?.intent.targetDeviceId ?? agentConfig?.agencyConfig?.boundDeviceId,
+      executionTarget: pendingExecution?.intent.target,
+      heterogeneousProvider,
+      isGatewayMode: this.#get().isGatewayModeEnabled(agentId),
+      // Callers that need to pin the runtime (e.g. task topics that were
+      // started server-side via runTask) pass `forceRuntime` to override
+      // the agent's local/cloud preference.
+      parentRuntime: forceRuntime,
+    });
+    const draftIntent = pendingExecution?.draftKey
+      ? projectWorkspaceState.draftByConversationKey[pendingExecution.draftKey]
+      : undefined;
+    const frozenWorkspaceId =
+      draftIntent?.workspaceId ??
+      topicWorkspaceState?.workspace?.id ??
+      existingTopic?.metadata?.executionSnapshot?.workspaceId;
+    const workspaceItem = frozenWorkspaceId
+      ? projectWorkspaceState.workspacesById[frozenWorkspaceId]
+      : undefined;
+    const legacyDraftWorkingDirectory = !projectWorkspaceState.seamAvailable
+      ? draftIntent?.legacyWorkingDirectory
+      : undefined;
+    const frozenWorkingDirectory =
+      topicWorkspaceState?.workspace?.rootPath ??
+      workspaceItem?.rootPath ??
+      legacyDraftWorkingDirectory ??
+      existingTopic?.metadata?.workingDirectory;
+    const legacyDeviceId =
+      pendingExecution?.intent.targetDeviceId ??
+      existingTopic?.metadata?.boundDeviceId ??
+      agentConfig?.agencyConfig?.boundDeviceId;
+    const legacyWorkspace =
+      !frozenWorkspaceId && frozenWorkingDirectory && legacyDeviceId
+        ? {
+            deviceId: legacyDeviceId,
+            kind: 'device' as const,
+            rootPath: frozenWorkingDirectory,
+          }
+        : undefined;
+    const frozenWorkspace = topicWorkspaceState?.workspace ?? workspaceItem ?? legacyWorkspace;
+    const frozenSkillContext = {
+      agentId,
+      skillPolicy: { ...DEFAULT_SKILL_POLICY, ...workspaceItem?.skillPolicy },
+      userId: 'client-user',
+      workspace: frozenWorkspace,
+      workspaceInit: undefined,
+    };
+
+    // Preserve renderer-local execution for ordinary Electron chat. Only
+    // heterogeneous runs with server-managed environment values are promoted
+    // to the coordinator; local tools cross the Electron main-process boundary
+    // later with the immutable context captured below.
+    runtimeType = await routeDesktopWorkspaceRuntime(runtimeType, {
+      topicId: context.topicId ?? undefined,
+      workspaceId: frozenWorkspaceId,
+    });
+
+    // UI normally prevents this path, but the store action is also callable by
+    // commands and queue drains. Keep the workspace requirement at the actual
+    // execution seam so an unbound heterogeneous topic can never reach spawn.
+    if (
+      runtimeType === 'hetero' &&
+      (!frozenWorkingDirectory || !frozenWorkspace || frozenWorkspace.kind === 'scratch')
+    ) {
+      getProjectWorkspaceStoreState().focusWorkspacePicker();
+      antdMessage.info(
+        (t as unknown as (key: string, options?: Record<string, unknown>) => string)(
+          'workspaceRuntime.hetero.gate.desc',
+          { ns: 'chat' },
+        ),
+      );
+      return;
+    }
+
     // Use provided messages or query from store
     // For /newTopic from existing topic, start with empty message list (fresh topic)
     const contextKey = messageMapKey(context);
@@ -465,6 +586,41 @@ export class ConversationLifecycleActionImpl {
         // Mark this as thread operation if threadId exists
         inThread: !!operationContext.threadId,
       },
+    });
+    const frozenExecutionContext = resolveFrozenClientExecutionContext({
+      agencyConfig: agentConfig?.agencyConfig,
+      chatConfig: agentConfig?.chatConfig,
+      envFiles: workspaceItem?.envFiles,
+      executionTargetByPlatform: pendingExecution?.intent.target
+        ? {
+            ...agentConfig?.agencyConfig?.executionTargetByPlatform,
+            [pendingExecution.intent.platform]: pendingExecution.intent.target,
+          }
+        : agentConfig?.agencyConfig?.executionTargetByPlatform,
+      initialTopicMetadata:
+        !context.topicId && (legacyDraftWorkingDirectory || frozenWorkspaceId)
+          ? {
+              ...(legacyDraftWorkingDirectory
+                ? { workingDirectory: legacyDraftWorkingDirectory }
+                : {}),
+              ...(frozenWorkspaceId ? { workspaceId: frozenWorkspaceId } : {}),
+            }
+          : undefined,
+      isDesktop,
+      isHetero: !!heterogeneousProvider,
+      operationId,
+      requestedDeviceId: pendingExecution?.intent.targetDeviceId,
+      snapshot: topicWorkspaceState?.snapshot ?? existingTopic?.metadata?.executionSnapshot,
+      topicGrants: Object.values(projectWorkspaceState.grantsByTopicDevice).flat(),
+      topicId: context.topicId ?? undefined,
+      topic: existingTopic
+        ? {
+            boundDeviceId: existingTopic.metadata?.boundDeviceId,
+            workingDirectory: existingTopic.metadata?.workingDirectory,
+            workspaceId: existingTopic.metadata?.workspaceId,
+          }
+        : undefined,
+      workspaces: projectWorkspaceState.workspacesById,
     });
 
     // Construct local media preview for server-mode temporary messages (S3 URL takes priority).
@@ -542,15 +698,26 @@ export class ConversationLifecycleActionImpl {
       // over the agent-level default. Without this, a topic pinned to dir A
       // would silently execute under the agent's current default dir B and
       // lose resume.
-      const existingTopic = operationContext.topicId
-        ? topicSelectors.getTopicById(operationContext.topicId)(this.#get())
-        : undefined;
-      const currentDeviceId = getElectronStoreState().gatewayDeviceInfo?.deviceId;
-      const agentWorkingDirectory = agentByIdSelectors.getAgentWorkingDirectoryById(
-        agentId,
-        currentDeviceId,
-      )(getAgentStoreState());
-      const workingDirectory = existingTopic?.metadata?.workingDirectory || agentWorkingDirectory;
+      const workingDirectory = frozenWorkingDirectory;
+      const agentExecutionEnv = agentConfig?.agencyConfig?.env ?? heterogeneousProvider.env;
+      const frozenHeterogeneousProvider = {
+        ...heterogeneousProvider,
+        ...(agentExecutionEnv ? { env: { ...agentExecutionEnv } } : {}),
+      };
+      const skillRegistry = await resolveClientSkillRegistry({
+        policy: workspaceItem?.skillPolicy,
+        skillContext: frozenSkillContext,
+      });
+      const frozenHeterogeneousSkills = skillRegistry.skills
+        .filter(({ content, source }) => !!content && source !== 'project')
+        .map(({ content, description, identifier, key, name, source }) => ({
+          content,
+          description,
+          identifier,
+          key,
+          name,
+          source,
+        }));
 
       // Persist messages to DB first (same as client mode)
       let heteroData: SendMessageServerResponse | undefined;
@@ -563,10 +730,13 @@ export class ConversationLifecycleActionImpl {
             // from the agent's requested model. Persist only the runtime
             // provider up front; the adapter backfills the actual model later
             // if the CLI reports it.
-            newAssistantMessage: { provider: heterogeneousProvider.type },
+            newAssistantMessage: { provider: frozenHeterogeneousProvider.type },
             newTopic: !operationContext.topicId
               ? {
-                  metadata: workingDirectory ? { workingDirectory } : undefined,
+                  executionIntent: pendingExecution?.intent,
+                  metadata: legacyDraftWorkingDirectory
+                    ? { workingDirectory: legacyDraftWorkingDirectory }
+                    : undefined,
                   title: markdownToTxt(message).slice(0, 80) || t('defaultTitle', { ns: 'topic' }),
                   topicMessageIds: messages.map((m) => m.id),
                 }
@@ -586,6 +756,7 @@ export class ConversationLifecycleActionImpl {
             ),
             topicPageSize: systemStatusSelectors.topicPageSize(useGlobalStore.getState()),
             topicId: operationContext.topicId ?? undefined,
+            topicExecutionIntent: operationContext.topicId ? pendingExecution?.intent : undefined,
           },
           abortController,
         );
@@ -599,6 +770,9 @@ export class ConversationLifecycleActionImpl {
       }
 
       if (!heteroData) return;
+      if (pendingExecution?.draftKey) {
+        getProjectWorkspaceStoreState().clearDraftIntent(pendingExecution.draftKey);
+      }
 
       // Update context with server-created topicId
       const heteroContext = {
@@ -660,7 +834,7 @@ export class ConversationLifecycleActionImpl {
       const { operationId: heteroOpId } = this.#get().startOperation({
         context: heteroContext,
         label: 'Heterogeneous Agent Execution',
-        metadata: { heterogeneousType: heterogeneousProvider.type },
+        metadata: { heterogeneousType: frozenHeterogeneousProvider.type },
         parentOperationId: operationId,
         type: 'execHeterogeneousAgent',
       });
@@ -692,11 +866,13 @@ export class ConversationLifecycleActionImpl {
         await executeHeterogeneousAgent(() => this.#get(), {
           assistantMessageId: heteroData.assistantMessageId,
           context: heteroContext,
-          heterogeneousProvider,
+          heterogeneousProvider: frozenHeterogeneousProvider,
           imageList: persistedImageList?.length ? persistedImageList : undefined,
           message,
           operationId: heteroOpId,
           resumeSessionId,
+          skillPolicy: skillRegistry.policy.materializeForHeteroCli,
+          skills: frozenHeterogeneousSkills,
           workingDirectory,
         });
       } catch (e) {
@@ -817,6 +993,10 @@ export class ConversationLifecycleActionImpl {
             : undefined,
           newTopic: !topicId
             ? {
+                executionIntent: pendingExecution?.intent,
+                metadata: legacyDraftWorkingDirectory
+                  ? { workingDirectory: legacyDraftWorkingDirectory }
+                  : undefined,
                 topicMessageIds: forceNewTopicFromExisting ? [] : messages.map((m) => m.id),
                 title: newTopicTitle,
               }
@@ -824,6 +1004,7 @@ export class ConversationLifecycleActionImpl {
           agentId: operationContext.agentId,
           // Pass groupId for group chat scenarios
           groupId: operationContext.groupId ?? undefined,
+          topicExecutionIntent: topicId ? pendingExecution?.intent : undefined,
           newAssistantMessage: {
             // Pass isSupervisor metadata for group orchestration
             metadata: operationContext.isSupervisor ? { isSupervisor: true } : undefined,
@@ -834,6 +1015,9 @@ export class ConversationLifecycleActionImpl {
         abortController,
       );
       const responseMeta = data as SendMessageServerResponseMeta;
+      if (pendingExecution?.draftKey) {
+        getProjectWorkspaceStoreState().clearDraftIntent(pendingExecution.draftKey);
+      }
       // Use created topicId/threadId if available, otherwise use original from context
       let finalTopicId = data.topicId ?? operationContext.topicId;
       const finalThreadId = data.createdThreadId ?? operationContext.threadId;
@@ -1123,6 +1307,8 @@ export class ConversationLifecycleActionImpl {
 
           await executeClientAgent({
             context: execContext,
+            directUserMessageId: data.userMessageId,
+            executionContext: frozenExecutionContext,
             initialContext: mergedAgentRuntimeInitialContext,
             metadata: requestMetadata,
             messages: displayMessages,
@@ -1131,6 +1317,8 @@ export class ConversationLifecycleActionImpl {
             parentOperationId: operationId,
             inPortalThread: !!data.createdThreadId,
             skipCreateFirstMessage: true,
+            skillContext: frozenSkillContext,
+            workingDirectory: frozenWorkingDirectory,
           });
         }
 
@@ -1276,7 +1464,6 @@ export class ConversationLifecycleActionImpl {
       const parentAgentConfig = context.agentId
         ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())
         : undefined;
-
       await dispatchNonHeteroSubAgent(
         { kind: 'mention', targetAgentId, instruction, parentMessageId: toolMessage.id },
         {
@@ -1287,6 +1474,15 @@ export class ConversationLifecycleActionImpl {
           isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
           messages: messagesWithInstruction,
           parentOperationId: operationId,
+          workspaceId:
+            (context.topicId
+              ? getProjectWorkspaceStoreState().topicStatesById?.[context.topicId]?.snapshot
+                  ?.workspaceId
+              : undefined) ??
+            (context.topicId
+              ? topicSelectors.getTopicById(context.topicId)(this.#get())?.metadata
+                  ?.executionSnapshot?.workspaceId
+              : undefined),
         },
         this.#get(),
       );
@@ -1333,7 +1529,15 @@ export class ConversationLifecycleActionImpl {
     const dbMessages = dbMessageSelectors.getDbMessagesByKey(contextKey)(this.#get()) || [];
     const messageIds = getCompressionCandidateMessageIds(dbMessages);
 
-    if (messageIds.length === 0) return;
+    if (messageIds.length === 0) {
+      antdMessage.info(
+        t('contextBudget.title.NO_CANDIDATES', {
+          defaultValue: 'Nothing left to compress',
+          ns: 'error',
+        }),
+      );
+      return;
+    }
 
     const tempId = 'tmp_compress_' + nanoid();
     const { abortController, operationId } = this.#get().startOperation({
@@ -1358,6 +1562,8 @@ export class ConversationLifecycleActionImpl {
       { operationId },
     );
 
+    let persistedCompressionGroupId: string | undefined;
+
     try {
       // 1. Create compression group on server
       const result = await messageService.createCompressionGroup({
@@ -1366,13 +1572,16 @@ export class ConversationLifecycleActionImpl {
         topicId,
       });
       const { messageGroupId, messages: serverMessages, messagesToSummarize } = result;
+      persistedCompressionGroupId = messageGroupId;
 
       // Replace local pending group with server compression group
       this.#get().replaceMessages(serverMessages, { context: context as any });
       this.#get().associateMessageWithOperation(messageGroupId, operationId);
 
       // 2. Generate summary via LLM
-      const { model, provider } = agentSelectors.getAgentConfigById(agentId)(getAgentStoreState());
+      const agentConfig = agentSelectors.getAgentConfigById(agentId)(getAgentStoreState());
+      const model = agentConfig.chatConfig?.compressionModelId ?? agentConfig.model;
+      const { provider } = agentConfig;
       const compressionPayload = chainCompressContext(messagesToSummarize);
       let summaryContent = '';
 
@@ -1407,6 +1616,14 @@ export class ConversationLifecycleActionImpl {
       this.#get().completeOperation(operationId);
     } catch (error) {
       if (isAbortError(error, abortController)) {
+        if (persistedCompressionGroupId) {
+          const { messages } = await messageService.cancelCompression({
+            agentId,
+            messageGroupId: persistedCompressionGroupId,
+            topicId,
+          });
+          this.#get().replaceMessages(messages, { context: context as any });
+        }
         this.#get().internal_dispatchMessage(
           { type: 'deleteMessages', ids: [tempId] },
           { operationId },
@@ -1415,6 +1632,18 @@ export class ConversationLifecycleActionImpl {
       }
 
       console.error('[/compact] Compression failed:', error);
+      if (persistedCompressionGroupId) {
+        try {
+          const { messages } = await messageService.failCompression({
+            agentId,
+            messageGroupId: persistedCompressionGroupId,
+            topicId,
+          });
+          this.#get().replaceMessages(messages, { context: context as any });
+        } catch (persistenceError) {
+          console.error('[/compact] Failed to retain compression audit record:', persistenceError);
+        }
+      }
       this.#get().internal_dispatchMessage(
         { type: 'deleteMessages', ids: [tempId] },
         { operationId },

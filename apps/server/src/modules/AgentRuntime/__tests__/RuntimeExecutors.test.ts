@@ -4,12 +4,21 @@ import { consumeStreamUntilDone } from '@lobechat/model-runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as ContextEngineering from '@/server/modules/Mecha/ContextEngineering';
-import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { FileService } from '@/server/services/file';
 
 import { ModelEmptyError } from '../ModelEmptyError';
-import { createRuntimeExecutors, type RuntimeExecutorContext } from '../RuntimeExecutors';
+import {
+  collectProviderMediaTokenEstimates,
+  createRuntimeExecutors,
+  hasPendingWorkspaceBindFailure,
+  resolveCompressionSummaryBudgetTokens,
+  type RuntimeExecutorContext,
+} from '../RuntimeExecutors';
 
 const mockCreateCompressionGroup = vi.fn();
+const mockCancelCompression = vi.fn();
+const mockFailCompression = vi.fn();
 const mockFinalizeCompression = vi.fn();
 const mockBuiltinModels = vi.hoisted(() => [
   {
@@ -52,7 +61,9 @@ vi.mock('@/server/modules/ModelRuntime', () => ({
 
 vi.mock('@/server/services/message', () => ({
   MessageService: vi.fn().mockImplementation(() => ({
+    cancelCompression: mockCancelCompression,
     createCompressionGroup: mockCreateCompressionGroup,
+    failCompression: mockFailCompression,
     finalizeCompression: mockFinalizeCompression,
   })),
 }));
@@ -129,6 +140,8 @@ describe('RuntimeExecutors', () => {
     mockGetFileByteArray.mockReset();
     mockUploadBase64.mockReset();
     vi.mocked(initModelRuntimeFromDB).mockReset();
+    mockCancelCompression.mockReset();
+    mockFailCompression.mockReset();
     mockCreateCompressionGroup.mockReset();
     mockFinalizeCompression.mockReset();
     mockCreateCompressionGroup.mockResolvedValue({
@@ -136,6 +149,8 @@ describe('RuntimeExecutors', () => {
       messagesToSummarize: [],
       success: true,
     });
+    mockCancelCompression.mockResolvedValue({ messages: [], success: true });
+    mockFailCompression.mockResolvedValue({ messages: [], success: true });
     mockFinalizeCompression.mockResolvedValue({ success: true });
     vi.mocked(initModelRuntimeFromDB).mockResolvedValue({
       chat: vi.fn().mockImplementation(async (_payload: any, options: any) => {
@@ -152,6 +167,7 @@ describe('RuntimeExecutors', () => {
       findById: vi.fn().mockResolvedValue({ id: 'msg-existing' }),
       query: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
+      updateMessagePlugin: vi.fn().mockResolvedValue({ success: true }),
       updateToolMessage: vi.fn().mockResolvedValue({ success: true }),
     };
 
@@ -171,6 +187,8 @@ describe('RuntimeExecutors', () => {
     };
 
     ctx = {
+      createTraceOptions,
+      initModelRuntime: initModelRuntimeFromDB,
       loadAgentState: vi.fn().mockResolvedValue(null),
       messageModel: mockMessageModel,
       operationId: 'op-123',
@@ -181,6 +199,16 @@ describe('RuntimeExecutors', () => {
       userId: 'user-123',
     };
   });
+
+  /**
+   * Serialize everything a step hands back, with Errors expanded — a bare
+   * `JSON.stringify` renders an Error as `{}` and would pass a "no raw failure
+   * details" assertion even if one were embedded.
+   */
+  const serializeForSecretScan = (value: unknown) =>
+    JSON.stringify(value, (_key, item) =>
+      item instanceof Error ? `${item.name}: ${item.message}` : item,
+    );
 
   // Helper to create a valid mock usage object
   const createMockUsage = () => ({
@@ -225,6 +253,121 @@ describe('RuntimeExecutors', () => {
       messages,
     },
     type: 'compress_context' as const,
+  });
+
+  describe('operation-frozen context budget inputs', () => {
+    it('uses the matching compression model catalog window without a 32k cap', () => {
+      expect(
+        resolveCompressionSummaryBudgetTokens({
+          compressionModel: { model: 'summary-model', provider: 'openai' },
+          compressionModelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 128_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'summary-model',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+        }),
+      ).toBe(126_976);
+    });
+
+    it('never expands a tiny compression model window beyond its prompt capacity', () => {
+      expect(
+        resolveCompressionSummaryBudgetTokens({
+          compressionModel: { model: 'tiny-summary-model', provider: 'openai' },
+          compressionModelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 1024,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'tiny-summary-model',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+        }),
+      ).toBe(1);
+    });
+
+    it('redacts provider media bytes while retaining stable accounting identity', () => {
+      expect(
+        collectProviderMediaTokenEstimates(
+          [
+            {
+              content: [
+                { text: 'inspect', type: 'text' },
+                { image_url: { url: 'https://files.example/image-1' }, type: 'image_url' },
+              ],
+              id: 'message-1',
+              role: 'user',
+            },
+          ] as any,
+          [
+            {
+              id: 'message-1',
+              imageList: [{ id: 'file-1', url: 'https://files.example/image-1' }],
+              role: 'user',
+            } as any,
+          ],
+        ),
+      ).toEqual([{ estimatedTokens: 1000, id: 'file-1', messageId: 'message-1' }]);
+    });
+  });
+
+  describe('finish executor', () => {
+    it('persists the terminal topic state even when no renderer is connected', async () => {
+      const completeTopicOperation = vi.fn().mockResolvedValue(undefined);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        completeTopicOperation,
+        topicId: 'topic-123',
+      } as RuntimeExecutorContext);
+      const state = {
+        cost: createMockCost(),
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        maxSteps: 10,
+        messages: [],
+        operationId: 'op-123',
+        status: 'running',
+        stepCount: 0,
+        toolManifestMap: {},
+        usage: createMockUsage(),
+      } as AgentState;
+
+      await executors.finish!({ reason: 'completed', type: 'finish' }, state);
+
+      expect(completeTopicOperation).toHaveBeenCalledWith({
+        operationId: 'op-123',
+        status: 'active',
+        topicId: 'topic-123',
+      });
+    });
   });
 
   describe('call_llm executor', () => {
@@ -273,6 +416,7 @@ describe('RuntimeExecutors', () => {
           parentId: 'parent-msg-123',
         }),
       );
+      expect(FileService).not.toHaveBeenCalled();
     });
 
     it('does not send an LLM request when projected input exceeds the remaining token budget', async () => {
@@ -296,6 +440,476 @@ describe('RuntimeExecutors', () => {
       expect(chat).not.toHaveBeenCalled();
       expect(result.newState.status).toBe('interrupted');
       expect(result.newState.metadata?.executionBudgetCompletionReason).toBe('token_limit');
+    });
+
+    it('fails closed at the final preflight when an unknown model window exceeds the assumed budget', async () => {
+      const chat = vi.fn();
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-03T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'unknown',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'default',
+              modelId: 'unknown-model',
+              providerId: 'unknown-provider',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+      const instruction = {
+        payload: {
+          messages: [{ content: 'x'.repeat(150_000), id: 'tail', role: 'user' }],
+          model: 'unknown-model',
+          provider: 'unknown-provider',
+          tools: [],
+        },
+        type: 'call_llm' as const,
+      };
+
+      await expect(executors.call_llm!(instruction, state)).rejects.toMatchObject({
+        contextBudget: {
+          decision: expect.objectContaining({ kind: 'fail' }),
+          trace: expect.any(Object),
+        },
+        error: expect.objectContaining({ ctx: 32_000 }),
+        name: 'FinalContextWindowError',
+      });
+      expect(chat).not.toHaveBeenCalled();
+    });
+
+    it('accounts outgoing visual parts at the final preflight and never forwards accounting metadata', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('done');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'supported',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          topicId: 'topic-123',
+        },
+      });
+      const imageParts = Array.from({ length: 40 }, (_, index) => ({
+        image_url: { url: `https://files.example/${index}.png` },
+        type: 'image_url',
+      }));
+
+      await expect(
+        executors.call_llm!(
+          {
+            payload: {
+              messages: [
+                {
+                  content: [{ text: 'inspect', type: 'text' }, ...imageParts],
+                  id: 'tail',
+                  role: 'user',
+                },
+              ],
+              model: 'gpt-4',
+              provider: 'openai',
+              tools: [],
+            },
+            type: 'call_llm' as const,
+          },
+          state,
+        ),
+      ).rejects.toMatchObject({ name: 'FinalContextWindowError' });
+      expect(chat).not.toHaveBeenCalled();
+    });
+
+    it('strips providerMedia before the actual model runtime call', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('done');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      const executors = createRuntimeExecutors(ctx);
+
+      await executors.call_llm!(
+        {
+          payload: {
+            messages: [
+              {
+                content: [
+                  { text: 'inspect', type: 'text' },
+                  { image_url: { url: 'https://files.example/image.png' }, type: 'image_url' },
+                ],
+                id: 'tail',
+                role: 'user',
+              },
+            ],
+            model: 'gpt-4',
+            provider: 'openai',
+            tools: [],
+          },
+          type: 'call_llm' as const,
+        },
+        createMockState(),
+      );
+
+      expect(chat.mock.calls[0][0]).not.toHaveProperty('providerMedia');
+    });
+
+    it('persists final-preflight auto compression before sending the reduced payload', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onText?.('summary-or-answer');
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'auto-group',
+        messagesToSummarize: [{ content: 'x'.repeat(150_000), id: 'old-history', role: 'user' }],
+        success: true,
+      });
+      mockFinalizeCompression.mockResolvedValue({
+        messages: [
+          { content: 'summary-or-answer', id: 'auto-group', role: 'compressedGroup' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+          { content: '', id: 'msg-123', role: 'assistant' },
+        ],
+        success: true,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const messages = [
+        { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_llm!(
+        {
+          payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+          type: 'call_llm' as const,
+        },
+        state,
+      );
+
+      expect(mockCreateCompressionGroup).toHaveBeenCalledWith(
+        'topic-123',
+        ['old-history'],
+        expect.any(Object),
+      );
+      expect(mockFinalizeCompression).toHaveBeenCalledWith(
+        'auto-group',
+        'summary-or-answer',
+        expect.any(Object),
+      );
+      const providerPayload = chat.mock.calls.at(-1)?.[0];
+      expect(providerPayload.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ content: expect.stringContaining('[Conversation summary]') }),
+        ]),
+      );
+      expect(result.newState.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'auto-group', role: 'compressedGroup' }),
+          expect.objectContaining({ id: 'latest-user', role: 'user' }),
+          expect.objectContaining({ id: 'msg-123', role: 'assistant' }),
+        ]),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ groupId: 'auto-group', type: 'compression_complete' }),
+        ]),
+      );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
+    });
+
+    it('discards a partial provider attempt before context compression retry commits final output', async () => {
+      const onContextWindowObserved = vi.fn();
+      const staleToolCall = [
+        {
+          function: { arguments: '{"path":"stale"}', name: 'filesystem____write' },
+          id: 'stale-tool',
+          type: 'function',
+        },
+      ];
+      let mainAttempt = 0;
+      const chat = vi.fn().mockImplementation(async (payload: any, options: any) => {
+        if (payload.model === 'summary-model') {
+          await options.callback.onText?.('safe summary');
+          return new Response('summary');
+        }
+
+        mainAttempt += 1;
+        if (mainAttempt === 1) {
+          await options.callback.onText?.('stale partial');
+          await options.callback.onThinking?.('stale reasoning');
+          await options.callback.onContentPart?.({
+            content: 'stale-content-image',
+            mimeType: 'image/png',
+            partType: 'image',
+          });
+          await options.callback.onReasoningPart?.({
+            content: 'stale-reasoning-image',
+            mimeType: 'image/png',
+            partType: 'image',
+          });
+          await options.callback.onGrounding?.({ query: 'stale grounding' });
+          await options.callback.onToolsCalling?.({ toolsCalling: staleToolCall });
+          await options.callback.onCompletion?.({
+            usage: { totalInputTokens: 999, totalOutputTokens: 999, totalTokens: 1998 },
+          });
+          await options.callback.onError?.({
+            contextWindowTokens: 16_000,
+            message: 'maximum context length is 16000 tokens',
+            type: 'ExceededContextWindow',
+          });
+          return new Response('rejected');
+        }
+
+        await options.callback.onText?.('final only');
+        await options.callback.onCompletion?.({
+          usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+        });
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockUploadBase64.mockResolvedValue({ url: 'https://files.example/stale.png' });
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'provider-recovery-group',
+        messagesToSummarize: [{ content: 'x'.repeat(40_000), id: 'old-history', role: 'user' }],
+        success: true,
+      });
+      mockFinalizeCompression.mockResolvedValue({
+        messages: [
+          { content: 'safe summary', id: 'provider-recovery-group', role: 'compressedGroup' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+          { content: '', id: 'msg-123', role: 'assistant' },
+        ],
+        success: true,
+      });
+      const messages = [
+        { content: 'x'.repeat(40_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 128_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'supported',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        modelRuntimeConfig: {
+          compressionModel: { model: 'summary-model', provider: 'openai' },
+          model: 'gpt-4',
+          provider: 'openai',
+        },
+      });
+
+      const result = await createRuntimeExecutors({ ...ctx, onContextWindowObserved }).call_llm!(
+        {
+          payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+          type: 'call_llm' as const,
+        },
+        state,
+      );
+
+      expect(mainAttempt).toBe(2);
+      expect(onContextWindowObserved).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 16_000,
+        modelId: 'gpt-4',
+        modelVersion: undefined,
+        providerId: 'openai',
+      });
+      expect(result.nextContext?.payload).toMatchObject({
+        hasToolsCalling: false,
+        result: { content: 'final only', tool_calls: [] },
+        toolsCalling: [],
+      });
+      expect(JSON.stringify(result.events)).not.toContain('stale');
+      expect(result.events).toContainEqual(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            content: 'final only',
+            reasoning: '',
+            tool_calls: [],
+            usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+          }),
+          type: 'llm_result',
+        }),
+      );
+      expect(mockMessageModel.update).toHaveBeenCalledWith(
+        'msg-123',
+        expect.objectContaining({
+          content: 'final only',
+          reasoning: undefined,
+          tools: undefined,
+        }),
+      );
+      expect(mockStreamManager.publishStreamEvent).toHaveBeenCalledWith(
+        'op-123',
+        expect.objectContaining({
+          data: expect.objectContaining({ reason: 'context_window', reset: true }),
+          type: 'stream_retry',
+        }),
+      );
+      expect(mockStreamManager.publishStreamEvent).toHaveBeenCalledWith(
+        'op-123',
+        expect.objectContaining({
+          data: expect.objectContaining({
+            finalContent: 'final only',
+            grounding: null,
+            reasoning: undefined,
+            toolsCalling: [],
+            usage: { totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12 },
+          }),
+          type: 'stream_end',
+        }),
+      );
+    });
+
+    it('retains a failed final-preflight compression group when summarization fails', async () => {
+      const chat = vi.fn().mockImplementation(async (_payload: any, options: any) => {
+        await options?.callback?.onError?.({ message: 'summary failed' });
+        return new Response('done');
+      });
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue({ chat } as any);
+      mockCreateCompressionGroup.mockResolvedValue({
+        messageGroupId: 'auto-failed-group',
+        messagesToSummarize: [],
+        success: true,
+      });
+      const messages = [
+        { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+        { content: 'continue', id: 'latest-user', role: 'user' },
+      ];
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        messages: messages as any,
+        metadata: {
+          agentId: 'agent-123',
+          modelCatalogSnapshot: {
+            capturedAt: '2026-09-04T00:00:00.000Z',
+            entry: {
+              abilitySources: {},
+              contextWindowSource: 'catalog',
+              contextWindowTokens: 32_000,
+              inputModalities: {
+                audio: 'unknown',
+                file: 'unknown',
+                image: 'unknown',
+                text: 'supported',
+                video: 'unknown',
+              },
+              kind: 'chat',
+              kindSource: 'catalog',
+              modelId: 'gpt-4',
+              providerId: 'openai',
+            },
+            operationId: 'op-123',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await expect(
+        executors.call_llm!(
+          {
+            payload: { messages, model: 'gpt-4', provider: 'openai', tools: [] },
+            type: 'call_llm' as const,
+          },
+          state,
+        ),
+      ).rejects.toMatchObject({ name: 'FinalContextWindowError' });
+
+      expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockFailCompression).toHaveBeenCalledWith(
+        'auto-failed-group',
+        expect.objectContaining({ topicId: 'topic-123' }),
+      );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
     });
 
     it('passes workspaceId to model runtime initialization', async () => {
@@ -1080,7 +1694,7 @@ describe('RuntimeExecutors', () => {
       });
     });
 
-    it('should skip compress_context when compression model config is missing', async () => {
+    it('should report failed compression when compression model config is missing', async () => {
       mockMessageModel.query.mockResolvedValue([
         { content: 'history', id: 'msg-history', role: 'user' },
         { content: 'loading', id: 'assistant-existing', role: 'assistant' },
@@ -1098,10 +1712,16 @@ describe('RuntimeExecutors', () => {
 
       expect(mockCreateCompressionGroup).toHaveBeenCalledTimes(1);
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockFailCompression).toHaveBeenCalledWith(
+        'group-123',
+        expect.objectContaining({ topicId: 'topic-123' }),
+      );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
       expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
         compressedMessages: [{ content: 'history', role: 'user' }],
+        outcome: 'failed',
         parentMessageId: 'assistant-existing',
-        skipped: true,
       });
     });
 
@@ -1121,8 +1741,13 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(result.nextContext?.phase).toBe('compression_result');
-      expect((result.nextContext?.payload as any).skipped).toBe(true);
+      expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
+        outcome: 'failed',
+      });
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
+      expect(mockCancelCompression).not.toHaveBeenCalled();
+      expect(mockFailCompression).not.toHaveBeenCalled();
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({ type: 'compression_error' });
     });
@@ -1252,7 +1877,7 @@ describe('RuntimeExecutors', () => {
       ]);
     });
 
-    it('should continue with skipped compression when the compression model reports a summary error', async () => {
+    it('should report failed compression when the compression model reports a summary error', async () => {
       const mockChat = vi.fn().mockImplementation(async (_payload, options) => {
         await options?.callback?.onError?.({ message: 'summary failed' });
         return new Response('done');
@@ -1279,7 +1904,15 @@ describe('RuntimeExecutors', () => {
       const result = await executors.compress_context!(instruction, state);
 
       expect(mockFinalizeCompression).not.toHaveBeenCalled();
-      expect((result.nextContext?.payload as any).skipped).toBe(true);
+      expect(mockFailCompression).toHaveBeenCalledWith(
+        'group-123',
+        expect.objectContaining({ topicId: 'topic-123' }),
+      );
+      expect(mockCancelCompression).not.toHaveBeenCalled();
+      expect(result.nextContext?.payload as any).toMatchObject({
+        code: 'SUMMARY_FAILED',
+        outcome: 'failed',
+      });
       expect(result.events).toContainEqual(
         expect.objectContaining({
           type: 'compression_error',
@@ -2383,6 +3016,565 @@ describe('RuntimeExecutors', () => {
       );
     });
 
+    it('creates and binds scratch only when an unbound tool first needs cwd', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'scratch-workspace',
+          workspaceKind: 'scratch',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'scratch-workspace',
+          kind: 'scratch',
+          rootPath: '/tmp/masterino/topic-123',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-scratch',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          executionContext: expect.objectContaining({
+            cwd: '/tmp/masterino/topic-123',
+            workspace: expect.objectContaining({ kind: 'scratch' }),
+          }),
+        }),
+      );
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rootPath: '/tmp/masterino/topic-123',
+          toolSucceeded: true,
+          topicId: 'topic-123',
+        }),
+      );
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/tmp/masterino/topic-123',
+        snapshot: { workspaceId: 'scratch-workspace' },
+        workspace: { id: 'scratch-workspace', kind: 'scratch' },
+      });
+    });
+
+    it.each(['call_tool', 'call_tools_batch'] as const)(
+      'does not bind a late successful scratch result after cancellation in %s',
+      async (mode) => {
+        const bindScratchAfterToolSuccess = vi.fn();
+        const executors = createRuntimeExecutors({
+          ...ctx,
+          bindScratchAfterToolSuccess,
+          ensureScratchWorkspace: vi.fn().mockResolvedValue({ root: '/scratch/topic-123' }),
+          loadAgentState: vi.fn().mockResolvedValue({ status: 'interrupted' }),
+          topicId: 'topic-123',
+        });
+        const state = createMockState({
+          metadata: {
+            agentId: 'agent-123',
+            topicId: 'topic-123',
+            activeDeviceId: 'device-a',
+            executionContext: {
+              accessRoots: [],
+              version: 1,
+              unresolvedReason: 'no-workspace',
+              plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            },
+          },
+        });
+        const tool = {
+          apiName: 'listFiles',
+          arguments: '{}',
+          id: 'cancelled-tool',
+          identifier: 'lobe-local-system',
+          type: 'builtin' as const,
+        };
+        const instruction =
+          mode === 'call_tool'
+            ? { type: mode, payload: { parentMessageId: 'assistant-msg-123', toolCalling: tool } }
+            : {
+                type: mode,
+                payload: { parentMessageId: 'assistant-msg-123', toolsCalling: [tool] },
+              };
+        const result = await executors[mode]!(instruction as any, state);
+        expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+        expect(bindScratchAfterToolSuccess).not.toHaveBeenCalled();
+        expect(result.newState.metadata?.executionContext?.workspace).toBeUndefined();
+      },
+    );
+
+    it('keeps a successful scratch tool result when a concurrent formal bind wins the CAS', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'formal-workspace',
+          kind: 'device',
+          rootPath: '/Users/me/formal-project',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-cas-race',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-cas-race' }),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            result: expect.objectContaining({ content: 'Tool result', success: true }),
+            type: 'tool_result',
+          }),
+        ]),
+      );
+      // The delegate resolved the winner and handed it back, so this is a
+      // recoverable race: adopt the authoritative workspace and keep running.
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/Users/me/formal-project',
+        plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+        snapshot: { workspaceId: 'formal-workspace', workspaceKind: 'device' },
+        workspace: { id: 'formal-workspace', kind: 'device' },
+      });
+      expect(result.newState.status).not.toBe('interrupted');
+      expect(result.nextContext).toBeDefined();
+    });
+
+    const unboundExecutionContext = {
+      accessRoots: [],
+      plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+      unresolvedReason: 'no-workspace',
+      version: 1,
+    };
+    const createUnboundScratchState = () =>
+      createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: unboundExecutionContext,
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+    // The production delegate already absorbs a lost race itself: it catches
+    // WorkspaceAlreadyBoundError, resolves the winning binding and returns it
+    // (see AiAgentService#bindScratchAfterToolSuccess, exercised by the CAS
+    // test above). A rejection therefore always means no authoritative
+    // workspace could be resolved — including one that still carries
+    // WORKSPACE_ALREADY_BOUND, which must not be read as a harmless race.
+    it.each<[string, Error]>([
+      ['the concurrent winner cannot be resolved', new Error('WORKSPACE_ALREADY_BOUND')],
+      ['the bind query fails', new Error('Failed query: update "topics" set "metadata" = $1')],
+    ])('keeps the successful tool result and interrupts when %s', async (_case, bindError) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'listFiles',
+              arguments: '{}',
+              id: 'tool-call-bind-failure',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        createUnboundScratchState(),
+      );
+
+      // The tool ran exactly once and its result is persisted and reported.
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Tool result', tool_call_id: 'tool-call-bind-failure' }),
+      );
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            result: expect.objectContaining({ content: 'Tool result', success: true }),
+            type: 'tool_result',
+          }),
+        ]),
+      );
+
+      // The run stops in a resumable interruption carrying a stable code, so
+      // nothing else is queued against a topic that nothing ever bound.
+      expect(result.newState.status).toBe('interrupted');
+      expect(result.newState.interruption).toMatchObject({
+        canResume: true,
+        reason: 'WORKSPACE_BIND_FAILED',
+      });
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: 'WORKSPACE_BIND_FAILED', type: 'interrupted' }),
+        ]),
+      );
+
+      // Never reported as an error: clients read `error` events as a failed
+      // tool call, and this tool did not fail.
+      expect(result.events.some((event: any) => event.type === 'error')).toBe(false);
+      expect(
+        mockStreamManager.publishStreamEvent.mock.calls.filter(
+          ([, event]: [string, any]) => event.type === 'error',
+        ),
+      ).toHaveLength(0);
+
+      // Nothing bound the scratch root, so the execution context stays the last
+      // persisted one instead of claiming a workspace the topic is not bound to.
+      expect(result.newState.metadata?.executionContext).toEqual(unboundExecutionContext);
+
+      // The raw failure reaches the server log only — never the persisted state
+      // or the events, neither as a driver message nor as a scratch path.
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), bindError);
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
+
+      consoleError.mockRestore();
+    });
+
+    it('uses the server-to-device transport for frozen local-system env authority', async () => {
+      mockStreamManager.sendToolExecute = vi.fn();
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'stale-device',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                deviceId: 'device-a',
+                modes: ['exec'],
+                rootPath: '/Users/me/project',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/Users/me/project',
+            env: {
+              secretKeys: ['TOKEN'],
+              sources: { TOKEN: 'workspace' },
+              values: { TOKEN: 'server-resolved-secret' },
+            },
+            envFiles: ['.env'],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            version: 1,
+            workspace: {
+              deviceId: 'device-a',
+              id: 'workspace-a',
+              kind: 'device',
+              rootPath: '/Users/me/project',
+            },
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'runCommand',
+              arguments: '{"command":"printenv TOKEN"}',
+              executor: 'client',
+              id: 'tool-call-env',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockStreamManager.sendToolExecute).not.toHaveBeenCalled();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'tool-call-env' }),
+        expect.objectContaining({
+          activeDeviceId: 'device-a',
+          executionContext: expect.objectContaining({
+            env: expect.objectContaining({ values: { TOKEN: 'server-resolved-secret' } }),
+            envFiles: ['.env'],
+          }),
+        }),
+      );
+    });
+
+    it('does not use the renderer tool channel when a local device is unrouted', async () => {
+      mockStreamManager.sendToolExecute = vi.fn();
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read'],
+                operationId: 'op-123',
+                rootPath: '/outside/docs',
+                scope: 'operation',
+                source: 'direct-user-message',
+                topicId: 'topic-123',
+              },
+            ],
+            plan: { kind: 'device-unrouted', target: 'local' },
+            unresolvedReason: 'device-offline',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs/report.md"}',
+              executor: 'client',
+              id: 'tool-call-unrouted',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockStreamManager.sendToolExecute).not.toHaveBeenCalled();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'tool-call-unrouted' }),
+        expect.objectContaining({ activeDeviceId: undefined }),
+      );
+    });
+
+    it('does not create scratch for an explicit absolute-path operation', async () => {
+      const ensureScratchWorkspace = vi.fn();
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                deviceId: 'device-a',
+                modes: ['read'],
+                operationId: 'op-123',
+                rootPath: '/outside/docs',
+                scope: 'operation',
+                source: 'user-approval',
+              },
+            ],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs/report.md"}',
+              id: 'tool-call-absolute',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('parks a device-authored path intervention instead of feeding it back to the LLM', async () => {
+      mockToolExecutionService.executeTool.mockResolvedValue({
+        content: 'INTERVENTION_REQUIRED',
+        error: { kind: 'stop', message: 'INTERVENTION_REQUIRED' },
+        executionTime: 10,
+        state: {
+          code: 'INTERVENTION_REQUIRED',
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-123',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-123',
+            version: 1,
+          },
+        },
+        success: false,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        userInterventionConfig: { approvalMode: 'manual' },
+      });
+
+      const result = await executors.call_tool!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolCalling: {
+              apiName: 'readFile',
+              arguments: '{"path":"/outside/docs"}',
+              id: 'tool-call-path',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          },
+          type: 'call_tool' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '',
+          pluginIntervention: { status: 'pending' },
+          pluginState: expect.objectContaining({
+            workspacePathConsent: expect.objectContaining({
+              operationId: 'op-123',
+              requestedPath: '/outside/docs',
+            }),
+          }),
+          tool_call_id: 'tool-call-path',
+        }),
+      );
+      expect(result.newState.status).toBe('waiting_for_human');
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toContainEqual(
+        expect.objectContaining({ type: 'human_approve_required' }),
+      );
+      expect(result.events).not.toContainEqual(expect.objectContaining({ type: 'tool_result' }));
+    });
+
     it('interrupts after the same deterministic tool failure occurs twice', async () => {
       mockToolExecutionService.executeTool.mockResolvedValue({
         content: 'invalid arguments',
@@ -2762,6 +3954,12 @@ describe('RuntimeExecutors', () => {
       it('should update existing tool message instead of creating a new one', async () => {
         const executors = createRuntimeExecutors(ctx);
         const state = createMockState();
+        state.messages.push({
+          id: 'pending-tool-msg-1',
+          role: 'tool',
+          content: '',
+          tool_call_id: 'tool-call-1',
+        });
 
         const instruction = {
           payload: {
@@ -2778,7 +3976,12 @@ describe('RuntimeExecutors', () => {
           type: 'call_tool' as const,
         };
 
-        await executors.call_tool!(instruction, state);
+        const result = await executors.call_tool!(instruction, state);
+        const modelResults = result.newState.messages.filter(
+          (message) => message.role === 'tool' && message.tool_call_id === 'tool-call-1',
+        );
+        expect(modelResults).toHaveLength(1);
+        expect(modelResults[0].content).toBe('Tool result');
 
         expect(mockMessageModel.create).not.toHaveBeenCalled();
         expect(mockMessageModel.updateToolMessage).toHaveBeenCalledWith(
@@ -2918,6 +4121,63 @@ describe('RuntimeExecutors', () => {
           parentId: 'assistant-msg-1',
           pluginIntervention: { status: 'pending' },
           tool_call_id: 'tool-call-2',
+        }),
+      );
+    });
+
+    it('persists runtime-authored path metadata for a pre-dispatch local path approval', async () => {
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read', 'write', 'exec'],
+                rootPath: '/workspace',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/workspace',
+            operationId: 'op-123',
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+      mockMessageModel.create.mockResolvedValue({ id: 'tool-msg-path' });
+
+      await executors.request_human_approve!(
+        {
+          pendingToolsCalling: [
+            {
+              apiName: 'writeFile',
+              arguments: '{"path":"/outside/note.txt","content":"x"}',
+              id: 'tool-call-path',
+              identifier: 'lobe-local-system',
+              type: 'builtin' as const,
+            },
+          ],
+          type: 'request_human_approve' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pluginIntervention: { status: 'pending' },
+          pluginState: {
+            workspacePathConsent: expect.objectContaining({
+              modes: ['write'],
+              operationId: 'op-123',
+              requestedPath: '/outside',
+            }),
+          },
+          tool_call_id: 'tool-call-path',
         }),
       );
     });
@@ -3137,6 +4397,366 @@ describe('RuntimeExecutors', () => {
           role: 'tool',
           tool_call_id: 'tool-call-2',
         }),
+      );
+    });
+
+    it('shares one scratch creation and one bind across concurrent cwd-dependent tools', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'scratch-workspace',
+          workspaceKind: 'scratch',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'scratch-workspace',
+          kind: 'scratch',
+          rootPath: '/tmp/masterino/topic-123',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'listFiles',
+                arguments: '{}',
+                id: 'tool-call-scratch-1',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+              {
+                apiName: 'searchFiles',
+                arguments: '{"query":"TODO"}',
+                id: 'tool-call-scratch-2',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(ensureScratchWorkspace).toHaveBeenCalledOnce();
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledTimes(2);
+      for (const [, executionOptions] of mockToolExecutionService.executeTool.mock.calls) {
+        expect(executionOptions.executionContext.cwd).toBe('/tmp/masterino/topic-123');
+      }
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/tmp/masterino/topic-123',
+        workspace: { id: 'scratch-workspace', kind: 'scratch' },
+      });
+    });
+
+    const createScratchBatchState = () =>
+      createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          executionContext: {
+            accessRoots: [],
+            plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            unresolvedReason: 'no-workspace',
+            version: 1,
+          },
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+      });
+
+    const scratchBatchInstruction = {
+      payload: {
+        parentMessageId: 'assistant-msg-123',
+        toolsCalling: [
+          {
+            apiName: 'listFiles',
+            arguments: '{}',
+            id: 'tool-call-scratch-1',
+            identifier: 'lobe-local-system',
+            type: 'builtin' as const,
+          },
+          {
+            apiName: 'searchFiles',
+            arguments: '{"query":"TODO"}',
+            id: 'tool-call-scratch-2',
+            identifier: 'lobe-local-system',
+            type: 'builtin' as const,
+          },
+        ],
+      },
+      type: 'call_tools_batch' as const,
+    };
+
+    const expectEveryBatchResultKept = (result: any) => {
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledTimes(2);
+      // The bug this guards: a bind outcome used to escape into the per-tool
+      // catch and skip persisting the result of a tool that already succeeded.
+      expect(mockMessageModel.create).toHaveBeenCalledTimes(2);
+      for (const toolCallId of ['tool-call-scratch-1', 'tool-call-scratch-2']) {
+        expect(mockMessageModel.create).toHaveBeenCalledWith(
+          expect.objectContaining({ content: 'Tool result', tool_call_id: toolCallId }),
+        );
+        expect(result.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: toolCallId, type: 'tool_result' }),
+          ]),
+        );
+      }
+    };
+
+    it('adopts the concurrent winner the shared batch bind resolves', async () => {
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:01.000Z',
+          workspaceId: 'formal-workspace',
+          workspaceKind: 'device',
+        },
+        workspace: {
+          deviceId: 'device-a',
+          id: 'formal-workspace',
+          kind: 'device',
+          rootPath: '/Users/me/formal-project',
+        },
+      });
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+
+      const result = await executors.call_tools_batch!(
+        scratchBatchInstruction,
+        createScratchBatchState(),
+      );
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expectEveryBatchResultKept(result);
+      expect(result.newState.metadata?.executionContext).toMatchObject({
+        cwd: '/Users/me/formal-project',
+        snapshot: { workspaceId: 'formal-workspace', workspaceKind: 'device' },
+        workspace: { id: 'formal-workspace', kind: 'device' },
+      });
+      expect(result.newState.status).not.toBe('interrupted');
+      expect(result.nextContext).toBeDefined();
+    });
+
+    // Same semantics as call_tool: a rejected bind — WORKSPACE_ALREADY_BOUND
+    // included — means no workspace could be resolved, so the batch keeps every
+    // successful result and stops instead of running on unbound.
+    it.each<[string, Error]>([
+      ['the concurrent winner cannot be resolved', new Error('WORKSPACE_ALREADY_BOUND')],
+      ['the bind query fails', new Error('Failed query: update "topics" set "metadata" = $1')],
+    ])('keeps every successful batch result and interrupts when %s', async (_case, bindError) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createScratchBatchState();
+
+      const result = await executors.call_tools_batch!(scratchBatchInstruction, state);
+
+      expect(bindScratchAfterToolSuccess).toHaveBeenCalledOnce();
+      expectEveryBatchResultKept(result);
+
+      expect(result.newState.status).toBe('interrupted');
+      expect(result.newState.interruption).toMatchObject({
+        canResume: true,
+        reason: 'WORKSPACE_BIND_FAILED',
+      });
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: 'WORKSPACE_BIND_FAILED', type: 'interrupted' }),
+        ]),
+      );
+      expect(result.events.some((event: any) => event.type === 'error')).toBe(false);
+      expect(result.newState.metadata?.executionContext).toEqual(state.metadata!.executionContext);
+
+      // Server log only — the raw failure never reaches state or events.
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), bindError);
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
+
+      consoleError.mockRestore();
+    });
+
+    it('persists a bind-failure debt while a mixed batch waits for its client tool', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const bindError = new Error('Failed query: update workspace binding');
+      const ensureScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ root: '/tmp/masterino/topic-123' });
+      const bindScratchAfterToolSuccess = vi.fn().mockRejectedValue(bindError);
+      const executors = createRuntimeExecutors({
+        ...ctx,
+        bindScratchAfterToolSuccess,
+        ensureScratchWorkspace,
+        topicId: 'topic-123',
+      });
+      const state = createScratchBatchState();
+      state.toolSourceMap = { 'client-extension': 'client' };
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'listFiles',
+                arguments: '{}',
+                id: 'tool-call-server',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+              {
+                apiName: 'pickFile',
+                arguments: '{}',
+                id: 'tool-call-client',
+                identifier: 'client-extension',
+                type: 'default' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tool_call_id: 'tool-call-server' }),
+      );
+      expect(result.newState.status).toBe('waiting_for_async_tool');
+      expect(result.newState.pendingToolsCalling).toEqual([
+        expect.objectContaining({ id: 'tool-call-client' }),
+      ]);
+      expect(result.newState.interruption).toMatchObject({ reason: 'client_tool_execution' });
+      expect(hasPendingWorkspaceBindFailure(result.newState)).toBe(true);
+      expect(result.nextContext).toBeUndefined();
+
+      const exposed = serializeForSecretScan({ events: result.events, state: result.newState });
+      expect(exposed).not.toContain(bindError.message);
+      expect(exposed).not.toContain('/tmp/masterino/topic-123');
+      consoleError.mockRestore();
+    });
+
+    it('parks a device-authored path intervention from a batch instead of returning it to the LLM', async () => {
+      mockToolExecutionService.executeTool.mockResolvedValue({
+        content: 'INTERVENTION_REQUIRED',
+        error: { kind: 'stop', message: 'INTERVENTION_REQUIRED' },
+        executionTime: 10,
+        state: {
+          code: 'INTERVENTION_REQUIRED',
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-123',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/real-target',
+            topicId: 'topic-123',
+            version: 1,
+          },
+        },
+        success: false,
+      });
+      const executors = createRuntimeExecutors(ctx);
+      const state = createMockState({
+        metadata: {
+          activeDeviceId: 'device-a',
+          agentId: 'agent-123',
+          threadId: 'thread-123',
+          topicId: 'topic-123',
+        },
+        userInterventionConfig: { approvalMode: 'manual' },
+      });
+
+      const result = await executors.call_tools_batch!(
+        {
+          payload: {
+            parentMessageId: 'assistant-msg-123',
+            toolsCalling: [
+              {
+                apiName: 'readFile',
+                arguments: '{"path":"/outside/link"}',
+                id: 'tool-call-path',
+                identifier: 'lobe-local-system',
+                type: 'builtin' as const,
+              },
+            ],
+          },
+          type: 'call_tools_batch' as const,
+        },
+        state,
+      );
+
+      expect(mockMessageModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '',
+          pluginIntervention: { status: 'pending' },
+          pluginState: expect.objectContaining({
+            workspacePathConsent: expect.objectContaining({
+              requestedPath: '/outside/real-target',
+            }),
+          }),
+          tool_call_id: 'tool-call-path',
+        }),
+      );
+      expect(result.newState.status).toBe('waiting_for_human');
+      expect(result.newState.pendingToolsCalling).toEqual([
+        expect.objectContaining({ id: 'tool-call-path' }),
+      ]);
+      expect(result.nextContext).toBeUndefined();
+      expect(result.events).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'human_approve_required' })]),
       );
     });
 

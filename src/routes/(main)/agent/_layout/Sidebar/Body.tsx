@@ -9,6 +9,10 @@ export enum ChatSidebarKey {
   Topic = 'topic',
 }
 
+/**
+ * Sidebar body. Task keeps its stable reserved position above Topic even while
+ * task support is not yet exposed. Both modules retain their existing logic.
+ */
 const Body = memo(() => {
   return (
     <Flexbox paddingInline={4}>

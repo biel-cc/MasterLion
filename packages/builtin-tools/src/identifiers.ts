@@ -21,6 +21,7 @@ import { MemoryManifest } from '@lobechat/builtin-tool-memory';
 import { NotebookManifest } from '@lobechat/builtin-tool-notebook';
 import { PageAgentManifest } from '@lobechat/builtin-tool-page-agent';
 import { selfFeedbackIntentManifest } from '@lobechat/builtin-tool-self-iteration';
+import { SkillAuthoringManifest } from '@lobechat/builtin-tool-skill-authoring';
 import { SkillStoreManifest } from '@lobechat/builtin-tool-skill-store';
 import { SkillsManifest } from '@lobechat/builtin-tool-skills';
 import { TopicReferenceManifest } from '@lobechat/builtin-tool-topic-reference';
@@ -44,6 +45,7 @@ export const builtinToolIdentifiers: string[] = [
   NotebookManifest.identifier,
   PageAgentManifest.identifier,
   selfFeedbackIntentManifest.identifier,
+  SkillAuthoringManifest.identifier,
   agentSignalReviewManifest.identifier,
   agentSignalReflectionManifest.identifier,
   agentSignalFeedbackIntentManifest.identifier,

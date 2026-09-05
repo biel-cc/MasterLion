@@ -66,7 +66,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: ['plugin-1'],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -94,7 +93,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: [],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -122,7 +120,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: ['plugin-1'],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -150,7 +147,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: [],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -179,7 +175,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: ['plugin-1'],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -207,7 +202,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: ['plugin-1'],
         }),
-        expect.any(AbortSignal),
       );
     });
   });
@@ -237,7 +231,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: [],
         }),
-        expect.any(AbortSignal),
       );
     });
 
@@ -266,7 +259,6 @@ describe('PluginSlice Actions', () => {
         expect.objectContaining({
           plugins: ['existing-plugin'],
         }),
-        expect.any(AbortSignal),
       );
     });
   });

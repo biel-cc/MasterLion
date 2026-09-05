@@ -8,6 +8,11 @@ import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { finished as streamFinished } from 'node:stream/promises';
 
+import {
+  type HeterogeneousSkillMaterializationMode,
+  type MaterializableSkill,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
 import type { HeterogeneousAgentSessionError } from '@lobechat/electron-client-ipc';
 import {
   CLAUDE_CODE_CLI_INSTALL_COMMANDS,
@@ -33,6 +38,7 @@ import {
   resolveCliSpawnPlan,
   resolveCodexInitialModel,
 } from '@lobechat/heterogeneous-agents/spawn';
+import { composeChildProcessEnv, resolveLoginShellPath } from '@lobechat/local-file-shell';
 import { app as electronApp, BrowserWindow } from 'electron';
 
 import { HETERO_AGENT_FILES_DIR, HETERO_AGENT_TRACING_DIR } from '@/const/heteroAgent';
@@ -49,32 +55,6 @@ import { ControllerModule, IpcMethod } from './index';
 
 const logger = createLogger('controllers:HeterogeneousAgentCtr');
 
-// Anthropic auth env vars that must NOT be inherited from the desktop process
-// when spawning a local CLI agent. A developer with `ANTHROPIC_API_KEY` (or an
-// auth token / base url) exported in their shell would otherwise have it
-// forwarded to `claude`, which then switches from its own subscription login to
-// that key — an expired / wrong key surfaces as a baffling "Invalid API key"
-// and the run exits non-zero. Agents that genuinely want an API key still set
-// it through `session.env`, which is spread AFTER the inherited env below and
-// therefore wins.
-const STRIPPED_INHERITED_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_BASE_URL',
-] as const;
-
-/**
- * Inherited `process.env` with the Anthropic auth vars removed. Keep this pure
- * and exported so the "never leak host Anthropic creds into the CLI" invariant
- * can be unit-tested directly.
- */
-export const buildInheritedSpawnEnv = (
-  sourceEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv => {
-  const env = { ...sourceEnv };
-  for (const key of STRIPPED_INHERITED_ENV_KEYS) delete env[key];
-  return env;
-};
 const CODEX_RESUME_THREAD_NOT_FOUND_PATTERNS = [
   /no conversation found/i,
   /thread .*not found/i,
@@ -119,6 +99,10 @@ interface StartSessionParams {
   env?: Record<string, string>;
   /** Session ID to resume (for multi-turn) */
   resumeSessionId?: string;
+  /** Missing means the safe default `off`. */
+  skillPolicy?: HeterogeneousSkillMaterializationMode;
+  /** Frozen registry winners with inline bodies. */
+  skills?: MaterializableSkill[];
 }
 
 interface StartSessionResult {
@@ -880,17 +864,30 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
    */
   @IpcMethod()
   async startSession(params: StartSessionParams): Promise<StartSessionResult> {
-    const sessionId = randomUUID();
+    if (!params.cwd?.trim()) throw new Error('WORKSPACE_REQUIRED');
     const agentType = params.agentType || 'claude-code';
     getHeterogeneousAgentDriver(agentType);
-
+    const materialization = await materializeSkillsForCli({
+      agentType,
+      cwd: params.cwd.trim(),
+      policy: params.skillPolicy,
+      skills: params.skills,
+    });
+    if (materialization.errors.length > 0) {
+      throw new Error(
+        `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+          .map(({ message }) => message)
+          .join('; ')}`,
+      );
+    }
+    const sessionId = randomUUID();
     this.sessions.set(sessionId, {
       // If resuming, pre-set the agent session ID so sendPrompt adds --resume
       agentSessionId: params.resumeSessionId,
       agentType,
       args: params.args || [],
       command: params.command,
-      cwd: params.cwd,
+      cwd: params.cwd.trim(),
       env: params.env,
       sessionId,
       resumeSessionId: params.resumeSessionId,
@@ -952,19 +949,20 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
         resumeSessionId: session.agentSessionId,
       });
 
-      // Fall back to the user's Desktop so the process never inherits
-      // the Electron parent's cwd (which is `/` when launched from Finder).
-      cwd = session.cwd || electronApp.getPath('desktop');
+      if (!session.cwd) throw new Error('WORKSPACE_REQUIRED');
+      cwd = session.cwd;
 
       // Forward the user's proxy settings to the CLI. The main-process undici
       // dispatcher doesn't reach child processes — they need env vars.
       const proxyEnv = buildProxyEnv(this.app.storeManager.get('networkProxy'));
-      const inheritedEnv = buildInheritedSpawnEnv();
-      // When preflight resolved the CLI via the login-shell PATH, spawn with
-      // that PATH (a superset of the inherited one) so a `#!/usr/bin/env node`
-      // shim finds its interpreter. `session.env` still wins if it sets PATH.
-      if (session.resolvedCommandSearchPath) inheritedEnv.PATH = session.resolvedCommandSearchPath;
-      spawnEnv = { ...inheritedEnv, ...proxyEnv, ...session.env };
+      spawnEnv = composeChildProcessEnv({
+        hostEnv: process.env,
+        // When preflight resolved the CLI via the login-shell PATH, carry that
+        // PATH into the child so a `#!/usr/bin/env node` shim finds node.
+        loginShellPath: session.resolvedCommandSearchPath,
+        resolvedEnv: session.env,
+        runtimeEnv: proxyEnv,
+      });
 
       if (session.agentType === 'codex') {
         const initialModel = await resolveCodexInitialModel({
@@ -1469,9 +1467,10 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
    * AgentStreamPipeline or IPC broadcast needed. Mirrors
    * `spawnHeteroSandbox()` on the server side.
    */
-  spawnLhHeteroExec(params: {
+  async spawnLhHeteroExec(params: {
     agentType: string;
     cwd?: string;
+    env?: Record<string, string>;
     /** Image attachments (signed URLs) appended as image content blocks. */
     imageList?: HeteroExecImageRef[];
     jwt: string;
@@ -1481,10 +1480,11 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
     serverUrl: string;
     systemContext?: string;
     topicId: string;
-  }): void {
+  }): Promise<void> {
     const {
       agentType,
       cwd,
+      env: executionEnv,
       imageList,
       jwt,
       operationId,
@@ -1494,7 +1494,8 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       systemContext,
       topicId,
     } = params;
-    const workDir = cwd ?? process.cwd();
+    const workDir = cwd?.trim();
+    if (!workDir) throw new Error('WORKSPACE_REQUIRED');
 
     // When CLI tracing is enabled (dev builds, or the Help-menu toggle in
     // packaged builds), have `lh hetero exec` persist the agent process's RAW
@@ -1523,12 +1524,16 @@ export default class HeterogeneousAgentCtr extends ControllerModule {
       ...(rawDumpDir ? ['--raw-dump', rawDumpDir] : []),
     ];
 
-    const env = {
-      ...process.env,
-      ...buildProxyEnv(this.app.storeManager.get('networkProxy')),
-      LOBEHUB_JWT: jwt,
-      LOBEHUB_SERVER: serverUrl,
-    };
+    const env = composeChildProcessEnv({
+      hostEnv: process.env,
+      loginShellPath: await resolveLoginShellPath(),
+      resolvedEnv: executionEnv,
+      runtimeEnv: {
+        ...buildProxyEnv(this.app.storeManager.get('networkProxy')),
+        LOBEHUB_JWT: jwt,
+        LOBEHUB_SERVER: serverUrl,
+      },
+    });
 
     logger.info('spawnLhHeteroExec: type=%s op=%s topic=%s', agentType, operationId, topicId);
 

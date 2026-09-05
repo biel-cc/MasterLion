@@ -65,13 +65,13 @@ describe('runCommand', () => {
       expect(result.shell_id).toBeDefined();
     }, 10_000);
 
-    it('should strip ANSI codes from output', async () => {
+    it('should preserve ANSI codes for client-side color rendering', async () => {
       const result = await runCommand(
         { command: 'printf "\\033[31mred\\033[0m"' },
         { processManager },
       );
 
-      expect(result.output).not.toContain('\u001B');
+      expect(result.output).toContain('\u001B[31mred\u001B[0m');
     });
 
     it('should truncate very long output', async () => {

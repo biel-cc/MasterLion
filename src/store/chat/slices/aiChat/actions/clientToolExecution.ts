@@ -1,8 +1,10 @@
 import { type ToolExecuteData, type ToolResultMessage } from '@lobechat/agent-gateway-client';
+import { LocalSystemIdentifier } from '@lobechat/builtin-tool-local-system';
 import { type BuiltinToolContext } from '@lobechat/types';
 import debug from 'debug';
 import { produce } from 'immer';
 
+import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { mcpService } from '@/services/mcp';
 import { type ChatStore } from '@/store/chat/store';
 import { hasExecutor, invokeExecutor } from '@/store/tool/slices/builtin/executors';
@@ -63,7 +65,7 @@ export class ClientToolExecutionActionImpl {
 
   internal_executeClientTool = async (
     data: ToolExecuteData,
-    context: { operationId: string },
+    context: { localOperationId?: string; operationId: string; topicId?: string },
   ): Promise<void> => {
     const { toolCallId, identifier, apiName, arguments: argsString, executionTimeoutMs } = data;
     const { operationId } = context;
@@ -129,7 +131,74 @@ export class ClientToolExecutionActionImpl {
         params = parsed ?? {};
       }
 
-      const operation = this.#get().operations[operationId];
+      const operation = this.#get().operations[context.localOperationId ?? operationId];
+      const operationTopicId = context.topicId ?? operation?.context?.topicId ?? undefined;
+
+      if (data.operationId && data.operationId !== operationId) {
+        send({
+          content: null,
+          error: {
+            message: 'Tool execution operation context does not match the active gateway session',
+            type: 'execution_context_mismatch',
+          },
+          success: false,
+          toolCallId,
+        });
+        return;
+      }
+      if (data.topicId && operationTopicId && data.topicId !== operationTopicId) {
+        send({
+          content: null,
+          error: {
+            message: 'Tool execution topic context does not match the active conversation',
+            type: 'execution_context_mismatch',
+          },
+          success: false,
+          toolCallId,
+        });
+        return;
+      }
+
+      // Standalone Electron local-system calls must cross the main-process
+      // authorization boundary. Do not invoke the legacy renderer executor:
+      // it has no realpath/access-root enforcement and cannot be the final
+      // authority for host filesystem access.
+      if (identifier === LocalSystemIdentifier) {
+        const localResult = await this.#raceAgainstDeadline(
+          () =>
+            gatewayConnectionService.executeLocalToolCall({
+              apiName,
+              args: params,
+              executionContext: data.executionContext,
+              trace: {
+                deviceId: data.deviceId,
+                operationId,
+                toolCallId,
+                topicId: data.topicId ?? operationTopicId,
+              },
+            }),
+          executionTimeoutMs,
+          () => operation?.abortController?.abort(),
+        );
+        const localError = localResult.error as
+          | { message?: string; type?: string }
+          | null
+          | undefined;
+        send({
+          content: localResult.content ?? localError?.message ?? null,
+          error: localResult.success
+            ? undefined
+            : {
+                message:
+                  localError?.message ?? localResult.content ?? 'Local tool execution failed',
+                type: localError?.type ?? 'PluginServerError',
+              },
+          state: localResult.state,
+          success: !!localResult.success,
+          toolCallId,
+        });
+        return;
+      }
 
       // ─── Builtin dispatch (via registry) ───
       if (hasExecutor(identifier, apiName)) {
@@ -144,7 +213,7 @@ export class ClientToolExecutionActionImpl {
           scope: operation?.context?.scope,
           signal: operation?.abortController?.signal,
           sourceMessageId: operation?.context?.messageId,
-          topicId: operation?.context?.topicId ?? undefined,
+          topicId: operationTopicId,
         };
 
         log('[ClientToolCall] execute:start', {
@@ -206,7 +275,7 @@ export class ClientToolExecutionActionImpl {
               },
               {
                 signal: operation?.abortController?.signal,
-                topicId: operation?.context?.topicId ?? undefined,
+                topicId: operationTopicId,
               },
             )
             .catch((err) => {

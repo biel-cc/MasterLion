@@ -315,6 +315,12 @@ export interface AiModelSettings {
   disabledParams?: DisabledParamType[];
   extendParams?: ExtendParamsType[];
   /**
+   * Versioned, non-secret model catalog evidence. Its runtime shape is owned by
+   * @lobechat/business-model-bank and intentionally remains unknown here to avoid
+   * introducing a model-bank -> application contract dependency cycle.
+   */
+  modelCatalog?: unknown;
+  /**
    * How the model layer implements search
    */
   searchImpl?: ModelSearchImplementType;
@@ -370,6 +376,7 @@ export const DisabledParamTypeSchema = z.enum([
 export const AiModelSettingsSchema = z.object({
   disabledParams: z.array(DisabledParamTypeSchema).optional(),
   extendParams: z.array(ExtendParamsTypeSchema).optional(),
+  modelCatalog: z.unknown().optional(),
   searchImpl: ModelSearchImplementTypeSchema.optional(),
   searchProvider: z.string().optional(),
 });
@@ -574,8 +581,8 @@ export interface EnabledAiModel {
   providerId: string;
   releasedAt?: string;
   settings?: AiModelSettings;
-  source?: AiModelSourceType;
   sort?: number;
+  source?: AiModelSourceType;
   type: AiModelType;
   visible?: boolean;
 }

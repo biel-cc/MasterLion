@@ -80,6 +80,20 @@ describe('aiModelSelectors', () => {
       const result = aiModelSelectors.aiProviderChatModelListIds(mockState);
       expect(result).toEqual(['model1', 'model2', 'model4']);
     });
+
+    it('reclassifies legacy remote chat defaults before exposing ids', () => {
+      const state = {
+        ...mockState,
+        aiProviderModelList: [
+          { enabled: true, id: 'qwen3-vl-rerank', type: 'chat' as const },
+          { enabled: true, id: 'bge-reranker-v2', type: 'chat' as const },
+          { enabled: true, id: 'text-embedding-3-small', type: 'chat' as const },
+          { enabled: true, id: 'company-chat', type: 'chat' as const },
+        ],
+      };
+
+      expect(aiModelSelectors.aiProviderChatModelListIds(state)).toEqual(['company-chat']);
+    });
   });
 
   describe('enabledAiProviderModelList', () => {
@@ -219,9 +233,7 @@ describe('aiModelSelectors', () => {
         ],
       };
 
-      expect(aiModelSelectors.getEnabledModelById('glm-5.1', 'newapi')(state)?.id).toBe(
-        'glm-5.1',
-      );
+      expect(aiModelSelectors.getEnabledModelById('glm-5.1', 'newapi')(state)?.id).toBe('glm-5.1');
       expect(aiModelSelectors.getEnabledModelById('glm5-5.1', 'newapi')(state)).toBeUndefined();
       expect(aiModelSelectors.isModelSupportToolUse('glm-5.1', 'newapi')(state)).toBe(true);
     });

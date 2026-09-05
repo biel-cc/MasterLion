@@ -1,7 +1,11 @@
 import { type UIChatMessage } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
-import { selectCurrentTurnTodosFromMessages, selectTodosFromMessages } from './dbMessage';
+import {
+  selectActivatedSkillsFromMessages,
+  selectCurrentTurnTodosFromMessages,
+  selectTodosFromMessages,
+} from './dbMessage';
 
 describe('selectTodosFromMessages', () => {
   const createLobeAgentToolMessage = (todos: {
@@ -315,5 +319,23 @@ describe('selectCurrentTurnTodosFromMessages', () => {
     const result = selectCurrentTurnTodosFromMessages(messages);
 
     expect(result?.items[0].text).toBe('greeting task');
+  });
+});
+
+describe('activated skill execution order', () => {
+  it('moves reactivated skills after previous winners without duplicating them', () => {
+    const activation = (id: string): UIChatMessage =>
+      ({
+        id: `activation-${id}`,
+        role: 'tool',
+        content: 'activated',
+        plugin: { identifier: 'lobe-skills', apiName: 'activateSkill', arguments: '{}' },
+        pluginState: { id, name: id },
+      }) as UIChatMessage;
+    expect(
+      selectActivatedSkillsFromMessages([activation('A'), activation('B'), activation('A')])?.map(
+        (skill) => skill.id,
+      ),
+    ).toEqual(['B', 'A']);
   });
 });

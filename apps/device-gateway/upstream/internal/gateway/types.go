@@ -2,21 +2,29 @@ package gateway
 
 import "encoding/json"
 
+type DeviceCapabilities struct {
+	ExecutionContextValidation bool `json:"executionContextValidation,omitempty"`
+}
+
 type DeviceAttachment struct {
-	Authenticated bool   `json:"authenticated"`
-	Channel       string `json:"channel,omitempty"`
-	ConnectedAt   int64  `json:"connectedAt"`
-	ConnectionID  string `json:"connectionId"`
-	DeviceID      string `json:"deviceId"`
-	Hostname      string `json:"hostname"`
-	LastHeartbeat int64  `json:"lastHeartbeat"`
-	Platform      string `json:"platform"`
+	Authenticated   bool               `json:"authenticated"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	Channel         string             `json:"channel,omitempty"`
+	ConnectedAt     int64              `json:"connectedAt"`
+	ConnectionID    string             `json:"connectionId"`
+	DeviceID        string             `json:"deviceId"`
+	Hostname        string             `json:"hostname"`
+	LastHeartbeat   int64              `json:"lastHeartbeat"`
+	Platform        string             `json:"platform"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
 }
 
 type DeviceConnection struct {
-	Channel      string `json:"channel,omitempty"`
-	ConnectedAt  int64  `json:"connectedAt"`
-	ConnectionID string `json:"connectionId"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	Channel         string             `json:"channel,omitempty"`
+	ConnectedAt     int64              `json:"connectedAt"`
+	ConnectionID    string             `json:"connectionId"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
 }
 
 type GatewayDevice struct {
@@ -28,10 +36,12 @@ type GatewayDevice struct {
 }
 
 type authMessage struct {
-	ServerURL string `json:"serverUrl,omitempty"`
-	Token     string `json:"token"`
-	TokenType string `json:"tokenType,omitempty"`
-	Type      string `json:"type"`
+	Capabilities    DeviceCapabilities `json:"capabilities,omitempty"`
+	ProtocolVersion int                `json:"protocolVersion,omitempty"`
+	ServerURL       string             `json:"serverUrl,omitempty"`
+	Token           string             `json:"token"`
+	TokenType       string             `json:"tokenType,omitempty"`
+	Type            string             `json:"type"`
 }
 
 type authSuccessMessage struct {
@@ -49,19 +59,26 @@ type rpcEnvelope struct {
 }
 
 type deviceHTTPBody struct {
-	AgentType       string          `json:"agentType,omitempty"`
-	API             json.RawMessage `json:"api,omitempty"`
-	CWD             string          `json:"cwd,omitempty"`
-	DeviceID        string          `json:"deviceId,omitempty"`
-	JWT             string          `json:"jwt,omitempty"`
-	Method          string          `json:"method,omitempty"`
-	OperationID     string          `json:"operationId,omitempty"`
-	Params          json.RawMessage `json:"params,omitempty"`
-	Prompt          string          `json:"prompt,omitempty"`
-	ResumeSessionID string          `json:"resumeSessionId,omitempty"`
-	SystemContext   string          `json:"systemContext,omitempty"`
-	Timeout         int             `json:"timeout,omitempty"`
-	ToolCall        json.RawMessage `json:"toolCall,omitempty"`
-	TopicID         string          `json:"topicId,omitempty"`
-	UserID          string          `json:"userId"`
+	AgentType        string            `json:"agentType,omitempty"`
+	API              json.RawMessage   `json:"api,omitempty"`
+	CWD              string            `json:"cwd,omitempty"`
+	DeviceID         string            `json:"deviceId,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
+	ExecutionContext json.RawMessage   `json:"executionContext,omitempty"`
+	ImageList        json.RawMessage   `json:"imageList,omitempty"`
+	JWT              string            `json:"jwt,omitempty"`
+	Method           string            `json:"method,omitempty"`
+	ModelRef         json.RawMessage   `json:"modelRef,omitempty"`
+	OperationID      string            `json:"operationId,omitempty"`
+	Params           json.RawMessage   `json:"params,omitempty"`
+	Prompt           string            `json:"prompt,omitempty"`
+	ResumeSessionID  string            `json:"resumeSessionId,omitempty"`
+	SkillPolicy      string            `json:"skillPolicy,omitempty"`
+	Skills           json.RawMessage   `json:"skills,omitempty"`
+	SystemContext    string            `json:"systemContext,omitempty"`
+	Timeout          int               `json:"timeout,omitempty"`
+	ToolCall         json.RawMessage   `json:"toolCall,omitempty"`
+	ToolCallID       string            `json:"toolCallId,omitempty"`
+	TopicID          string            `json:"topicId,omitempty"`
+	UserID           string            `json:"userId"`
 }

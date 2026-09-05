@@ -86,7 +86,7 @@ export const LocalSystemManifest: BuiltinToolManifest = {
           },
           scope: {
             description:
-              'Working directory scope. Limits the search to this directory. Defaults to the current working directory.',
+              'Optional sub-scope within an authorized execution workspace. The runtime supplies the workspace when omitted.',
             type: 'string',
           },
           limit: {
@@ -239,12 +239,6 @@ export const LocalSystemManifest: BuiltinToolManifest = {
               'Clear description of what this command does (5-10 words, in active voice). Use the same language as the user input.',
             type: 'string',
           },
-          env: {
-            additionalProperties: { type: 'string' },
-            description:
-              'Optional environment variables to set for this command. Use this for securely passing credentials (e.g., API tokens) — do NOT embed secrets in the command string. Values are merged into the child process environment.',
-            type: 'object',
-          },
           run_in_background: {
             description:
               'Set to true to return immediately after starting the terminal session. The result will include a `shell_id` for later observation or termination.',
@@ -352,7 +346,7 @@ export const LocalSystemManifest: BuiltinToolManifest = {
           },
           'scope': {
             description:
-              'Working directory scope. Limits the search to this directory. Defaults to the current working directory.',
+              'Optional sub-scope within an authorized execution workspace. The runtime supplies the workspace when omitted.',
             type: 'string',
           },
           'type': {
@@ -385,7 +379,7 @@ export const LocalSystemManifest: BuiltinToolManifest = {
           },
           scope: {
             description:
-              'Working directory scope. When `pattern` is relative, it is joined with this scope. Defaults to the current working directory.',
+              'Optional sub-scope within an authorized execution workspace. Relative patterns use the runtime workspace when omitted.',
             type: 'string',
           },
         },

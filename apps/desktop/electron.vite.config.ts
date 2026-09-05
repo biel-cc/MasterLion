@@ -189,7 +189,10 @@ function cloudDesktopBusinessConstPlugin(): PluginOption {
   };
 }
 
-dotenv.config();
+const isolatedDevelopment =
+  process.env.NODE_ENV === 'development' &&
+  ['local', 'test'].includes(process.env.MASTERINO_DEV_ENV || '');
+if (!isolatedDevelopment) dotenv.config();
 
 const isDev = process.env.NODE_ENV === 'development';
 const ROOT_DIR = path.resolve(__dirname, '../..');
@@ -197,7 +200,7 @@ const CLOUD_ROOT_DIR = path.resolve(__dirname, '../../..');
 const isCloudDesktopBuild = process.env.CLOUD_DESKTOP === '1';
 const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development';
 
-Object.assign(process.env, loadEnv(mode, ROOT_DIR, ''));
+if (!isolatedDevelopment) Object.assign(process.env, loadEnv(mode, ROOT_DIR, ''));
 const updateChannel = process.env.UPDATE_CHANNEL;
 const isTestDesktopBuild = process.env.DESKTOP_BUILD_FLAVOR === 'test';
 const desktopCloudServer = process.env.NEXT_PUBLIC_DESKTOP_CLOUD_SERVER?.trim() || '';
@@ -225,6 +228,7 @@ const cloudTsconfigPathsPlugin = () =>
 
 export default defineConfig({
   main: {
+    ...(isolatedDevelopment ? { envDir: false } : {}),
     build: {
       minify: !isDev,
       outDir: 'dist/main',
@@ -301,6 +305,7 @@ export default defineConfig({
     },
   },
   preload: {
+    ...(isolatedDevelopment ? { envDir: false } : {}),
     build: {
       minify: !isDev,
       outDir: 'dist/preload',
@@ -317,6 +322,16 @@ export default defineConfig({
     },
   },
   renderer: {
+    ...(isolatedDevelopment
+      ? {
+          envDir: false,
+          cacheDir: path.join(
+            ROOT_DIR,
+            'node_modules/.cache/masterino',
+            `electron-${process.env.MASTERINO_DEV_ENV}`,
+          ),
+        }
+      : {}),
     root: ROOT_DIR,
     build: {
       outDir: path.resolve(__dirname, 'dist/renderer'),
@@ -354,6 +369,7 @@ export default defineConfig({
     // port MUST be deterministic. `strictPort` fails fast on conflict instead of
     // silently sliding, and `clientPort` baked into the HMR injection has to match.
     server: {
+      fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.local-dev/**'] },
       hmr: {
         clientPort: 5173,
         host: '127.0.0.1',

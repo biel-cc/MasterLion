@@ -85,6 +85,42 @@ describe('createGatewayEventHandler', () => {
     vi.clearAllMocks();
   });
 
+  describe('stream_retry', () => {
+    it('rolls back partial content, reasoning and tools for a context retry', async () => {
+      const store = createMockStore();
+      const handler = createHandler(store);
+
+      handler(makeEvent('stream_chunk', { chunkType: 'text', content: 'stale partial' }));
+      handler(
+        makeEvent('stream_chunk', { chunkType: 'reasoning', reasoning: 'stale reasoning' }),
+      );
+      handler(
+        makeEvent('stream_chunk', {
+          chunkType: 'tools_calling',
+          toolsCalling: [{ id: 'stale-tool' }],
+        }),
+      );
+      handler(makeEvent('stream_retry', { reason: 'context_window', reset: true }));
+      handler(makeEvent('stream_chunk', { chunkType: 'text', content: 'final only' }));
+      await flush();
+
+      expect(store.internal_dispatchMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: expect.objectContaining({ content: '', tools: undefined }),
+        }),
+        expect.anything(),
+      );
+      expect(store.internal_dispatchMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ value: { content: 'final only' } }),
+        expect.anything(),
+      );
+      expect(store.internal_toggleToolCallingStreaming).toHaveBeenLastCalledWith(
+        'msg-initial',
+        undefined,
+      );
+    });
+  });
+
   describe('stream_start', () => {
     it('should associate new message with operation and skip the DB refetch', async () => {
       const store = createMockStore();
@@ -479,7 +515,9 @@ describe('createGatewayEventHandler', () => {
       await flush();
 
       expect(store.internal_executeClientTool).toHaveBeenCalledWith(toolExecuteData, {
+        localOperationId: 'op-1',
         operationId: 'op-1',
+        topicId: 'topic-1',
       });
     });
 
@@ -495,7 +533,9 @@ describe('createGatewayEventHandler', () => {
       await flush();
 
       expect(store.internal_executeClientTool).toHaveBeenCalledWith(toolExecuteData, {
+        localOperationId: 'op-1',
         operationId: 'gw-op-server',
+        topicId: 'topic-1',
       });
     });
 

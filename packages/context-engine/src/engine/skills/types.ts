@@ -1,4 +1,5 @@
 import type { SkillMeta } from '../../providers/SkillContextProvider';
+import type { SkillRegistryTrace } from './SkillRegistry';
 
 /**
  * Application-layer checker that determines whether a skill is available
@@ -12,6 +13,8 @@ export type SkillEnableChecker = (skill: SkillMeta) => boolean;
 export interface SkillEngineOptions {
   /** Optional checker to filter skills by environment/platform */
   enableChecker?: SkillEnableChecker;
+  /** Registry evidence used to produce this immutable operation set. */
+  registry?: SkillRegistryTrace;
   /** All raw skills from all sources (builtin, DB, etc.) */
   skills: SkillMeta[];
 }
@@ -23,6 +26,8 @@ export interface SkillEngineOptions {
 export interface OperationSkillSet {
   /** Plugin IDs enabled on this agent — skills matching these IDs are auto-activated */
   enabledPluginIds: string[];
+  /** Source/policy/precedence evidence for diagnostics and UI projections. */
+  registry?: SkillRegistryTrace;
   /** All available skills after enableChecker filtering */
   skills: SkillMeta[];
 }

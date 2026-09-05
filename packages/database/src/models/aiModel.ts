@@ -1,3 +1,9 @@
+import {
+  getModelCatalogFromSettings,
+  type PersistedModelCatalog,
+  recordContextWindowRejectionEvidence,
+} from '@lobechat/business-model-bank';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type {
   AiModelSortMap,
@@ -164,6 +170,69 @@ export class AiModelModel {
         target: [aiModels.id, aiModels.providerId, aiModels.userId],
         targetWhere: isNull(aiModels.workspaceId),
       });
+  };
+
+  recordContextWindowRejection = async (input: {
+    contextWindowRejectionTokens: number;
+    modelCatalogSnapshot?: ModelCatalogSnapshot;
+    modelId: string;
+    modelVersion?: string;
+    providerId: string;
+    verifiedAt?: string;
+  }): Promise<boolean> => {
+    const persist = async (db: LobeChatDatabase, lockExisting: boolean) => {
+      const scopedModel = new AiModelModel(db, this.userId);
+      const ownership = and(
+        eq(aiModels.id, input.modelId),
+        eq(aiModels.providerId, input.providerId),
+        eq(aiModels.userId, this.userId),
+        isNull(aiModels.workspaceId),
+      );
+      let existing: AiModelSelectItem | undefined;
+      if (lockExisting) {
+        [existing] = await db.select().from(aiModels).where(ownership).limit(1).for('update');
+      } else {
+        [existing] = await db.select().from(aiModels).where(ownership).limit(1);
+      }
+      const persistedCatalog = getModelCatalogFromSettings(existing?.settings);
+      const snapshotEntry = input.modelCatalogSnapshot?.entry;
+      const exactSnapshot =
+        snapshotEntry?.modelId === input.modelId && snapshotEntry.providerId === input.providerId
+          ? snapshotEntry
+          : undefined;
+      const baseCatalog: PersistedModelCatalog | undefined =
+        persistedCatalog?.entry.modelId === input.modelId &&
+        persistedCatalog.entry.providerId === input.providerId
+          ? persistedCatalog
+          : exactSnapshot
+            ? { denied: false, drift: [], entry: exactSnapshot, version: 1 }
+            : undefined;
+      if (!baseCatalog) return false;
+
+      const modelCatalog = recordContextWindowRejectionEvidence(baseCatalog, {
+        contextWindowRejectionTokens: input.contextWindowRejectionTokens,
+        modelVersion: input.modelVersion ?? exactSnapshot?.modelVersion,
+        verifiedAt: input.verifiedAt ?? new Date().toISOString(),
+      });
+      const update = {
+        contextWindowTokens: modelCatalog.entry.contextWindowTokens,
+        settings: { ...existing?.settings, modelCatalog },
+      };
+      if (existing) {
+        await db
+          .update(aiModels)
+          .set({ ...update, updatedAt: new Date() })
+          .where(ownership);
+      } else {
+        await scopedModel.update(input.modelId, input.providerId, update);
+      }
+      return true;
+    };
+
+    if (typeof this.db.transaction === 'function') {
+      return this.db.transaction((transaction) => persist(transaction as LobeChatDatabase, true));
+    }
+    return persist(this.db, false);
   };
 
   toggleModelEnabled = async (value: ToggleAiModelEnableParams) => {

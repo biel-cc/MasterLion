@@ -1032,6 +1032,24 @@ describe('AgentModel', () => {
       expect(result?.updatedAt.getTime()).toBeGreaterThan(originalUpdatedAt.getTime());
     });
 
+    it('preserves disjoint fields across concurrent config and meta writes', async () => {
+      const agent = await serverDB
+        .insert(agents)
+        .values({ userId, title: 'Original Title', model: 'original-model' })
+        .returning()
+        .then((res) => res[0]);
+
+      await Promise.all([
+        agentModel.updateConfig(agent.id, { model: 'updated-model' }),
+        agentModel.update(agent.id, { title: 'Updated Title' }),
+      ]);
+
+      const result = await serverDB.query.agents.findFirst({
+        where: eq(agents.id, agent.id),
+      });
+      expect(result).toMatchObject({ model: 'updated-model', title: 'Updated Title' });
+    });
+
     it('should not update another user agent', async () => {
       const agent = await serverDB
         .insert(agents)

@@ -15,6 +15,7 @@ logs/
 .idea/
 .vscode/
 .codex/
+.local-dev/
 .agents/
 .superpowers/
 .sync-cache/

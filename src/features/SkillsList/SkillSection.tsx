@@ -16,6 +16,7 @@ export interface SkillSectionHeader {
 export interface SkillSectionProps {
   children?: ReactNode;
   emptyText?: string;
+  error?: string;
   isEmpty?: boolean;
   isLoading?: boolean;
   /**
@@ -65,15 +66,25 @@ HeaderRow.displayName = 'SkillSectionHeaderRow';
 interface BodyProps {
   children?: ReactNode;
   emptyText?: string;
+  error?: string;
   isEmpty?: boolean;
   isLoading?: boolean;
 }
 
-const Body = memo<BodyProps>(({ children, emptyText, isEmpty, isLoading }) => {
+const Body = memo<BodyProps>(({ children, emptyText, error, isEmpty, isLoading }) => {
   if (isLoading) {
     return (
       <Center paddingBlock={12}>
         <NeuralNetworkLoading size={24} />
+      </Center>
+    );
+  }
+  if (error) {
+    return (
+      <Center paddingBlock={8}>
+        <Text className={styles.empty} title={error} type={'danger'}>
+          {error}
+        </Text>
       </Center>
     );
   }
@@ -90,12 +101,12 @@ const Body = memo<BodyProps>(({ children, emptyText, isEmpty, isLoading }) => {
 Body.displayName = 'SkillSectionBody';
 
 const SkillSection = memo<SkillSectionProps>(
-  ({ children, emptyText, isEmpty, isLoading, sectionHeader }) => {
+  ({ children, emptyText, error, isEmpty, isLoading, sectionHeader }) => {
     // Hook always runs regardless of whether sectionHeader is provided.
     const [expanded, setExpanded] = useState(sectionHeader?.defaultExpanded ?? true);
 
     const body = (
-      <Body emptyText={emptyText} isEmpty={isEmpty} isLoading={isLoading}>
+      <Body emptyText={emptyText} error={error} isEmpty={isEmpty} isLoading={isLoading}>
         {children}
       </Body>
     );

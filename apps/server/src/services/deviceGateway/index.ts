@@ -8,6 +8,7 @@ import {
   type DeviceToolCallResult,
   GatewayHttpClient,
   type GatewayMcpStdioParams,
+  type GatewayToolCallExecutionContext,
 } from '@lobechat/device-gateway-client';
 import type { HeterogeneousAgentType } from '@lobechat/heterogeneous-agents';
 import type {
@@ -187,6 +188,89 @@ export class DeviceGateway {
       };
     } catch (error) {
       log('initWorkspace: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  async prepareSkillPackage(params: {
+    deviceId: string;
+    userId: string;
+    url: string;
+    zipHash: string;
+  }): Promise<{ extractedDir: string } | undefined> {
+    const { deviceId, userId, ...input } = params;
+    const result = await this.getClient()?.invokeRpc<{ extractedDir: string }>(
+      { deviceId, userId, timeout: 60000 },
+      { method: 'prepareSkillPackage', params: input },
+    );
+    return result?.success ? (result.data ?? undefined) : undefined;
+  }
+
+  async getLocalScratchExecution(params: {
+    deviceId: string;
+    userId: string;
+    topicId: string;
+    operationId: string;
+    toolCallId: string;
+  }): Promise<{ root: string } | undefined> {
+    const { deviceId, userId, ...trace } = params;
+    const result = await this.getClient()?.invokeRpc<{ root: string }>(
+      { deviceId, userId, timeout: 8000 },
+      { method: 'getLocalScratchExecution', params: trace },
+    );
+    return result?.success ? (result.data ?? undefined) : undefined;
+  }
+
+  /** Lazily create the topic-scoped scratch directory on the selected device. */
+  async ensureScratchWorkspace(params: {
+    deviceId: string;
+    timeout?: number;
+    topicId: string;
+    userId: string;
+  }): Promise<{ root: string } | undefined> {
+    const { userId, deviceId, topicId, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ root: string }>(
+        { deviceId, timeout, userId },
+        { method: 'ensureScratchWorkspace', params: { topicId } },
+      );
+      if (!result.success || !result.data?.root) {
+        log('ensureScratchWorkspace: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return { root: result.data.root };
+    } catch (error) {
+      log('ensureScratchWorkspace: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Delete the deterministic topic scratch directory on its owning device. */
+  async cleanupScratchWorkspace(params: {
+    deviceId: string;
+    timeout?: number;
+    topicId: string;
+    userId: string;
+  }): Promise<{ removed: boolean; root: string } | undefined> {
+    const { userId, deviceId, topicId, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ removed: boolean; root: string }>(
+        { deviceId, timeout, userId },
+        { method: 'cleanupScratchWorkspace', params: { topicId } },
+      );
+      if (!result.success || !result.data?.root) {
+        log('cleanupScratchWorkspace: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data;
+    } catch (error) {
+      log('cleanupScratchWorkspace: error for deviceId=%s — %O', deviceId, error);
       return undefined;
     }
   }
@@ -831,8 +915,8 @@ export class DeviceGateway {
    * Check whether a path exists on the device and is a directory, via the same
    * generic `invokeRpc` channel as `gitInfo`. Lets a web / remote client
    * validate a manually-entered working directory before binding it. Returns
-   * `undefined` when the gateway is unconfigured or the device is unreachable
-   * (the caller treats "can't verify" as non-blocking).
+   * `undefined` when the gateway is unconfigured or the device is unreachable;
+   * callers choose whether their operation can proceed without proof.
    */
   async statPath(params: {
     deviceId: string;
@@ -863,12 +947,113 @@ export class DeviceGateway {
     }
   }
 
+  /** Resolve an existing absolute path on the selected device. Fail closed when unreachable. */
+  async resolveRealPath(params: {
+    deviceId: string;
+    path: string;
+    timeout?: number;
+    userId: string;
+  }): Promise<string | undefined> {
+    const { userId, deviceId, path, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ path: string }>(
+        { deviceId, timeout, userId },
+        { method: 'resolveRealPath', params: { path } },
+      );
+      if (!result.success || !result.data?.path) {
+        log('resolveRealPath: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data.path;
+    } catch (error) {
+      log('resolveRealPath: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Device-authoritative realpath proof for project skill script execution. */
+  async verifySkillPaths(params: {
+    deviceId: string;
+    skillDir: string;
+    timeout?: number;
+    userId: string;
+    workspaceRoot: string;
+  }): Promise<{ skillDir: string; workspaceRoot: string } | undefined> {
+    const { userId, deviceId, skillDir, workspaceRoot, timeout = 8000 } = params;
+    const client = this.getClient();
+    if (!client) return undefined;
+
+    try {
+      const result = await client.invokeRpc<{ skillDir: string; workspaceRoot: string }>(
+        { deviceId, timeout, userId },
+        { method: 'verifySkillPaths', params: { skillDir, workspaceRoot } },
+      );
+      if (!result.success || !result.data) {
+        log('verifySkillPaths: failed for deviceId=%s — %s', deviceId, result.error);
+        return undefined;
+      }
+      return result.data;
+    } catch (error) {
+      log('verifySkillPaths: error for deviceId=%s — %O', deviceId, error);
+      return undefined;
+    }
+  }
+
+  /** Invoke one of the device-owned project skill authoring operations. */
+  async executeProjectSkillRpc<T>(params: {
+    deviceId: string;
+    input: Record<string, unknown>;
+    method:
+      | 'createProjectSkill'
+      | 'deleteProjectSkill'
+      | 'packProjectSkill'
+      | 'renameProjectSkill'
+      | 'updateProjectSkill'
+      | 'validateProjectSkill';
+    timeout?: number;
+    userId: string;
+  }): Promise<T> {
+    const { userId, deviceId, input, method, timeout = 30_000 } = params;
+    const client = this.getClient();
+    if (!client) throw new Error('GATEWAY_NOT_CONFIGURED');
+
+    const result = await client.invokeRpc<T>(
+      { deviceId, timeout, userId },
+      { method, params: input },
+    );
+    if (!result.success || result.data === undefined) {
+      throw new Error(result.error || `${method} failed`);
+    }
+    return result.data;
+  }
+
   async dispatchAgentRun(params: {
     agentType: HeterogeneousAgentType;
     cwd?: string;
     deviceId?: string;
+    env?: Record<string, string>;
+    executionContext?: GatewayToolCallExecutionContext;
     /** Image attachments forwarded to the device as fetchable (signed) URLs. */
     imageList?: Array<{ id?: string; url: string }>;
+    modelRef?: {
+      capturedAt: string;
+      kind: string;
+      modelId: string;
+      operationId: string;
+      providerId: string;
+    };
+    skills?: Array<{
+      content?: string;
+      description: string;
+      identifier: string;
+      key: string;
+      name: string;
+      source: string;
+    }>;
+    skillPolicy?: 'off' | 'project' | 'user';
     jwt: string;
     operationId: string;
     prompt: string;
@@ -890,7 +1075,14 @@ export class DeviceGateway {
   }
 
   async executeToolCall(
-    params: { deviceId: string; operationId?: string; userId: string },
+    params: {
+      deviceId: string;
+      executionContext?: GatewayToolCallExecutionContext;
+      operationId?: string;
+      toolCallId?: string;
+      topicId?: string;
+      userId: string;
+    },
     toolCall: { apiName: string; arguments: string; identifier: string },
     timeout = 30_000,
   ): Promise<DeviceToolCallResult> {
@@ -916,8 +1108,11 @@ export class DeviceGateway {
       return await client.executeToolCall(
         {
           deviceId: params.deviceId,
+          executionContext: params.executionContext,
           operationId: params.operationId,
           timeout,
+          toolCallId: params.toolCallId,
+          topicId: params.topicId,
           userId: params.userId,
         },
         toolCall,
@@ -939,8 +1134,12 @@ export class DeviceGateway {
       apiName: string;
       arguments: string;
       deviceId: string;
+      executionContext?: GatewayToolCallExecutionContext;
       identifier: string;
+      operationId?: string;
       params: GatewayMcpStdioParams;
+      toolCallId?: string;
+      topicId?: string;
       userId: string;
     },
     timeout = 30_000,

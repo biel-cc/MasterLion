@@ -3,13 +3,16 @@ import { act, renderHook } from '@testing-library/react';
 import { TRPCClientError } from '@trpc/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { message as antdMessage } from '@/components/AntdStaticMethods';
 import { agentService } from '@/services/agent';
 import { aiChatService } from '@/services/aiChat';
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
+import { projectWorkspaceService } from '@/services/projectWorkspace';
 import * as agentGroupStore from '@/store/agentGroup';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
+import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { getSessionStoreState } from '@/store/session';
 import * as toolStoreModule from '@/store/tool';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
@@ -20,6 +23,10 @@ import { resetTestEnvironment, setupMockSelectors, spyOnMessageService } from '.
 
 // Keep zustand mock as it's needed globally
 vi.mock('zustand/traditional');
+
+vi.mock('@/components/AntdStaticMethods', () => ({
+  message: { info: vi.fn() },
+}));
 
 const executeHeterogeneousAgentMock = vi.hoisted(() => vi.fn());
 const mockConstEnv = vi.hoisted(() => ({ isDesktop: false }));
@@ -37,6 +44,12 @@ vi.mock('@lobechat/const', async (importOriginal) => {
     },
   };
 });
+
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return mockConstEnv.isDesktop;
+  },
+}));
 
 vi.mock('../heterogeneousAgentExecutor', () => ({
   executeHeterogeneousAgent: (...args: any[]) => executeHeterogeneousAgentMock(...args),
@@ -64,8 +77,20 @@ beforeEach(() => {
   const sessionStore = getSessionStoreState();
   vi.spyOn(sessionStore, 'triggerSessionUpdate').mockResolvedValue(undefined);
   vi.spyOn(agentService, 'getAgentConfigById').mockResolvedValue(createMockAgentConfig() as any);
+  vi.spyOn(projectWorkspaceService, 'getManagedEnvSummary').mockResolvedValue({
+    envFiles: [],
+    hasManagedEnv: false,
+    userEnvKeys: [],
+    workspaceEnvKeys: [],
+  });
 
   act(() => {
+    useProjectWorkspaceStore.setState({
+      draftByConversationKey: {},
+      topicStatesById: {},
+      workspaceIdsByDevice: {},
+      workspacesById: {},
+    });
     useChatStore.setState({
       refreshMessages: vi.fn(),
       refreshTopic: vi.fn(),
@@ -87,6 +112,67 @@ const createTestContext = (agentId: string = TEST_IDS.SESSION_ID) => ({
   topicId: null,
   threadId: null,
 });
+
+const mockClientMessagePersistence = () =>
+  vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+    assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+    messages: [
+      createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
+      createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
+    ],
+    topicId: TEST_IDS.TOPIC_ID,
+    topics: { items: [], total: 0 },
+    userMessageId: TEST_IDS.USER_MESSAGE_ID,
+  } as any);
+
+const seedFormalLocalWorkspace = (agentId: string = TEST_IDS.SESSION_ID) => {
+  const draftKey = buildDraftConversationKey({ agentId });
+  useProjectWorkspaceStore.setState({
+    draftByConversationKey: {
+      [draftKey]: {
+        target: 'local',
+        updatedAt: Date.now(),
+        workspaceId: 'workspace-project',
+      },
+    },
+    workspaceIdsByDevice: { 'device-local': ['workspace-project'] },
+    workspacesById: {
+      'workspace-project': {
+        deviceId: 'device-local',
+        id: 'workspace-project',
+        kind: 'device',
+        rootPath: '/Users/me/project',
+      },
+    },
+  });
+};
+
+const seedBoundTopicWorkspace = (topicId: string = TEST_IDS.TOPIC_ID) => {
+  const workspace = {
+    deviceId: 'device-local',
+    id: 'workspace-project',
+    kind: 'device' as const,
+    rootPath: '/Users/me/project',
+  };
+  useProjectWorkspaceStore.setState({
+    topicStatesById: {
+      [topicId]: {
+        snapshot: {
+          boundDeviceId: 'device-local',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+          workspaceBoundAt: '2026-09-04T00:00:00.000Z',
+          workspaceId: workspace.id,
+          workspaceKind: workspace.kind,
+        },
+        workspace,
+      },
+    },
+    workspaceIdsByDevice: { 'device-local': [workspace.id] },
+    workspacesById: { [workspace.id]: workspace },
+  });
+};
 
 describe('ConversationLifecycle actions', () => {
   describe('sendMessage', () => {
@@ -134,6 +220,13 @@ describe('ConversationLifecycle actions', () => {
 
     describe('message creation', () => {
       it('should render pending compressedGroup immediately for /compact', async () => {
+        setupMockSelectors({
+          agentConfig: {
+            chatConfig: { compressionModelId: 'summary-model' },
+            model: 'main-model',
+            provider: 'aihub',
+          },
+        });
         const { result } = renderHook(() => useChatStore());
         const topicId = TEST_IDS.TOPIC_ID;
         const agentId = TEST_IDS.SESSION_ID;
@@ -167,7 +260,9 @@ describe('ConversationLifecycle actions', () => {
             ],
             messagesToSummarize: existingMessages,
           });
-        vi.spyOn(chatService, 'fetchPresetTaskResult').mockResolvedValue(undefined);
+        const fetchSummarySpy = vi
+          .spyOn(chatService, 'fetchPresetTaskResult')
+          .mockResolvedValue(undefined);
         vi.spyOn(messageService, 'finalizeCompression').mockResolvedValue({
           messages: [
             {
@@ -229,6 +324,50 @@ describe('ConversationLifecycle actions', () => {
           messageIds: ['user-1', 'assistant-1'],
           topicId,
         });
+        expect(fetchSummarySpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            params: expect.objectContaining({ model: 'summary-model', provider: 'aihub' }),
+          }),
+        );
+      });
+
+      it('should show a visible no-candidates outcome for /compact', async () => {
+        const { result } = renderHook(() => useChatStore());
+        const topicId = TEST_IDS.TOPIC_ID;
+        const agentId = TEST_IDS.SESSION_ID;
+        const infoSpy = vi.spyOn(antdMessage, 'info').mockImplementation(vi.fn());
+
+        await act(async () => {
+          useChatStore.setState({
+            activeAgentId: agentId,
+            activeTopicId: topicId,
+            dbMessagesMap: { [messageMapKey({ agentId, topicId })]: [] },
+          });
+          await result.current.sendMessage({
+            context: { agentId, threadId: null, topicId },
+            editorData: {
+              root: {
+                children: [
+                  {
+                    children: [
+                      {
+                        actionCategory: 'command',
+                        actionLabel: 'Compact context',
+                        actionType: 'compact',
+                        type: 'action-tag',
+                      },
+                    ],
+                    type: 'paragraph',
+                  },
+                ],
+                type: 'root',
+              },
+            } as any,
+            message: '',
+          });
+        });
+
+        expect(infoSpy).toHaveBeenCalledWith('Nothing left to compress');
       });
 
       it('should not process AI when onlyAddUserMessage is true', async () => {
@@ -944,6 +1083,7 @@ describe('ConversationLifecycle actions', () => {
             model: 'claude-sonnet-4-6',
           },
         });
+        seedFormalLocalWorkspace();
 
         const { result } = renderHook(() => useChatStore());
 
@@ -971,12 +1111,437 @@ describe('ConversationLifecycle actions', () => {
 
         expect(sendMessageInServerSpy).toHaveBeenCalledWith(
           expect.objectContaining({
+            newTopic: expect.objectContaining({
+              executionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local',
+                workspaceId: 'workspace-project',
+              },
+            }),
             newAssistantMessage: {
               provider: 'codex',
             },
           }),
           expect.any(AbortController),
         );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({
+            workingDirectory: '/Users/me/project',
+          }),
+        );
+      });
+
+      it('runs an old-server draft from its explicit legacy cwd and persists the compatibility mirror', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        const draftKey = buildDraftConversationKey({ agentId: TEST_IDS.SESSION_ID });
+        useProjectWorkspaceStore.setState({
+          draftByConversationKey: {
+            [draftKey]: {
+              legacyWorkingDirectory: '/Users/me/legacy-project',
+              target: 'local',
+              targetDeviceId: 'device-local',
+              updatedAt: Date.now(),
+            },
+          },
+          seamAvailable: false,
+        });
+
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        executeHeterogeneousAgentMock.mockResolvedValue(undefined);
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            message: TEST_CONTENT.USER_MESSAGE,
+            context: createTestContext(),
+          });
+        });
+
+        expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            newTopic: expect.objectContaining({
+              executionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local',
+              },
+              metadata: { workingDirectory: '/Users/me/legacy-project' },
+            }),
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({ workingDirectory: '/Users/me/legacy-project' }),
+        );
+      });
+
+      it('loads a missing existing-topic binding before freezing hetero cwd and intent', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        vi.spyOn(projectWorkspaceService, 'getTopicState').mockResolvedValue({
+          snapshot: {
+            boundDeviceId: 'device-existing',
+            target: 'local',
+            targetCapturedAt: '2026-09-04T00:00:00.000Z',
+            version: 1,
+            workspaceBoundAt: '2026-09-04T00:00:00.000Z',
+            workspaceId: 'workspace-existing',
+            workspaceKind: 'device',
+          },
+          workspace: {
+            deviceId: 'device-existing',
+            id: 'workspace-existing',
+            kind: 'device',
+            rootPath: '/Users/me/existing-project',
+          },
+        });
+        act(() => {
+          useChatStore.setState({
+            activeAgentId: TEST_IDS.SESSION_ID,
+            activeTopicId: TEST_IDS.TOPIC_ID,
+            topicDataMap: {
+              [topicMapKey({ agentId: TEST_IDS.SESSION_ID })]: {
+                currentPage: 0,
+                hasMore: false,
+                items: [{ id: TEST_IDS.TOPIC_ID, title: 'Existing topic' }],
+                pageSize: 20,
+                total: 1,
+              },
+            },
+          } as any);
+        });
+        vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          messages: [
+            createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
+            createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
+          ],
+          topicId: TEST_IDS.TOPIC_ID,
+          topics: [],
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        } as any);
+        executeHeterogeneousAgentMock.mockResolvedValue(undefined);
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
+            },
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(projectWorkspaceService.getTopicState).toHaveBeenCalledWith(TEST_IDS.TOPIC_ID);
+        expect(aiChatService.sendMessageInServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            topicExecutionIntent: {
+              platform: 'desktop',
+              target: 'local',
+              targetDeviceId: 'device-existing',
+            },
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeHeterogeneousAgentMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({
+            workingDirectory: '/Users/me/existing-project',
+          }),
+        );
+      });
+
+      it('routes managed workspace env through the server/device transport, never direct IPC', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+          },
+        });
+        seedFormalLocalWorkspace();
+        useProjectWorkspaceStore.setState((state) => ({
+          workspacesById: {
+            ...state.workspacesById,
+            'workspace-project': {
+              ...state.workspacesById['workspace-project'],
+              envKeys: [{ key: 'API_TOKEN', secret: true }],
+            },
+          },
+        }));
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [],
+          workspaceEnvKeys: [{ key: 'API_TOKEN', secret: true }],
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => {
+          useChatStore.setState({ executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeGatewayAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID }),
+          }),
+        );
+        expect(executeHeterogeneousAgentMock).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).not.toHaveBeenCalled();
+      });
+
+      it('keeps native desktop managed env on client runtime with a frozen workspace context', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+            },
+          },
+        });
+        seedFormalLocalWorkspace();
+        useProjectWorkspaceStore.setState((state) => ({
+          workspacesById: {
+            ...state.workspacesById,
+            'workspace-project': {
+              ...state.workspacesById['workspace-project'],
+              envKeys: [{ key: 'API_TOKEN', secret: true }],
+            },
+          },
+        }));
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [],
+          workspaceEnvKeys: [{ key: 'API_TOKEN', secret: true }],
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => {
+          useChatStore.setState({ executeClientAgent, executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId: TEST_IDS.SESSION_ID }),
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/project',
+              plan: expect.objectContaining({ deviceId: 'device-local', kind: 'device' }),
+              workspace: expect.objectContaining({ id: 'workspace-project' }),
+            }),
+            workingDirectory: '/Users/me/project',
+            directUserMessageId: TEST_IDS.USER_MESSAGE_ID,
+            parentMessageType: 'assistant',
+          }),
+        );
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
+      });
+
+      it('keeps native desktop legacy cwd on the client runtime when the server is old', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: { executionTargetByPlatform: { desktop: 'local', web: 'sandbox' } },
+          },
+        });
+        const draftKey = buildDraftConversationKey({ agentId: TEST_IDS.SESSION_ID });
+        useProjectWorkspaceStore.setState({
+          draftByConversationKey: {
+            [draftKey]: {
+              legacyWorkingDirectory: '/Users/me/legacy-project',
+              target: 'local',
+              targetDeviceId: 'device-local',
+              updatedAt: Date.now(),
+            },
+          },
+          seamAvailable: false,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => useChatStore.setState({ executeClientAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            newTopic: expect.objectContaining({
+              metadata: { workingDirectory: '/Users/me/legacy-project' },
+            }),
+          }),
+          expect.any(AbortController),
+        );
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/legacy-project',
+              workspace: expect.objectContaining({
+                deviceId: 'device-local',
+                kind: 'device',
+                rootPath: '/Users/me/legacy-project',
+              }),
+            }),
+            workingDirectory: '/Users/me/legacy-project',
+          }),
+        );
+      });
+
+      it('keeps an unbound desktop local topic on client runtime and freezes it unresolved', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: {
+            agencyConfig: {
+              executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+            },
+          },
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => {
+          useChatStore.setState({ executeClientAgent, executeGatewayAgent });
+        });
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: 'read /Users/me/shared/README.md then list cwd',
+          });
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({
+              agentId: TEST_IDS.SESSION_ID,
+              topicId: TEST_IDS.TOPIC_ID,
+            }),
+            executionContext: expect.objectContaining({ unresolvedReason: 'device-unrouted' }),
+          }),
+        );
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
+        // Unbound routing is decided before the managed-env probe: no secret
+        // values or cache-dependent decision crosses the renderer boundary.
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
+      });
+
+      it('does not probe managed env before native desktop client execution', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
+        });
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockResolvedValue({
+          envFiles: [],
+          hasManagedEnv: true,
+          userEnvKeys: [{ key: 'TOKEN', secret: true }],
+          workspaceEnvKeys: [],
+        });
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        mockClientMessagePersistence();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
+      });
+
+      it('does not let an unavailable managed env summary break native desktop chat', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({
+          agentConfig: { agencyConfig: { executionTargetByPlatform: { desktop: 'local' } } },
+        });
+        vi.mocked(projectWorkspaceService.getManagedEnvSummary).mockRejectedValue(
+          new Error('summary unavailable'),
+        );
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        mockClientMessagePersistence();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: createTestContext(),
+            message: TEST_CONTENT.USER_MESSAGE,
+          });
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(projectWorkspaceService.getManagedEnvSummary).not.toHaveBeenCalled();
       });
 
       it('should materialize local file mention editor data into persisted tool-result snapshots', async () => {
@@ -988,6 +1553,7 @@ describe('ConversationLifecycle actions', () => {
             },
           },
         });
+        seedFormalLocalWorkspace();
         mockLocalFileService.readLocalFile.mockResolvedValue({
           charCount: 17,
           content: 'export const x = 1;',
@@ -1058,79 +1624,78 @@ describe('ConversationLifecycle actions', () => {
         ]);
       });
 
-      it('should preserve local file snapshots for runtime when server response omits metadata', async () => {
+      it('routes a formally-bound LocalSystem topic through the native client runtime', async () => {
         mockConstEnv.isDesktop = true;
         setupMockSelectors({
           agentConfig: {
             plugins: ['lobe-local-system'],
           },
         });
-        mockLocalFileService.readLocalFile.mockResolvedValue({
-          charCount: 17,
-          content: 'export const x = 1;',
-          fileType: 'text',
-          filename: 'foo.ts',
-          loc: [0, 200],
-          totalCharCount: 17,
-          totalLineCount: 1,
-        });
+        seedBoundTopicWorkspace();
 
-        const { result } = renderHook(() => useChatStore());
-        vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
           assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
-          isCreateNewTopic: true,
-          messages: [
-            createMockMessage({ id: TEST_IDS.USER_MESSAGE_ID, role: 'user' }),
-            createMockMessage({ id: TEST_IDS.ASSISTANT_MESSAGE_ID, role: 'assistant' }),
-          ],
+          operationId: 'gateway-op',
           topicId: TEST_IDS.TOPIC_ID,
-          topics: { items: [], total: 0 },
           userMessageId: TEST_IDS.USER_MESSAGE_ID,
-        } as any);
+        });
+        const executeClientAgent = vi.fn();
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const { result } = renderHook(() => useChatStore());
 
         await act(async () => {
           await result.current.sendMessage({
-            context: createTestContext(),
-            editorData: {
-              root: {
-                children: [
-                  {
-                    children: [
-                      {
-                        label: 'foo.ts',
-                        metadata: {
-                          name: 'foo.ts',
-                          path: '/Users/me/project/foo.ts',
-                          type: 'localFile',
-                        },
-                        type: 'mention',
-                      },
-                      { text: ' 这个文件是什么', type: 'text' },
-                    ],
-                    type: 'paragraph',
-                  },
-                ],
-                type: 'root',
-              },
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
             },
-            message: '<localFile name="foo.ts" path="/Users/me/project/foo.ts" /> 这个文件是什么',
+            message: '列出当前目录',
           });
         });
 
-        const runtimePayload = vi.mocked(result.current.executeClientAgent).mock.calls[0]?.[0];
-        const runtimeUserMessage = runtimePayload?.messages.find(
-          (message) => message.id === TEST_IDS.USER_MESSAGE_ID,
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executionContext: expect.objectContaining({
+              cwd: '/Users/me/project',
+              workspace: expect.objectContaining({ id: 'workspace-project' }),
+            }),
+          }),
         );
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
+      });
 
-        expect(runtimeUserMessage?.metadata?.localSystemToolSnapshots).toMatchObject([
-          {
-            apiName: 'readFile',
-            arguments: { path: '/Users/me/project/foo.ts' },
-            content: expect.stringContaining('export const x = 1;'),
-            identifier: 'lobe-local-system',
-            success: true,
-          },
-        ]);
+      it('keeps a formally-bound desktop chat on client runtime when plugins are empty', async () => {
+        mockConstEnv.isDesktop = true;
+        setupMockSelectors({ agentConfig: { plugins: [] } });
+        seedBoundTopicWorkspace();
+        const executeGatewayAgent = vi.fn().mockResolvedValue({
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          operationId: 'gateway-op',
+          topicId: TEST_IDS.TOPIC_ID,
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        });
+        const executeClientAgent = vi.fn();
+        act(() => useChatStore.setState({ executeClientAgent, executeGatewayAgent }));
+        const sendMessageInServerSpy = mockClientMessagePersistence();
+        const { result } = renderHook(() => useChatStore());
+
+        await act(async () => {
+          await result.current.sendMessage({
+            context: {
+              agentId: TEST_IDS.SESSION_ID,
+              threadId: null,
+              topicId: TEST_IDS.TOPIC_ID,
+            },
+            message: 'plain chat',
+          });
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledOnce();
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
+        expect(sendMessageInServerSpy).toHaveBeenCalledOnce();
       });
     });
 

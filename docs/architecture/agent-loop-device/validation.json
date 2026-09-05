@@ -1,0 +1,216 @@
+{
+  "automated": {
+    "01-runtime-paths": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "02-native-loop": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "03-device-topic": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "04-cwd-precedence": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "05-environment": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "06-skills-workspace": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    },
+    "07-disk-map": {
+      "checks": {
+        "xml": {
+          "ok": true,
+          "details": []
+        },
+        "markers": {
+          "ok": true,
+          "details": []
+        },
+        "collisions": {
+          "ok": true,
+          "details": []
+        },
+        "geometry": {
+          "ok": true,
+          "details": []
+        },
+        "composition": {
+          "ok": true,
+          "details": []
+        }
+      },
+      "png_width": 2400,
+      "render_ok": true
+    }
+  },
+  "renderer": "CairoSVG",
+  "visual_review": "passed",
+  "source_commit": "73e2ea9a09cca9194131b54887c48c15c3755a81",
+  "visual_review_details": {
+    "reviewed_pngs": [
+      "01-runtime-paths.png",
+      "02-native-loop.png",
+      "03-device-topic.png",
+      "04-cwd-precedence.png",
+      "05-environment.png",
+      "06-skills-workspace.png",
+      "07-disk-map.png"
+    ],
+    "checks": [
+      "Chinese and code labels render clearly",
+      "No clipping or node overlap",
+      "Arrow directions and labels readable",
+      "Font compatibility corrected and final PNGs re-inspected"
+    ]
+  },
+  "browser_review": {
+    "status": "passed",
+    "checks": [
+      "Overview rendered in Codex browser",
+      "Navigation from view 01 to view 04",
+      "Zoom control changed 100% to 120%",
+      "All local download and iframe targets exist"
+    ],
+    "network_required_for_atlas": false
+  }
+}

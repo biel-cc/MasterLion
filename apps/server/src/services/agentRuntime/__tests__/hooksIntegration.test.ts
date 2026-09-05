@@ -39,6 +39,7 @@ vi.mock('@/server/modules/AgentRuntime', () => ({
 }));
 vi.mock('@/server/modules/AgentRuntime/RuntimeExecutors', () => ({
   createRuntimeExecutors: vi.fn(() => ({})),
+  hasPendingWorkspaceBindFailure: vi.fn(() => false),
 }));
 vi.mock('@/server/services/mcp', () => ({ mcpService: {} }));
 vi.mock('@/server/services/queue', () => ({

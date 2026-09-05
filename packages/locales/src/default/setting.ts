@@ -1,4 +1,8 @@
 export default {
+  'workspaceSkills.scanError':
+    'Could not scan project skills. Check the device connection and retry.',
+  'workspaceSkills.retry': 'Retry',
+
   '_cloud.officialProvider': '{{name}} Official Model Service',
   'about.title': 'About',
   'agentImport.action': 'Copy to Workspace...',
@@ -230,13 +234,39 @@ export default {
   'heterogeneousStatus.unavailable': '{{name}} CLI not found. Please install or configure it.',
 
   // Heterogeneous agent — Cloud tab (web environment config)
+  'heterogeneousStatus.cloud.agentEnv.add': 'Add',
+  'heterogeneousStatus.cloud.agentEnv.description':
+    'Non-secret values passed to every run of this agent. Never store tokens, passwords, or other secrets here; use workspace or personal environment variables instead.',
+  'heterogeneousStatus.cloud.agentEnv.empty': 'No custom non-secret values',
+  'heterogeneousStatus.cloud.agentEnv.formLabel': 'Add or update an agent environment value',
+  'heterogeneousStatus.cloud.agentEnv.invalidKey':
+    'Use uppercase letters, numbers, and underscores; start with a letter or underscore.',
+  'heterogeneousStatus.cloud.agentEnv.keyLabel': 'Name',
+  'heterogeneousStatus.cloud.agentEnv.keyPlaceholder': 'MODE',
+  'heterogeneousStatus.cloud.agentEnv.listLabel': 'Custom agent environment values',
+  'heterogeneousStatus.cloud.agentEnv.managedKey': '{{key}} is managed elsewhere in this panel.',
+  'heterogeneousStatus.cloud.agentEnv.remove': 'Remove',
+  'heterogeneousStatus.cloud.agentEnv.removeLabel': 'Remove {{key}}',
+  'heterogeneousStatus.cloud.agentEnv.removeSuccess': '{{key}} removed.',
+  'heterogeneousStatus.cloud.agentEnv.reservedKey': '{{key}} is reserved by the runtime.',
+  'heterogeneousStatus.cloud.agentEnv.saveError': 'Could not save the agent environment change.',
+  'heterogeneousStatus.cloud.agentEnv.saveSuccess': '{{key}} saved.',
+  'heterogeneousStatus.cloud.agentEnv.sensitiveKey':
+    '{{key}} looks security-sensitive. Store it in workspace or personal environment variables.',
+  'heterogeneousStatus.cloud.agentEnv.title': 'Agent environment',
+  'heterogeneousStatus.cloud.agentEnv.update': 'Update',
+  'heterogeneousStatus.cloud.agentEnv.valueLabel': 'Value',
+  'heterogeneousStatus.cloud.agentEnv.valuePlaceholder': 'development',
   'heterogeneousStatus.cloud.tabLabel': 'Cloud',
+  'heterogeneousStatus.cloud.envScopeHint':
+    'Store secrets in workspace-level or personal environment variables. Agent-level values are for non-secret configuration only. Names use uppercase letters, numbers, and underscores; PATH, HOME, LOBEHUB_JWT, and LOBEHUB_SERVER are reserved.',
   'heterogeneousStatus.cloud.tokenLabel': 'Claude Code Token',
   'heterogeneousStatus.cloud.tokenDesc':
     'Your Claude Code OAuth token. Saved securely to Credentials once submitted. Run `claude setup-token` in your terminal to generate one.',
   'heterogeneousStatus.cloud.tokenPlaceholder': 'Paste your OAuth token here',
   'heterogeneousStatus.cloud.tokenChange': 'Change',
   'heterogeneousStatus.cloud.tokenSave': 'Save',
+  'heterogeneousStatus.cloud.tokenSaveError': 'Could not save the Claude Code token. Try again.',
   'heterogeneousStatus.cloud.tokenCancel': 'Cancel',
   'heterogeneousStatus.cloud.githubLabel': 'GitHub Connection',
   'heterogeneousStatus.cloud.githubDesc':
@@ -2479,4 +2509,69 @@ When I am ___, I need ___
   'tools.tabs.all': 'All',
   'tools.tabs.installed': 'Enabled',
   'tools.title': 'Skills',
+  'userEnv.description':
+    'These variables are inherited by agent commands in every workspace. Saved secrets stay masked.',
+  'userEnv.title': 'Personal environment',
+  'workspaceEnv.configured': 'Configured',
+  'workspaceEnv.configuredList': 'Configured environment variables',
+  'workspaceEnv.configuredValueLabel': '{{key}} is configured',
+  'workspaceEnv.description':
+    'These variables are resolved for agent commands in this workspace. Saved secrets stay masked.',
+  'workspaceEnv.empty': 'No environment variables yet',
+  'workspaceEnv.formLabel': 'Add or replace an environment variable',
+  'workspaceEnv.invalidKey':
+    'Use uppercase letters, numbers, and underscores; start with a letter or underscore.',
+  'workspaceEnv.keyLabel': 'Name',
+  'workspaceEnv.keyPlaceholder': 'EXAMPLE_VARIABLE',
+  'workspaceEnv.loadError': 'Could not load environment variables.',
+  'workspaceEnv.loading': 'Loading environment variables',
+  'workspaceEnv.maskedValueLabel': '{{key}} is a masked secret',
+  'workspaceEnv.reservedKey':
+    '{{key}} is set by the Masterino runtime and cannot be overridden here. Pick another name.',
+  'workspaceEnv.retry': 'Retry',
+  'workspaceEnv.revoke': 'Revoke',
+  'workspaceEnv.revokeConfirmDescription':
+    '{{key}} will no longer be available to new agent commands in this workspace.',
+  'workspaceEnv.revokeConfirmTitle': 'Revoke environment variable?',
+  'workspaceEnv.revokeLabel': 'Revoke {{key}}',
+  'workspaceEnv.revokeSuccess': '{{key}} was revoked.',
+  'workspaceEnv.save': 'Save',
+  'workspaceEnv.saveError': 'Could not save the environment change.',
+  'workspaceEnv.saveSuccess': 'Environment variable saved.',
+  'workspaceEnv.secret': 'Secret',
+  'workspaceEnv.secretLabel': 'Store as a secret',
+  'workspaceEnv.securitySensitiveKey':
+    '{{key}} changes how commands load code or credentials, so it cannot be set here. Pick another name.',
+  'workspaceEnv.title': 'Workspace environment',
+  'workspaceEnv.valueLabel': 'Value',
+  'workspaceEnv.valuePlaceholder': 'Enter a value',
+  'workspaceEnvFiles.count': '{{count}}/{{max}} files',
+  'workspaceEnvFiles.description':
+    'Load additional environment files when this workspace runs. Enter one workspace-relative path per line; later files override earlier ones.',
+  'workspaceEnvFiles.invalidPath':
+    '{{path}} must be a workspace-relative path without parent-directory traversal.',
+  'workspaceEnvFiles.label': 'Environment file paths',
+  'workspaceEnvFiles.placeholder': '.env\n.env.local',
+  'workspaceEnvFiles.save': 'Save files',
+  'workspaceEnvFiles.saveError': 'Could not save environment file paths.',
+  'workspaceEnvFiles.saveSuccess': 'Environment file paths saved.',
+  'workspaceEnvFiles.title': 'Environment files',
+  'workspaceEnvFiles.tooMany': 'Add no more than {{max}} environment files.',
+  'workspaceSkills.description':
+    'Choose which skill sources are available when an agent runs in this workspace.',
+  'workspaceSkills.discovered': 'Project skills found in this directory',
+  'workspaceSkills.empty': 'No project skills found',
+  'workspaceSkills.includeAgent': 'Include agent skills',
+  'workspaceSkills.includeProject': 'Include project and workspace skills',
+  'workspaceSkills.includeUser': 'Include personal skills',
+  'workspaceSkills.materialize.description':
+    'For supported heterogeneous agents, copy the resolved skill set to the project or personal skill directory.',
+  'workspaceSkills.materialize.label': 'Materialize for CLI agents',
+  'workspaceSkills.materialize.off': 'Do not materialize',
+  'workspaceSkills.materialize.project': 'Project skill directory',
+  'workspaceSkills.materialize.user': 'Personal skill directory',
+  'workspaceSkills.save': 'Save skill policy',
+  'workspaceSkills.saveError': 'Could not save the skill policy.',
+  'workspaceSkills.saveSuccess': 'Skill policy saved.',
+  'workspaceSkills.title': 'Workspace skills',
 };

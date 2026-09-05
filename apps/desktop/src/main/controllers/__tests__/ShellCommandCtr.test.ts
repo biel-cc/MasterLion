@@ -152,6 +152,19 @@ describe('ShellCommandCtr (thin wrapper)', () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  it('preserves the frozen cwd and resolved env when routing lh commands', async () => {
+    await ctr.handleRunCommand({
+      command: 'lh status --json',
+      cwd: '/approved/project',
+      env: { WORKSPACE_TOKEN: 'resolved' },
+    });
+
+    expect(mockCliCtr.runCliCommand).toHaveBeenCalledWith('status --json', {
+      cwd: '/approved/project',
+      env: { WORKSPACE_TOKEN: 'resolved' },
+    });
+  });
+
   it('should route lobehub commands to CliCtr.runCliCommand', async () => {
     const result = await ctr.handleRunCommand({
       command: 'lobehub search test',

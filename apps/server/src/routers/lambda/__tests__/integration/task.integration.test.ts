@@ -368,7 +368,7 @@ describe('Task Router Integration', () => {
         instruction: 'Test',
       });
 
-      const result = await caller.run({ id: task.data.id });
+      await caller.run({ id: task.data.id });
 
       await expect(caller.run({ continueTopicId: 'tpc_test', id: task.data.id })).rejects.toThrow(
         /already running/,
@@ -436,6 +436,26 @@ describe('Task Router Integration', () => {
 
       // Try to cancel again — should fail
       await expect(caller.cancelTopic({ topicId: 'tpc_test' })).rejects.toThrow(/not running/);
+    });
+  });
+
+  describe('deleteTopic', () => {
+    it('decrements totalTopics before the topic foreign key cascades its task link', async () => {
+      const task = await caller.create({
+        assigneeAgentId: testAgentId,
+        instruction: 'Test',
+      });
+      await caller.run({ id: task.data.id });
+
+      await expect(caller.find({ id: task.data.id })).resolves.toMatchObject({
+        data: { totalTopics: 1 },
+      });
+
+      await caller.deleteTopic({ topicId: testTopicId });
+
+      await expect(caller.find({ id: task.data.id })).resolves.toMatchObject({
+        data: { totalTopics: 0 },
+      });
     });
   });
 

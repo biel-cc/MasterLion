@@ -2,7 +2,6 @@ import useSWR from 'swr';
 
 import { gatewayKeys } from '@/libs/swr/keys';
 import { useChatStore } from '@/store/chat';
-import { useServerConfigStore } from '@/store/serverConfig';
 
 interface RunningOperation {
   assistantMessageId: string;
@@ -18,9 +17,8 @@ interface RunningOperation {
  * (main agent) and the task-detail activity (task drawer) live in different
  * stores, so this hook stays source-agnostic.
  *
- * Reconnect only depends on whether the server has a Gateway URL configured;
- * the user's lab toggle controls *new* requests, not resuming an op that's
- * already running on the Gateway.
+ * Reconnect follows the persisted running operation. External Gateway deployments
+ * use WebSocket; standalone deployments use the authenticated same-origin stream.
  *
  * SWR key is the operationId, so the same operation deduplicates and only
  * one reconnect attempt fires per op.
@@ -29,12 +27,8 @@ export const useGatewayReconnect = (
   topicId: string | null | undefined,
   runningOperation: RunningOperation | null | undefined,
 ) => {
-  const agentGatewayUrl = useServerConfigStore((s) => s.serverConfig.agentGatewayUrl);
-
   useSWR(
-    runningOperation && topicId && agentGatewayUrl
-      ? gatewayKeys.reconnect(runningOperation.operationId)
-      : null,
+    runningOperation && topicId ? gatewayKeys.reconnect(runningOperation.operationId) : null,
     async () => {
       if (!runningOperation || !topicId) return;
 

@@ -148,6 +148,15 @@ const ExecAgentSchema = z
             workingDirectory: z.string().optional(),
           })
           .optional(),
+        topicExecutionIntent: z
+          .object({
+            platform: z.enum(['desktop', 'web']),
+            target: z.enum(['local', 'device', 'sandbox', 'none']),
+            targetDeviceId: z.string().min(1).optional(),
+            workspaceId: z.string().min(1).optional(),
+          })
+          .strict()
+          .optional(),
         scope: z.string().optional().nullable(),
         sessionId: z.string().optional(),
         taskId: z.string().optional().nullable(),
@@ -177,6 +186,18 @@ const ExecAgentSchema = z
     resumeApproval: z
       .object({
         decision: z.enum(['approved', 'rejected', 'rejected_continue']),
+        pathConsent: z
+          .object({
+            deviceId: z.string().min(1),
+            modes: z.array(z.enum(['exec', 'read', 'write'])).min(1),
+            requestedPath: z.string().min(1),
+            rootPath: z.string().min(1),
+            scope: z.literal('operation'),
+            sourceOperationId: z.string().min(1),
+            topicId: z.string().min(1),
+            version: z.literal(1),
+          })
+          .optional(),
         /** ID of the pending `role='tool'` message this decision targets. */
         parentMessageId: z.string(),
         /** Optional user-supplied rejection reason (only meaningful for rejected variants). */
@@ -184,6 +205,14 @@ const ExecAgentSchema = z
         /** tool_call_id of the pending tool call being approved/rejected. */
         toolCallId: z.string(),
       })
+      .optional(),
+    /** Resume an already-persisted interaction result under server-owned runtime authority. */
+    resumeInteraction: z
+      .object({
+        parentMessageId: z.string().min(1),
+        phase: z.enum(['tool_result', 'user_input']),
+      })
+      .strict()
       .optional(),
     /** The agent slug to run (either agentId or slug is required) */
     slug: z.string().optional(),
@@ -641,6 +670,7 @@ export const aiAgentRouter = router({
       fileIds,
       parentMessageId,
       resumeApproval,
+      resumeInteraction,
       trigger,
       userInterventionConfig,
     } = input;
@@ -661,6 +691,7 @@ export const aiAgentRouter = router({
         // human-approval resume — either way, skip user message creation.
         resume: !!parentMessageId,
         resumeApproval,
+        resumeInteraction,
         slug,
         trigger: trigger ?? RequestTrigger.Chat,
         userInterventionConfig,

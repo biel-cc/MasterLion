@@ -32,10 +32,12 @@ import {
   type ExecVirtualSubAgentParams,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import debug from 'debug';
 import urlJoin from 'url-join';
 
 import { AgentOperationModel } from '@/database/models/agentOperation';
+import { AiModelModel } from '@/database/models/aiModel';
 import { MessageModel } from '@/database/models/message';
 import { type LobeChatDatabase } from '@/database/type';
 import { appEnv } from '@/envs/app';
@@ -44,9 +46,16 @@ import { AgentRuntimeCoordinator, createStreamEventManager } from '@/server/modu
 import { formatErrorForState } from '@/server/modules/AgentRuntime/formatErrorForState';
 import {
   createRuntimeExecutors,
+  hasPendingWorkspaceBindFailure,
+  interruptForPendingWorkspaceBindFailure,
   type RuntimeExecutorContext,
 } from '@/server/modules/AgentRuntime/RuntimeExecutors';
 import { type IStreamEventManager } from '@/server/modules/AgentRuntime/types';
+import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import {
+  tagWorkspacePathInterventionAudits,
+  workspacePathInterventionAudits,
+} from '@/server/modules/AgentRuntime/workspacePathConsent';
 import { emitAgentSignalSourceEvent } from '@/server/services/agentSignal';
 import { toAgentSignalTraceEvents } from '@/server/services/agentSignal/observability/traceEvents';
 import { FileService } from '@/server/services/file';
@@ -162,6 +171,27 @@ const toAgentSignalSnapshotEvents = (
  */
 export interface AgentRuntimeDelegate {
   /**
+   * Bind a device-created scratch workspace after (and only after) the first
+   * cwd-dependent tool succeeds. The owning service persists the topic's
+   * bind-once snapshot and returns the authoritative identity.
+   */
+  bindScratchAfterToolSuccess?: (params: {
+    deviceId: string;
+    rootPath: string;
+    target?: 'device' | 'local';
+    toolSucceeded: true;
+    topicId: string;
+  }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
+  /**
+   * Ask the selected device to create/realpath its deterministic topic scratch
+   * directory. This is intentionally separate from persistence so pure chat
+   * and failed tools never bind a workspace.
+   */
+  ensureScratchWorkspace?: (params: {
+    deviceId: string;
+    topicId: string;
+  }) => Promise<{ root: string }>;
+  /**
    * Fork a group member ("call agent member") under a `lobe-group-management`
    * tool call. Handles both in-group (non-isolated, shared group session) and
    * isolated members, installing the group-action member completion bridge that
@@ -243,6 +273,7 @@ export interface AgentRuntimeServiceOptions {
  * ```
  */
 export class AgentRuntimeService {
+  private aiModelModel: AiModelModel;
   private agentFactory?: (config: GeneralAgentConfig) => Agent;
   private completionLifecycle: CompletionLifecycle;
   private coordinator: AgentRuntimeCoordinator;
@@ -302,6 +333,7 @@ export class AgentRuntimeService {
     this.userId = userId;
     this.workspaceId = options?.workspaceId;
     const workspaceId = this.workspaceId;
+    this.aiModelModel = new AiModelModel(db, this.userId);
     this.messageModel = new MessageModel(db, this.userId, workspaceId);
     this.completionLifecycle = new CompletionLifecycle(db, userId, workspaceId);
     this.humanIntervention = new HumanInterventionHandler(db, this.messageModel);
@@ -393,11 +425,15 @@ export class AgentRuntimeService {
       discordContext,
       evalContext,
       executionPlan,
+      executionContext,
       executionBudget,
       maxSteps,
       userMemory,
       deviceSystemInfo,
       operationSkillSet,
+      compressionModelCatalogSnapshot,
+      modelCatalogSnapshot,
+      skillRegistryResult,
       parentOperationId,
       signal,
       userTimezone,
@@ -442,7 +478,7 @@ export class AgentRuntimeService {
       trigger: appContext?.trigger,
     });
 
-    const operationToolSet = toolSet;
+    const operationToolSet = tagWorkspacePathInterventionAudits(toolSet);
     let operationCreated = false;
     let hooksRegistered = false;
 
@@ -482,17 +518,25 @@ export class AgentRuntimeService {
           discordContext,
           evalContext,
           executionPlan,
+          executionContext,
           executionBudget,
           // need be removed
           modelRuntimeConfig,
+          compressionModelCatalogSnapshot,
+          modelCatalogSnapshot,
           queueRetries,
           queueRetryDelay,
           stream,
           operationSkillSet,
+          skillRegistryResult,
+          contextBudget: {
+            catalogSnapshot: modelCatalogSnapshot,
+          },
           userId,
           userMemory,
           userTimezone,
-          workingDirectory: agentConfig?.chatConfig?.runtimeEnv?.workingDirectory,
+          workingDirectory:
+            executionContext?.cwd ?? agentConfig?.chatConfig?.runtimeEnv?.workingDirectory,
           workspaceId,
           ...appContext,
         },
@@ -892,6 +936,9 @@ export class AgentRuntimeService {
         // Handle human intervention
         let currentContext = context;
         let currentState = agentState;
+        let forcedStepResult:
+          | ReturnType<typeof interruptForPendingWorkspaceBindFailure>
+          | undefined;
 
         if (humanInput || approvedToolCall || rejectionReason) {
           const interventionResult = await this.humanIntervention.process(currentState, {
@@ -903,6 +950,14 @@ export class AgentRuntimeService {
           });
           currentState = interventionResult.newState;
           currentContext = interventionResult.nextContext;
+
+          // A rejection (or plain human input) resolves the human wait without
+          // executing another cwd tool that could repair an earlier bind debt.
+          // Surface that debt before the intervention can re-enter the LLM.
+          if (hasPendingWorkspaceBindFailure(currentState) && !approvedToolCall) {
+            currentState = structuredClone(currentState);
+            forcedStepResult = interruptForPendingWorkspaceBindFailure(currentState, []);
+          }
         }
 
         // Resume from a parked async-tool wait (server sub-agent completion
@@ -919,20 +974,29 @@ export class AgentRuntimeService {
           currentState = structuredClone(currentState);
           currentState.messages = refreshed;
           currentState.pendingToolsCalling = [];
-          currentState.status = 'running';
-          currentState.interruption = undefined;
           currentState.lastModified = new Date().toISOString();
-          currentContext = {
-            payload: { parentMessageId: resumeParentMessageId },
-            phase: 'user_input',
-          } as AgentRuntimeContext;
-          log(
-            '[%s][%d] Resuming from async tool with %d messages (parent=%s)',
-            operationId,
-            stepIndex,
-            refreshed.length,
-            resumeParentMessageId,
-          );
+          if (hasPendingWorkspaceBindFailure(currentState)) {
+            forcedStepResult = interruptForPendingWorkspaceBindFailure(currentState, []);
+            log(
+              '[%s][%d] Interrupting async-tool resume because workspace binding never committed',
+              operationId,
+              stepIndex,
+            );
+          } else {
+            currentState.status = 'running';
+            currentState.interruption = undefined;
+            currentContext = {
+              payload: { parentMessageId: resumeParentMessageId },
+              phase: 'user_input',
+            } as AgentRuntimeContext;
+            log(
+              '[%s][%d] Resuming from async tool with %d messages (parent=%s)',
+              operationId,
+              stepIndex,
+              refreshed.length,
+              resumeParentMessageId,
+            );
+          }
         }
 
         // Finish a parked supervisor op WITHOUT another LLM turn (group
@@ -941,7 +1005,11 @@ export class AgentRuntimeService {
         // and let the standard `!shouldContinue` finalization below record
         // completion + dispatch hooks. Skips runtime.step entirely.
         let forcedFinishState: AgentState | undefined;
-        if (finishAfterAsyncTool && currentState.status === 'waiting_for_async_tool') {
+        if (
+          !forcedStepResult &&
+          finishAfterAsyncTool &&
+          currentState.status === 'waiting_for_async_tool'
+        ) {
           const refreshed = await this.refreshMessagesFromDB(currentState);
           currentState = structuredClone(currentState);
           currentState.messages = refreshed;
@@ -977,9 +1045,25 @@ export class AgentRuntimeService {
 
         // Execute step (skipped when force-finishing a parked supervisor op).
         const startAt = Date.now();
-        const stepResult = forcedFinishState
-          ? { events: [], newState: forcedFinishState, nextContext: undefined }
-          : await runtime.step(currentState, currentContext);
+        let stepResult = forcedStepResult
+          ? forcedStepResult
+          : forcedFinishState
+            ? { events: [], newState: forcedFinishState, nextContext: undefined }
+            : await runtime.step(currentState, currentContext);
+
+        // An approved pending tool must be allowed to execute: it may establish
+        // the authoritative workspace and clear the debt. If it did not, stop
+        // before any returned nextContext can schedule another LLM step. Keep a
+        // marker only while another human/async result is still outstanding.
+        if (
+          hasPendingWorkspaceBindFailure(stepResult.newState) &&
+          !isParkedStatus(stepResult.newState.status)
+        ) {
+          stepResult = interruptForPendingWorkspaceBindFailure(
+            stepResult.newState,
+            stepResult.events,
+          );
+        }
 
         // Inner runtime.step() catches model-runtime exceptions and stuffs the
         // raw error into newState.error without re-throwing — so the outer
@@ -2379,6 +2463,14 @@ export class AgentRuntimeService {
             metadata.modelRuntimeConfig.provider,
           )
         : undefined;
+    const onContextWindowObserved: NonNullable<
+      GeneralAgentConfig['onContextWindowObserved']
+    > = async (input) => {
+      await this.aiModelModel.recordContextWindowRejection({
+        ...input,
+        modelCatalogSnapshot: metadata?.modelCatalogSnapshot,
+      });
+    };
 
     // Create Agent instance — use custom factory if provided, otherwise default to GeneralChatAgent
     const generalConfig = {
@@ -2387,8 +2479,12 @@ export class AgentRuntimeService {
         enabled: metadata?.agentConfig?.chatConfig?.enableContextCompression ?? true,
         maxWindowToken: contextWindowTokens ?? undefined,
       },
-      dynamicInterventionAudits,
+      dynamicInterventionAudits: {
+        ...dynamicInterventionAudits,
+        ...workspacePathInterventionAudits,
+      },
       modelRuntimeConfig: metadata?.modelRuntimeConfig,
+      onContextWindowObserved,
       operationId,
       userId: metadata?.userId,
     };
@@ -2402,15 +2498,20 @@ export class AgentRuntimeService {
       agentConfig: metadata?.agentConfig,
       botContext: metadata?.botContext,
       botPlatformContext: metadata?.botPlatformContext,
+      createTraceOptions,
       discordContext: metadata?.discordContext,
       userTimezone: metadata?.userTimezone,
       evalContext: metadata?.evalContext,
       execSubAgent: this.delegate.execSubAgent,
       execVirtualSubAgent: this.delegate.execVirtualSubAgent,
       execGroupMember: this.delegate.execGroupMember,
+      bindScratchAfterToolSuccess: this.delegate.bindScratchAfterToolSuccess,
+      ensureScratchWorkspace: this.delegate.ensureScratchWorkspace,
       hookDispatcher,
+      initModelRuntime: initModelRuntimeFromDB,
       loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,
+      onContextWindowObserved,
       operationId,
       serverDB: this.serverDB,
       stepIndex,

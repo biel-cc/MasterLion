@@ -4,8 +4,12 @@ import { createStaticStyles } from 'antd-style';
 import { type ReactNode } from 'react';
 import { memo, useMemo } from 'react';
 
-import { ModelItemRender, ProviderItemRender, TAG_CLASSNAME } from '@/components/ModelSelect';
-import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
+import {
+  ModelItemRender,
+  ProviderItemRender,
+  TAG_CLASSNAME,
+  useChatEligibleModelList,
+} from '@/components/ModelSelect';
 import { type EnabledProviderWithModels } from '@/types/aiProvider';
 
 const prefixCls = 'ant';
@@ -62,7 +66,8 @@ const ModelSelect = memo<ModelSelectProps>(
     initialWidth = false,
     popupWidth,
   }) => {
-    const enabledList = useEnabledChatModels();
+    // Only B1 chat-eligible rows reach the dropdown; no local id denylist.
+    const enabledList = useChatEligibleModelList();
 
     const options = useMemo<SelectProps['options']>(() => {
       const getChatModels = (provider: EnabledProviderWithModels) => {
@@ -75,7 +80,15 @@ const ModelSelect = memo<ModelSelectProps>(
 
         return models.map((model) => ({
           ...model,
-          label: <ModelItemRender {...model} {...model.abilities} showInfoTag={false} />,
+          label: (
+            <ModelItemRender
+              {...model}
+              {...model.abilities}
+              providerId={provider.id}
+              showInfoTag={false}
+              showInputModality={showAbility}
+            />
+          ),
           provider: provider.id,
           value: `${provider.id}/${model.id}`,
         }));
@@ -127,7 +140,9 @@ const ModelSelect = memo<ModelSelectProps>(
             <ModelItemRender
               {...(option as ModelOption)}
               {...(option as ModelOption).abilities}
+              providerId={(option as ModelOption).provider}
               showInfoTag={false}
+              showInputModality={showAbility}
             />
           )}
           style={{

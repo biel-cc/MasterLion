@@ -9,8 +9,8 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
 import { SESSION_CHAT_TOPIC_URL } from '@/const/url';
+import { useTopicItemDropdownMenu } from '@/features/AgentTopicSidebar/TopicItem/useDropdownMenu';
 import { useActivityTime } from '@/hooks/useActivityTime';
-import { useTopicItemDropdownMenu } from '@/routes/(main)/agent/_layout/Sidebar/Topic/List/Item/useDropdownMenu';
 import type { ChatTopic } from '@/types/topic';
 
 import StatusDot from './StatusDot';
@@ -148,6 +148,10 @@ const Row = memo<RowProps>(({ topic, agentId }) => {
   const { dropdownMenu } = useTopicItemDropdownMenu({
     fav: topic.favorite,
     id: topic.id,
+    scratchWorkspace:
+      topic.metadata?.workspaceKind === 'scratch' && topic.metadata.workingDirectory
+        ? { rootPath: topic.metadata.workingDirectory }
+        : undefined,
     status: topic.status,
     title: topic.title,
   });

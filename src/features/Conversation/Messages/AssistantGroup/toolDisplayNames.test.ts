@@ -16,6 +16,26 @@ import {
 const blk = (p: Partial<AssistantContentBlock> & { id: string }): AssistantContentBlock =>
   ({ content: '', ...p }) as AssistantContentBlock;
 
+describe('rejected tool summary', () => {
+  it('does not claim a rejected command ran', () => {
+    const summary = getWorkflowSummaryText([
+      blk({
+        id: 'rejected-assistant',
+        tools: [
+          {
+            apiName: 'runCommand',
+            id: 'denied',
+            intervention: { status: 'rejected' },
+            result: { content: 'denied' },
+          } as any,
+        ],
+      }),
+    ]);
+    expect(summary).not.toContain('Ran a command');
+    expect(summary).toContain('Rejected tool calls: 1');
+  });
+});
+
 describe('tool display names', () => {
   it('uses friendly labels for Codex tool api names', () => {
     expect(getToolDisplayName('command_execution')).toBe('Ran a command');

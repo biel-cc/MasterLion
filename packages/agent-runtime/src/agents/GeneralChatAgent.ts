@@ -4,13 +4,17 @@ import {
   type HumanInterventionConfig,
   type HumanInterventionPolicy,
 } from '@lobechat/types';
+import type {
+  ContextBudgetDecision,
+  ContextBudgetTrigger,
+  ContextCompressionOutcome,
+} from '@lobechat/types/src/contextBudget';
 
 import { createDefaultGlobalAudits, DEFAULT_SECURITY_BLACKLIST } from '../audit';
 import { InterventionChecker } from '../core';
 import {
   type Agent,
   type AgentInstruction,
-  type AgentInstructionCompressContext,
   type AgentRuntimeContext,
   type AgentState,
   type GeneralAgentCallingToolInstructionPayload,
@@ -18,13 +22,21 @@ import {
   type GeneralAgentCallLLMResultPayload,
   type GeneralAgentCallToolResultPayload,
   type GeneralAgentCallToolsBatchInstructionPayload,
-  type GeneralAgentCompressionResultPayload,
   type GeneralAgentConfig,
   type HumanAbortPayload,
   type SubAgentResultPayload,
   type SubAgentsBatchResultPayload,
 } from '../types';
-import { shouldCompress } from '../utils/tokenCounter';
+import {
+  type BudgetedCompressionResultPayload,
+  createCompressionInstruction,
+  createContextBudgetFailure,
+  evaluateContextBudget,
+  failureAfterCompression,
+  getRuntimeContextBudgetInput,
+  parseExceededContextWindowError,
+  type RuntimeContextBudgetInput,
+} from '../utils/contextBudget';
 
 /**
  * ChatAgent - The "Brain" of the chat agent
@@ -371,32 +383,55 @@ export class GeneralChatAgent implements Agent {
   private toLLMCall(
     payload: GeneralAgentCallLLMInstructionPayload,
     state: AgentState,
+    trigger: ContextBudgetTrigger = 'threshold',
+    runtimeOverride?: RuntimeContextBudgetInput,
   ): AgentInstruction {
     const compressionEnabled = this.config.compressionConfig?.enabled ?? true;
     // Mirror RuntimeExecutors.callLlm: when state.forceFinish is set, the
     // executor strips all tools via buildStepToolDelta (deactivatedToolIds: ['*']),
     // so they must not count against the compression budget either — otherwise
     // we'd burn an extra summarization pass on tool tokens that won't be sent.
-    const compressionOptions = {
-      maxWindowToken: this.config.compressionConfig?.maxWindowToken,
+    if (!compressionEnabled) return { payload, type: 'call_llm' };
+
+    const runtimeInput = {
+      ...getRuntimeContextBudgetInput(payload, state.metadata),
+      ...runtimeOverride,
+    };
+    const attemptState = runtimeInput.attemptState ?? {
+      compressionAttempt: 0,
+      payloadFingerprint: '',
+      sentPayloadFingerprints: runtimeInput.sentPayloadFingerprints ?? [],
+    };
+    const modelId = payload.model ?? this.config.modelRuntimeConfig?.model ?? '';
+    const providerId = payload.provider ?? this.config.modelRuntimeConfig?.provider ?? '';
+    const evaluation = evaluateContextBudget({
+      attemptState,
+      candidateIds: runtimeInput.candidateIds,
+      catalogSnapshot: runtimeInput.catalogSnapshot,
+      configuredWindowTokens: this.config.compressionConfig?.maxWindowToken,
+      messages: payload.messages,
+      modelId,
+      observedWindowTokens: runtimeInput.observedWindowTokens,
+      operationId: this.config.operationId,
+      outputReserveTokens: runtimeInput.outputReserveTokens,
+      preservedIds: runtimeInput.preservedIds,
+      providerId,
+      providerMedia: runtimeInput.providerMedia,
       thresholdRatio: this.config.compressionConfig?.thresholdRatio,
       tools: state.forceFinish ? undefined : payload.tools,
-    };
+      trigger,
+    });
 
-    if (compressionEnabled) {
-      const messages = payload.messages;
-      const compressionCheck = shouldCompress(messages, compressionOptions);
-
-      if (compressionCheck.needsCompression) {
-        return {
-          payload: {
-            currentTokenCount: compressionCheck.currentTokenCount,
-            existingSummary: this.findExistingSummary(messages),
-            messages,
-          },
-          type: 'compress_context',
-        };
-      }
+    if (evaluation.decision.kind === 'compress') {
+      return createCompressionInstruction(
+        evaluation,
+        payload.messages,
+        runtimeInput,
+        this.findExistingSummary(payload.messages),
+      );
+    }
+    if (evaluation.decision.kind === 'fail') {
+      return createContextBudgetFailure(evaluation.decision, evaluation.trace);
     }
 
     return {
@@ -446,41 +481,14 @@ export class GeneralChatAgent implements Agent {
     switch (context.phase) {
       case 'init':
       case 'user_input': {
-        // Check if context compression is enabled and needed before calling LLM
-        const compressionEnabled = this.config.compressionConfig?.enabled ?? true; // Default to enabled
-        // Mirror RuntimeExecutors.callLlm: force-finish steps ship without tools,
-        // so they must not count against the compression budget here either.
-        const compressionOptions = {
-          maxWindowToken: this.config.compressionConfig?.maxWindowToken,
-          thresholdRatio: this.config.compressionConfig?.thresholdRatio,
-          tools: state.forceFinish ? undefined : state.tools,
-        };
-
-        if (compressionEnabled) {
-          const compressionCheck = shouldCompress(state.messages, compressionOptions);
-
-          if (compressionCheck.needsCompression) {
-            // Context exceeds threshold, compress ALL messages into a single summary
-            return {
-              payload: {
-                currentTokenCount: compressionCheck.currentTokenCount,
-                existingSummary: this.findExistingSummary(state.messages),
-                messages: state.messages,
-              },
-              type: 'compress_context',
-            } as AgentInstructionCompressContext;
-          }
-        }
-
-        // User input received, call LLM to generate response
-        // At this point, messages may have been preprocessed with RAG/Search
-        return {
-          payload: {
+        return this.toLLMCall(
+          {
             ...(context.payload as any),
             messages: state.messages,
+            ...(state.tools ? { tools: state.tools } : {}),
           } as GeneralAgentCallLLMInstructionPayload,
-          type: 'call_llm',
-        };
+          state,
+        );
       }
 
       case 'llm_result': {
@@ -747,24 +755,97 @@ export class GeneralChatAgent implements Agent {
       }
 
       case 'compression_result': {
-        // Context compression completed, continue to call LLM
-        const compressionPayload = context.payload as GeneralAgentCompressionResultPayload;
+        const compressionPayload = context.payload as BudgetedCompressionResultPayload;
+        const runtimeInput = getRuntimeContextBudgetInput(compressionPayload, state.metadata);
+        const validOutcome =
+          compressionPayload.attempt === 1 &&
+          typeof compressionPayload.beforeTokens === 'number' &&
+          typeof compressionPayload.afterTokens === 'number' &&
+          typeof compressionPayload.payloadFingerprint === 'string' &&
+          typeof compressionPayload.outcome === 'string' &&
+          typeof compressionPayload.trigger === 'string';
+        let outcome: ContextCompressionOutcome;
+        if (validOutcome) {
+          outcome = compressionPayload as ContextCompressionOutcome;
+        } else if (compressionPayload.skipped) {
+          outcome = {
+            afterTokens: 0,
+            attempt: 1,
+            beforeTokens: 0,
+            code: 'NO_CANDIDATES',
+            outcome: 'skipped',
+            payloadFingerprint: '',
+            trigger: 'final-preflight',
+          };
+        } else {
+          outcome = {
+            afterTokens: 0,
+            attempt: 1,
+            beforeTokens: 0,
+            code: 'SUMMARY_FAILED',
+            outcome: 'failed',
+            payloadFingerprint: '',
+            trigger: 'final-preflight',
+          };
+        }
+        const outcomeFailure = failureAfterCompression(outcome);
+        if (outcomeFailure?.kind === 'fail') return createContextBudgetFailure(outcomeFailure);
 
-        // If compression was skipped (no messages to compress), just call LLM
-        // Otherwise, messages have been updated with compressed content
-        // Pass parentMessageId and createAssistantMessage=true to force new message creation
-        return {
-          payload: {
-            // Force create new assistant message after compression
-            createAssistantMessage: true,
-            messages: compressionPayload.compressedMessages,
-            model: this.config.modelRuntimeConfig?.model,
-            parentMessageId: compressionPayload.parentMessageId,
-            provider: this.config.modelRuntimeConfig?.provider,
-            tools: state.tools,
-          } as GeneralAgentCallLLMInstructionPayload,
-          type: 'call_llm',
-        };
+        const llmPayload = {
+          createAssistantMessage: true,
+          messages: compressionPayload.compressedMessages,
+          model: this.config.modelRuntimeConfig?.model,
+          parentMessageId: compressionPayload.parentMessageId,
+          provider: this.config.modelRuntimeConfig?.provider,
+          tools: state.tools,
+        } as GeneralAgentCallLLMInstructionPayload;
+        const postCompression = evaluateContextBudget({
+          attemptState: {
+            compressionAttempt: 1,
+            payloadFingerprint: outcome.payloadFingerprint,
+            sentPayloadFingerprints: runtimeInput.sentPayloadFingerprints ?? [],
+          },
+          catalogSnapshot: runtimeInput.catalogSnapshot,
+          configuredWindowTokens: this.config.compressionConfig?.maxWindowToken,
+          messages: compressionPayload.compressedMessages,
+          modelId: llmPayload.model ?? '',
+          observedWindowTokens: runtimeInput.observedWindowTokens,
+          operationId: this.config.operationId,
+          outputReserveTokens: runtimeInput.outputReserveTokens,
+          providerId: llmPayload.provider ?? '',
+          providerMedia: runtimeInput.providerMedia,
+          tools: state.forceFinish ? undefined : state.tools,
+          trigger: 'final-preflight',
+        });
+        const measuredOutcome = { ...outcome, afterTokens: postCompression.estimatedPromptTokens };
+        const measuredFailure = failureAfterCompression(measuredOutcome);
+        if (
+          postCompression.payloadFingerprint === outcome.payloadFingerprint ||
+          measuredFailure?.kind === 'fail'
+        ) {
+          return createContextBudgetFailure(
+            (measuredFailure ??
+              failureAfterCompression({
+                ...measuredOutcome,
+                afterTokens: measuredOutcome.beforeTokens,
+              })) as Extract<ContextBudgetDecision, { kind: 'fail' }>,
+            postCompression.trace,
+          );
+        }
+        if (postCompression.decision.kind === 'fail') {
+          return createContextBudgetFailure(postCompression.decision, postCompression.trace);
+        }
+        if (postCompression.decision.kind !== 'send') {
+          return createContextBudgetFailure(
+            failureAfterCompression({
+              ...measuredOutcome,
+              afterTokens: measuredOutcome.beforeTokens,
+            }) as Extract<ContextBudgetDecision, { kind: 'fail' }>,
+            postCompression.trace,
+          );
+        }
+
+        return { payload: llmPayload, type: 'call_llm' };
       }
 
       case 'human_abort': {
@@ -785,8 +866,55 @@ export class GeneralChatAgent implements Agent {
       }
 
       case 'error': {
-        // Error occurred, finish execution
         const { error } = context.payload as { error: any };
+        const providerError = parseExceededContextWindowError(error);
+        if (providerError) {
+          const runtimeInput = getRuntimeContextBudgetInput(context.payload, state.metadata);
+          if (providerError.observedLimitTokens && this.config.onContextWindowObserved) {
+            const snapshot =
+              runtimeInput.catalogSnapshot ??
+              (state.metadata
+                ?.modelCatalogSnapshot as RuntimeContextBudgetInput['catalogSnapshot']);
+            const modelId = snapshot?.entry.modelId ?? this.config.modelRuntimeConfig?.model;
+            const providerId =
+              snapshot?.entry.providerId ?? this.config.modelRuntimeConfig?.provider;
+            if (modelId && providerId) {
+              try {
+                await this.config.onContextWindowObserved({
+                  contextWindowRejectionTokens: providerError.observedLimitTokens,
+                  modelId,
+                  modelVersion: snapshot?.entry.modelVersion,
+                  providerId,
+                });
+              } catch {
+                // Evidence persistence is a side channel and must not block recovery.
+              }
+            }
+          }
+          if (!(this.config.compressionConfig?.enabled ?? true)) {
+            return {
+              reason: 'error_recovery',
+              reasonDetail: error?.message || 'Unknown error occurred',
+              type: 'finish',
+            };
+          }
+          return this.toLLMCall(
+            {
+              messages: state.messages,
+              model: this.config.modelRuntimeConfig?.model,
+              provider: this.config.modelRuntimeConfig?.provider,
+              tools: state.tools,
+            } as GeneralAgentCallLLMInstructionPayload,
+            state,
+            'provider-error',
+            {
+              ...runtimeInput,
+              observedWindowTokens:
+                providerError.observedLimitTokens ?? runtimeInput.observedWindowTokens,
+            },
+          );
+        }
+
         return {
           reason: 'error_recovery',
           reasonDetail: error?.message || 'Unknown error occurred',

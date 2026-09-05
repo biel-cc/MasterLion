@@ -231,11 +231,58 @@ describe('connect command', () => {
       type: 'tool_call_request',
     });
 
-    expect(executeToolCall).toHaveBeenCalledWith('readLocalFile', '{"path":"/test"}', undefined);
+    expect(executeToolCall).toHaveBeenCalledWith(
+      'readLocalFile',
+      '{"path":"/test"}',
+      undefined,
+      undefined,
+      {
+        deviceId: 'mock-device-id',
+        operationId: undefined,
+        toolCallId: 'req-1',
+        topicId: undefined,
+      },
+    );
     expect(lastSentToolResponse).toEqual({
       requestId: 'req-1',
       result: { content: 'tool result', error: undefined, success: true },
     });
+  });
+
+  it('should forward the frozen execution context and operation tuple', async () => {
+    const program = createProgram();
+    await program.parseAsync(['node', 'test', 'connect']);
+
+    const executionContext = {
+      cwd: '/workspace/project',
+      env: { FOO: 'bar' },
+      workspaceKind: 'device',
+      workspaceRootPath: '/workspace/project',
+    };
+    await clientEventHandlers['tool_call_request']?.({
+      deviceId: 'device-1',
+      executionContext,
+      operationId: 'op-1',
+      requestId: 'req-2',
+      timeout: 5000,
+      toolCall: { apiName: 'runCommand', arguments: '{"command":"pwd"}', identifier: 'test' },
+      toolCallId: 'tool-1',
+      topicId: 'topic-1',
+      type: 'tool_call_request',
+    });
+
+    expect(executeToolCall).toHaveBeenCalledWith(
+      'runCommand',
+      '{"command":"pwd"}',
+      5000,
+      executionContext,
+      {
+        deviceId: 'device-1',
+        operationId: 'op-1',
+        toolCallId: 'tool-1',
+        topicId: 'topic-1',
+      },
+    );
   });
 
   it('should handle system info requests', async () => {

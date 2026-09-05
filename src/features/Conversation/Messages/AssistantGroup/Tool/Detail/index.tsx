@@ -5,6 +5,8 @@ import { Flexbox } from '@lobehub/ui';
 import { memo, Suspense } from 'react';
 
 import AbortResponse from './AbortResponse';
+import AutoPathConsentNotice from './AutoPathConsent';
+import { parseAutoPathConsentEvidence } from './AutoPathConsent/evidence';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import RejectedResponse from './RejectedResponse';
 import ToolRender from './Render';
@@ -99,9 +101,19 @@ const Render = memo<RenderProps>(
 
     if (isToolCalling) return placeholder;
 
+    // Runtime-authored success audit only; tool arguments never reach this decision.
+    const autoPathConsent = result.error ? undefined : parseAutoPathConsentEvidence(result.state);
+
     return (
       <Suspense fallback={placeholder}>
         <Flexbox gap={8}>
+          {autoPathConsent && (
+            <AutoPathConsentNotice
+              evidence={autoPathConsent}
+              messageId={toolMessageId}
+              toolCallId={toolCallId}
+            />
+          )}
           <ToolRender
             content={result.content || ''}
             messageId={toolMessageId}

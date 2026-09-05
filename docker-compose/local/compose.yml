@@ -1,0 +1,84 @@
+# Only invoked by scripts/local-dev; no remote services or production inheritance.
+services:
+  postgres:
+    image: paradedb/paradedb@sha256:044b8cc5b40159714e88e3f546fc74de11cf215c030190cc82c6627015d728ea
+    ports: ['127.0.0.1:${POSTGRES_PORT}:5432']
+    environment:
+      POSTGRES_DB: masterino_local
+      POSTGRES_PASSWORD: ${LOCAL_PASSWORD}
+    volumes: ['postgres:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d masterino_local']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  redis:
+    image: redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    ports: ['127.0.0.1:${REDIS_PORT}:6379']
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes: ['redis:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  storage:
+    image: rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
+    ports: ['127.0.0.1:${S3_PORT}:9000', '127.0.0.1:${S3_CONSOLE_PORT}:9001']
+    environment:
+      RUSTFS_ACCESS_KEY: masterino-local
+      RUSTFS_SECRET_KEY: ${LOCAL_PASSWORD}
+      RUSTFS_CONSOLE_ENABLE: 'true'
+    volumes: ['storage:/data']
+    command: ['/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:9000/health >/dev/null']
+      interval: 3s
+      timeout: 3s
+      retries: 60
+  storage-init:
+    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    depends_on:
+      storage: { condition: service_healthy }
+    environment:
+      LOCAL_PASSWORD: ${LOCAL_PASSWORD}
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        mc alias set local http://storage:9000 masterino-local "$$LOCAL_PASSWORD" >/dev/null
+        mc mb --ignore-existing local/masterino-local >/dev/null
+        mc anonymous set download local/masterino-local >/dev/null
+        echo 'Local storage bucket initialized.'
+  gateway:
+    image: golang@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628
+    ports: ['127.0.0.1:${GATEWAY_PORT}:8788']
+    working_dir: /source
+    environment:
+      PORT: '8788'
+      SERVICE_TOKEN: ${LOCAL_GATEWAY_TOKEN}
+      JWKS_PUBLIC_KEY: ${LOCAL_GATEWAY_JWKS}
+      GOCACHE: /cache
+      GOTOOLCHAIN: local
+    volumes:
+      - '../../apps/device-gateway/upstream:/source:ro'
+      - 'go-cache:/cache'
+    command: ['go', 'run', './cmd/device-gateway-go']
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8788/health >/dev/null']
+      interval: 5s
+      timeout: 3s
+      retries: 60
+  search:
+    profiles: ['search']
+    image: searxng/searxng@sha256:8bb6a6f677a758cefa4ae2c9f5da1012876e428a4388e3e86f34be4ca715330a
+    ports: ['127.0.0.1:${SEARCH_PORT}:8080']
+    volumes: ['../dev/searxng-settings.yml:/etc/searxng/settings.yml:ro']
+  qstash:
+    image: public.ecr.aws/upstash/qstash@sha256:c5102007fa59b97411bf870e942b214ea2cad8cce0ffff059b428953ba22710a
+    ports: ['127.0.0.1:${QSTASH_PORT}:8080']
+    command: ['qstash', 'dev']
+volumes:
+  postgres: {}
+  redis: {}
+  storage: {}
+  go-cache: {}

@@ -1,21 +1,51 @@
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
 import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPermission';
 import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceAuth';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TopicModel } from '@/database/models/topic';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { DeviceGateway } from '@/server/services/deviceGateway';
+import {
+  ScratchWorkspaceCleanupError,
+  TopicDeletionService,
+} from '@/server/services/projectWorkspace/topicDeletion';
 import { type BatchTaskResult } from '@/types/service';
 
 const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
+  const projectWorkspaceModel = new ProjectWorkspaceModel(ctx.serverDB, ctx.userId);
+  const topicModel = new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId ?? undefined);
 
   return opts.next({
     ctx: {
-      topicModel: new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId ?? undefined),
+      topicDeletionService: new TopicDeletionService({
+        deviceGateway: new DeviceGateway(),
+        projectWorkspaceModel,
+        topicModel,
+        userId: ctx.userId,
+      }),
+      topicModel,
     },
   });
 });
+
+const runTopicDeletion = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ScratchWorkspaceCleanupError) {
+      throw new TRPCError({
+        cause: error,
+        code: 'PRECONDITION_FAILED',
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+};
 
 const topicCreateProcedure = topicProcedure.use(withScopedPermission('topic:create'));
 const topicDeleteProcedure = topicProcedure.use(withScopedPermission('topic:delete'));
@@ -47,13 +77,13 @@ export const topicRouter = router({
   batchDelete: topicDeleteProcedure
     .input(z.object({ ids: z.array(z.string()) }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDelete(input.ids);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeByIds(input.ids));
     }),
 
   batchDeleteBySessionId: topicDeleteProcedure
     .input(z.object({ id: z.string().nullable().optional() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDeleteBySessionId(input.id);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeBySessionId(input.id));
     }),
 
   cloneTopic: topicCreateProcedure
@@ -115,13 +145,13 @@ export const topicRouter = router({
   }),
 
   removeAllTopics: topicDeleteProcedure.mutation(async ({ ctx }) => {
-    return ctx.topicModel.deleteAll();
+    return runTopicDeletion(() => ctx.topicDeletionService.removeAll());
   }),
 
   removeTopic: topicDeleteProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.delete(input.id);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeById(input.id));
     }),
 
   searchTopics: topicProcedure

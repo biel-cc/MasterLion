@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@lobechat/local-file-shell": "workspace:*",
-    "fast-glob": "^3.3.3"
+    "fast-glob": "^3.3.3",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "vitest": "^3.2.6"

@@ -17,6 +17,9 @@
     "incremental": true,
     "types": ["vitest/globals"],
     "paths": {
+      "@lobechat/types": ["./packages/types/src/index.ts"],
+      "@lobechat/types/*": ["./packages/types/*"],
+      "@lobechat/business-const": ["./packages/business/const/src/index.ts"],
       "@/database/*": ["./packages/database/src/*"],
       "@/const/*": ["./packages/const/src/*", "./src/const/*"],
       "@/utils/*": ["./packages/utils/src/*", "./src/utils/*"],

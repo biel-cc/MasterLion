@@ -1,9 +1,19 @@
+import '../_testFixtures/executionAuthority';
+
 import { LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
 import { RemoteDeviceManifest } from '@lobechat/builtin-tool-remote-device';
 import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AiAgentService } from '../index';
+
+vi.mock('@/database/models/user', () => {
+  const UserModel = vi.fn().mockImplementation(() => ({
+    getUserSettings: vi.fn().mockResolvedValue(undefined),
+  })) as any;
+  UserModel.getInfoForAIGeneration = vi.fn().mockResolvedValue({});
+  return { UserModel };
+});
 
 const {
   mockCreateOperation,
@@ -294,6 +304,7 @@ describe('AiAgentService.execAgent - device tool pipeline ()', () => {
 
       // RemoteDevice is present in manifestMap (discoverable builtin),
       // but should NOT be in enabledToolIds when gateway is not configured
+      expect(manifestMap[RemoteDeviceManifest.identifier]).toBeDefined();
       const enabledToolIds = callArgs.toolSet.enabledToolIds;
       expect(enabledToolIds).not.toContain(RemoteDeviceManifest.identifier);
     });

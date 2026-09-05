@@ -3,10 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { type DeviceControlDeps, executeDeviceRpc as runDeviceRpc } from '@lobechat/device-control';
+import {
+  type DeviceControlDeps,
+  executeDeviceRpc as runDeviceRpc,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
 import type {
   AgentRunRequestMessage,
   GatewayMcpStdioParams,
+  GatewayToolCallExecutionContext,
 } from '@lobechat/device-gateway-client';
 import type {
   EditLocalFileParams,
@@ -24,8 +29,19 @@ import type {
   RunCommandParams,
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
+import {
+  composeChildProcessEnv,
+  toolNeedsDefaultCwd,
+  ExecutionBoundaryError,
+  type ExecutionBoundaryTrace,
+  loadWorkspaceEnvFiles,
+  type PreparedToolCallExecution,
+  prepareToolCallExecution,
+  resolveLoginShellPath,
+} from '@lobechat/local-file-shell';
 import { type ILocalSystemService, LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 
+import ExecutionEnvService from '@/services/executionEnvSrv';
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
 import ImessageBridgeService from '@/services/imessageBridgeSrv';
 import { createLogger } from '@/utils/logger';
@@ -150,6 +166,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
   /** Maps topicId → hermes session_id for multi-turn conversation continuity. */
   private readonly hermesSessionMap = new Map<string, string>();
 
+  private readonly localScratchExecutions = new Map<
+    string,
+    { at: number; deviceId: string; root: string; output: BuiltinServerRuntimeOutput }
+  >();
+
+  private readonly pendingLocalToolCalls = new Map<string, Promise<BuiltinServerRuntimeOutput>>();
+
   private localSystemRuntime: LocalSystemExecutionRuntime | null = null;
 
   // ─── Service Accessor ───
@@ -196,7 +219,14 @@ export default class GatewayConnectionCtr extends ControllerModule {
     srv.setTokenRefresher(() => this.remoteServerConfigCtr.refreshAccessToken());
 
     // Wire up tool call handler
-    srv.setToolCallHandler((apiName, args) => this.executeToolCall(apiName, args));
+    srv.setToolCallHandler((apiName, args, request) =>
+      this.executeToolCall(apiName, args, request.executionContext, {
+        deviceId: request.deviceId,
+        operationId: request.operationId,
+        toolCallId: request.toolCallId ?? request.requestId,
+        topicId: request.topicId,
+      }),
+    );
 
     // Wire up MCP call handler (tunneled stdio MCP calls from the cloud server)
     srv.setMcpCallHandler((mcpCall) => this.executeMcpCall(mcpCall));
@@ -262,6 +292,124 @@ export default class GatewayConnectionCtr extends ControllerModule {
     return { success: true };
   }
 
+  /**
+   * Standalone desktop conversations execute client tools through this IPC
+   * boundary. Keep the same fail-closed preparation used by gateway calls so
+   * the renderer cannot bypass frozen-workspace or path-consent checks.
+   */
+  @IpcMethod()
+  async executeLocalToolCall(params: {
+    apiName: string;
+    args: Record<string, unknown>;
+    executionContext?: GatewayToolCallExecutionContext;
+    purpose?: 'skill-command' | 'skill-script';
+    trace?: ExecutionBoundaryTrace;
+  }): Promise<BuiltinServerRuntimeOutput> {
+    const { trace } = params;
+    if (!trace?.topicId || !trace.operationId || !trace.toolCallId) {
+      return this.executeLocalToolCallOnce(params);
+    }
+    const key = JSON.stringify([
+      trace.deviceId,
+      trace.topicId,
+      trace.operationId,
+      trace.toolCallId,
+    ]);
+    const pending = this.pendingLocalToolCalls.get(key);
+    if (pending) return pending;
+    const execution = this.executeLocalToolCallOnce(params);
+    this.pendingLocalToolCalls.set(key, execution);
+    try {
+      return await execution;
+    } finally {
+      this.pendingLocalToolCalls.delete(key);
+    }
+  }
+
+  private async executeLocalToolCallOnce(
+    params: Parameters<GatewayConnectionCtr['executeLocalToolCall']>[0],
+  ): Promise<BuiltinServerRuntimeOutput> {
+    const { trace } = params;
+    let context = params.executionContext;
+    const key = JSON.stringify([trace?.topicId, trace?.operationId, trace?.toolCallId]);
+    const previous = this.localScratchExecutions.get(key);
+    if (
+      previous &&
+      previous.deviceId === trace?.deviceId &&
+      previous.deviceId === this.service.getDeviceId()
+    ) {
+      // Replaying a known success renews its evidence without running the command again.
+      previous.at = Date.now();
+      return previous.output;
+    }
+    let scratchRoot: string | undefined;
+    if (
+      context &&
+      !context.cwd &&
+      !params.purpose &&
+      toolNeedsDefaultCwd(params.apiName, params.args)
+    ) {
+      if (
+        !trace?.topicId ||
+        !trace.operationId ||
+        !trace.toolCallId ||
+        trace.deviceId !== this.service.getDeviceId()
+      ) {
+        return { content: 'WORKSPACE_REQUIRED', success: false };
+      }
+      const prepared = (await this.executeDeviceRpc('ensureScratchWorkspace', {
+        topicId: trace.topicId,
+      })) as { root: string };
+      scratchRoot = prepared.root;
+      context = {
+        ...context,
+        cwd: scratchRoot,
+        workspaceKind: 'scratch',
+        workspaceRootPath: scratchRoot,
+        accessRoots: [
+          ...(context.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+          {
+            rootPath: scratchRoot,
+            modes: ['read', 'write', 'exec'],
+            scope: 'primary',
+            source: 'workspace',
+          },
+        ],
+      };
+    }
+    const result = await this.executeToolCall(
+      params.apiName,
+      params.args,
+      context,
+      trace,
+      params.purpose,
+    );
+    const commandFailed =
+      result.state &&
+      typeof result.state === 'object' &&
+      'success' in result.state &&
+      result.state.success === false;
+    if (!scratchRoot || !result.success || commandFailed) return result;
+    const output = {
+      ...result,
+      state: {
+        ...(typeof result.state === 'object' && result.state
+          ? result.state
+          : { result: result.state }),
+        localScratch: { root: scratchRoot },
+      },
+    };
+    // Retain unacknowledged successes for this main-process lifetime. Evicting
+    // one on another topic's activity could replay a command with side effects.
+    this.localScratchExecutions.set(key, {
+      at: Date.now(),
+      deviceId: this.service.getDeviceId(),
+      root: scratchRoot,
+      output,
+    });
+    return output;
+  }
+
   // ─── Auto Connect ───
 
   private async tryAutoConnect() {
@@ -283,6 +431,35 @@ export default class GatewayConnectionCtr extends ControllerModule {
     request: AgentRunRequestMessage,
   ): Promise<{ reason?: string; status: 'accepted' | 'rejected' }> {
     try {
+      const cwd = request.executionContext?.cwd ?? request.cwd;
+      const fileEnv = await loadWorkspaceEnvFiles({
+        envFiles: request.executionContext?.envFiles,
+        workspaceRootPath: request.executionContext?.workspaceRootPath ?? cwd,
+      });
+      const env = {
+        ...fileEnv,
+        ...(request.executionContext?.env ?? request.env),
+      };
+      if (!cwd?.trim()) {
+        return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
+      }
+      if (request.modelRef && request.modelRef.operationId !== request.operationId) {
+        return { reason: 'MODEL_REFERENCE_OPERATION_MISMATCH', status: 'rejected' };
+      }
+      const materialization = await materializeSkillsForCli({
+        agentType: request.agentType,
+        cwd,
+        policy: request.skillPolicy,
+        skills: request.skills,
+      });
+      if (materialization.errors.length > 0) {
+        return {
+          reason: `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+            .map(({ message }) => message)
+            .join('; ')}`,
+          status: 'rejected',
+        };
+      }
       const serverUrl = await this.remoteServerConfigCtr.getRemoteServerUrl();
       if (!serverUrl) {
         return { reason: 'Remote server URL not configured', status: 'rejected' };
@@ -291,16 +468,19 @@ export default class GatewayConnectionCtr extends ControllerModule {
       // Fire-and-forget: lh hetero exec handles spawn -> adapt ->
       // BatchIngester -> heteroIngest/heteroFinish -> server -> Gateway -> clients.
       // Same command as spawnHeteroSandbox() on the server side.
-      this.heterogeneousAgentCtr.spawnLhHeteroExec({
+      await this.heterogeneousAgentCtr.spawnLhHeteroExec({
         agentType: request.agentType,
-        cwd: request.cwd,
+        cwd,
+        env,
         imageList: request.imageList,
         jwt: request.jwt,
         operationId: request.operationId,
         prompt: request.prompt,
         resumeSessionId: request.resumeSessionId,
         serverUrl,
-        systemContext: request.systemContext,
+        systemContext: request.modelRef
+          ? `<frozen_model_ref>${JSON.stringify(request.modelRef)}</frozen_model_ref>\n\n${request.systemContext ?? ''}`
+          : request.systemContext,
         topicId: request.topicId,
       });
 
@@ -361,8 +541,20 @@ export default class GatewayConnectionCtr extends ControllerModule {
           logger.error(`Failed to approve project preview root ${root}:`, error);
         }
       },
+      getLocalScratchExecution: ({ topicId, operationId, toolCallId }) => {
+        const entry = this.localScratchExecutions.get(
+          JSON.stringify([topicId, operationId, toolCallId]),
+        );
+        return entry && entry.deviceId === this.service.getDeviceId()
+          ? { root: entry.root }
+          : undefined;
+      },
       getLocalFilePreview: (params) => this.localFileCtr.getLocalFilePreview(params),
       getProjectFileIndex: (params) => this.localFileCtr.getProjectFileIndex(params),
+      runHeterogeneousAgent: (request) =>
+        this.executeAgentRun({ ...request, type: 'agent_run_request' }),
+      scratchRoot: path.join(this.app.appStoragePath, 'scratch-workspaces'),
+      skillCacheRoot: path.join(this.app.appStoragePath, 'file-storage', 'skills'),
     };
   }
 
@@ -378,9 +570,95 @@ export default class GatewayConnectionCtr extends ControllerModule {
   private async executeToolCall(
     apiName: string,
     args: unknown,
+    executionContext?: GatewayToolCallExecutionContext,
+    trace?: ExecutionBoundaryTrace,
+    purpose?: 'skill-command' | 'skill-script',
   ): Promise<BuiltinServerRuntimeOutput> {
     const runtime = this.getLocalSystemRuntime();
     const normalized = LEGACY_API_ALIASES[apiName] ?? apiName;
+    let resolvedExecutionContext = executionContext?.envRef
+      ? {
+          ...executionContext,
+          // A renderer may carry only the reference. If it also supplied
+          // values, ignore them: the authenticated server response is the
+          // sole authority for managed environment values.
+          env: await this.app.getService(ExecutionEnvService).resolve(executionContext.envRef),
+        }
+      : executionContext;
+    if (resolvedExecutionContext && purpose) {
+      const workspaceDir =
+        resolvedExecutionContext.workspaceRootPath ?? resolvedExecutionContext.cwd;
+      resolvedExecutionContext = {
+        ...resolvedExecutionContext,
+        env: {
+          ...resolvedExecutionContext.env,
+          ...(purpose === 'skill-script' && resolvedExecutionContext.cwd
+            ? { SKILL_DIR: resolvedExecutionContext.cwd }
+            : {}),
+          ...(workspaceDir ? { WORKSPACE_DIR: workspaceDir } : {}),
+        },
+      };
+    }
+    let prepared: PreparedToolCallExecution;
+    try {
+      prepared = await prepareToolCallExecution({
+        // This list is populated only after a native folder-picker approval and
+        // stored on the device. Keep it out of the server-authored context so a
+        // remote caller cannot nominate its own mount allowlist.
+        allowedMountRoots: this.app.storeManager.get('localFileWorkspaceRoots', []),
+        apiName: normalized,
+        args: args as Record<string, any>,
+        context: resolvedExecutionContext,
+        trace,
+      });
+    } catch (error) {
+      if (error instanceof ExecutionBoundaryError) {
+        const pathConsent =
+          error.code === 'INTERVENTION_REQUIRED' &&
+          resolvedExecutionContext &&
+          trace?.deviceId &&
+          trace.operationId &&
+          trace.topicId &&
+          error.scopeAudit.length > 0
+            ? {
+                actualCwd: resolvedExecutionContext.cwd ?? '',
+                deviceId: trace.deviceId,
+                modes: [...new Set(error.scopeAudit.map(({ mode }) => mode))],
+                operationId: trace.operationId,
+                primaryCwd:
+                  resolvedExecutionContext.workspaceRootPath ?? resolvedExecutionContext.cwd ?? '',
+                requestedPath: error.scopeAudit[0]!.path,
+                topicId: trace.topicId,
+                version: 1 as const,
+              }
+            : undefined;
+        return {
+          content: error.code,
+          error,
+          state: {
+            code: error.code,
+            scopeAudit: error.scopeAudit,
+            ...(pathConsent && { workspacePathConsent: pathConsent }),
+          },
+          success: false,
+        };
+      }
+      throw error;
+    }
+    args = prepared.args;
+    const finish = (output: BuiltinServerRuntimeOutput): BuiltinServerRuntimeOutput => {
+      if (prepared.scopeAudit.length === 0 && prepared.warnings.length === 0) return output;
+      return {
+        ...output,
+        state: {
+          ...(typeof output.state === 'object' && output.state
+            ? output.state
+            : { result: output.state }),
+          scopeAudit: prepared.scopeAudit,
+          workspaceWarnings: prepared.warnings,
+        },
+      };
+    };
 
     // Each case narrows `args` to its IPC param type — the manifest guarantees
     // the gateway sends params matching the apiName. The `as never` casts on
@@ -391,57 +669,67 @@ export default class GatewayConnectionCtr extends ControllerModule {
     switch (normalized) {
       case 'listFiles': {
         const p = args as ListLocalFileParams;
-        return runtime.listFiles({
-          directoryPath: p.path,
-          limit: p.limit,
-          sortBy: p.sortBy,
-          sortOrder: p.sortOrder,
-        } as never);
+        return finish(
+          await runtime.listFiles({
+            directoryPath: p.path,
+            limit: p.limit,
+            sortBy: p.sortBy,
+            sortOrder: p.sortOrder,
+          } as never),
+        );
       }
 
       case 'readFile': {
         const p = args as LocalReadFileParams;
-        return runtime.readFile({
-          endLine: p.loc?.[1],
-          path: p.path,
-          startLine: p.loc?.[0],
-        });
+        return finish(
+          await runtime.readFile({
+            endLine: p.loc?.[1],
+            path: p.path,
+            startLine: p.loc?.[0],
+          }),
+        );
       }
 
       case 'readFiles': {
-        return runtime.readFiles(args as LocalReadFilesParams);
+        return finish(await runtime.readFiles(args as LocalReadFilesParams));
       }
 
       case 'searchFiles': {
         const resolved = resolveArgsWithScope(args as LocalSearchFilesParams, 'directory');
-        return runtime.searchFiles({
-          ...resolved,
-          directory: resolved.directory || '',
-        });
+        return finish(
+          await runtime.searchFiles({
+            ...resolved,
+            directory: resolved.directory || '',
+          }),
+        );
       }
 
       case 'moveFiles': {
         const p = args as MoveLocalFilesParams;
-        return runtime.moveFiles({
-          operations: p.items?.map((item) => ({
-            destination: item.newPath,
-            source: item.oldPath,
-          })),
-        });
+        return finish(
+          await runtime.moveFiles({
+            operations: p.items?.map((item) => ({
+              destination: item.newPath,
+              source: item.oldPath,
+            })),
+          }),
+        );
       }
 
       case 'writeFile': {
-        return runtime.writeFile(args as WriteLocalFileParams);
+        return finish(await runtime.writeFile(args as WriteLocalFileParams));
       }
 
       case 'editFile': {
         const p = args as EditLocalFileParams;
-        return runtime.editFile({
-          all: p.replace_all,
-          path: p.file_path,
-          replace: p.new_string,
-          search: p.old_string,
-        });
+        return finish(
+          await runtime.editFile({
+            all: p.replace_all,
+            path: p.file_path,
+            replace: p.new_string,
+            search: p.old_string,
+          }),
+        );
       }
 
       case 'runCommand': {
@@ -449,38 +737,46 @@ export default class GatewayConnectionCtr extends ControllerModule {
         // exposes `run_in_background`. Without this normalize the state would
         // always show foreground even for background commands.
         const p = args as RunCommandParams;
-        return runtime.runCommand({
-          ...p,
-          background: p.run_in_background,
-        } as never);
+        return finish(
+          await runtime.runCommand({
+            ...p,
+            background: p.run_in_background,
+          } as never),
+        );
       }
 
       case 'getCommandOutput': {
         const p = args as GetCommandOutputParams;
-        return runtime.getCommandOutput({
-          commandId: p.shell_id,
-          filter: p.filter,
-        } as never);
+        return finish(
+          await runtime.getCommandOutput({
+            commandId: p.shell_id,
+            filter: p.filter,
+          } as never),
+        );
       }
 
       case 'killCommand': {
         const p = args as KillCommandParams;
-        return runtime.killCommand({
-          commandId: p.shell_id,
-        });
+        return finish(
+          await runtime.killCommand({
+            commandId: p.shell_id,
+          }),
+        );
       }
 
       case 'grepContent': {
         const resolved = resolveArgsWithScope(args as GrepContentParams, 'path');
-        return runtime.grepContent(resolved as never);
+        return finish(await runtime.grepContent(resolved as never));
       }
 
       case 'globFiles': {
         const p = args as GlobFilesParams;
-        return runtime.globFiles({
-          directory: p.scope,
-          pattern: p.pattern,
-        });
+        return finish(
+          await runtime.globFiles({
+            directory: p.scope,
+            pattern: p.pattern,
+          }),
+        );
       }
 
       case 'renameLocalFile': {
@@ -489,13 +785,13 @@ export default class GatewayConnectionCtr extends ControllerModule {
         // call the IPC handler directly and wrap the raw result into the
         // BuiltinServerRuntimeOutput shape so `state` still flows downstream.
         const raw = await this.localFileCtr.handleRenameFile(args as RenameLocalFileParams);
-        return {
+        return finish({
           content: raw.success
             ? `Renamed to ${raw.newPath}`
             : `Rename failed: ${raw.error ?? 'unknown error'}`,
           state: raw,
           success: raw.success,
-        };
+        });
       }
 
       // ─── Platform agent tools (openclaw / hermes) ───
@@ -506,12 +802,12 @@ export default class GatewayConnectionCtr extends ControllerModule {
 
       case 'checkPlatformCapability': {
         const result = await this.checkPlatformCapability(args as { platform: string });
-        return { content: JSON.stringify(result), state: result, success: true };
+        return finish({ content: JSON.stringify(result), state: result, success: true });
       }
 
       case 'getAgentProfile': {
         const result = await this.getAgentProfile(args as { agentId?: string; platform: string });
-        return { content: JSON.stringify(result), state: result, success: true };
+        return finish({ content: JSON.stringify(result), state: result, success: true });
       }
 
       case 'runHeteroTask': {
@@ -522,18 +818,19 @@ export default class GatewayConnectionCtr extends ControllerModule {
             agentId?: string;
             agentType: string;
             cwd?: string;
+            env?: Record<string, string>;
             operationId: string;
             prompt: string;
             taskId: string;
             topicId: string;
           },
         );
-        return { content: json, state: safeJsonParse(json), success: true };
+        return finish({ content: json, state: safeJsonParse(json), success: true });
       }
 
       case 'cancelHeteroTask': {
         const json = await this.cancelHeteroTask(args as { signal?: string; taskId: string });
-        return { content: json, state: safeJsonParse(json), success: true };
+        return finish({ content: json, state: safeJsonParse(json), success: true });
       }
 
       default: {
@@ -763,13 +1060,15 @@ export default class GatewayConnectionCtr extends ControllerModule {
     agentId?: string;
     agentType: string;
     cwd?: string;
+    env?: Record<string, string>;
     operationId: string;
     prompt: string;
     taskId: string;
     topicId: string;
   }): Promise<string> {
-    const { agentId, agentType, cwd, operationId, prompt, taskId, topicId } = args;
-    const workDir = cwd || process.cwd();
+    const { agentId, agentType, cwd, env, operationId, prompt, taskId, topicId } = args;
+    const workDir = cwd?.trim();
+    if (!workDir) throw new Error('WORKSPACE_REQUIRED');
 
     const [serverUrl, accessToken] = await Promise.all([
       this.remoteServerConfigCtr.getRemoteServerUrl(),
@@ -777,11 +1076,15 @@ export default class GatewayConnectionCtr extends ControllerModule {
     ]);
 
     // Inject auth into child env so `lh notify` can authenticate without CLI config.
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(accessToken && { LOBEHUB_JWT: accessToken }),
-      ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
-    };
+    const childEnv: NodeJS.ProcessEnv = composeChildProcessEnv({
+      hostEnv: process.env,
+      loginShellPath: await resolveLoginShellPath(),
+      resolvedEnv: env,
+      runtimeEnv: {
+        ...(accessToken && { LOBEHUB_JWT: accessToken }),
+        ...(serverUrl && { LOBEHUB_SERVER: serverUrl }),
+      },
+    });
 
     if (agentType === 'openclaw') {
       const lhPath = this.resolveLhPath();

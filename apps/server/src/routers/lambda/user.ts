@@ -508,7 +508,19 @@ export const userRouter = router({
   }),
 
   updateSettings: userProcedure.input(UserSettingsSchema).mutation(async ({ ctx, input }) => {
-    const { keyVaults, ...res } = input as Partial<UserSettings>;
+    const { executionEnv, keyVaults, ...res } = input as Partial<UserSettings> & {
+      executionEnv?: unknown;
+    };
+
+    // User execution env has its own service/router boundary, which validates
+    // reserved keys and encrypts values before persistence. Never allow the
+    // permissive legacy settings payload to bypass that boundary.
+    if (executionEnv !== undefined) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'USER_ENV_UPDATE_REQUIRES_DEDICATED_API',
+      });
+    }
 
     if (ctx.workspaceId && (hasOwnerSettingChange(res) || hasMemberSettingChange(res))) {
       const rbac = new RbacModel(ctx.serverDB, ctx.userId);

@@ -16,7 +16,9 @@ import { SkillManifestError, SkillParseError } from './errors';
 const MAX_SKILL_ZIP_BYTES = 16 * 1024 * 1024;
 const MAX_SKILL_ZIP_FILES = 2000;
 const MAX_SKILL_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
-const forbiddenSkillFile = /\.(?:bat|cmd|com|dll|docm|exe|msi|ps1|scr|sh|xlsm)$/i;
+// Script sources are skill resources; import never executes them. Execution
+// remains subject to the selected runtime and its approval/path boundary.
+const forbiddenSkillFile = /\.(?:com|dll|docm|exe|msi|scr|xlsm)$/i;
 
 const assertSafeZipArchive = (archive: Buffer) => {
   if (archive.length > MAX_SKILL_ZIP_BYTES) {

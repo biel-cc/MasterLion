@@ -7,6 +7,7 @@ import type { MockInstance } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentOperationModel } from '@/database/models/agentOperation';
+import type { AiModelModel } from '@/database/models/aiModel';
 
 import { AgentRuntimeService } from './AgentRuntimeService';
 import { hookDispatcher } from './hooks';
@@ -57,11 +58,13 @@ vi.mock('@/database/models/plugin', () => ({
 
 // Mock ModelRuntime to avoid server-side env access
 vi.mock('@/server/modules/ModelRuntime', () => ({
-  initializeRuntimeOptions: vi.fn(),
   ApiKeyManager: vi.fn().mockImplementation(() => ({
     getApiKey: vi.fn(),
     getAllApiKeys: vi.fn(),
   })),
+  createTraceOptions: vi.fn(() => ({ callback: {}, headers: new Headers() })),
+  initializeRuntimeOptions: vi.fn(),
+  initModelRuntimeFromDB: vi.fn(),
 }));
 
 // Mock search service to avoid server-side env access
@@ -255,11 +258,11 @@ describe('AgentRuntimeService', () => {
           status: 'idle',
           stepCount: 0,
           messages: [],
-          metadata: {
+          metadata: expect.objectContaining({
             agentConfig: mockParams.agentConfig,
             modelRuntimeConfig: mockParams.modelRuntimeConfig,
             userId: mockParams.userId,
-          },
+          }),
           toolManifestMap: {},
         }),
       );
@@ -325,6 +328,90 @@ describe('AgentRuntimeService', () => {
         expect.objectContaining({
           metadata: expect.objectContaining({
             evalContext,
+          }),
+        }),
+      );
+    });
+
+    it('should freeze execution, model catalog, and skill registry snapshots in operation state', async () => {
+      const executionContext: NonNullable<OperationCreationParams['executionContext']> = {
+        accessRoots: [
+          {
+            modes: ['read'],
+            rootPath: '/approved/project',
+            scope: 'primary',
+            source: 'workspace',
+          },
+        ],
+        cwd: '/approved/project',
+        env: {
+          secretKeys: ['TOKEN'],
+          sources: { TOKEN: 'workspace' },
+          values: { TOKEN: 'resolved-secret' },
+        },
+        operationId: 'test-operation-1',
+        plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+        version: 1,
+        workspace: {
+          deviceId: 'device-1',
+          id: 'workspace-1',
+          kind: 'device',
+          rootPath: '/approved/project',
+        },
+      };
+      const modelCatalogSnapshot: NonNullable<OperationCreationParams['modelCatalogSnapshot']> = {
+        capturedAt: '2026-09-03T00:00:00.000Z',
+        entry: {
+          abilitySources: {},
+          contextWindowSource: 'unknown',
+          contextWindowTokens: 32_000,
+          inputModalities: {
+            audio: 'unknown',
+            file: 'unknown',
+            image: 'unknown',
+            text: 'supported',
+            video: 'unknown',
+          },
+          kind: 'chat',
+          kindSource: 'default',
+          modelId: 'gpt-4',
+          providerId: 'openai',
+        },
+        operationId: 'test-operation-1',
+        version: 1,
+      };
+      const skillRegistryResult: NonNullable<OperationCreationParams['skillRegistryResult']> = {
+        entries: [],
+        errors: [],
+        policy: {
+          includeAgentSkills: true,
+          includeProjectSkills: true,
+          includeUserSkills: true,
+          materializeForHeteroCli: 'off',
+          pinned: [],
+        },
+        precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+        skills: [],
+      };
+
+      await service.createOperation({
+        ...mockParams,
+        autoStart: false,
+        compressionModelCatalogSnapshot: modelCatalogSnapshot,
+        executionContext,
+        modelCatalogSnapshot,
+        skillRegistryResult,
+      });
+
+      expect(mockCoordinator.saveAgentState).toHaveBeenCalledWith(
+        'test-operation-1',
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            compressionModelCatalogSnapshot: modelCatalogSnapshot,
+            contextBudget: { catalogSnapshot: modelCatalogSnapshot },
+            executionContext,
+            modelCatalogSnapshot,
+            skillRegistryResult,
           }),
         }),
       );
@@ -453,6 +540,69 @@ describe('AgentRuntimeService', () => {
           }),
         }),
       );
+    });
+
+    it('wires structured context-window evidence to the persisted model catalog', async () => {
+      vi.mocked(getModelPropertyWithFallback).mockResolvedValueOnce(128_000);
+      let capturedConfig: any;
+      const serviceWithFactory = new AgentRuntimeService(mockDb, mockUserId, {
+        agentFactory: (config) => {
+          capturedConfig = config;
+          return { runner: vi.fn() } as any;
+        },
+      });
+      const recordContextWindowRejection = vi
+        .spyOn(
+          (serviceWithFactory as any).aiModelModel as AiModelModel,
+          'recordContextWindowRejection',
+        )
+        .mockResolvedValueOnce(true);
+      const modelCatalogSnapshot = {
+        capturedAt: '2026-09-03T00:00:00.000Z',
+        entry: {
+          abilitySources: {},
+          contextWindowSource: 'provider-meta',
+          contextWindowTokens: 128_000,
+          inputModalities: {
+            audio: 'unknown',
+            file: 'unknown',
+            image: 'unknown',
+            text: 'supported',
+            video: 'unknown',
+          },
+          kind: 'chat',
+          kindSource: 'provider-meta',
+          modelId: 'company-chat',
+          modelVersion: '2026-08-31',
+          providerId: 'newapi',
+        },
+        operationId: 'test-operation-1',
+        version: 1,
+      } as const;
+
+      await (serviceWithFactory as any).createAgentRuntime({
+        metadata: {
+          modelCatalogSnapshot,
+          modelRuntimeConfig: { model: 'company-chat', provider: 'newapi' },
+        },
+        operationId: 'test-operation-1',
+        stepIndex: 1,
+      });
+      await capturedConfig.onContextWindowObserved({
+        contextWindowRejectionTokens: 32_000,
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+      });
+
+      expect(recordContextWindowRejection).toHaveBeenCalledWith({
+        contextWindowRejectionTokens: 32_000,
+        modelCatalogSnapshot,
+        modelId: 'company-chat',
+        modelVersion: '2026-08-31',
+        providerId: 'newapi',
+      });
+      recordContextWindowRejection.mockRestore();
     });
 
     it('should fall back to undefined maxWindowToken when model lookup misses', async () => {
@@ -593,6 +743,63 @@ describe('AgentRuntimeService', () => {
           phase: 'user_input',
         }),
       );
+    });
+
+    it('interrupts a parked mixed batch with bind debt before resuming the LLM', async () => {
+      const pendingTools = [
+        {
+          apiName: 'pickFile',
+          arguments: '{}',
+          id: 'tool-call-client',
+          identifier: 'client-extension',
+          type: 'default',
+        },
+      ];
+      const parkedState = {
+        ...mockState,
+        interruption: {
+          canResume: true,
+          interruptedAt: new Date().toISOString(),
+          reason: 'client_tool_execution',
+        },
+        metadata: { _pendingWorkspaceBindFailure: true },
+        pendingToolsCalling: pendingTools,
+        status: 'waiting_for_async_tool',
+      };
+      const refreshedMessages = [
+        { content: 'use tools', id: 'user-msg-1', role: 'user' },
+        {
+          content: 'picked',
+          id: 'tool-msg-client',
+          role: 'tool',
+          tool_call_id: 'tool-call-client',
+        },
+      ];
+      const mockRuntime = { step: vi.fn() };
+
+      mockCoordinator.loadAgentState.mockResolvedValue(parkedState);
+      vi.spyOn(service as any, 'refreshMessagesFromDB').mockResolvedValue(refreshedMessages);
+      vi.spyOn(service as any, 'createAgentRuntime').mockReturnValue({ runtime: mockRuntime });
+
+      const result = await service.executeStep({ ...mockParams, resumeAsyncTool: true });
+
+      expect(mockRuntime.step).not.toHaveBeenCalled();
+      expect(result.state).toMatchObject({
+        interruption: { canResume: true, reason: 'WORKSPACE_BIND_FAILED' },
+        messages: refreshedMessages,
+        pendingToolsCalling: [],
+        status: 'interrupted',
+      });
+      expect(result.state.metadata).not.toHaveProperty('_pendingWorkspaceBindFailure');
+      expect(result.nextStepScheduled).toBe(false);
+      expect(mockQueueService.scheduleMessage).not.toHaveBeenCalled();
+      expect(mockCoordinator.saveStepResult).toHaveBeenCalledWith(
+        'test-operation-1',
+        expect.objectContaining({
+          newState: expect.objectContaining({ status: 'interrupted' }),
+        }),
+      );
+      expect(result.stepResult.nextContext).toBeUndefined();
     });
 
     it('should handle missing agent state', async () => {

@@ -15,14 +15,20 @@ import { wsCompatProcedure } from '@/business/server/trpc-middlewares/workspaceA
 import { LOADING_FLAT } from '@/const/message';
 import { AgentModel } from '@/database/models/agent';
 import { MessageModel } from '@/database/models/message';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { ThreadModel } from '@/database/models/thread';
 import { TopicModel } from '@/database/models/topic';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { resolveContext } from '@/server/routers/lambda/_helpers/resolveContext';
+import {
+  assertValidTopicExecutionIntent,
+  resolveTopicCreationExecutionMetadata,
+} from '@/server/services/aiAgent/topicExecutionIntent';
 import { AiChatService } from '@/server/services/aiChat';
 import { AiGenerationService } from '@/server/services/aiGeneration';
 import { FileService } from '@/server/services/file';
+import { DatabaseTopicWorkspaceBindingStore } from '@/server/services/projectWorkspace';
 import { archiveToolResultIfNeeded } from '@/server/services/toolExecution/archiveToolResult';
 
 const log = debug('lobe-lambda-router:ai-chat');
@@ -110,6 +116,12 @@ const aiChatProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =
       aiGenerationService: new AiGenerationService(ctx.serverDB, ctx.userId, wsId),
       fileService: new FileService(ctx.serverDB, ctx.userId, wsId),
       messageModel: new MessageModel(ctx.serverDB, ctx.userId, wsId),
+      projectWorkspaceModel: new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
+      topicWorkspaceBindingStore: new DatabaseTopicWorkspaceBindingStore(
+        ctx.serverDB,
+        ctx.userId,
+        wsId,
+      ),
       threadModel: new ThreadModel(ctx.serverDB, ctx.userId, wsId),
       topicModel: new TopicModel(ctx.serverDB, ctx.userId, wsId),
     },
@@ -202,18 +214,36 @@ export const aiChatRouter = router({
       let isCreateNewTopic = false;
       let agentTouchUpdatedAtTask: Promise<void> | undefined;
 
+      // The renderer supplies intent, never authority. For a legacy topic the
+      // lock-protected compare-and-set freezes the first operation's target;
+      // an existing server snapshot always wins.
+      if (!input.newTopic && input.topicId && input.topicExecutionIntent) {
+        assertValidTopicExecutionIntent(input.topicExecutionIntent);
+        await ctx.topicWorkspaceBindingStore.captureTargetIfAbsent({
+          boundDeviceId: input.topicExecutionIntent.targetDeviceId,
+          target: input.topicExecutionIntent.target,
+          topicId: input.topicId,
+        });
+      }
+
       // create topic if there should be a new topic
       if (input.newTopic) {
         log('creating new topic with title: %s', input.newTopic.title);
         const topicItem = await runTimedStage(
           timingContext,
           'lambda.aiChat.topic.create',
-          () => {
+          async () => {
+            const metadata = await resolveTopicCreationExecutionMetadata({
+              intent: input.newTopic!.executionIntent,
+              metadata: input.newTopic!.metadata,
+              organizationWorkspaceId: ctx.workspaceId ?? undefined,
+              workspaceModel: ctx.projectWorkspaceModel,
+            });
             const payload = {
               agentId: input.agentId,
               groupId: input.groupId,
               messages: input.newTopic!.topicMessageIds,
-              metadata: input.newTopic!.metadata,
+              metadata,
               sessionId,
               title: input.newTopic!.title,
               trigger: input.newTopic!.trigger,

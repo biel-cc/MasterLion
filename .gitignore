@@ -180,3 +180,6 @@ k8s/**/*.env
 migration-artifacts/
 # SearXNG config carries an internal secret_key
 k8s/12-searxng.yaml
+
+# Independent local development state, credentials and logs
+.local-dev/

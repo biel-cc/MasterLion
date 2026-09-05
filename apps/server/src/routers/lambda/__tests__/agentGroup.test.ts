@@ -143,6 +143,19 @@ describe('agentGroupRouter', () => {
   });
 
   describe('createGroupWithMembers', () => {
+    it('rejects reserved agent env keys before batch-persisting virtual members', async () => {
+      const caller = agentGroupRouter.createCaller(mockCtx);
+
+      await expect(
+        caller.createGroupWithMembers({
+          groupConfig: { title: 'Unsafe Team' },
+          members: [{ agencyConfig: { env: { PATH: '/attacker/bin' } }, title: 'Unsafe' }],
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+      expect(agentModelMock.batchCreate).not.toHaveBeenCalled();
+    });
+
     it('should create a group with virtual member agents', async () => {
       const mockInput = {
         groupConfig: {

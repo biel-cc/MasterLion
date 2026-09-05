@@ -7,6 +7,7 @@ import type {
   AgentInstructionExecSubAgent,
   AgentInstructionExecSubAgents,
   AgentRuntimeContext,
+  ContextBudgetEvaluation,
   GeneralAgentCallingToolInstructionPayload,
   GeneralAgentCallLLMInstructionPayload,
   GeneralAgentCallLLMResultPayload,
@@ -17,8 +18,12 @@ import type {
   SubAgentsBatchResultPayload,
 } from '@lobechat/agent-runtime';
 import { UsageCounter } from '@lobechat/agent-runtime';
-import { countContextTokens, type ToolsEngine } from '@lobechat/context-engine';
-import { chainCompressContext } from '@lobechat/prompts';
+import { LocalSystemIdentifier } from '@lobechat/builtin-tool-local-system';
+import {
+  countContextTokens,
+  type OperationSkillSet,
+  type ToolsEngine,
+} from '@lobechat/context-engine';
 import {
   type ChatMessageError,
   type ChatToolPayload,
@@ -27,22 +32,28 @@ import {
   type MessageToolCall,
   type ModelUsage,
   TraceNameMap,
+  type UIChatMessage,
 } from '@lobechat/types';
+import type { ContextBudgetAttemptState } from '@lobechat/types/src/contextBudget';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 import { createNanoId, dedupeBy } from '@lobechat/utils';
 import debug from 'debug';
 import { t } from 'i18next';
 import pMap from 'p-map';
 
 import { LOADING_FLAT } from '@/const/message';
+import { getRuntimePathConsentRequest } from '@/helpers/executionContext/pathConsent';
 import { aiAgentService } from '@/services/aiAgent';
-import { chatService } from '@/services/chat';
+import { chatService, collectClientProviderMediaTokenEstimates } from '@/services/chat';
 import { type ResolvedAgentConfig } from '@/services/chat/mecha';
+import type { ClientBudgetedChatPayload } from '@/services/chat/types';
 import { messageService } from '@/services/message';
 import { type ChatStore } from '@/store/chat/store';
 import { getCompressionCandidateMessageIds } from '@/store/chat/utils/compression';
 import { getFileStoreState } from '@/store/file/store';
 import { sleep } from '@/utils/sleep';
 
+import { runClientContextCompressionTransaction } from './clientContextCompression';
 import { StreamingHandler } from './StreamingHandler';
 import { createChatStoreToolCallLifecycle } from './toolCallLifecycle';
 import { type StreamChunk } from './types/streaming';
@@ -93,9 +104,6 @@ const isAbortError = (error: unknown, abortController?: AbortController) =>
     (error.name === 'AbortError' ||
       error.message.includes('aborted') ||
       error.message.includes('cancelled')));
-
-const createAbortError = () =>
-  Object.assign(new Error('Compression cancelled'), { name: 'AbortError' });
 
 const getGoogleBlockedReason = (error: ChatMessageError): string | undefined => {
   const body = error.body as
@@ -177,6 +185,8 @@ export const createAgentExecutors = (context: {
   metadata?: Pick<MessageMetadata, 'trigger'>;
   messageKey: string;
   operationId: string;
+  /** Registry winners captured once for the enclosing operation. */
+  operationSkills?: OperationSkillSet['skills'];
   parentId: string;
   skipCreateFirstMessage?: boolean;
   /** ToolsEngine for expanding dynamically activated tools */
@@ -407,6 +417,28 @@ export const createAgentExecutors = (context: {
           topicId,
         },
         {
+          onAttemptReset: () => {
+            finalUsage = undefined;
+            finalToolCalls = undefined;
+            internal_dispatchMessage(
+              {
+                id: assistantMessageId,
+                type: 'updateMessage',
+                value: {
+                  content: '',
+                  imageList: undefined,
+                  metadata: {
+                    isMultimodal: undefined,
+                    tempDisplayContent: undefined,
+                  },
+                  reasoning: undefined,
+                  search: undefined,
+                  tools: undefined,
+                },
+              },
+              { operationId: context.operationId },
+            );
+          },
           onContentUpdate: (content, reasoning, contentMetadata) => {
             internal_dispatchMessage(
               {
@@ -492,13 +524,162 @@ export const createAgentExecutors = (context: {
 
       const messages = llmPayload.messages.filter((message) => message.id !== assistantMessageId);
 
+      const contextBudgetEvents: AgentEvent[] = [];
+      let contextBudgetAttemptState = state.metadata?.contextBudget?.attemptState as
+        | ContextBudgetAttemptState
+        | undefined;
+      const compressFinalPayload = async (
+        budgetPayload: ClientBudgetedChatPayload,
+        evaluation: ContextBudgetEvaluation,
+      ) => {
+        const compressionTrigger =
+          evaluation.decision.kind === 'compress' ? evaluation.decision.trigger : 'final-preflight';
+        const failedOutcome = {
+          afterTokens: evaluation.estimatedPromptTokens,
+          attempt: 1 as const,
+          beforeTokens: evaluation.estimatedPromptTokens,
+          code: 'SUMMARY_FAILED' as const,
+          outcome: 'failed' as const,
+          payloadFingerprint: evaluation.payloadFingerprint,
+          trigger: compressionTrigger,
+        };
+        const skippedOutcome = {
+          afterTokens: evaluation.estimatedPromptTokens,
+          attempt: 1 as const,
+          beforeTokens: evaluation.estimatedPromptTokens,
+          code: 'NO_CANDIDATES' as const,
+          outcome: 'skipped' as const,
+          payloadFingerprint: evaluation.payloadFingerprint,
+          trigger: compressionTrigger,
+        };
+
+        if (
+          agentConfigData.chatConfig?.enableContextCompression === false ||
+          !topicId ||
+          !agentId
+        ) {
+          return { outcome: failedOutcome, payload: budgetPayload };
+        }
+
+        const persistedIds = new Set(
+          (context.get().dbMessagesMap[context.messageKey] || [])
+            .map((message) => message.id)
+            .filter(Boolean),
+        );
+        const messageIds = evaluation.partition.candidateIds.filter((id) => persistedIds.has(id));
+        if (messageIds.length === 0) {
+          return { outcome: skippedOutcome, payload: budgetPayload };
+        }
+
+        const { operationId: compressionOperationId } = context.get().startOperation({
+          context: { ...fetchContext, messageId: assistantMessageId },
+          metadata: { messageCount: messageIds.length, startTime: Date.now() },
+          parentOperationId: context.operationId,
+          type: 'contextCompression',
+        });
+        const compressionModel = state.modelRuntimeConfig?.compressionModel ?? {
+          model: llmPayload.model,
+          provider: llmPayload.provider,
+        };
+        const transaction = await runClientContextCompressionTransaction({
+          abortController,
+          // Only persisted history may enter the persisted compression group. CE injections
+          // (system/memory/skills) remain in the provider payload as preserved messages.
+          candidateIds: messageIds,
+          compressionModel,
+          createGroup: () =>
+            messageService.createCompressionGroup({
+              agentId,
+              groupId,
+              messageIds,
+              threadId: operation.context.threadId,
+              topicId,
+            }),
+          failGroup: (messageGroupId) =>
+            messageService.failCompression({
+              agentId,
+              groupId,
+              messageGroupId,
+              threadId: operation.context.threadId,
+              topicId,
+            }),
+          finalizeGroup: (messageGroupId, summary) =>
+            messageService.finalizeCompression({
+              agentId,
+              content: summary,
+              groupId,
+              messageGroupId,
+              threadId: operation.context.threadId,
+              topicId,
+            }),
+          metadata: state.metadata,
+          rollbackGroup: (messageGroupId) =>
+            messageService.cancelCompression({
+              agentId,
+              groupId,
+              messageGroupId,
+              threadId: operation.context.threadId,
+              topicId,
+            }),
+          sourceMessages: budgetPayload.messages as UIChatMessage[],
+          tools: budgetPayload.tools,
+          trigger: compressionTrigger,
+        });
+
+        if (transaction.kind === 'failed') {
+          if (transaction.rollbackError) {
+            log(`${stagePrefix} Final compression rollback failed: %O`, transaction.rollbackError);
+          }
+          context.get().completeOperation(compressionOperationId, {
+            error: {
+              message:
+                transaction.error instanceof Error
+                  ? transaction.error.message
+                  : String(transaction.error ?? 'SUMMARY_FAILED'),
+              type: 'compression_failed',
+            },
+          });
+          return { outcome: transaction.outcome, payload: budgetPayload };
+        }
+
+        context.get().replaceMessages(transaction.finalizedMessages, {
+          context: operation.context,
+        });
+        context.get().completeOperation(compressionOperationId, { groupId: transaction.groupId });
+        contextBudgetEvents.push({
+          groupId: transaction.groupId,
+          parentMessageId: assistantMessageId,
+          type: 'compression_complete',
+        });
+        return {
+          outcome: transaction.outcome,
+          payload: {
+            ...budgetPayload,
+            messages: transaction.providerMessages,
+            providerMedia: collectClientProviderMediaTokenEstimates(transaction.providerMessages),
+          },
+        };
+      };
+
       await chatService.createAssistantMessageStream({
         abortController,
+        contextBudget: {
+          attemptState: contextBudgetAttemptState,
+          catalogSnapshot: state.metadata?.modelCatalogSnapshot,
+          compress: compressFinalPayload,
+          onAttemptState: (attemptState) => {
+            contextBudgetAttemptState = attemptState;
+          },
+          onProviderAttemptDiscard: () => handler.discardAttempt(),
+          operationId: state.operationId,
+          outputReserveTokens: 1024,
+        },
         params: {
           agentId: agentId || undefined,
           groupId,
           messages,
           model: llmPayload.model,
+          operationSkills: context.operationSkills,
           provider: llmPayload.provider,
           resolvedAgentConfig,
           topicId: topicId ?? undefined,
@@ -627,7 +808,18 @@ export const createAgentExecutors = (context: {
       );
 
       // Accumulate usage and cost to state
-      const newState = { ...state, messages: latestMessages };
+      const newState = {
+        ...state,
+        messages: latestMessages,
+        metadata: {
+          ...state.metadata,
+          contextBudget: {
+            ...state.metadata?.contextBudget,
+            attemptState: contextBudgetAttemptState,
+            catalogSnapshot: state.metadata?.modelCatalogSnapshot,
+          },
+        },
+      };
 
       if (currentStepUsage) {
         // Use UsageCounter to accumulate LLM usage and cost
@@ -652,7 +844,7 @@ export const createAgentExecutors = (context: {
         );
 
         return {
-          events: [],
+          events: contextBudgetEvents,
           newState,
           nextContext: {
             payload: {
@@ -674,7 +866,7 @@ export const createAgentExecutors = (context: {
       }
 
       return {
-        events: [],
+        events: contextBudgetEvents,
         newState,
         nextContext: {
           payload: {
@@ -823,6 +1015,55 @@ export const createAgentExecutors = (context: {
           })
           .finally(lifecycleSignal.cleanup);
         const { executionTimeMs: executionTime, result } = receipt;
+
+        const executionContext =
+          context.get().operations[context.operationId]?.metadata.executionContext;
+        const pathRequest = getRuntimePathConsentRequest({ state: result.state });
+        if (
+          !result.success &&
+          result.content === 'INTERVENTION_REQUIRED' &&
+          chatToolPayload.identifier === LocalSystemIdentifier &&
+          pathRequest &&
+          executionContext?.plan.kind === 'device' &&
+          executionContext.plan.target === 'local' &&
+          pathRequest.deviceId === executionContext.plan.deviceId &&
+          pathRequest.operationId === (executionContext.operationId ?? context.operationId) &&
+          pathRequest.topicId === opContext.topicId &&
+          state.userInterventionConfig?.approvalMode !== 'headless'
+        ) {
+          const updateContext = { operationId: context.operationId };
+          await context.get().optimisticUpdateToolMessage(
+            toolMessageId,
+            {
+              content: '',
+              pluginError: null,
+              pluginState: result.state,
+            },
+            updateContext,
+          );
+          await context.get().optimisticUpdateMessagePlugin(
+            toolMessageId,
+            {
+              intervention: { status: 'pending' },
+            },
+            updateContext,
+          );
+          return {
+            events: [
+              {
+                type: 'human_approve_required',
+                operationId: state.operationId,
+                pendingToolsCalling: [chatToolPayload],
+              },
+            ],
+            newState: {
+              ...state,
+              messages: context.get().dbMessagesMap[context.messageKey] || [],
+              status: 'waiting_for_human',
+              pendingToolsCalling: [chatToolPayload],
+            },
+          };
+        }
 
         const isSuccess = result.success;
 
@@ -1890,8 +2131,18 @@ export const createAgentExecutors = (context: {
       const sessionLogId = `${state.operationId}:${state.stepCount}`;
       const stagePrefix = `[${sessionLogId}][compress_context]`;
 
-      const { messages, currentTokenCount } = (instruction as AgentInstructionCompressContext)
-        .payload;
+      const { payload } = instruction as AgentInstructionCompressContext;
+      const { messages, currentTokenCount } = payload;
+      const budgetPayload = payload as AgentInstructionCompressContext['payload'] & {
+        candidateIds?: readonly string[];
+        catalogSnapshot?: ModelCatalogSnapshot;
+        observedWindowTokens?: number;
+        outputReserveTokens?: number;
+        payloadFingerprint?: string;
+        providerMedia?: ClientBudgetedChatPayload['providerMedia'];
+        sentPayloadFingerprints?: readonly string[];
+        trigger?: 'final-preflight' | 'manual' | 'provider-error' | 'threshold';
+      };
 
       // Get topicId from operation context (same as agentId)
       const { topicId } = getOperationContext();
@@ -1903,10 +2154,48 @@ export const createAgentExecutors = (context: {
       );
 
       const events: AgentEvent[] = [];
+      const inputMeasurement = countContextTokens({
+        messages,
+        providerMedia: budgetPayload.providerMedia,
+        tools: state.tools,
+      });
+      const payloadFingerprint =
+        budgetPayload.payloadFingerprint ?? inputMeasurement.payloadFingerprint;
+      const compressionTrigger = budgetPayload.trigger ?? 'threshold';
+      const forwardedBudgetContext = {
+        catalogSnapshot: budgetPayload.catalogSnapshot,
+        observedWindowTokens: budgetPayload.observedWindowTokens,
+        outputReserveTokens: budgetPayload.outputReserveTokens,
+        providerMedia: budgetPayload.providerMedia,
+        sentPayloadFingerprints: budgetPayload.sentPayloadFingerprints,
+      };
+      const resultPayload = (
+        outcome: 'failed' | 'skipped',
+        compressedMessages: UIChatMessage[],
+        parentMessageId?: string,
+      ) => ({
+        ...forwardedBudgetContext,
+        afterTokens: currentTokenCount,
+        attempt: 1 as const,
+        beforeTokens: currentTokenCount,
+        code: outcome === 'failed' ? ('SUMMARY_FAILED' as const) : ('NO_CANDIDATES' as const),
+        compressedMessages,
+        groupId: '',
+        outcome,
+        parentMessageId,
+        payloadFingerprint,
+        skipped: outcome === 'skipped' || undefined,
+        trigger: compressionTrigger,
+      });
 
       // Get message IDs from dbMessagesMap (raw db messages)
       const dbMessages = context.get().dbMessagesMap[context.messageKey] || [];
-      const messageIds = getCompressionCandidateMessageIds(dbMessages);
+      const requestedCandidates = new Set(
+        budgetPayload.candidateIds ?? getCompressionCandidateMessageIds(dbMessages),
+      );
+      const messageIds = getCompressionCandidateMessageIds(dbMessages).filter((id) =>
+        requestedCandidates.has(id),
+      );
 
       if (!topicId || messageIds.length === 0) {
         // No topicId or no messages, skip compression
@@ -1919,13 +2208,7 @@ export const createAgentExecutors = (context: {
           events: [],
           newState: state,
           nextContext: {
-            payload: {
-              compressedMessages: messages,
-              compressedTokenCount: currentTokenCount,
-              groupId: '',
-              originalTokenCount: currentTokenCount,
-              skipped: true,
-            } as GeneralAgentCompressionResultPayload,
+            payload: resultPayload('skipped', messages),
             phase: 'compression_result',
             session: {
               messageCount: state.messages.length,
@@ -1959,84 +2242,74 @@ export const createAgentExecutors = (context: {
         type: 'contextCompression',
       });
 
+      const opContext = getOperationContext();
+      const agentId = getEffectiveAgentId();
+      let summaryOperationId: string | undefined;
+
       try {
-        const opContext = getOperationContext();
-        // agentId is guaranteed to exist in compression context
-        const agentId = getEffectiveAgentId()!;
-
-        // 1. Create compression group with placeholder content
-        const result = await messageService.createCompressionGroup({
-          agentId,
-          messageIds,
-          topicId,
+        if (!agentId) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+        const compressionModel = state.modelRuntimeConfig?.compressionModel;
+        if (!compressionModel?.model || !compressionModel.provider) {
+          throw new Error('SUMMARY_MODEL_REQUIRED');
+        }
+        const summaryOperation = context.get().startOperation({
+          context: { ...opContext, messageId: assistantMessageId },
+          parentOperationId: compressOperationId,
+          type: 'generateSummary',
         });
-        const { messageGroupId, messages: initialCompressedMessages, messagesToSummarize } = result;
-
-        // 2. Update UI with compressed messages immediately
-        context.get().replaceMessages(initialCompressedMessages, { context: opContext });
-
-        // 3. Get model/provider from compressionModel config
-        const { model, provider } = state.modelRuntimeConfig?.compressionModel || {};
-
-        log(
-          `${stagePrefix} Created group=%s, generating summary for %d messages by %s`,
-          messageGroupId,
-          messagesToSummarize.length,
-          `${provider}/${model}`,
-        );
-
-        // 4. Build compression prompt and generate summary with streaming UI updates
-        const compressionPayload = chainCompressContext(messagesToSummarize);
-        let summaryContent = '';
-
-        // Start generateSummary operation attached to the compressed group message
-        const { abortController: summaryAbortController, operationId: summaryOperationId } = context
-          .get()
-          .startOperation({
-            context: { ...getOperationContext(), messageId: messageGroupId },
-            type: 'generateSummary',
-            parentOperationId: compressOperationId,
-          });
-
-        await chatService.fetchPresetTaskResult({
-          abortController: summaryAbortController,
-          params: { ...compressionPayload, model, provider },
-          onMessageHandle: (chunk) => {
-            if (chunk.type === 'text') {
-              summaryContent += chunk.text || '';
-              // Stream update the compression group message content
-              context
-                .get()
-                .internal_dispatchMessage(
-                  { id: messageGroupId, type: 'updateMessage', value: { content: summaryContent } },
-                  { operationId: summaryOperationId },
-                );
-            }
-          },
-          onError: (e) => {
-            console.error(e);
-            context.get().completeOperation(summaryOperationId, {
-              error: { message: String(e), type: 'summary_generation_failed' },
-            });
-          },
+        summaryOperationId = summaryOperation.operationId;
+        const transaction = await runClientContextCompressionTransaction({
+          abortController: summaryOperation.abortController,
+          candidateIds: messageIds,
+          compressionModel,
+          createGroup: () =>
+            messageService.createCompressionGroup({
+              agentId,
+              groupId: opContext.groupId,
+              messageIds,
+              threadId: opContext.threadId,
+              topicId,
+            }),
+          failGroup: (messageGroupId) =>
+            messageService.failCompression({
+              agentId,
+              groupId: opContext.groupId,
+              messageGroupId,
+              threadId: opContext.threadId,
+              topicId,
+            }),
+          finalizeGroup: (messageGroupId, summary) =>
+            messageService.finalizeCompression({
+              agentId,
+              content: summary,
+              groupId: opContext.groupId,
+              messageGroupId,
+              threadId: opContext.threadId,
+              topicId,
+            }),
+          metadata: state.metadata,
+          rollbackGroup: (messageGroupId) =>
+            messageService.cancelCompression({
+              agentId,
+              groupId: opContext.groupId,
+              messageGroupId,
+              threadId: opContext.threadId,
+              topicId,
+            }),
+          sourceMessages: messages,
+          tools: state.tools,
+          trigger: compressionTrigger,
         });
+        if (transaction.kind === 'failed') {
+          if (transaction.rollbackError) {
+            log(`${stagePrefix} Compression rollback failed: %O`, transaction.rollbackError);
+          }
+          throw transaction.error ?? new Error('SUMMARY_FAILED');
+        }
+        context.get().completeOperation(summaryOperation.operationId);
 
-        if (summaryAbortController.signal.aborted) throw createAbortError();
-
-        log(`${stagePrefix} Generated summary: %d chars`, summaryContent.length);
-
-        // 5. Finalize compression with actual content
-        const finalResult = await messageService.finalizeCompression({
-          agentId,
-          content: summaryContent,
-          messageGroupId,
-          topicId,
-        });
-        // Complete the generateSummary operation
-        context.get().completeOperation(summaryOperationId);
-
-        const compressedMessages = finalResult.messages || initialCompressedMessages;
-        const groupId = messageGroupId;
+        const compressedMessages = transaction.finalizedMessages;
+        const groupId = transaction.groupId;
         // Use the latest assistant message ID (before compression) as parentMessageId for next call_llm
         const parentMessageId = assistantMessageId;
 
@@ -2054,21 +2327,43 @@ export const createAgentExecutors = (context: {
 
         events.push({ type: 'compression_complete', groupId, parentMessageId });
 
-        // Calculate new token count
         const compressedTokenCount = countContextTokens({
           messages: compressedMessages,
-        }).rawTotal;
+          providerMedia: collectClientProviderMediaTokenEstimates(compressedMessages),
+          tools: state.tools,
+        }).adjustedTotal;
 
         return {
           events,
-          newState: { ...state, messages: compressedMessages },
+          newState: {
+            ...state,
+            messages: compressedMessages,
+            metadata: {
+              ...state.metadata,
+              contextBudget: {
+                ...state.metadata?.contextBudget,
+                attemptState: {
+                  compressionAttempt: 1,
+                  payloadFingerprint,
+                  sentPayloadFingerprints: budgetPayload.sentPayloadFingerprints ?? [],
+                },
+                catalogSnapshot:
+                  budgetPayload.catalogSnapshot ?? state.metadata?.modelCatalogSnapshot,
+              },
+            },
+          },
           nextContext: {
             payload: {
+              ...forwardedBudgetContext,
+              afterTokens: compressedTokenCount,
+              attempt: 1,
+              beforeTokens: currentTokenCount,
               compressedMessages,
-              compressedTokenCount,
               groupId,
-              originalTokenCount: currentTokenCount,
+              outcome: 'compressed',
               parentMessageId,
+              payloadFingerprint,
+              trigger: compressionTrigger,
             } as GeneralAgentCompressionResultPayload,
             phase: 'compression_result',
             session: {
@@ -2080,6 +2375,18 @@ export const createAgentExecutors = (context: {
           } as AgentRuntimeContext,
         };
       } catch (error) {
+        if (
+          summaryOperationId &&
+          context.get().operations[summaryOperationId]?.status === 'running'
+        ) {
+          context.get().completeOperation(summaryOperationId, {
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+              type: 'summary_generation_failed',
+            },
+          });
+        }
+
         if (isAbortError(error)) {
           log(`${stagePrefix} Compression cancelled`);
 
@@ -2093,10 +2400,7 @@ export const createAgentExecutors = (context: {
             events,
             newState: state,
             nextContext: {
-              payload: {
-                compressedMessages: messages,
-                skipped: true,
-              } as GeneralAgentCompressionResultPayload,
+              payload: resultPayload('failed', messages, assistantMessageId),
               phase: 'compression_result',
               session: {
                 messageCount: state.messages.length,
@@ -2125,10 +2429,7 @@ export const createAgentExecutors = (context: {
           events,
           newState: state,
           nextContext: {
-            payload: {
-              compressedMessages: messages,
-              skipped: true,
-            } as GeneralAgentCompressionResultPayload,
+            payload: resultPayload('failed', messages, assistantMessageId),
             phase: 'compression_result',
             session: {
               messageCount: state.messages.length,

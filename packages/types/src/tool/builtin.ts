@@ -1,6 +1,8 @@
 import { type ReactNode } from 'react';
 import { z } from 'zod';
 
+import type { ExecutionContext } from '../executionContext';
+import type { SkillRef } from '../projectWorkspace';
 import { type RuntimeStepContext } from '../stepContext';
 import { type HumanInterventionConfig, type HumanInterventionPolicy } from './intervention';
 import { HumanInterventionConfigSchema, HumanInterventionPolicySchema } from './intervention';
@@ -456,6 +458,12 @@ export interface BuiltinToolContext {
   documentId?: string | null;
 
   /**
+   * Immutable workspace and execution plan captured for the root agent run.
+   * Desktop executors project this into the main-process IPC boundary.
+   */
+  executionContext?: ExecutionContext;
+
+  /**
    * The current group ID (only available in group chat context)
    * Used by group management tools to access group member information
    */
@@ -488,6 +496,9 @@ export interface BuiltinToolContext {
    * The current operation ID (for abort signal)
    */
   operationId?: string;
+
+  /** Skill registry winners frozen for the root runtime operation. */
+  operationSkills?: SkillRef[];
 
   /**
    * Current plugin state for this tool message

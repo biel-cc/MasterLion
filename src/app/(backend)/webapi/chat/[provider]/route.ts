@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
+import { parseExceededContextWindowError } from '@lobechat/agent-runtime';
 import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AGENT_RUNTIME_ERROR_SET } from '@lobechat/model-runtime';
 import { ChatErrorType } from '@lobechat/types';
 
 import { checkAuth } from '@/app/(backend)/middleware/auth';
+import { AiModelModel } from '@/database/models/aiModel';
 import { getLangfuseConfig } from '@/envs/langfuse';
 import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { type ChatStreamPayload } from '@/types/openai/chat';
@@ -24,6 +26,28 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
   const inboundTracePayload = getTracePayload(req);
   const operationId = inboundTracePayload?.traceId || randomUUID();
   let traceOptions: ReturnType<typeof createTraceOptions> | undefined;
+  let requestedModel: string | undefined;
+  const recordedLimits = new Set<number>();
+  const recordContextWindowRejection = async (error: unknown) => {
+    const observed = parseExceededContextWindowError(error);
+    if (!requestedModel || !observed?.observedLimitTokens) return;
+    if (recordedLimits.has(observed.observedLimitTokens)) return;
+    recordedLimits.add(observed.observedLimitTokens);
+    try {
+      await new AiModelModel(serverDB, userId).recordContextWindowRejection({
+        contextWindowRejectionTokens: observed.observedLimitTokens,
+        modelId: requestedModel,
+        providerId: provider,
+      });
+    } catch (persistenceError) {
+      console.warn('[context_window_evidence_failed]', {
+        error: serializeProviderError(persistenceError),
+        model: requestedModel,
+        operationId,
+        provider,
+      });
+    }
+  };
 
   try {
     const workspaceId = await resolveValidWorkspaceIdFromRequest({ req, serverDB, userId });
@@ -34,6 +58,7 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
     // ============  2. create chat completion   ============ //
 
     const data = (await req.json()) as ChatStreamPayload;
+    requestedModel = data.model;
 
     const { ENABLE_LANGFUSE } = getLangfuseConfig();
     if (inboundTracePayload?.enabled || ENABLE_LANGFUSE) {
@@ -57,6 +82,13 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
         operation: (signal) =>
           modelRuntime.chat(data, {
             ...traceOptions,
+            callback: {
+              ...traceOptions?.callback,
+              onError: async (error) => {
+                await recordContextWindowRejection(error);
+                await traceOptions?.callback?.onError?.(error);
+              },
+            },
             headers: Object.fromEntries(responseHeaders.entries()),
             metadata: { operationId, provider },
             requestHeaders: { 'X-Request-ID': operationId },
@@ -90,6 +122,7 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
     const error = errorContent || e;
     const safeError = serializeProviderError(error);
 
+    await recordContextWindowRejection(error);
     await traceOptions?.callback?.onError?.({ ...safeError, operationId, provider });
     await traceOptions?.callback?.onFinal?.({} as any);
 

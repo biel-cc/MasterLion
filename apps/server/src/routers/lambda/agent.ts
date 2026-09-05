@@ -18,6 +18,7 @@ import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentService } from '@/server/services/agent';
 import { EditLockService } from '@/server/services/editLock';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 import { publishResourceEvent } from '@/server/services/resourceEvents';
 import { TransferErrorCode } from '@/types/transferError';
 
@@ -37,6 +38,18 @@ const agentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
     },
   });
 });
+
+const assertSafeAgentExecutionEnv = (config: unknown): void => {
+  try {
+    assertConfigurableAgentExecutionEnv(config);
+  } catch (error) {
+    throw new TRPCError({
+      cause: error,
+      code: 'BAD_REQUEST',
+      message: error instanceof Error ? error.message : 'INVALID_AGENT_ENV',
+    });
+  }
+};
 
 export const agentRouter = router({
   /**
@@ -75,6 +88,7 @@ export const agentRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      assertSafeAgentExecutionEnv(input.config);
       const agent = await ctx.agentModel.create({
         ...input.config,
         sessionGroupId: input.groupId,
@@ -127,6 +141,7 @@ export const agentRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      assertSafeAgentExecutionEnv(input.config);
       // Create the agent entity only (no session)
       const agent = await ctx.agentModel.create(input.config ?? {});
 
@@ -450,6 +465,7 @@ export const agentRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      assertSafeAgentExecutionEnv(input.value);
       // Collaborative edit lock: reject writes to a workspace agent another
       // member is actively editing. Inert until a client acquires the lock.
       if (ctx.workspaceId) {

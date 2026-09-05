@@ -344,6 +344,49 @@ describe('DeviceGateway', () => {
       expect(mockClient.executeMcpCall).toHaveBeenCalledWith({ ...mcpCall, timeout: 60_000 });
     });
 
+    it('should forward frozen execution authority and trace ids', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.executeMcpCall.mockResolvedValue({ content: 'ok', success: true });
+      const executionContext: NonNullable<
+        Parameters<DeviceGateway['executeMcpCall']>[0]['executionContext']
+      > = {
+        accessRoots: [
+          {
+            deviceId: 'dev-1',
+            modes: ['read'],
+            operationId: 'op-1',
+            rootPath: '/approved/project',
+            scope: 'primary',
+            source: 'workspace',
+            topicId: 'topic-1',
+          },
+        ],
+        cwd: '/approved/project',
+        env: { TOKEN: 'resolved-secret' },
+        workspaceKind: 'device',
+        workspaceRootPath: '/approved/project',
+      };
+
+      const proxy = new DeviceGateway();
+      await proxy.executeMcpCall({
+        ...mcpCall,
+        executionContext,
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+
+      expect(mockClient.executeMcpCall).toHaveBeenCalledWith({
+        ...mcpCall,
+        executionContext,
+        operationId: 'op-1',
+        timeout: 30_000,
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+    });
+
     it('should return error result on exception', async () => {
       mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
       mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
@@ -557,6 +600,43 @@ describe('DeviceGateway', () => {
         { deviceId: 'dev-1', timeout: 60_000, userId: 'user-1' },
         { method: 'initWorkspace', params: { scope: '/proj' } },
       );
+    });
+  });
+
+  describe('cleanupScratchWorkspace', () => {
+    it('passes only the topic identity to the owning device RPC', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({
+        data: { removed: true, root: '/scratch/topic-1' },
+        success: true,
+      });
+
+      const result = await new DeviceGateway().cleanupScratchWorkspace({
+        deviceId: 'dev-1',
+        topicId: 'topic-1',
+        userId: 'user-1',
+      });
+
+      expect(result).toEqual({ removed: true, root: '/scratch/topic-1' });
+      expect(mockClient.invokeRpc).toHaveBeenCalledWith(
+        { deviceId: 'dev-1', timeout: 8000, userId: 'user-1' },
+        { method: 'cleanupScratchWorkspace', params: { topicId: 'topic-1' } },
+      );
+    });
+
+    it('fails closed when the device cannot confirm its scratch root', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({ error: 'offline', success: false });
+
+      await expect(
+        new DeviceGateway().cleanupScratchWorkspace({
+          deviceId: 'dev-1',
+          topicId: 'topic-1',
+          userId: 'user-1',
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -908,6 +988,43 @@ describe('DeviceGateway', () => {
           },
         );
       });
+    });
+  });
+
+  describe('resolveRealPath', () => {
+    it('returns the device-authored canonical path', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({
+        data: { path: '/canonical/project' },
+        success: true,
+      });
+
+      const result = await new DeviceGateway().resolveRealPath({
+        deviceId: 'dev-1',
+        path: '/project-link',
+        userId: 'user-1',
+      });
+
+      expect(result).toBe('/canonical/project');
+      expect(mockClient.invokeRpc).toHaveBeenCalledWith(
+        { deviceId: 'dev-1', timeout: 8000, userId: 'user-1' },
+        { method: 'resolveRealPath', params: { path: '/project-link' } },
+      );
+    });
+
+    it('fails closed when the device cannot prove the path', async () => {
+      mockEnv.DEVICE_GATEWAY_URL = 'https://gateway.example.com';
+      mockEnv.DEVICE_GATEWAY_SERVICE_TOKEN = 'token';
+      mockClient.invokeRpc.mockResolvedValue({ error: 'offline', success: false });
+
+      await expect(
+        new DeviceGateway().resolveRealPath({
+          deviceId: 'dev-1',
+          path: '/project-link',
+          userId: 'user-1',
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 

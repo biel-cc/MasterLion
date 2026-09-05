@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./currency": "./src/currency.ts",
     "./desktopGlobalShortcuts": "./src/desktopGlobalShortcuts.ts",
+    "./executionEnv": "./src/executionEnv.ts",
     "./hotkeys": "./src/hotkeys.ts",
     "./rbac": "./src/rbac.ts",
     "./visualRef": "./src/visualRef.ts"

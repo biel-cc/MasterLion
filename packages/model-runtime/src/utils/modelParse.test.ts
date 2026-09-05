@@ -627,6 +627,28 @@ describe('modelParse', () => {
       expect(result[0].type).toBe('chat');
     });
 
+    it('classifies rerank and embedding before vision-shaped family names', async () => {
+      const result = await processMultiProviderModelList(
+        [{ id: 'qwen3-vl-rerank' }, { id: 'bge-reranker-v2' }, { id: 'text-embedding-3-small' }],
+        'newapi',
+      );
+
+      expect(result.map(({ id, type }) => ({ id, type }))).toEqual([
+        { id: 'qwen3-vl-rerank', type: 'embedding' },
+        { id: 'bge-reranker-v2', type: 'embedding' },
+        { id: 'text-embedding-3-small', type: 'embedding' },
+      ]);
+    });
+
+    it('retains a normal model when provider metadata explicitly exposes chat', async () => {
+      const result = await processMultiProviderModelList(
+        [{ id: 'company-model-v2', supported_endpoint_types: ['chat/completions'] }],
+        'newapi',
+      );
+
+      expect(result).toEqual([expect.objectContaining({ id: 'company-model-v2', type: 'chat' })]);
+    });
+
     it('should correctly process a model from a non-OpenAI provider not in default list, relying on keywords', async () => {
       // This model ('claude-3-haiku-unlisted') is NOT in mockDefaultModelList.
       // It should be detected as 'anthropic'.

@@ -307,7 +307,12 @@ export abstract class ComputerRuntime {
       }
 
       const r = result.result || {};
-      const commandSuccess = typeof r.success === 'boolean' ? r.success : result.success;
+      const exitCode = r.exitCode ?? r.exit_code;
+      // A successful IPC/transport response can still carry a failed process.
+      // Downstream scratch finalization must observe the command's outcome.
+      const commandSuccess =
+        (typeof r.success === 'boolean' ? r.success : result.success) &&
+        !(typeof exitCode === 'number' && exitCode !== 0);
 
       const state: RunCommandState = {
         commandId: r.commandId || r.shell_id,
@@ -329,7 +334,7 @@ export abstract class ComputerRuntime {
         success: commandSuccess,
       });
 
-      return { content, state, success: true };
+      return { content, state, success: commandSuccess };
     } catch (error) {
       return this.handleError(error);
     }

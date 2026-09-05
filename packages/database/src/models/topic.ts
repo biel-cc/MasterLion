@@ -131,6 +131,14 @@ export interface ListTopicsForMemoryExtractorCursor {
   id: string;
 }
 
+export interface TopicDeletionFilter {
+  agentId?: string;
+  ids?: string[];
+  sessionId?: string | null;
+}
+
+export type TopicDeletionCandidate = Pick<TopicItem, 'id' | 'metadata'>;
+
 // Status priority for the sidebar "group by status" ordering. Lower rank =
 // higher in the list. A NULL / unknown status falls through to `active` (3),
 // matching the client which treats a missing status as active. Keep this in
@@ -435,7 +443,7 @@ export class TopicModel {
 
     // Remove internal fields before returning
 
-    const cleanItems = items.map(({ agentId, sessionId, ...rest }) => rest);
+    const cleanItems = items.map(({ agentId: _agentId, sessionId: _sessionId, ...rest }) => rest);
 
     logTiming(timing, 'db.topic.query:done', {
       itemCount: cleanItems.length,
@@ -450,6 +458,32 @@ export class TopicModel {
     return this.db.query.topics.findFirst({
       where: and(eq(topics.id, id), this.ownership()),
     });
+  };
+
+  /**
+   * Select the minimal topic evidence required by the server-side deletion
+   * orchestrator. Bulk routes must inspect every candidate before deleting it
+   * because a scratch-bound topic owns a device directory that is not covered
+   * by database cascades.
+   */
+  listForDeletion = async (filter: TopicDeletionFilter = {}): Promise<TopicDeletionCandidate[]> => {
+    if (filter.ids && filter.ids.length === 0) return [];
+
+    return this.db
+      .select({ id: topics.id, metadata: topics.metadata })
+      .from(topics)
+      .where(
+        and(
+          this.ownership(),
+          filter.ids ? inArray(topics.id, filter.ids) : undefined,
+          filter.agentId ? eq(topics.agentId, filter.agentId) : undefined,
+          filter.sessionId === undefined
+            ? undefined
+            : filter.sessionId === null
+              ? isNull(topics.sessionId)
+              : eq(topics.sessionId, filter.sessionId),
+        ),
+      );
   };
 
   /**
@@ -920,6 +954,39 @@ export class TopicModel {
       .where(and(eq(topics.id, id), this.ownership()))
       .returning();
   };
+
+  /**
+   * Finish one persisted runtime without racing a newer run on the same topic.
+   *
+   * The operation-id predicate and both terminal mutations live in one UPDATE:
+   * an older completion therefore cannot clear the reconnect pointer or status
+   * of a newer operation that started while it was winding down.
+   */
+  completeRunningOperation = async (
+    id: string,
+    operationId: string,
+    status: Extract<ChatTopicStatus, 'active' | 'failed'>,
+  ) =>
+    this.db
+      .update(topics)
+      .set({
+        metadata: sql<ChatTopicMetadata>`jsonb_set(
+          COALESCE(${topics.metadata}, '{}'::jsonb),
+          '{runningOperation}',
+          'null'::jsonb,
+          true
+        )`,
+        status,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(topics.id, id),
+          this.ownership(),
+          eq(sql<string>`${topics.metadata}->'runningOperation'->>'operationId'`, operationId),
+        ),
+      )
+      .returning();
 
   /**
    * Move multiple topics (and all their messages) to another agent.

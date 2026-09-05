@@ -12,10 +12,18 @@ import { useAgentStore } from '@/store/agent';
 import { PortalViewType } from '@/store/chat/slices/portal/initialState';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
+import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { useSessionStore } from '@/store/session';
 import { type ChatTopic } from '@/types/topic';
 
 import { useChatStore } from '../../store';
+
+const platform = vi.hoisted(() => ({ desktop: true }));
+vi.mock('@/const/version', () => ({
+  get isDesktop() {
+    return platform.desktop;
+  },
+}));
 
 // Mock @/libs/swr mutate
 vi.mock('@/libs/swr', async () => {
@@ -67,6 +75,7 @@ vi.mock('i18next', () => ({
 }));
 
 beforeEach(() => {
+  platform.desktop = true;
   // Setup initial state and mocks before each test
   vi.clearAllMocks();
   useChatStore.setState(
@@ -82,6 +91,7 @@ beforeEach(() => {
     false,
   );
   useAgentStore.setState({ agentDocumentsMap: {} });
+  useProjectWorkspaceStore.setState({ draftByConversationKey: {} });
   useSessionStore.setState(
     {
       activeId: 'inbox',
@@ -100,6 +110,53 @@ afterEach(() => {
 });
 
 describe('topic action', () => {
+  it.each([true, false])(
+    'creates an editable header draft with an inherited project only when present (%s)',
+    async (hasProject) => {
+      const key = buildDraftConversationKey({ agentId: 'agent-header' });
+      useProjectWorkspaceStore.setState({
+        topicStatesById: hasProject
+          ? {
+              'topic-header-source': {
+                workspace: {
+                  deviceId: 'device-1',
+                  id: 'ws-header',
+                  kind: 'device',
+                  rootPath: '/header-project',
+                },
+                snapshot: {
+                  boundDeviceId: 'device-1',
+                  target: 'local',
+                  targetCapturedAt: '2026-09-05T00:00:00.000Z',
+                  version: 1,
+                  workspaceId: 'ws-header',
+                  workspaceKind: 'device',
+                },
+              },
+            }
+          : {},
+      });
+      useChatStore.setState({
+        activeAgentId: 'agent-header',
+        activeTopicId: 'topic-header-source',
+      });
+      vi.spyOn(useChatStore.getState(), 'switchTopic').mockResolvedValue(undefined);
+      await act(async () => {
+        await useChatStore.getState().openNewTopicFromHeader();
+      });
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({
+        runtimeEditable: true,
+        target: 'local',
+      });
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]?.workspaceId).toBe(
+        hasProject ? 'ws-header' : undefined,
+      );
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[key]?.legacyWorkingDirectory,
+      ).toBeUndefined();
+    },
+  );
+
   describe('openNewTopicOrSaveTopic', () => {
     it('should call switchTopic if activeTopicId exists', async () => {
       const { result } = renderHook(() => useChatStore());
@@ -143,6 +200,180 @@ describe('topic action', () => {
       });
 
       expect(disableAllFilesSpy).toHaveBeenCalledOnce();
+    });
+
+    it('starts an unbound local topic when the global action replaces an empty new-topic page', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        draftByConversationKey: {
+          [draftKey]: {
+            target: 'local',
+            targetDeviceId: 'device-1',
+            updatedAt: Date.now(),
+            workspaceId: 'workspace-1',
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: undefined });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+      });
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.workspaceId,
+      ).toBeUndefined();
+    });
+
+    it('inherits the project of the topic currently being viewed', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        topicStatesById: {
+          'topic-project': {
+            snapshot: {
+              boundDeviceId: 'device-1',
+              target: 'local',
+              targetCapturedAt: '2026-09-03T00:00:00.000Z',
+              version: 1,
+              workspaceBoundAt: '2026-09-03T00:00:00.000Z',
+              workspaceId: 'workspace-1',
+              workspaceKind: 'device',
+            },
+            workspace: {
+              deviceId: 'device-1',
+              id: 'workspace-1',
+              kind: 'device',
+              rootPath: '/projects/acme',
+            },
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-project' });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+        targetDeviceId: 'device-1',
+        workspaceId: 'workspace-1',
+      });
+    });
+
+    it('inherits an old-server project that only stored a working directory', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+
+      await act(async () => {
+        useChatStore.setState({
+          activeAgentId: 'agent-1',
+          activeTopicId: 'topic-legacy',
+          topicDataMap: {
+            [topicMapKey({ agentId: 'agent-1' })]: {
+              currentPage: 1,
+              hasMore: false,
+              items: [
+                {
+                  createdAt: Date.now(),
+                  id: 'topic-legacy',
+                  metadata: { workingDirectory: '/projects/legacy' },
+                  title: 'Legacy project',
+                  updatedAt: Date.now(),
+                } as ChatTopic,
+              ],
+              pageSize: 20,
+              total: 1,
+            },
+          },
+        });
+        await result.current.openNewTopicOrSaveTopic();
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        legacyWorkingDirectory: '/projects/legacy',
+        target: 'local',
+      });
+    });
+
+    it.each(['scratch', 'sandbox'] as const)(
+      'never inherits a %s workspace into a new topic',
+      async (workspaceKind) => {
+        const { result } = renderHook(() => useChatStore());
+        const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+        useProjectWorkspaceStore.setState({
+          topicStatesById: {
+            'topic-temporary': {
+              snapshot: {
+                boundDeviceId: workspaceKind === 'scratch' ? 'device-1' : undefined,
+                target: workspaceKind === 'scratch' ? 'local' : 'sandbox',
+                targetCapturedAt: '2026-09-03T00:00:00.000Z',
+                version: 1,
+                workspaceId: 'workspace-temporary',
+                workspaceKind,
+              },
+              workspace: {
+                deviceId: workspaceKind === 'scratch' ? 'device-1' : undefined,
+                id: 'workspace-temporary',
+                kind: workspaceKind,
+                rootPath: workspaceKind === 'scratch' ? '/tmp/topic' : '/workspace',
+              },
+            },
+          },
+        });
+
+        await act(async () => {
+          useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-temporary' });
+          await result.current.openNewTopicOrSaveTopic();
+        });
+
+        expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+          target: 'local',
+        });
+        expect(
+          useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.workspaceId,
+        ).toBeUndefined();
+      },
+    );
+  });
+
+  describe('startNewTopic', () => {
+    it('replaces stale state with the explicit project selected by a sidebar entry', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      useProjectWorkspaceStore.setState({
+        draftByConversationKey: {
+          [draftKey]: {
+            target: 'sandbox',
+            updatedAt: Date.now(),
+            workspaceId: 'workspace-stale',
+            runtimeEditable: true,
+          },
+        },
+      });
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId: 'agent-1', activeTopicId: 'topic-current' });
+        await result.current.startNewTopic({
+          target: 'local',
+          targetDeviceId: 'device-1',
+          workspaceId: 'workspace-project',
+        });
+      });
+
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'local',
+        targetDeviceId: 'device-1',
+        workspaceId: 'workspace-project',
+      });
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.runtimeEditable,
+      ).toBeUndefined();
     });
   });
   describe('saveToTopic', () => {
@@ -788,6 +1019,65 @@ describe('topic action', () => {
       expect(refreshTopicSpy).toHaveBeenCalled();
     });
   });
+  describe('updateTopicStatus', () => {
+    it('persists status transitions for the same topic in invocation order', async () => {
+      const agentId = 'agent-id';
+      const topicId = 'topic-id';
+      let releaseRunningWrite: (() => void) | undefined;
+      const runningWrite = new Promise<void>((resolve) => {
+        releaseRunningWrite = resolve;
+      });
+      const updateTopicSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockImplementationOnce(() => runningWrite as any)
+        .mockResolvedValueOnce(undefined as any);
+
+      useChatStore.setState({
+        activeAgentId: agentId,
+        topicDataMap: {
+          [topicMapKey({ agentId })]: {
+            currentPage: 1,
+            hasMore: false,
+            isLoadingMore: false,
+            items: [
+              {
+                createdAt: 0,
+                favorite: false,
+                id: topicId,
+                status: 'active',
+                title: 'Topic',
+                updatedAt: 0,
+              },
+            ],
+            pageSize: 20,
+            total: 1,
+          },
+        },
+      } as any);
+
+      const { result } = renderHook(() => useChatStore());
+      let markRunning!: Promise<void>;
+      let markActive!: Promise<void>;
+
+      act(() => {
+        markRunning = result.current.updateTopicStatus({ agentId, status: 'running', topicId });
+        markActive = result.current.updateTopicStatus({ agentId, status: 'active', topicId });
+      });
+
+      await Promise.resolve();
+      expect(updateTopicSpy).toHaveBeenCalledTimes(1);
+      expect(updateTopicSpy).toHaveBeenNthCalledWith(1, topicId, { status: 'running' });
+
+      releaseRunningWrite?.();
+      await Promise.all([markRunning, markActive]);
+
+      expect(updateTopicSpy).toHaveBeenCalledTimes(2);
+      expect(updateTopicSpy).toHaveBeenNthCalledWith(2, topicId, { status: 'active' });
+      expect(useChatStore.getState().topicDataMap[topicMapKey({ agentId })].items[0].status).toBe(
+        'active',
+      );
+    });
+  });
   describe('switchTopic', () => {
     it('should update activeTopicId and call refreshMessages', async () => {
       const topicId = 'topic-id';
@@ -1404,6 +1694,7 @@ describe('topic action', () => {
       });
 
       expect(createTopicSpy).toHaveBeenCalledWith({
+        executionIntent: { platform: 'desktop', target: 'local' },
         sessionId: activeAgentId,
         messages: messages.map((m) => m.id),
         title: 'defaultTitle',

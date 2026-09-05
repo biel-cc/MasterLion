@@ -1,3 +1,4 @@
+export { type SkillRegistryListModel,toSkillRegistryListModel } from './registryModel';
 export { openRenameSkillModal } from './RenameSkillModal';
 export type { SkillSectionHeader, SkillSectionProps } from './SkillSection';
 export { default as SkillSection } from './SkillSection';

@@ -32,6 +32,8 @@ import {
   type ProjectFileIndexParams,
   type ProjectFileIndexResult,
   type RenameLocalFileParams,
+  type ResolveRealPathParams,
+  type ResolveRealPathResult,
   type ResolveSkillResourcePathParams,
   type ResolveSkillResourcePathResult,
   type RunCommandParams,
@@ -168,6 +170,10 @@ class LocalFileService {
 
   async auditSafePaths(params: AuditSafePathsParams): Promise<AuditSafePathsResult> {
     return ensureElectronIpc().localSystem.auditSafePaths(params);
+  }
+
+  async resolveRealPath(params: ResolveRealPathParams): Promise<ResolveRealPathResult> {
+    return ensureElectronIpc().localSystem.resolveRealPath(params);
   }
 
   async getLocalFilePreviewUrl(

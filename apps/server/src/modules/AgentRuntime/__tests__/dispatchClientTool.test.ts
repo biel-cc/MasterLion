@@ -98,6 +98,20 @@ describe('dispatchClientTool', () => {
   it('sends tool_execute, BLPOPs, and returns the parsed result on success', async () => {
     const sendToolExecute = vi.fn().mockResolvedValue(undefined);
     const streamManager = makeStreamManager(sendToolExecute);
+    const executionContext = {
+      accessRoots: [
+        {
+          deviceId: 'device-1',
+          modes: ['read' as const],
+          rootPath: '/approved/project',
+          scope: 'primary' as const,
+          source: 'workspace' as const,
+          topicId: 'topic-1',
+        },
+      ],
+      cwd: '/approved/project',
+      workspaceRootPath: '/approved/project',
+    };
 
     mockBlpop.mockResolvedValue([
       'tool_result:call-1',
@@ -109,8 +123,11 @@ describe('dispatchClientTool', () => {
     ]);
 
     const result = await dispatchClientTool(makePayload(), {
+      deviceId: 'device-1',
+      executionContext,
       operationId: 'op-1',
       streamManager,
+      topicId: 'topic-1',
     });
 
     expect(sendToolExecute).toHaveBeenCalledTimes(1);
@@ -118,8 +135,12 @@ describe('dispatchClientTool', () => {
     expect(sendCall[0]).toBe('op-1');
     expect(sendCall[1]).toMatchObject({
       apiName: 'readFile',
+      deviceId: 'device-1',
+      executionContext,
       identifier: 'local-system',
+      operationId: 'op-1',
       toolCallId: 'call-1',
+      topicId: 'topic-1',
     });
 
     expect(result.success).toBe(true);

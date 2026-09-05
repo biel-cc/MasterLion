@@ -7,6 +7,15 @@ const remoteHeteroProvider = { type: 'openclaw' as const };
 const remoteHeteroProviderHermes = { type: 'hermes' as const };
 
 describe('selectRuntimeType', () => {
+  it.each([false, true])('routes ordinary device chat through gateway (desktop=%s)', (isDesktop) => {
+    expect(selectRuntimeType({ executionTarget: 'device', boundDeviceId: 'device-a', isGatewayMode: false }, { isDesktop })).toBe('gateway');
+  });
+
+  it('keeps a synced desktop-local topic on its device when opened from web', () => {
+    expect(selectRuntimeType({ executionTarget: 'local', boundDeviceId: 'device-a', isGatewayMode: false }, { isDesktop: false })).toBe('gateway');
+    expect(selectRuntimeType({ executionTarget: 'local', boundDeviceId: 'device-a', isGatewayMode: false }, { isDesktop: true })).toBe('client');
+  });
+
   describe('on web (isDesktop = false)', () => {
     const opts = { isDesktop: false };
 

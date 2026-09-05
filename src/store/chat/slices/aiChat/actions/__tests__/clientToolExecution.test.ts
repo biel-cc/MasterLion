@@ -5,11 +5,13 @@ import { ClientToolExecutionActionImpl } from '../clientToolExecution';
 
 // ─── Hoisted mocks ───
 
-const { hasExecutorMock, invokeExecutorMock, invokeMcpToolCallMock } = vi.hoisted(() => ({
-  hasExecutorMock: vi.fn(),
-  invokeExecutorMock: vi.fn(),
-  invokeMcpToolCallMock: vi.fn(),
-}));
+const { executeLocalToolCallMock, hasExecutorMock, invokeExecutorMock, invokeMcpToolCallMock } =
+  vi.hoisted(() => ({
+    executeLocalToolCallMock: vi.fn(),
+    hasExecutorMock: vi.fn(),
+    invokeExecutorMock: vi.fn(),
+    invokeMcpToolCallMock: vi.fn(),
+  }));
 
 vi.mock('@/store/tool/slices/builtin/executors', () => ({
   hasExecutor: hasExecutorMock,
@@ -19,6 +21,12 @@ vi.mock('@/store/tool/slices/builtin/executors', () => ({
 vi.mock('@/services/mcp', () => ({
   mcpService: {
     invokeMcpToolCall: invokeMcpToolCallMock,
+  },
+}));
+
+vi.mock('@/services/electron/gatewayConnection', () => ({
+  gatewayConnectionService: {
+    executeLocalToolCall: executeLocalToolCallMock,
   },
 }));
 
@@ -84,12 +92,78 @@ beforeEach(() => {
   hasExecutorMock.mockReset();
   invokeExecutorMock.mockReset();
   invokeMcpToolCallMock.mockReset();
+  executeLocalToolCallMock.mockReset();
 });
 
 // ─── Tests ───
 
 describe('internal_executeClientTool', () => {
   describe('builtin dispatch', () => {
+    it('routes standalone local-system through the main-process execution boundary', async () => {
+      const executionContext = {
+        accessRoots: [
+          {
+            modes: ['read' as const],
+            rootPath: '/approved/project',
+            scope: 'primary' as const,
+            source: 'workspace' as const,
+          },
+        ],
+        cwd: '/approved/project',
+        workspaceRootPath: '/approved/project',
+      };
+      executeLocalToolCallMock.mockResolvedValue({ content: 'safe', success: true });
+      const { action, sendToolResult } = setup();
+
+      await action.internal_executeClientTool(
+        makeData({
+          deviceId: 'device-1',
+          executionContext,
+          identifier: 'lobe-local-system',
+          operationId: 'op-1',
+          topicId: 'topic-1',
+        }),
+        { localOperationId: 'op-1', operationId: 'op-1', topicId: 'topic-1' },
+      );
+
+      expect(executeLocalToolCallMock).toHaveBeenCalledWith({
+        apiName: 'readFile',
+        args: { path: '/tmp/a.txt' },
+        executionContext,
+        trace: {
+          deviceId: 'device-1',
+          operationId: 'op-1',
+          toolCallId: 'call_1',
+          topicId: 'topic-1',
+        },
+      });
+      expect(invokeExecutorMock).not.toHaveBeenCalled();
+      expect(sendToolResult).toHaveBeenCalledWith({
+        content: 'safe',
+        error: undefined,
+        state: undefined,
+        success: true,
+        toolCallId: 'call_1',
+      });
+    });
+
+    it('fails closed when the tool payload operation tuple is mismatched', async () => {
+      const { action, sendToolResult } = setup();
+
+      await action.internal_executeClientTool(
+        makeData({ identifier: 'lobe-local-system', operationId: 'other-op' }),
+        { operationId: 'op-1' },
+      );
+
+      expect(executeLocalToolCallMock).not.toHaveBeenCalled();
+      expect(sendToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ type: 'execution_context_mismatch' }),
+          success: false,
+        }),
+      );
+    });
+
     it('sends a successful tool_result when the executor returns content', async () => {
       hasExecutorMock.mockReturnValue(true);
       invokeExecutorMock.mockResolvedValue({

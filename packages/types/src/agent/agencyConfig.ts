@@ -1,3 +1,5 @@
+import type { ExecutionTargetByPlatform } from '../projectWorkspace';
+
 /**
  * Heterogeneous agent provider configuration.
  * When set, the assistant delegates execution to an external agent runtime
@@ -58,12 +60,18 @@ export interface LobeAgentAgencyConfig {
    * hetero agents `openclaw` / `hermes`).
    */
   boundDeviceId?: string;
+  /** Formal workspace default per device. Legacy cwd strings are migrated into this map. */
+  defaultWorkspaceByDevice?: Record<string, string>;
+  /** Non-secret environment applied to every run. Secrets belong in user/workspace env. */
+  env?: Record<string, string>;
   /**
    * Execution target for the hetero agent. When omitted, resolves to a
    * platform default: `'local'` on desktop, `'none'` on web (or `'device'` for
    * remote hetero providers).
    */
   executionTarget?: DeviceExecutionTarget;
+  /** Platform-isolated defaults used only while a new topic has no snapshot. */
+  executionTargetByPlatform?: ExecutionTargetByPlatform;
   heterogeneousProvider?: HeterogeneousProviderConfig;
   /**
    * Ad-hoc verify criteria mounted directly on this agent, in addition to any

@@ -1,12 +1,21 @@
+import type {
+  SkillScope as CanonicalSkillScope,
+  SkillSourceKind,
+} from '@lobechat/types/src/projectWorkspace';
+
 export { buildResourcesTreeText, resourcesTreePrompt } from './resourcesTree';
 
-export type SkillSource = 'builtin' | 'project' | 'user';
+export type SkillScope = CanonicalSkillScope;
+export type SkillSource = SkillSourceKind;
 
 export interface SkillItem {
   description: string;
   identifier: string;
+  /** Stable registry key used for diagnostics. */
+  key?: string;
   location?: string;
   name: string;
+  scope?: SkillScope;
   /**
    * Where the skill comes from. `project` skills live on the device filesystem
    * (e.g. `.agents/skills/<name>/SKILL.md`) and `location` carries their absolute
@@ -15,11 +24,22 @@ export interface SkillItem {
   source?: SkillSource;
 }
 
+const escapeXml = (value: string): string =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+
 export const skillPrompt = (skill: SkillItem) => {
-  const attrs = [`name="${skill.name}"`];
+  const attrs = [`name="${escapeXml(skill.name)}"`];
+  if (skill.identifier !== skill.name) attrs.push(`identifier="${escapeXml(skill.identifier)}"`);
+  if (skill.key) attrs.push(`key="${escapeXml(skill.key)}"`);
   if (skill.source) attrs.push(`source="${skill.source}"`);
-  if (skill.location) attrs.push(`location="${skill.location}"`);
-  return `  <skill ${attrs.join(' ')}>${skill.description}</skill>`;
+  if (skill.scope) attrs.push(`scope="${skill.scope}"`);
+  if (skill.location) attrs.push(`location="${escapeXml(skill.location)}"`);
+  return `  <skill ${attrs.join(' ')}>${escapeXml(skill.description)}</skill>`;
 };
 
 export const skillsPrompts = (skills: SkillItem[]) => {
@@ -27,14 +47,9 @@ export const skillsPrompts = (skills: SkillItem[]) => {
 
   const skillTags = skills.map((skill) => skillPrompt(skill)).join('\n');
 
-  const hasProjectSkill = skills.some((skill) => skill.source === 'project');
-  const projectHint = hasProjectSkill
-    ? `\nFor a skill with source="project", load it by calling the readFile tool on its \`location\` path before following its instructions.`
-    : '';
-
   return `<available_skills>
 ${skillTags}
 </available_skills>
 
-Use the runSkill tool to activate a skill when needed.${projectHint}`;
+Use the activateSkill tool with the exact skill name to load its instructions.`;
 };

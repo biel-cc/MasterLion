@@ -116,7 +116,8 @@ const CloudRepoSwitcher = memo<CloudRepoSwitcherProps>(({ agentId }) => {
 
   // Available repos configured on the agent
   const availableRepos: string[] = useAgentStore((s) => {
-    const env = agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider?.env;
+    const agencyConfig = agentByIdSelectors.getAgencyConfigById(agentId)(s);
+    const env = agencyConfig?.env ?? agencyConfig?.heterogeneousProvider?.env;
     try {
       return JSON.parse(env?.GITHUB_REPOS ?? '[]');
     } catch {

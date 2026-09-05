@@ -1,0 +1,172 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "shellenv0--shellenv1",
+      "source": "shellenv0",
+      "target": "shellenv1",
+      "route": [
+        [
+          397,
+          197.0
+        ],
+        [
+          467,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "shellenv1--shellenv2",
+      "source": "shellenv1",
+      "target": "shellenv2",
+      "route": [
+        [
+          794,
+          197.0
+        ],
+        [
+          864,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "shellenv2--shellenv3",
+      "source": "shellenv2",
+      "target": "shellenv3",
+      "route": [
+        [
+          1191,
+          197.0
+        ],
+        [
+          1261,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "localenv0--localenv1",
+      "source": "localenv0",
+      "target": "localenv1",
+      "route": [
+        [
+          397,
+          362.0
+        ],
+        [
+          467,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "localenv1--localenv2",
+      "source": "localenv1",
+      "target": "localenv2",
+      "route": [
+        [
+          794,
+          362.0
+        ],
+        [
+          864,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "localenv2--localenv3",
+      "source": "localenv2",
+      "target": "localenv3",
+      "route": [
+        [
+          1191,
+          362.0
+        ],
+        [
+          1261,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "gatewayenv0--gatewayenv1",
+      "source": "gatewayenv0",
+      "target": "gatewayenv1",
+      "route": [
+        [
+          397,
+          527.0
+        ],
+        [
+          467,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "gatewayenv1--gatewayenv2",
+      "source": "gatewayenv1",
+      "target": "gatewayenv2",
+      "route": [
+        [
+          794,
+          527.0
+        ],
+        [
+          864,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "gatewayenv2--gatewayenv3",
+      "source": "gatewayenv2",
+      "target": "gatewayenv3",
+      "route": [
+        [
+          1191,
+          527.0
+        ],
+        [
+          1261,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "prompt0--prompt1",
+      "source": "prompt0",
+      "target": "prompt1",
+      "route": [
+        [
+          510,
+          692.0
+        ],
+        [
+          610,
+          692.0
+        ]
+      ]
+    },
+    {
+      "id": "prompt1--prompt2",
+      "source": "prompt1",
+      "target": "prompt2",
+      "route": [
+        [
+          1050,
+          692.0
+        ],
+        [
+          1150,
+          692.0
+        ]
+      ]
+    }
+  ]
+}

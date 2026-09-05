@@ -4,6 +4,7 @@ import type {
   CreateMessageParams,
 } from '@lobechat/types';
 
+import { getRuntimePathConsentRequest } from '@/helpers/executionContext/pathConsent';
 import { truncateToolResult } from '@/server/utils/truncateToolResult';
 import { messageService } from '@/services/message';
 import { archiveToolResultViaServer } from '@/services/toolResultArchive';
@@ -116,8 +117,18 @@ export const createChatStoreToolCallMessageAdapter = ({
             executor: toolCall.executor,
             identifier: toolCall.identifier,
             intervention: toolCall.intervention,
-            result_msg_id: toolCall.result_msg_id,
-            source: toolCall.source,
+            // Reconciliation backfills the tool row itself for display. That
+            // derived pointer was absent from the original execution intent.
+            result_msg_id:
+              toolCall.result_msg_id === messageId ? undefined : toolCall.result_msg_id,
+            // The builtin registry supplies this on first execution; the DB
+            // plugin projection omits it on approval resume. Keep the exact
+            // local-system origin stable across both paths.
+            source:
+              toolCall.source ??
+              (toolCall.type === 'builtin' && toolCall.identifier === 'lobe-local-system'
+                ? 'builtin'
+                : undefined),
             thoughtSignature: toolCall.thoughtSignature,
             toolCallId: toolCall.id,
             type: toolCall.type,
@@ -143,6 +154,27 @@ export const createChatStoreToolCallMessageAdapter = ({
       toolCall,
     }) => {
       throwIfAborted(signal);
+      const pendingPath = getRuntimePathConsentRequest({ state: result.state });
+      if (
+        toolCall.identifier === 'lobe-local-system' &&
+        result.success === false &&
+        result.content === 'INTERVENTION_REQUIRED' &&
+        pendingPath?.topicId === context.topicId
+      ) {
+        // The boundary refused before execution. Keep its request resumable;
+        // committing a terminal result here would forbid the later approved read.
+        await get().optimisticUpdateToolMessage(
+          messageId,
+          {
+            content: '',
+            pluginError: null,
+            pluginState: result.state,
+          },
+          { operationId },
+        );
+        throwIfAborted(signal);
+        return;
+      }
       let committedResult = committedResults.get(executionAttemptId);
       if (!committedResult) {
         const rawContent = result.content || result.error?.message || '';

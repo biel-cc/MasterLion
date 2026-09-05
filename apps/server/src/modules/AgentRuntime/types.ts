@@ -129,6 +129,9 @@ export interface IStreamEventManager {
    */
   getStreamHistory: (operationId: string, count?: number) => Promise<StreamEvent[]>;
 
+  /** Server-authored owner retained alongside the stream, including after completion. */
+  getStreamOwner?: (operationId: string) => Promise<string | undefined>;
+
   /**
    * Publish Agent runtime end event.
    *

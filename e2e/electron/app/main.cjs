@@ -16,6 +16,85 @@ const retryPolicyModuleUrl = pathToFileURL(
 const aihubReadinessModuleUrl = pathToFileURL(
   path.join(__dirname, '../.artifacts/AihubReadiness.mjs'),
 ).href;
+const workspaceRuntimeSeamsModuleUrl = pathToFileURL(
+  path.join(__dirname, '../.artifacts/workspaceRuntimeSeams.mjs'),
+).href;
+const stateRoot = process.env.MASTERINO_ELECTRON_E2E_STATE_ROOT;
+if (stateRoot) {
+  app.setPath('userData', stateRoot);
+}
+
+/**
+ * Workspace Runtime acceptance seams. They are production code (real services,
+ * the repository's isolated PGlite database, the real device execution
+ * boundary) and they run here in the Electron main process; the renderer can
+ * only reach them through the preload bridge below, exactly like a production
+ * main-process capability.
+ */
+let workspaceRuntimePromise;
+const getWorkspaceRuntime = () => {
+  workspaceRuntimePromise ??= (async () => {
+    if (!stateRoot) {
+      throw new Error('MASTERINO_ELECTRON_E2E_STATE_ROOT is required for Workspace Runtime seams');
+    }
+    const { createWorkspaceRuntimeAcceptanceRuntime } = await import(
+      workspaceRuntimeSeamsModuleUrl
+    );
+    return createWorkspaceRuntimeAcceptanceRuntime({ stateRoot });
+  })();
+  return workspaceRuntimePromise;
+};
+
+const toTransportError = (error) => ({
+  code: error?.code ?? 'UNEXPECTED_ERROR',
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined,
+});
+
+ipcMain.handle('masterino-e2e:workspace-runtime-run', async (_event, acceptanceId) => {
+  try {
+    const runtime = await getWorkspaceRuntime();
+    return { ok: true, result: await runtime.run(acceptanceId) };
+  } catch (error) {
+    return { error: toTransportError(error), ok: false };
+  }
+});
+
+ipcMain.handle('masterino-e2e:workspace-runtime-counters', async () => {
+  try {
+    const runtime = await getWorkspaceRuntime();
+    return { counters: runtime.counters(), ok: true };
+  } catch (error) {
+    return { error: toTransportError(error), ok: false };
+  }
+});
+
+ipcMain.handle('masterino-e2e:workspace-runtime-dispose', async () => {
+  const pending = workspaceRuntimePromise;
+  // Cleared up front so dispose is idempotent: a second call — and a retry
+  // after a failed close — has nothing left to await instead of re-entering
+  // the same memoized initialization.
+  workspaceRuntimePromise = undefined;
+  if (!pending) return { ok: true };
+
+  let runtime;
+  try {
+    runtime = await pending;
+  } catch {
+    // Initialization never produced a runtime, so there is nothing to close
+    // and no cleanup was skipped. Its rejection already surfaced through the
+    // `run` / `counters` call that triggered it; reporting it again from
+    // teardown would replace that first, real failure in the test output.
+    return { ok: true };
+  }
+
+  try {
+    await runtime.close();
+    return { ok: true };
+  } catch (error) {
+    return { error: toTransportError(error), ok: false };
+  }
+});
 
 const createAihubHarness = async () => {
   const { AihubReadiness } = await import(aihubReadinessModuleUrl);

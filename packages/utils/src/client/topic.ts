@@ -64,6 +64,21 @@ const sortGroups = (groups: GroupedTopic[]): GroupedTopic[] => {
   });
 };
 
+/**
+ * Whether a topic has enough live evidence to be presented as running.
+ *
+ * `status=running` alone is not sufficient: it can survive a renderer crash,
+ * network loss, or an older client whose terminal write never reached the
+ * server. A client-local loading id proves the current renderer owns a run;
+ * `runningOperation` proves a server run can be reconnected after reload.
+ */
+export const isTopicRunActive = (
+  topic: Pick<ChatTopic, 'metadata' | 'status'>,
+  isLoadingOnThisClient: boolean = false,
+): boolean =>
+  isLoadingOnThisClient ||
+  (topic.status === 'running' && Boolean(topic.metadata?.runningOperation?.operationId));
+
 // Generic time-based grouping parameterized by field
 const groupTopicsByField = (
   topics: ChatTopic[],
@@ -198,7 +213,7 @@ const resolveStatusBucket = (
 ): TopicStatusBucket => {
   if (topic.status === 'waitingForHuman' || topic.status === 'failed') return 'pending';
   if (unreadTopicIds?.has(topic.id)) return 'pending';
-  if (loadingTopicIds?.has(topic.id) || topic.status === 'running') return 'running';
+  if (isTopicRunActive(topic, loadingTopicIds?.has(topic.id))) return 'running';
   const status: ChatTopicStatus = topic.status ?? 'active';
   if (status === 'paused' || status === 'completed' || status === 'archived') return status;
   return 'active';

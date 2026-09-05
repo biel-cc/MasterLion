@@ -1,4 +1,6 @@
+import type { OperationPathConsentApproval } from '../executionContext';
 import type { TaskDetail, UIChatMessage } from '../message';
+import type { TopicExecutionIntent } from '../projectWorkspace';
 import type { ChatTopic } from '../topic';
 
 export type AgentSignalOperationKind =
@@ -104,6 +106,11 @@ export interface ExecAgentAppContext {
   taskId?: string | null;
   /** Thread ID for threaded conversations */
   threadId?: string | null;
+  /**
+   * One-shot topic target/workspace intent. The server accepts it only while
+   * the topic has no authoritative execution snapshot.
+   */
+  topicExecutionIntent?: TopicExecutionIntent;
   /** Topic ID */
   topicId?: string | null;
 }
@@ -151,6 +158,22 @@ export interface ExecAgentParams {
   prompt: string;
   /** Override the agent's default provider */
   provider?: string;
+  /** Resume a pending human-approved tool call. */
+  resumeApproval?: {
+    decision: 'approved' | 'rejected' | 'rejected_continue';
+    parentMessageId: string;
+    /** Operation-only path access is accepted only with matching runtime-authored evidence. */
+    pathConsent?: OperationPathConsentApproval;
+    rejectionReason?: string;
+    toolCallId: string;
+  };
+  /** Resume an interaction card after its result has already been persisted. */
+  resumeInteraction?: {
+    /** Persisted message that the resumed runtime must branch from. */
+    parentMessageId: string;
+    /** Explicit runtime phase; prevents a tool result from becoming an empty user turn. */
+    phase: 'tool_result' | 'user_input';
+  };
   /** The agent slug to run (either agentId or slug is required) */
   slug?: string;
 }

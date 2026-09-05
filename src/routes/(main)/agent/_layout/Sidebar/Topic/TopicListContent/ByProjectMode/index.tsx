@@ -1,12 +1,14 @@
 'use client';
 
-import { memo } from 'react';
+import WorkspaceMode from '@/features/AgentTopicSidebar/WorkspaceMode';
 
-import GroupedAccordion from '../GroupedAccordion';
-import GroupItem from './GroupItem';
+import TopicItem from '../../List/Item';
 
-const ByProjectMode = memo(() => <GroupedAccordion GroupItem={GroupItem} />);
-
-ByProjectMode.displayName = 'ByProjectMode';
+/**
+ * Legacy entry kept for callers that still route the `byProject` group mode.
+ * The raw-path (`project:<path>`) grouping is gone: project mode now renders
+ * the fixed Workspace / Recent navigation keyed by `project_workspaces` ids.
+ */
+const ByProjectMode = () => <WorkspaceMode TopicItemComponent={TopicItem} />;
 
 export default ByProjectMode;

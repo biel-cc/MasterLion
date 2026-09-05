@@ -10,8 +10,8 @@ export interface NewApiClientOptions {
 }
 
 export interface NewApiUserSelf {
-  email?: string;
   display_name?: string;
+  email?: string;
   group?: string;
   id: number;
   quota?: number;
@@ -62,8 +62,8 @@ export interface NewApiToken {
   remain_quota?: number;
   status?: number;
   unlimited_quota?: boolean;
-  user_id?: number;
   used_quota?: number;
+  user_id?: number;
 }
 
 export interface NewApiTokenUsageResponse {
@@ -79,11 +79,18 @@ export interface NewApiTokenUsageResponse {
 }
 
 export interface NewApiModelCard {
+  context_window?: number;
   created?: number;
   id: string;
+  input_modalities?: string[];
+  max_output_tokens?: number;
   object?: string;
   owned_by?: string;
   supported_endpoint_types?: string[];
+  supported_modalities?: string[];
+  type?: string;
+  unsupported_modalities?: string[];
+  version?: string;
 }
 
 export interface NewApiLogItem {

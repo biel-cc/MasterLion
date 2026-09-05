@@ -212,9 +212,13 @@ export class HeterogeneousAgentService {
         currentMsgRef?.operationId === operationId
           ? currentMsgRef.msgId
           : topic?.metadata?.runningOperation?.assistantMessageId;
-      await this.topicModel.updateMetadata(topicId, { runningOperation: null });
+      await this.topicModel.completeRunningOperation(
+        topicId,
+        operationId,
+        result === 'error' ? 'failed' : 'active',
+      );
     } catch (err) {
-      log('heteroFinish: failed to clear runningOperation (non-fatal): %O', err);
+      log('heteroFinish: failed to persist terminal topic state (non-fatal): %O', err);
     }
 
     if (completionWebhook?.url) {

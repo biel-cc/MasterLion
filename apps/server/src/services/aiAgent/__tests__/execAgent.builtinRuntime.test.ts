@@ -1,3 +1,5 @@
+import '../_testFixtures/executionAuthority';
+
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { SELF_FEEDBACK_INTENT_IDENTIFIER } from '@lobechat/builtin-tool-self-iteration';
 import { RequestTrigger } from '@lobechat/types';
@@ -117,11 +119,13 @@ vi.mock('@/database/models/thread', () => ({
   })),
 }));
 
-vi.mock('@/database/models/user', () => ({
-  UserModel: {
-    getInfoForAIGeneration: mockGetInfoForAIGeneration,
-  },
-}));
+vi.mock('@/database/models/user', () => {
+  const UserModel = vi.fn().mockImplementation(() => ({
+    getUserSettings: vi.fn().mockResolvedValue(undefined),
+  })) as any;
+  UserModel.getInfoForAIGeneration = mockGetInfoForAIGeneration;
+  return { UserModel };
+});
 
 vi.mock('@/database/models/task', () => ({
   TaskModel: vi.fn().mockImplementation(() => ({

@@ -212,6 +212,301 @@ describe('ChatService', () => {
       );
     });
 
+    describe('client final context budget', () => {
+      const catalogSnapshot = {
+        capturedAt: '2026-09-04T00:00:00.000Z',
+        entry: {
+          abilitySources: {},
+          contextWindowSource: 'catalog',
+          contextWindowTokens: 32_000,
+          inputModalities: {
+            audio: 'unknown',
+            file: 'unknown',
+            image: 'supported',
+            text: 'supported',
+            video: 'unknown',
+          },
+          kind: 'chat',
+          kindSource: 'catalog',
+          modelId: 'budget-model',
+          providerId: 'openai',
+        },
+        operationId: 'op-client-budget',
+        version: 1,
+      } as const;
+
+      it('measures the context-engineered messages and resolved tools before the provider call', async () => {
+        const finalMessages = [
+          { content: 'x'.repeat(150_000), id: 'old-history', role: 'user' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+        ] as UIChatMessage[];
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue(finalMessages as any);
+        const provider = vi.spyOn(chatService, 'getChatCompletion').mockResolvedValue(new Response());
+        const onErrorHandle = vi.fn();
+        const compress = vi.fn(async (payload: any, evaluation: any) => {
+          expect(provider).not.toHaveBeenCalled();
+          expect(evaluation.partition.candidateIds).toEqual(['old-history']);
+          expect(evaluation.trace.estimatedPromptTokens).toBeGreaterThan(30_000);
+          return {
+            outcome: {
+              afterTokens: 10,
+              attempt: 1,
+              beforeTokens: evaluation.estimatedPromptTokens,
+              outcome: 'compressed',
+              payloadFingerprint: evaluation.payloadFingerprint,
+              trigger: 'final-preflight',
+            } as const,
+            payload: {
+              ...payload,
+              messages: [
+                { content: '[Conversation summary]\nshort', id: 'summary', role: 'user' },
+                finalMessages[1],
+              ],
+            },
+          };
+        });
+        const tools = [
+          {
+            function: { description: 'read a file', name: 'local____readFile' },
+            type: 'function',
+          },
+        ] as any;
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [{ content: 'raw', role: 'user' }] as UIChatMessage[],
+            model: 'budget-model',
+            provider: 'openai',
+            resolvedAgentConfig: createMockResolvedConfig({
+              agentConfig: { model: 'budget-model', provider: 'openai' },
+              tools,
+            }),
+          },
+          {
+            contextBudget: {
+              catalogSnapshot,
+              compress,
+              operationId: 'op-client-budget',
+              outputReserveTokens: 1024,
+            },
+            onErrorHandle,
+          },
+        );
+
+        expect(compress).toHaveBeenCalledTimes(1);
+        expect(onErrorHandle).not.toHaveBeenCalled();
+        expect(provider).toHaveBeenCalledTimes(1);
+        expect(provider).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messages: expect.arrayContaining([
+              expect.objectContaining({ content: expect.stringContaining('Conversation summary') }),
+            ]),
+            tools,
+          }),
+          expect.anything(),
+        );
+        expect(provider.mock.calls[0][0]).not.toHaveProperty('providerMedia');
+      });
+
+      it('counts provider-visible media after context engineering and fails before sending', async () => {
+        const visualParts = Array.from({ length: 40 }, (_, index) => ({
+          image_url: { url: `https://files.example/${index}.png` },
+          type: 'image_url',
+        }));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([
+          {
+            content: [{ text: 'inspect', type: 'text' }, ...visualParts],
+            id: 'latest-user',
+            role: 'user',
+          },
+        ] as unknown as any);
+        const provider = vi.spyOn(chatService, 'getChatCompletion').mockResolvedValue(new Response());
+        const onErrorHandle = vi.fn();
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [{ content: 'raw', role: 'user' }] as UIChatMessage[],
+            model: 'budget-model',
+            provider: 'openai',
+            resolvedAgentConfig: createMockResolvedConfig({
+              agentConfig: { model: 'budget-model', provider: 'openai' },
+            }),
+          },
+          {
+            contextBudget: {
+              catalogSnapshot,
+              compress: vi.fn(),
+              operationId: 'op-client-budget',
+              outputReserveTokens: 1024,
+            },
+            onErrorHandle,
+          },
+        );
+
+        expect(provider).not.toHaveBeenCalled();
+        expect(onErrorHandle).toHaveBeenCalledWith(
+          expect.objectContaining({
+            body: expect.objectContaining({
+              contextBudget: expect.objectContaining({
+                decision: expect.objectContaining({ code: 'TAIL_TOO_LARGE', kind: 'fail' }),
+              }),
+            }),
+            type: 'ExceededContextWindow',
+          }),
+        );
+      });
+
+      it('recovers one structured provider context error and never exposes the transient error', async () => {
+        const finalMessages = [
+          { content: 'x'.repeat(1000), id: 'old-history', role: 'user' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+        ] as UIChatMessage[];
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue(finalMessages as any);
+        let providerCalls = 0;
+        const provider = vi.spyOn(chatService, 'getChatCompletion').mockImplementation(
+          async (_payload, options) => {
+            providerCalls += 1;
+            if (providerCalls === 1) {
+              options?.onErrorHandle?.({
+                body: { contextWindowTokens: 16_000 },
+                message: 'provider rejected context',
+                type: 'ExceededContextWindow',
+              });
+            }
+            await options?.onFinish?.('', { type: providerCalls === 1 ? 'error' : 'stop' } as any);
+            return new Response();
+          },
+        );
+        const onErrorHandle = vi.fn();
+        const onFinish = vi.fn();
+        const onAttemptState = vi.fn();
+        const onProviderAttemptDiscard = vi.fn();
+        const compress = vi.fn(async (payload: any, evaluation: any) => ({
+          outcome: {
+            afterTokens: 10,
+            attempt: 1,
+            beforeTokens: evaluation.estimatedPromptTokens,
+            outcome: 'compressed',
+            payloadFingerprint: evaluation.payloadFingerprint,
+            trigger: 'provider-error',
+          } as const,
+          payload: {
+            ...payload,
+            messages: [
+              { content: 'summary', id: 'summary', role: 'user' },
+              finalMessages[1],
+            ],
+          },
+        }));
+
+        await chatService.createAssistantMessage(
+          {
+            messages: finalMessages,
+            model: 'budget-model',
+            provider: 'openai',
+            resolvedAgentConfig: createMockResolvedConfig({
+              agentConfig: { model: 'budget-model', provider: 'openai' },
+            }),
+          },
+          {
+            contextBudget: {
+              catalogSnapshot,
+              compress,
+              onAttemptState,
+              onProviderAttemptDiscard,
+              operationId: 'op-client-budget',
+              outputReserveTokens: 1024,
+            },
+            onErrorHandle,
+            onFinish,
+          },
+        );
+
+        expect(provider).toHaveBeenCalledTimes(2);
+        expect(compress).toHaveBeenCalledTimes(1);
+        expect(onErrorHandle).not.toHaveBeenCalled();
+        expect(onFinish).toHaveBeenCalledTimes(1);
+        expect(onFinish).toHaveBeenCalledWith('', expect.objectContaining({ type: 'stop' }));
+        expect(onProviderAttemptDiscard).toHaveBeenCalledWith(
+          expect.objectContaining({ attempt: 1, willRetry: true }),
+        );
+        expect(onAttemptState).toHaveBeenLastCalledWith(
+          expect.objectContaining({ compressionAttempt: 1 }),
+        );
+      });
+
+      it('stops after the single provider-error recovery attempt', async () => {
+        const finalMessages = [
+          { content: 'x'.repeat(1000), id: 'old-history', role: 'user' },
+          { content: 'continue', id: 'latest-user', role: 'user' },
+        ] as UIChatMessage[];
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue(finalMessages as any);
+        const provider = vi.spyOn(chatService, 'getChatCompletion').mockImplementation(
+          async (_payload, options) => {
+            options?.onErrorHandle?.({
+              body: { contextWindowTokens: 16_000 },
+              message: 'provider rejected context',
+              type: 'ExceededContextWindow',
+            });
+            await options?.onFinish?.('', { type: 'error' } as any);
+            return new Response();
+          },
+        );
+        const onErrorHandle = vi.fn();
+        const onFinish = vi.fn();
+
+        await chatService.createAssistantMessage(
+          {
+            messages: finalMessages,
+            model: 'budget-model',
+            provider: 'openai',
+            resolvedAgentConfig: createMockResolvedConfig({
+              agentConfig: { model: 'budget-model', provider: 'openai' },
+            }),
+          },
+          {
+            contextBudget: {
+              catalogSnapshot,
+              compress: vi.fn(async (payload: any, evaluation: any) => ({
+                outcome: {
+                  afterTokens: 10,
+                  attempt: 1,
+                  beforeTokens: evaluation.estimatedPromptTokens,
+                  outcome: 'compressed',
+                  payloadFingerprint: evaluation.payloadFingerprint,
+                  trigger: 'provider-error',
+                } as const,
+                payload: {
+                  ...payload,
+                  messages: [
+                    { content: 'summary', id: 'summary', role: 'user' },
+                    finalMessages[1],
+                  ],
+                },
+              })),
+              operationId: 'op-client-budget',
+              outputReserveTokens: 1024,
+            },
+            onErrorHandle,
+            onFinish,
+          },
+        );
+
+        expect(provider).toHaveBeenCalledTimes(2);
+        expect(onErrorHandle).toHaveBeenCalledTimes(1);
+        expect(onFinish).toHaveBeenCalledTimes(1);
+        expect(onErrorHandle).toHaveBeenCalledWith(
+          expect.objectContaining({
+            body: expect.objectContaining({
+              contextBudget: expect.objectContaining({
+                decision: expect.objectContaining({ code: 'RETRY_EXHAUSTED', kind: 'fail' }),
+              }),
+            }),
+          }),
+        );
+      });
+    });
+
     describe('historyCount functionality', () => {
       it('should include historyCount + 1 messages when historyCount is enabled', async () => {
         const getChatCompletionSpy = vi.spyOn(chatService, 'getChatCompletion');
@@ -1153,7 +1448,7 @@ describe('ChatService', () => {
         );
         expect(requestMessages[0].content).toContain('<available_skills>');
         expect(requestMessages[0].content).toContain(
-          'Use the runSkill tool to activate a skill when needed.',
+          'Use the activateSkill tool with the exact skill name to load its instructions.',
         );
         expect(requestMessages[0].content).toContain('<tool name="SEO">');
         expect(requestMessages[1]).toEqual(

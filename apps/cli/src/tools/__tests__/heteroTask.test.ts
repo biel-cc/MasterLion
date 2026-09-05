@@ -66,12 +66,27 @@ describe('runHeteroTask (openclaw)', () => {
     vi.restoreAllMocks();
   });
 
+  it('requires an explicit workspace before resolving or spawning a child', async () => {
+    await expect(
+      runHeteroTask({
+        agentType: 'openclaw',
+        operationId: 'op-missing',
+        prompt: 'work',
+        taskId: 'task-missing',
+        topicId: 'topic-missing',
+      }),
+    ).rejects.toThrow('WORKSPACE_REQUIRED');
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it('always injects buildNotifyProtocol into the prompt regardless of session history', async () => {
     const child = makeMockChild();
     spawnMock.mockReturnValue(child);
 
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'what time is it',
       taskId: 'task-1',
@@ -96,6 +111,7 @@ describe('runHeteroTask (openclaw)', () => {
     // First turn
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'hello',
       taskId: 'task-1',
@@ -107,6 +123,7 @@ describe('runHeteroTask (openclaw)', () => {
     // Second turn (same topicId)
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-2',
       prompt: 'follow up',
       taskId: 'task-2',
@@ -128,6 +145,7 @@ describe('runHeteroTask (openclaw)', () => {
     spawnMock.mockReturnValueOnce(child1);
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'msg1',
       taskId: 'task-1',
@@ -139,6 +157,7 @@ describe('runHeteroTask (openclaw)', () => {
     spawnMock.mockReturnValueOnce(child2);
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-2',
       prompt: 'msg2',
       taskId: 'task-2',
@@ -156,6 +175,7 @@ describe('runHeteroTask (openclaw)', () => {
     spawnMock.mockReturnValueOnce(child1);
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'a',
       taskId: 'task-a',
@@ -166,6 +186,7 @@ describe('runHeteroTask (openclaw)', () => {
     spawnMock.mockReturnValueOnce(child2);
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-2',
       prompt: 'b',
       taskId: 'task-b',
@@ -182,6 +203,7 @@ describe('runHeteroTask (openclaw)', () => {
     await runHeteroTask({
       agentId: 'agent-1',
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-x',
       prompt: 'test',
       taskId: 'task-x',
@@ -204,6 +226,7 @@ describe('runHeteroTask (openclaw)', () => {
 
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'hello',
       taskId: 'task-1',
@@ -226,6 +249,7 @@ describe('runHeteroTask (openclaw)', () => {
     spawnMock.mockReturnValueOnce(child1);
     await runHeteroTask({
       agentType: 'openclaw',
+      cwd: '/work/dir',
       operationId: 'op-1',
       prompt: 'msg1',
       taskId: 'task-1',
@@ -238,6 +262,7 @@ describe('runHeteroTask (openclaw)', () => {
     await expect(
       runHeteroTask({
         agentType: 'openclaw',
+        cwd: '/work/dir',
         operationId: 'op-2',
         prompt: 'msg2',
         taskId: 'task-2',

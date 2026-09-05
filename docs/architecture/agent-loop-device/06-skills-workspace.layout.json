@@ -1,0 +1,127 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "skillzip0--skillzip1",
+      "source": "skillzip0",
+      "target": "skillzip1",
+      "route": [
+        [
+          397,
+          212.0
+        ],
+        [
+          467,
+          212.0
+        ]
+      ]
+    },
+    {
+      "id": "skillzip1--skillzip2",
+      "source": "skillzip1",
+      "target": "skillzip2",
+      "route": [
+        [
+          794,
+          212.0
+        ],
+        [
+          864,
+          212.0
+        ]
+      ]
+    },
+    {
+      "id": "skillzip2--skillzip3",
+      "source": "skillzip2",
+      "target": "skillzip3",
+      "route": [
+        [
+          1191,
+          212.0
+        ],
+        [
+          1261,
+          212.0
+        ]
+      ]
+    },
+    {
+      "id": "project0--project1",
+      "source": "project0",
+      "target": "project1",
+      "route": [
+        [
+          397,
+          402.0
+        ],
+        [
+          467,
+          402.0
+        ]
+      ]
+    },
+    {
+      "id": "project1--project2",
+      "source": "project1",
+      "target": "project2",
+      "route": [
+        [
+          794,
+          402.0
+        ],
+        [
+          864,
+          402.0
+        ]
+      ]
+    },
+    {
+      "id": "project2--project3",
+      "source": "project2",
+      "target": "project3",
+      "route": [
+        [
+          1191,
+          402.0
+        ],
+        [
+          1261,
+          402.0
+        ]
+      ]
+    },
+    {
+      "id": "cloudskill0--cloudskill1",
+      "source": "cloudskill0",
+      "target": "cloudskill1",
+      "route": [
+        [
+          510,
+          592.0
+        ],
+        [
+          610,
+          592.0
+        ]
+      ]
+    },
+    {
+      "id": "cloudskill1--cloudskill2",
+      "source": "cloudskill1",
+      "target": "cloudskill2",
+      "route": [
+        [
+          1050,
+          592.0
+        ],
+        [
+          1150,
+          592.0
+        ]
+      ]
+    }
+  ]
+}

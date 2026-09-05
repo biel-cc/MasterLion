@@ -1,10 +1,15 @@
 import { getBuiltinIntervention } from '@lobechat/builtin-tools/interventions';
+import { isDesktop } from '@lobechat/const';
 import { safeParseJSON } from '@lobechat/utils';
 import { Flexbox } from '@lobehub/ui';
 import { memo, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { localFileService } from '@/services/electron/localFileService';
+import { projectWorkspaceService } from '@/services/projectWorkspace';
 import { useChatStore } from '@/store/chat';
+import { useElectronStore } from '@/store/electron';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { useUserStore } from '@/store/user';
 import { toolInterventionSelectors } from '@/store/user/selectors';
 
@@ -19,6 +24,11 @@ import {
 } from './customInteractionHandlers';
 import Fallback from './Fallback';
 import KeyValueEditor from './KeyValueEditor';
+import PathConsent, {
+  parseStructuredPathConsentRequest,
+  type PathConsentSelection,
+  WORKSPACE_PATH_CONSENT_METADATA_KEY,
+} from './PathConsent';
 import SecurityBlacklistWarning from './SecurityBlacklistWarning';
 
 export type { ApprovalMode } from '@/store/user/slices/settings/selectors';
@@ -95,16 +105,89 @@ const Intervention = memo<InterventionProps>(
     const parsedArgs = useMemo(() => safeParseJSON(requestArgs || '') ?? {}, [requestArgs]);
 
     const isCustomInteraction = isCustomInteractionIdentifier(identifier, apiName);
+    const showFullShellArguments = identifier === 'lobe-local-system' && apiName === 'runCommand';
 
-    const topicId = useConversationStore((s) => dataSelectors.getDbMessageById(id)(s)?.topicId);
+    const toolMessage = useConversationStore(dataSelectors.getDbMessageById(id));
+    const topicId = toolMessage?.topicId;
+    const pathConsentRequest = useMemo(() => {
+      const pluginState = toolMessage?.pluginState;
+      const intervention = toolMessage?.pluginIntervention as Record<string, unknown> | undefined;
+      return parseStructuredPathConsentRequest(
+        pluginState?.[WORKSPACE_PATH_CONSENT_METADATA_KEY] ??
+          intervention?.[WORKSPACE_PATH_CONSENT_METADATA_KEY],
+      );
+    }, [toolMessage?.pluginIntervention, toolMessage?.pluginState]);
     const submitToolInteraction = useConversationStore((s) => s.submitToolInteraction);
     const skipToolInteraction = useConversationStore((s) => s.skipToolInteraction);
     const cancelToolInteraction = useConversationStore((s) => s.cancelToolInteraction);
+    const approveToolCall = useConversationStore((s) => s.approveToolCall);
+    const rejectAndContinueToolCall = useConversationStore((s) => s.rejectAndContinueToolCall);
+    useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
+    const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
+    const grantTopicAccess = useProjectWorkspaceStore((s) => s.grantTopicAccess);
+    const setOperationPathConsent = useProjectWorkspaceStore((s) => s.setOperationPathConsent);
     // Hetero (CC / Codex) interventions ship the answer back through IPC to a
     // running CLI subprocess instead of starting a fresh `executeClientAgent`
     // turn. Pull the chat-store action lazily so non-hetero interactions stay
     // on the existing path with no behavior change.
     const submitHeteroIntervention = useChatStore((s) => s.submitHeteroIntervention);
+
+    const handlePathConsentDecision = useCallback(
+      async (decision: PathConsentSelection): Promise<PathConsentSelection> => {
+        if (decision.scope === 'reject') {
+          setOperationPathConsent(id, decision);
+          await rejectAndContinueToolCall(id, 'Workspace path access was rejected');
+          return decision;
+        }
+
+        let canonicalPath: string;
+        if (isDesktop && currentDeviceId === decision.deviceId) {
+          const resolved = await localFileService.resolveRealPath({ path: decision.rootPath });
+          if (!resolved.success || !resolved.path) {
+            throw new Error(resolved.error || 'Unable to resolve the selected path');
+          }
+          canonicalPath = resolved.path;
+        } else {
+          const resolved = await projectWorkspaceService.resolveRealPath({
+            deviceId: decision.deviceId,
+            path: decision.rootPath,
+          });
+          canonicalPath = resolved.path;
+        }
+
+        const canonicalDecision = { ...decision, rootPath: canonicalPath };
+        if (decision.scope === 'topic') {
+          const granted = await grantTopicAccess({
+            deviceId: decision.deviceId,
+            modes: decision.modes,
+            requestedVia: {
+              messageId: id,
+              reason: 'workspace-path-consent',
+              toolCallId,
+            },
+            rootPath: canonicalPath,
+            topicId: decision.topicId,
+          });
+          if (!granted.ok) throw new Error(granted.message || granted.code);
+        }
+
+        // Persist the canonical operation decision before resume so the next
+        // execution-context build can consume it synchronously.
+        setOperationPathConsent(id, canonicalDecision);
+        await approveToolCall(id, assistantGroupId ?? '');
+        return canonicalDecision;
+      },
+      [
+        approveToolCall,
+        assistantGroupId,
+        currentDeviceId,
+        grantTopicAccess,
+        id,
+        rejectAndContinueToolCall,
+        setOperationPathConsent,
+        toolCallId,
+      ],
+    );
 
     const handleInteractionAction = useCallback(
       async (
@@ -201,7 +284,7 @@ const Intervention = memo<InterventionProps>(
         );
       }
 
-      const actions = (
+      const actions = pathConsentRequest ? null : (
         <Flexbox horizontal justify={'flex-end'}>
           <ApprovalActions
             apiName={apiName}
@@ -218,6 +301,11 @@ const Intervention = memo<InterventionProps>(
       return (
         <Flexbox gap={12}>
           <SecurityBlacklistWarning args={parsedArgs} />
+          {showFullShellArguments && (
+            <div data-testid="workspace-shell-full-arguments">
+              <Arguments arguments={requestArgs} />
+            </div>
+          )}
           <BuiltinToolInterventionRender
             apiName={apiName}
             args={parsedArgs}
@@ -226,7 +314,16 @@ const Intervention = memo<InterventionProps>(
             registerBeforeApprove={registerBeforeApprove}
             onArgsChange={handleArgsChange}
           />
-          {actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions}
+          {pathConsentRequest && (
+            <PathConsent
+              actionsPortalTarget={actionsPortalTarget}
+              messageId={id}
+              request={pathConsentRequest}
+              onDecision={handlePathConsentDecision}
+            />
+          )}
+          {!pathConsentRequest &&
+            (actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions)}
         </Flexbox>
       );
     }
@@ -234,15 +331,29 @@ const Intervention = memo<InterventionProps>(
     return (
       <Flexbox gap={12}>
         <SecurityBlacklistWarning args={parsedArgs} />
+        {showFullShellArguments && (
+          <div data-testid="workspace-shell-full-arguments">
+            <Arguments arguments={requestArgs} />
+          </div>
+        )}
         <Fallback
           actionsPortalTarget={actionsPortalTarget}
           apiName={apiName}
           assistantGroupId={assistantGroupId}
+          hideActions={!!pathConsentRequest}
           id={id}
           identifier={identifier}
           requestArgs={requestArgs}
           toolCallId={toolCallId}
         />
+        {pathConsentRequest && (
+          <PathConsent
+            actionsPortalTarget={actionsPortalTarget}
+            messageId={id}
+            request={pathConsentRequest}
+            onDecision={handlePathConsentDecision}
+          />
+        )}
       </Flexbox>
     );
   },

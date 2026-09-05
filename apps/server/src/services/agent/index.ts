@@ -20,6 +20,7 @@ import {
   RedisKeys,
 } from '@/libs/redis';
 import { getServerDefaultAgentConfig } from '@/server/globalConfig';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 
 import { type UpdateAgentResult } from './type';
 
@@ -222,6 +223,8 @@ export class AgentService {
     agentId: string,
     value: PartialDeep<AgentItem>,
   ): Promise<UpdateAgentResult> {
+    assertConfigurableAgentExecutionEnv(value);
+
     // 1. Execute update
     await this.agentModel.updateConfig(agentId, value);
 

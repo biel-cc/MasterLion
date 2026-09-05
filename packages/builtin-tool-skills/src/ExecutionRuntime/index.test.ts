@@ -29,7 +29,7 @@ describe('SkillsExecutionRuntime', () => {
         const result = await runtime.execScript(args);
 
         expect(result.success).toBe(true);
-        expect(result.content).toBe('hello');
+        expect(result.content).toBe('Command completed successfully.\n\nOutput:\nhello');
         expect(result.state).toEqual({ command: 'echo hello', exitCode: 0, success: true });
       });
 
@@ -47,7 +47,9 @@ describe('SkillsExecutionRuntime', () => {
         const result = await runtime.execScript(args);
 
         expect(result.success).toBe(false);
-        expect(result.content).toBe('command not found');
+        expect(result.content).toBe(
+          'Command failed with exit code 1\n\nStderr:\ncommand not found',
+        );
         expect(result.state).toEqual({ command: 'echo hello', exitCode: 1, success: false });
       });
 
@@ -64,7 +66,9 @@ describe('SkillsExecutionRuntime', () => {
 
         const result = await runtime.execScript(args);
 
-        expect(result.content).toBe('stdout line\nstderr line');
+        expect(result.content).toBe(
+          'Command completed successfully.\n\nOutput:\nstdout line\n\nStderr:\nstderr line',
+        );
       });
 
       it('should return "(no output)" when output is empty', async () => {
@@ -79,7 +83,7 @@ describe('SkillsExecutionRuntime', () => {
 
         const result = await runtime.execScript(args);
 
-        expect(result.content).toBe('(no output)');
+        expect(result.content).toBe('Command completed successfully.');
       });
 
       it('should return success: false when execScript throws', async () => {
@@ -109,7 +113,7 @@ describe('SkillsExecutionRuntime', () => {
         const result = await runtime.execScript(args);
 
         expect(result.success).toBe(true);
-        expect(result.content).toBe('ok');
+        expect(result.content).toBe('Command completed successfully.\n\nOutput:\nok');
       });
 
       it('should return success: false when command fails with non-zero exit code', async () => {
@@ -126,7 +130,7 @@ describe('SkillsExecutionRuntime', () => {
         const result = await runtime.execScript(args);
 
         expect(result.success).toBe(false);
-        expect(result.content).toBe('not found');
+        expect(result.content).toBe('Command failed with exit code 127\n\nStderr:\nnot found');
         expect(result.state).toEqual({ command: 'echo hello', exitCode: 127, success: false });
       });
 
@@ -151,6 +155,65 @@ describe('SkillsExecutionRuntime', () => {
         expect(result.success).toBe(false);
         expect(result.content).toBe('Command execution is not available in this environment.');
       });
+    });
+
+    it('executes a project skill on its device workspace with injected directories', async () => {
+      const deviceScriptRunner = vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output: 'device ok',
+        success: true,
+      });
+      const runtime = new SkillsExecutionRuntime({
+        deviceScriptRunner,
+        deviceSkillPathVerifier: async ({ skillDir, workspaceRoot }) => ({
+          skillDir,
+          workspaceRoot,
+        }),
+        executionContext: {
+          cwd: '/repo',
+          plan: { deviceId: 'device-1', kind: 'device', target: 'device' },
+          version: 1,
+          workspace: { deviceId: 'device-1', kind: 'device', rootPath: '/repo' },
+        },
+        projectSkills: [{ location: '/repo/.agents/skills/deploy/SKILL.md', name: 'deploy' }],
+        service: createMockService(),
+      });
+
+      const result = await runtime.execScript({
+        activatedSkills: [{ id: 'project:deploy', name: 'deploy' }],
+        command: 'scripts/deploy.sh',
+        description: 'Run deploy script',
+      });
+
+      expect(result.success).toBe(true);
+      expect(deviceScriptRunner).toHaveBeenCalledWith(
+        'scripts/deploy.sh',
+        expect.objectContaining({
+          cwd: '/repo/.agents/skills/deploy',
+          deviceId: 'device-1',
+          env: {
+            SKILL_DIR: '/repo/.agents/skills/deploy',
+            WORKSPACE_DIR: '/repo',
+          },
+        }),
+      );
+    });
+
+    it('returns WORKSPACE_REQUIRED without calling a runner for a none plan', async () => {
+      const execScript = vi.fn();
+      const runtime = new SkillsExecutionRuntime({
+        executionContext: {
+          plan: { kind: 'none', target: 'none' },
+          unresolvedReason: 'target-none',
+          version: 1,
+        },
+        service: createMockService({ execScript }),
+      });
+
+      const result = await runtime.execScript(args);
+
+      expect(result).toMatchObject({ state: { errorCode: 'WORKSPACE_REQUIRED' }, success: false });
+      expect(execScript).not.toHaveBeenCalled();
     });
   });
 
@@ -293,6 +356,43 @@ describe('SkillsExecutionRuntime', () => {
   });
 
   describe('activation precedence', () => {
+    it('uses the operation registry winner instead of recomputing source precedence', async () => {
+      const findByName = vi.fn().mockResolvedValue({
+        content: 'shadowed user content',
+        id: 'user-1',
+        name: 'deploy',
+      });
+      const runtime = new SkillsExecutionRuntime({
+        builtinSkills: [
+          {
+            content: 'registry-selected builtin',
+            description: 'builtin skill',
+            identifier: 'builtin-deploy',
+            name: 'deploy',
+            source: 'builtin',
+          },
+        ],
+        registryResult: {
+          skills: [
+            {
+              description: 'builtin skill',
+              identifier: 'builtin-deploy',
+              key: 'builtin:builtin-deploy',
+              name: 'deploy',
+              scope: 'builtin',
+              source: 'builtin',
+            },
+          ],
+        },
+        service: createMockService({ findByName }),
+      });
+
+      const result = await runtime.activateSkill({ name: 'deploy' });
+
+      expect(findByName).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ content: 'registry-selected builtin', success: true });
+    });
+
     it('DB skill wins over a same-named builtin (matches injection dedupe)', async () => {
       const findByName = vi.fn().mockResolvedValue({
         content: 'user-authored content',

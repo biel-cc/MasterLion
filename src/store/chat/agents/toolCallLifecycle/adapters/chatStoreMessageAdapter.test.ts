@@ -20,6 +20,51 @@ describe('createChatStoreToolCallMessageAdapter', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps an unexecuted path intervention out of the terminal result barrier', async () => {
+    vi.mocked(messageService.commitToolResult).mockResolvedValue({
+      disposition: 'committed',
+      id: 'tool-1',
+    });
+    const optimisticUpdateToolMessage = vi.fn().mockResolvedValue(undefined);
+    const adapter = createChatStoreToolCallMessageAdapter({
+      context: { agentId: 'agent-1', topicId: 'topic-1' },
+      get: () => ({ optimisticUpdateToolMessage, internal_dispatchMessage: vi.fn() }) as any,
+    });
+    const state = {
+      code: 'INTERVENTION_REQUIRED',
+      workspacePathConsent: {
+        version: 1,
+        actualCwd: '',
+        primaryCwd: '',
+        requestedPath: '/tmp/probe.txt',
+        modes: ['read'],
+        deviceId: 'device-1',
+        operationId: 'operation-1',
+        topicId: 'topic-1',
+      },
+    };
+    await adapter.commitResult({
+      executionAttemptId: 'attempt-1',
+      messageId: 'tool-1',
+      operationId: 'commit-1',
+      signal: new AbortController().signal,
+      result: { content: 'INTERVENTION_REQUIRED', success: false, state },
+      toolCall: {
+        id: 'call-1',
+        identifier: 'lobe-local-system',
+        apiName: 'readFile',
+        arguments: '{}',
+        type: 'builtin',
+      },
+    });
+    expect(messageService.commitToolResult).not.toHaveBeenCalled();
+    expect(optimisticUpdateToolMessage).toHaveBeenCalledWith(
+      'tool-1',
+      { content: '', pluginError: null, pluginState: state },
+      { operationId: 'commit-1' },
+    );
+  });
+
   it('projects one stable optimistic message before retrying the ensure request', async () => {
     const optimisticCreateTmpMessage = vi.fn();
     const adapter = createChatStoreToolCallMessageAdapter({
@@ -106,6 +151,7 @@ describe('createChatStoreToolCallMessageAdapter', () => {
           apiName: 'runCommand',
           arguments: '{"command":"pwd"}',
           id: 'call-existing',
+          result_msg_id: 'tool-message-existing',
           identifier: 'lobe-local-system',
           intervention: { status: 'approved' },
           type: 'builtin',
@@ -114,6 +160,12 @@ describe('createChatStoreToolCallMessageAdapter', () => {
     ).resolves.toEqual({ disposition: 'existing', messageId: 'tool-message-existing' });
 
     expect(optimisticCreateTmpMessage).not.toHaveBeenCalled();
+    expect(vi.mocked(messageService.ensureToolMessage).mock.calls[0][0].toolCall.source).toBe(
+      'builtin',
+    );
+    expect(
+      vi.mocked(messageService.ensureToolMessage).mock.calls[0][0].toolCall.result_msg_id,
+    ).toBeUndefined();
     expect(messageService.ensureToolMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'tool-message-existing', mode: 'confirm-existing' }),
       expect.any(Object),

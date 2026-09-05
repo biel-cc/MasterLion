@@ -141,6 +141,53 @@ export class CompressionRepository {
   }
 
   /**
+   * Restore the original messages while retaining a sanitized, queryable record of the failed
+   * compression attempt. This is deliberately distinct from `deleteCompressionGroup`, which is
+   * reserved for an explicit cancellation/removal.
+   */
+  async markCompressionFailed(
+    groupId: string,
+    failureCode: 'SUMMARY_FAILED' = 'SUMMARY_FAILED',
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ description: messageGroups.description })
+        .from(messageGroups)
+        .where(and(eq(messageGroups.id, groupId), this.groupsOwnership()));
+
+      if (!existing) return;
+
+      let existingMetadata: CompressionGroupMetadata = {};
+      if (existing.description) {
+        try {
+          existingMetadata = JSON.parse(existing.description) as CompressionGroupMetadata;
+        } catch {
+          // A legacy malformed description must not prevent restoring the original messages.
+        }
+      }
+
+      await tx
+        .update(messages)
+        .set({ messageGroupId: null })
+        .where(and(this.messagesOwnership(), eq(messages.messageGroupId, groupId)));
+
+      await tx
+        .update(messageGroups)
+        .set({
+          content: '',
+          description: JSON.stringify({
+            ...existingMetadata,
+            compressionStatus: 'failed',
+            failedAt: new Date().toISOString(),
+            failureCode,
+          } satisfies CompressionGroupMetadata),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(messageGroups.id, groupId), this.groupsOwnership()));
+    });
+  }
+
+  /**
    * Update compression group metadata (UI state like expanded)
    */
   async updateMetadata(

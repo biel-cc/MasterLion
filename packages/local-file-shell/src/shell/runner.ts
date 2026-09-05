@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 
+import { composeChildProcessEnv, resolveLoginShellPath } from '../env';
 import type { RunCommandParams, RunCommandResult } from '../types';
 import type { ShellProcess, ShellProcessManager } from './process-manager';
 import { getShellConfig } from './utils';
@@ -28,17 +29,28 @@ export async function runCommand(
     return { error: 'command is required', success: false };
   }
 
-  const logPrefix = `[runCommand: ${description || command.slice(0, 50)}]`;
-  logger?.debug(`${logPrefix} Starting`, { background: run_in_background, cwd, timeout });
+  // Commands and descriptions can carry user data or tokens. Keep logs to
+  // redacted execution metadata; stdout/stderr stay in the returned result.
+  const logPrefix = '[runCommand]';
+  logger?.debug(`${logPrefix} Starting`, {
+    background: run_in_background,
+    cwd,
+    hasDescription: !!description,
+    timeout,
+  });
 
   const shellConfig = getShellConfig(command);
-  const childEnv = extraEnv ? { ...process.env, ...extraEnv } : process.env;
+  const childEnv = composeChildProcessEnv({
+    hostEnv: process.env,
+    loginShellPath: await resolveLoginShellPath(),
+    resolvedEnv: extraEnv,
+  });
 
   try {
     const shellId = processManager.createShellId();
     const childProcess = spawn(shellConfig.cmd, shellConfig.args, {
       cwd,
-      env: childEnv,
+      env: childEnv as NodeJS.ProcessEnv,
       shell: false,
     });
 

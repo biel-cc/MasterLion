@@ -159,6 +159,11 @@ export interface ChatInputProps {
    */
   mentionItems?: SlashOptions['items'];
   /**
+   * Optional pre-send transaction. Returning false leaves editor/uploads
+   * untouched and prevents dispatch; returning true continues normal send.
+   */
+  onBeforeSend?: (payload: BeforeSendPayload) => Promise<boolean> | boolean;
+  /**
    * Callback when editor instance is ready
    */
   onEditorReady?: (editor: any) => void;
@@ -188,6 +193,11 @@ export interface ChatInputProps {
   skipScrollMarginWithList?: boolean;
 }
 
+export interface BeforeSendPayload {
+  hasAttachments: boolean;
+  message: string;
+}
+
 /**
  * ChatInput component for Conversation
  *
@@ -214,6 +224,7 @@ const ChatInput = memo<ChatInputProps>(
     sendAreaPrefix,
     sendButtonProps: customSendButtonProps,
     showControlBar = true,
+    onBeforeSend,
     onEditorReady,
     skipScrollMarginWithList,
   }) => {
@@ -337,6 +348,12 @@ const ChatInput = memo<ChatInputProps>(
         if (!message.trim() && currentFileList.length === 0 && currentContextList.length === 0)
           return;
 
+        const shouldSend = await onBeforeSend?.({
+          hasAttachments: currentFileList.length > 0 || currentContextList.length > 0,
+          message,
+        });
+        if (shouldSend === false) return;
+
         // Capture editor JSON state before clearing for rich text rendering
         const editorData = getEditorData();
 
@@ -356,7 +373,7 @@ const ChatInput = memo<ChatInputProps>(
         // Fire and forget - send with captured message
         await sendMessage({ editorData, files: currentFileList, message, pageSelections });
       },
-      [sendMessage, disableQueue, disableSend, isInputLoading, t],
+      [sendMessage, disableQueue, disableSend, isInputLoading, onBeforeSend, t],
     );
 
     const sendButtonProps: SendButtonProps = {

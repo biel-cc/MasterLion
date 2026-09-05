@@ -14,6 +14,8 @@ import { createSandboxService } from '@/server/services/sandbox';
 
 const log = debug('lobe-server:hetero-sandbox-runner');
 
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
+
 export interface SandboxRunParams {
   agentType: 'claude-code' | 'codex';
   /** Initial assistant placeholder message id — injected as LOBEHUB_ASSISTANT_MESSAGE_ID so
@@ -21,6 +23,8 @@ export interface SandboxRunParams {
    * to re-read topic.metadata.runningOperation on every cold Lambda start. */
   assistantMessageId: string;
   cwd?: string;
+  /** Operation-frozen execution environment. */
+  env?: Record<string, string>;
   /** GitHub OAuth token for cloning private repos. */
   githubToken?: string;
   /**
@@ -182,12 +186,13 @@ export async function spawnHeteroSandbox(params: SandboxRunParams): Promise<void
   // auth callbacks and must stay as localhost in dev.
   const serverUrl = process.env.LOBEHUB_HETERO_SERVER_URL ?? appEnv.APP_URL;
   const envVars = [
-    `LOBEHUB_JWT=${JSON.stringify(jwt)}`,
-    `LOBEHUB_SERVER=${JSON.stringify(serverUrl)}`,
-    `LOBEHUB_ASSISTANT_MESSAGE_ID=${JSON.stringify(assistantMessageId)}`,
+    `LOBEHUB_JWT=${shellQuote(jwt)}`,
+    `LOBEHUB_SERVER=${shellQuote(serverUrl)}`,
+    `LOBEHUB_ASSISTANT_MESSAGE_ID=${shellQuote(assistantMessageId)}`,
     // Inject GitHub token so CC can authenticate git operations and GitHub API
     // calls inside the sandbox (e.g. gh CLI, git push, API requests).
-    ...(githubToken ? [`GITHUB_TOKEN=${JSON.stringify(githubToken)}`] : []),
+    ...(githubToken ? [`GITHUB_TOKEN=${shellQuote(githubToken)}`] : []),
+    ...Object.entries(params.env ?? {}).map(([key, value]) => `${key}=${shellQuote(value)}`),
   ].join(' ');
   const mainCommand = `echo ${base64Payload} | base64 -d | ${envVars} ${args.join(' ')}`;
   // Creds first (writes ~/.creds/env + authenticates gh CLI), then repo clone.

@@ -1,1 +1,4 @@
+# Build output of the Electron harness: transpiled production plugins, the
+# bundled renderer/main-process artifacts, Playwright results, and the symlinks
+# that let Node load the native/WASM runtime packages from the artifacts dir.
 .artifacts/

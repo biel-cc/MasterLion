@@ -98,9 +98,11 @@ func (h *hub) devices() []GatewayDevice {
 			continue
 		}
 		channel := DeviceConnection{
-			Channel:      conn.att.Channel,
-			ConnectedAt:  conn.att.ConnectedAt,
-			ConnectionID: conn.att.ConnectionID,
+			Capabilities:    conn.att.Capabilities,
+			Channel:         conn.att.Channel,
+			ConnectedAt:     conn.att.ConnectedAt,
+			ConnectionID:    conn.att.ConnectionID,
+			ProtocolVersion: conn.att.ProtocolVersion,
 		}
 		device := byDevice[conn.att.DeviceID]
 		if device == nil {

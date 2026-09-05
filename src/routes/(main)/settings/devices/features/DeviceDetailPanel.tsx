@@ -10,6 +10,7 @@ import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import DirIcon from '@/features/ChatInput/ControlBar/DirIcon';
+import { WorkspacesSection } from '@/features/DeviceWorkspaces';
 import { lambdaQuery } from '@/libs/trpc/client';
 import { electronSystemService } from '@/services/electron/system';
 import { nextWorkingDirs } from '@/store/device';
@@ -60,6 +61,8 @@ interface DeviceDetailPanelProps {
 
 const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onClose }) => {
   const { t } = useTranslation('setting');
+  const { t: tChat } = useTranslation('chat');
+  const tw = tChat as unknown as (key: string) => string;
   const utils = lambdaQuery.useUtils();
 
   const [name, setName] = useState(device.friendlyName ?? '');
@@ -199,63 +202,72 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
         />
       </Flexbox>
 
-      {/* ─── Default working directory ─── */}
-      <Flexbox gap={6}>
-        <span className={styles.label}>{t('devices.edit.defaultCwd')}</span>
-        <Flexbox horizontal gap={8}>
-          <Input
-            placeholder={t('devices.edit.defaultCwdPlaceholder')}
-            value={cwd}
-            onBlur={handleCwdBlur}
-            onChange={(e) => setCwd(e.target.value)}
-            onPressEnter={handleCwdBlur}
-          />
-          {canBrowse && (
-            <Button icon={<Icon icon={FolderOpenIcon} />} onClick={handleBrowse}>
-              {t('devices.edit.browse')}
-            </Button>
-          )}
-        </Flexbox>
-      </Flexbox>
+      {isDesktop && (
+        <>
+          {/* ─── Default working directory ─── */}
+          <Flexbox gap={6}>
+            <span className={styles.label}>{t('devices.edit.defaultCwd')}</span>
+            <Flexbox horizontal gap={8}>
+              <Input
+                placeholder={t('devices.edit.defaultCwdPlaceholder')}
+                value={cwd}
+                onBlur={handleCwdBlur}
+                onChange={(e) => setCwd(e.target.value)}
+                onPressEnter={handleCwdBlur}
+              />
+              {canBrowse && (
+                <Button icon={<Icon icon={FolderOpenIcon} />} onClick={handleBrowse}>
+                  {t('devices.edit.browse')}
+                </Button>
+              )}
+            </Flexbox>
+            <Text fontSize={12} type="secondary">
+              {tw('workspaceRuntime.settings.defaultCwdRecommendation')}
+            </Text>
+          </Flexbox>
 
-      {/* ─── Recent directories ─── */}
-      <Flexbox gap={6}>
-        <span className={styles.label}>{t('devices.detail.recentDirs')}</span>
-        {device.workingDirs.length === 0 ? (
-          <Text style={{ fontSize: 12 }} type={'secondary'}>
-            {t('devices.detail.noRecent')}
-          </Text>
-        ) : (
-          <SortableList
-            items={device.workingDirs.map((d) => ({ id: d.path, repoType: d.repoType }))}
-            renderItem={(item: { id: string; repoType?: 'git' | 'github' }) => (
-              <SortableList.Item className={styles.recentItem} id={item.id} variant={'filled'}>
-                <SortableList.DragHandle />
-                <DirIcon repoType={item.repoType} />
-                <Text className={styles.path} title={item.id}>
-                  {item.id}
-                </Text>
-                <ActionIcon
-                  icon={XIcon}
-                  size={'small'}
-                  onClick={() => handleRemoveRecent(item.id)}
-                />
-              </SortableList.Item>
+          {isDesktop && <WorkspacesSection deviceId={device.deviceId} />}
+
+          {/* ─── Recent directories ─── */}
+          <Flexbox gap={6}>
+            <span className={styles.label}>{t('devices.detail.recentDirs')}</span>
+            {device.workingDirs.length === 0 ? (
+              <Text style={{ fontSize: 12 }} type={'secondary'}>
+                {t('devices.detail.noRecent')}
+              </Text>
+            ) : (
+              <SortableList
+                items={device.workingDirs.map((d) => ({ id: d.path, repoType: d.repoType }))}
+                renderItem={(item: { id: string; repoType?: 'git' | 'github' }) => (
+                  <SortableList.Item className={styles.recentItem} id={item.id} variant={'filled'}>
+                    <SortableList.DragHandle />
+                    <DirIcon repoType={item.repoType} />
+                    <Text className={styles.path} title={item.id}>
+                      {item.id}
+                    </Text>
+                    <ActionIcon
+                      icon={XIcon}
+                      size={'small'}
+                      onClick={() => handleRemoveRecent(item.id)}
+                    />
+                  </SortableList.Item>
+                )}
+                onChange={handleReorderRecent}
+              />
             )}
-            onChange={handleReorderRecent}
-          />
-        )}
-        {canBrowse && (
-          <Button
-            block
-            icon={<Icon icon={FolderPlusIcon} />}
-            variant={'filled'}
-            onClick={handleAddRecent}
-          >
-            {t('devices.detail.addDir')}
-          </Button>
-        )}
-      </Flexbox>
+            {canBrowse && (
+              <Button
+                block
+                icon={<Icon icon={FolderPlusIcon} />}
+                variant={'filled'}
+                onClick={handleAddRecent}
+              >
+                {t('devices.detail.addDir')}
+              </Button>
+            )}
+          </Flexbox>
+        </>
+      )}
     </Flexbox>
   );
 });

@@ -7,6 +7,8 @@ import type {
   SkillListItem,
   SkillResourceContent,
 } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
+import type { SkillRef } from '@lobechat/types/src/projectWorkspace';
 
 import type {
   ActivateSkillParams,
@@ -17,6 +19,7 @@ import type {
   RunCommandOptions,
   RunCommandParams,
 } from '../types';
+import { type DeviceSkillPathVerifier, resolveSkillScriptExecutionRoute } from './skillScriptRoute';
 
 /**
  * Unified skill service interface for dependency injection.
@@ -84,12 +87,35 @@ export interface DeviceFileAccess {
 }
 
 export interface SkillsExecutionRuntimeOptions {
+  /** Server runtimes derive activation from owned conversation history, never model arguments. */
+  activatedSkillsResolver?: () => Promise<ExecScriptParams['activatedSkills']>;
   builtinSkills?: BuiltinSkill[];
   /** Reads project skill files from the device (local-system over the gateway). */
   deviceFileAccess?: DeviceFileAccess;
+  /** Device execution adapter. Server wiring supplies the gateway implementation. */
+  deviceScriptRunner?: (
+    command: string,
+    options: {
+      activatedSkills?: Array<{ description?: string; id: string; name: string }>;
+      cwd: string;
+      description: string;
+      deviceId: string;
+      env: Record<string, string>;
+    },
+  ) => Promise<CommandResult>;
+  /** Device-side realpath proof for workspace and skill containment. */
+  deviceSkillPathVerifier?: DeviceSkillPathVerifier;
+  /** Immutable operation-scoped execution context from the workspace runtime. */
+  executionContext?: ExecutionContext;
   /** Project skills discovered on the device filesystem. */
   projectSkills?: ProjectSkillRuntimeItem[];
+  /** Registry winners used by prompt assembly for this operation. */
+  registryResult?: { skills: SkillRef[] };
   service: SkillRuntimeService;
+  /** Resolves a mounted device skill bundle without guessing a host path. */
+  skillDirectoryResolver?: (
+    activatedSkills: Array<{ description?: string; id: string; name: string }>,
+  ) => Promise<string | undefined>;
 }
 
 /** Cross-platform dirname for absolute paths (POSIX or Windows separators). */
@@ -135,18 +161,95 @@ This project skill lives in \`${skillDir}\`. Use \`local-system.globFiles\` with
 export class SkillsExecutionRuntime {
   private builtinSkills: BuiltinSkill[];
   private projectSkills: ProjectSkillRuntimeItem[];
+  private registrySkills?: SkillRef[];
   private deviceFileAccess?: DeviceFileAccess;
+  private deviceSkillPathVerifier?: DeviceSkillPathVerifier;
+  private deviceScriptRunner?: SkillsExecutionRuntimeOptions['deviceScriptRunner'];
+  private executionContext?: ExecutionContext;
   private service: SkillRuntimeService;
+  private activatedSkillsResolver?: SkillsExecutionRuntimeOptions['activatedSkillsResolver'];
+  private skillDirectoryResolver?: SkillsExecutionRuntimeOptions['skillDirectoryResolver'];
 
   constructor(options: SkillsExecutionRuntimeOptions) {
     this.service = options.service;
     this.builtinSkills = options.builtinSkills || [];
-    this.projectSkills = options.projectSkills || [];
+    this.registrySkills = options.registryResult?.skills;
+    const registryProjectSkills = (this.registrySkills ?? [])
+      .filter(
+        (skill): skill is SkillRef & { location: string } =>
+          (skill.source === 'project' || skill.source === 'workspace') && !!skill.location,
+      )
+      .map((skill) => ({ location: skill.location, name: skill.name }));
+    this.projectSkills = [...registryProjectSkills, ...(options.projectSkills || [])].filter(
+      (skill, index, all) => all.findIndex(({ name }) => name === skill.name) === index,
+    );
     this.deviceFileAccess = options.deviceFileAccess;
+    this.deviceSkillPathVerifier = options.deviceSkillPathVerifier;
+    this.deviceScriptRunner = options.deviceScriptRunner;
+    this.executionContext = options.executionContext;
+    this.skillDirectoryResolver = options.skillDirectoryResolver;
+    this.activatedSkillsResolver = options.activatedSkillsResolver;
   }
 
   async execScript(args: ExecScriptParams): Promise<BuiltinServerRuntimeOutput> {
-    const { activatedSkills, command, description } = args;
+    const { command, description } = args;
+    const activatedSkills = this.activatedSkillsResolver
+      ? await this.activatedSkillsResolver()
+      : args.activatedSkills;
+
+    if (this.executionContext) {
+      let projectSkill: (typeof this.projectSkills)[number] | undefined;
+      let skillDir: string | undefined;
+      // Activation history contains builtins and document-only skills as well.
+      // Resolve the most recently activated executable skill, across both origins.
+      for (const activated of [...(activatedSkills ?? [])].reverse()) {
+        projectSkill = this.projectSkills.find((skill) => skill.name === activated.name);
+        skillDir = projectSkill
+          ? getDirname(projectSkill.location)
+          : await this.skillDirectoryResolver?.([activated]);
+        if (skillDir) break;
+      }
+      const route = await resolveSkillScriptExecutionRoute({
+        allowExternalSkillDir: !projectSkill,
+        context: this.executionContext,
+        skillDir,
+        verifyDevicePaths: this.deviceSkillPathVerifier,
+      });
+
+      if (!route.ok) {
+        return {
+          content: route.error.message,
+          state: { errorCode: route.error.code },
+          success: false,
+        };
+      }
+
+      if (route.kind === 'device') {
+        if (!this.deviceScriptRunner) {
+          return {
+            content: 'Device skill script execution is not wired in this environment.',
+            success: false,
+          };
+        }
+        try {
+          const result = await this.deviceScriptRunner(command, {
+            activatedSkills,
+            cwd: route.cwd,
+            description,
+            deviceId: route.deviceId,
+            env: route.env,
+          });
+          return this.formatCommandOutput(command, result);
+        } catch (error) {
+          return {
+            content: `Failed to execute command: ${(error as Error).message}`,
+            success: false,
+          };
+        }
+      }
+      // Sandbox intentionally falls through to the existing service call so its
+      // provider-owned mount path and behavior remain unchanged.
+    }
 
     // Try new execScript method first (with cloud sandbox support)
     if (this.service.execScript) {
@@ -187,6 +290,52 @@ export class SkillsExecutionRuntime {
   async runCommand(args: RunCommandParams): Promise<BuiltinServerRuntimeOutput> {
     const { command } = args;
 
+    if (this.executionContext) {
+      const { plan } = this.executionContext;
+      if (plan.kind === 'none') {
+        return {
+          content: 'A workspace is required to run a skill command.',
+          state: { errorCode: 'WORKSPACE_REQUIRED' },
+          success: false,
+        };
+      }
+      if (plan.kind === 'device-unrouted') {
+        return {
+          content: 'The selected device is unavailable for skill command execution.',
+          state: { errorCode: 'DEVICE_UNROUTED' },
+          success: false,
+        };
+      }
+      if (plan.kind === 'device') {
+        const cwd = this.executionContext.workspace?.rootPath ?? this.executionContext.cwd;
+        if (!cwd || !this.deviceScriptRunner) {
+          return {
+            content: 'Device skill command execution is not wired in this environment.',
+            state: { errorCode: 'WORKSPACE_REQUIRED' },
+            success: false,
+          };
+        }
+        try {
+          const result = await this.deviceScriptRunner(command, {
+            cwd,
+            description: args.description ?? 'Run skill command',
+            deviceId: plan.deviceId,
+            env: {
+              ...this.executionContext.env?.values,
+              WORKSPACE_DIR: cwd,
+            },
+          });
+          return this.formatCommandOutput(command, result);
+        } catch (error) {
+          return {
+            content: `Failed to execute command: ${(error as Error).message}`,
+            success: false,
+          };
+        }
+      }
+      // Sandbox intentionally keeps using its provider-owned service below.
+    }
+
     if (!this.service.runCommand) {
       return {
         content: 'Command execution is not available in this environment.',
@@ -207,6 +356,29 @@ export class SkillsExecutionRuntime {
 
   async exportFile(args: ExportFileParams): Promise<BuiltinServerRuntimeOutput> {
     const { path, filename } = args;
+
+    if (this.executionContext) {
+      const { plan } = this.executionContext;
+      if (plan.kind === 'device') {
+        return {
+          content: `The file is already on the device at ${path}`,
+          state: { filename, path },
+          success: true,
+        };
+      }
+      if (plan.kind !== 'sandbox') {
+        return {
+          content:
+            plan.kind === 'device-unrouted'
+              ? 'The selected device is unavailable for file export.'
+              : 'A workspace is required to export a skill file.',
+          state: {
+            errorCode: plan.kind === 'device-unrouted' ? 'DEVICE_UNROUTED' : 'WORKSPACE_REQUIRED',
+          },
+          success: false,
+        };
+      }
+    }
 
     if (!this.service.exportFile) {
       return {
@@ -248,9 +420,16 @@ export class SkillsExecutionRuntime {
     const { id, path } = args;
 
     try {
+      const registryRef = this.registrySkills?.find((skill) => skill.name === id);
+      if (this.registrySkills && !registryRef) {
+        return { content: `Skill not found: "${id}"`, success: false };
+      }
       // Project skills resolve references relative to the SKILL.md directory,
       // read through the device file access (local-system over the gateway).
-      const projectSkill = this.projectSkills.find((s) => s.name === id);
+      const projectSkill =
+        !registryRef || registryRef.source === 'project' || registryRef.source === 'workspace'
+          ? this.projectSkills.find((s) => s.name === id)
+          : undefined;
       if (projectSkill) {
         if (!this.deviceFileAccess) {
           return {
@@ -310,7 +489,10 @@ export class SkillsExecutionRuntime {
       // builtin) in `aiAgent/index.ts`. Without this, the model would see a
       // user skill in the list but `readReference` would silently read the
       // shadowed builtin's resources.
-      const skill = await this.service.findByName(id);
+      const skill =
+        !registryRef || registryRef.source === 'user'
+          ? await this.service.findByName(id)
+          : undefined;
       if (skill) {
         const resource = await this.service.readResource(skill.id, path);
         return {
@@ -328,7 +510,12 @@ export class SkillsExecutionRuntime {
 
       // Fall back to builtin skills (includes agent-document skill bundles
       // via the `agent-skills:` identifier prefix).
-      const builtinSkill = this.builtinSkills.find((s) => s.name === id);
+      const builtinSkill =
+        !registryRef || registryRef.source === 'builtin' || registryRef.source === 'agent'
+          ? this.builtinSkills.find(
+              (skill) => skill.identifier === registryRef?.identifier || skill.name === id,
+            )
+          : undefined;
       if (builtinSkill?.resources) {
         const meta = builtinSkill.resources[path];
         if (meta?.content !== undefined) {
@@ -363,9 +550,23 @@ export class SkillsExecutionRuntime {
 
   async activateSkill(args: ActivateSkillParams): Promise<BuiltinServerRuntimeOutput> {
     const { name } = args;
+    const registryRef = this.registrySkills?.find((skill) => skill.name === name);
+    if (this.registrySkills && !registryRef) {
+      const availableSkills = this.registrySkills.map((skill) => ({
+        description: skill.description,
+        name: skill.name,
+      }));
+      return {
+        content: `Skill not found: "${name}". Available skills: ${JSON.stringify(availableSkills)}`,
+        success: false,
+      };
+    }
 
     // Project skills (filesystem SKILL.md) take precedence over db/builtin.
-    const projectSkill = this.projectSkills.find((s) => s.name === name);
+    const projectSkill =
+      !registryRef || registryRef.source === 'project' || registryRef.source === 'workspace'
+        ? this.projectSkills.find((s) => s.name === name)
+        : undefined;
     if (projectSkill) {
       if (!this.deviceFileAccess) {
         return {
@@ -390,6 +591,7 @@ export class SkillsExecutionRuntime {
           content,
           state: {
             hasResources: false,
+            id: registryRef?.key ?? `project:${name}`,
             location: projectSkill.location,
             name,
             source: 'project',
@@ -409,7 +611,10 @@ export class SkillsExecutionRuntime {
     // builtin) in `aiAgent/index.ts`. Without this, the model would see a
     // user skill in the list but `activateSkill` would silently load the
     // shadowed builtin instead.
-    const skill = await this.service.findByName(name);
+    const skill =
+      !registryRef || registryRef.source === 'user'
+        ? await this.service.findByName(name)
+        : undefined;
     if (skill) {
       const hasResources = !!(skill.resources && Object.keys(skill.resources).length > 0);
       let content = skill.content || '';
@@ -433,7 +638,12 @@ export class SkillsExecutionRuntime {
 
     // Fall back to builtin skills (includes agent-document skill bundles via
     // the `agent-skills:` identifier prefix).
-    const builtinSkill = this.builtinSkills.find((s) => s.name === name);
+    const builtinSkill =
+      !registryRef || registryRef.source === 'builtin' || registryRef.source === 'agent'
+        ? this.builtinSkills.find(
+            (skill) => skill.identifier === registryRef?.identifier || skill.name === name,
+          )
+        : undefined;
     if (builtinSkill) {
       let content = builtinSkill.content;
       const hasResources = !!(
@@ -464,11 +674,15 @@ export class SkillsExecutionRuntime {
       };
     }
 
-    const { data: allSkills } = await this.service.findAll();
-    const availableSkills = allSkills.map((s) => ({
-      description: s.description,
-      name: s.name,
-    }));
+    const availableSkills = this.registrySkills
+      ? this.registrySkills.map((skill) => ({
+          description: skill.description,
+          name: skill.name,
+        }))
+      : (await this.service.findAll()).data.map((skill) => ({
+          description: skill.description,
+          name: skill.name,
+        }));
 
     return {
       content: `Skill not found: "${name}". Available skills: ${JSON.stringify(availableSkills)}`,

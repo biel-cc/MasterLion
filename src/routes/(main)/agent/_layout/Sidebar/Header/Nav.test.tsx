@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Nav from './Nav';
 
-const mutateMock = vi.hoisted(() => vi.fn());
-const openNewTopicOrSaveTopicMock = vi.hoisted(() => vi.fn());
+const openNewTopicFromHeaderMock = vi.hoisted(() => vi.fn());
 const pushMock = vi.hoisted(() => vi.fn());
 const switchTopicMock = vi.hoisted(() => vi.fn());
 const toggleCommandMenuMock = vi.hoisted(() => vi.fn());
@@ -83,12 +82,6 @@ vi.mock('@/libs/router/navigation', () => ({
   usePathname: usePathnameMock,
 }));
 
-vi.mock('@/libs/swr', () => ({
-  useActionSWR: () => ({
-    mutate: mutateMock,
-  }),
-}));
-
 vi.mock('@/hooks/usePermission', () => ({
   usePermission: (action: 'create_content') => ({
     allowed: permissionMock[action],
@@ -109,12 +102,12 @@ vi.mock('@/store/agent/selectors', () => ({
 vi.mock('@/store/chat', () => ({
   useChatStore: (
     selector: (state: {
-      openNewTopicOrSaveTopic: () => void;
+      openNewTopicFromHeader: () => void;
       switchTopic: (topicId: string | null, options?: unknown) => void;
     }) => unknown,
   ) =>
     selector({
-      openNewTopicOrSaveTopic: openNewTopicOrSaveTopicMock,
+      openNewTopicFromHeader: openNewTopicFromHeaderMock,
       switchTopic: switchTopicMock,
     }),
 }));
@@ -134,8 +127,7 @@ vi.mock('@/store/serverConfig', () => ({
 
 describe('Agent sidebar header nav', () => {
   beforeEach(() => {
-    mutateMock.mockReset();
-    openNewTopicOrSaveTopicMock.mockReset();
+    openNewTopicFromHeaderMock.mockReset();
     pushMock.mockReset();
     switchTopicMock.mockReset();
     toggleCommandMenuMock.mockReset();
@@ -146,7 +138,7 @@ describe('Agent sidebar header nav', () => {
     useParamsMock.mockReturnValue({ aid: 'agt_eH4zL98zBx5u', topicId: 'tpc_2FCHvjS7d4CA' });
   });
 
-  it('returns to the agent chat route before opening a new topic from a topic page document route', () => {
+  it('captures the current topic before returning to the bare agent route', () => {
     usePathnameMock.mockReturnValue(
       '/agent/agt_eH4zL98zBx5u/tpc_2FCHvjS7d4CA/page/docs_9B8hFkmEOZyPZb60',
     );
@@ -156,7 +148,10 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(screen.getByRole('button', { name: 'actions.addNewTopic' }));
 
     expect(pushMock).toHaveBeenCalledWith('/agent/agt_eH4zL98zBx5u');
-    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(openNewTopicFromHeaderMock).toHaveBeenCalledTimes(1);
+    expect(openNewTopicFromHeaderMock.mock.invocationCallOrder[0]).toBeLessThan(
+      pushMock.mock.invocationCallOrder[0],
+    );
   });
 
   it('pushes the agent chat route even when already on it', () => {
@@ -167,7 +162,7 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(screen.getByRole('button', { name: 'actions.addNewTopic' }));
 
     expect(pushMock).toHaveBeenCalledWith('/agent/agt_eH4zL98zBx5u');
-    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(openNewTopicFromHeaderMock).toHaveBeenCalledTimes(1);
   });
 
   it('disables starting a new topic for workspace viewers', () => {
@@ -182,6 +177,6 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(startButton);
 
     expect(pushMock).not.toHaveBeenCalled();
-    expect(mutateMock).not.toHaveBeenCalled();
+    expect(openNewTopicFromHeaderMock).not.toHaveBeenCalled();
   });
 });

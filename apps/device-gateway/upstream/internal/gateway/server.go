@@ -23,6 +23,7 @@ const (
 	defaultDeviceRPCTimeout     = 10 * time.Second
 	defaultDeviceMessageTimeout = 30 * time.Second
 	defaultAgentRunTimeout      = 10 * time.Second
+	currentProtocolVersion      = 2
 )
 
 type Server struct {
@@ -111,10 +112,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			LastHeartbeat: now,
 			Platform:      r.URL.Query().Get("platform"),
 		},
-		authTimeout:  s.authTimeout,
+		authTimeout:   s.authTimeout,
 		claimedUserID: r.URL.Query().Get("userId"),
-		server:       s,
-		ws:           ws,
+		server:        s,
+		ws:            ws,
 	}
 	slog.Info(
 		"device gateway websocket accepted",
@@ -190,6 +191,51 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 	timeout := normalizeToolCallTimeout(body.Timeout)
 	requestID := randomID()
 
+	request := buildToolCallRequest(body, requestID, timeout)
+
+	msg, status := h.dispatch(target, requestID, timeout+toolCallTimeoutPadding, request)
+	switch status {
+	case dispatchOK:
+		metadata := map[string]any{}
+		if validation := executionContextValidation(target, body); validation != "" {
+			metadata["executionContextValidation"] = validation
+		}
+		writeMergedResultWithMetadata(w, http.StatusOK, true, msg.Result, metadata)
+	case dispatchTimeout:
+		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "工具调用超时（" + formatSeconds(timeout) + "s）", "error": "TIMEOUT", "success": false})
+	case dispatchOffline:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
+	}
+}
+
+func executionContextValidation(target *connection, body deviceHTTPBody) string {
+	if len(body.ExecutionContext) == 0 {
+		return ""
+	}
+
+	// Protocol v2 only defines hard validation for the builtin LocalSystem
+	// execution boundary. MCP calls have a separate execution path on the
+	// device, so accepting their advertised device-level capability would
+	// falsely claim validation that never ran. Unknown future protocol versions
+	// also fail legacy until this gateway explicitly understands their contract.
+	var toolCall struct {
+		Identifier string `json:"identifier"`
+		Type       string `json:"type"`
+	}
+	if err := json.Unmarshal(body.ToolCall, &toolCall); err != nil ||
+		toolCall.Type != "tool" ||
+		toolCall.Identifier != "lobe-local-system" {
+		return "legacy"
+	}
+	if target != nil &&
+		target.att.ProtocolVersion == currentProtocolVersion &&
+		target.att.Capabilities.ExecutionContextValidation {
+		return "hard"
+	}
+	return "legacy"
+}
+
+func buildToolCallRequest(body deviceHTTPBody, requestID string, timeout time.Duration) map[string]any {
 	request := map[string]any{
 		"requestId": requestID,
 		"timeout":   int(timeout / time.Millisecond),
@@ -199,16 +245,19 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 	if body.OperationID != "" {
 		request["operationId"] = body.OperationID
 	}
-
-	msg, status := h.dispatch(target, requestID, timeout+toolCallTimeoutPadding, request)
-	switch status {
-	case dispatchOK:
-		writeMergedResult(w, http.StatusOK, true, msg.Result)
-	case dispatchTimeout:
-		writeJSON(w, http.StatusGatewayTimeout, map[string]any{"content": "工具调用超时（" + formatSeconds(timeout) + "s）", "error": "TIMEOUT", "success": false})
-	case dispatchOffline:
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
+	if len(body.ExecutionContext) > 0 {
+		request["executionContext"] = body.ExecutionContext
 	}
+	if body.TopicID != "" {
+		request["topicId"] = body.TopicID
+	}
+	if body.ToolCallID != "" {
+		request["toolCallId"] = body.ToolCallID
+	}
+	if body.DeviceID != "" {
+		request["deviceId"] = body.DeviceID
+	}
+	return request
 }
 
 func (s *Server) handleSystemInfo(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
@@ -308,6 +357,45 @@ func (s *Server) handleMessageAPI(w http.ResponseWriter, _ *http.Request, body d
 	}
 }
 
+func buildAgentRunRequest(body deviceHTTPBody) map[string]any {
+	msg := map[string]any{
+		"agentType":   body.AgentType,
+		"jwt":         body.JWT,
+		"operationId": body.OperationID,
+		"prompt":      body.Prompt,
+		"topicId":     body.TopicID,
+		"type":        "agent_run_request",
+	}
+	if body.CWD != "" {
+		msg["cwd"] = body.CWD
+	}
+	if len(body.Env) > 0 {
+		msg["env"] = body.Env
+	}
+	if len(body.ExecutionContext) > 0 {
+		msg["executionContext"] = body.ExecutionContext
+	}
+	if len(body.ImageList) > 0 {
+		msg["imageList"] = body.ImageList
+	}
+	if len(body.ModelRef) > 0 {
+		msg["modelRef"] = body.ModelRef
+	}
+	if body.ResumeSessionID != "" {
+		msg["resumeSessionId"] = body.ResumeSessionID
+	}
+	if body.SystemContext != "" {
+		msg["systemContext"] = body.SystemContext
+	}
+	if body.SkillPolicy != "" {
+		msg["skillPolicy"] = body.SkillPolicy
+	}
+	if len(body.Skills) > 0 {
+		msg["skills"] = body.Skills
+	}
+	return msg
+}
+
 func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
 	if strings.TrimSpace(body.OperationID) == "" {
 		writeText(w, http.StatusBadRequest, "Missing operationId")
@@ -325,24 +413,7 @@ func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body dev
 	}
 	timeout := timeoutOrDefault(body.Timeout, defaultAgentRunTimeout)
 	key := body.OperationID
-
-	msg := map[string]any{
-		"agentType":   body.AgentType,
-		"jwt":         body.JWT,
-		"operationId": body.OperationID,
-		"prompt":      body.Prompt,
-		"topicId":     body.TopicID,
-		"type":        "agent_run_request",
-	}
-	if body.CWD != "" {
-		msg["cwd"] = body.CWD
-	}
-	if body.ResumeSessionID != "" {
-		msg["resumeSessionId"] = body.ResumeSessionID
-	}
-	if body.SystemContext != "" {
-		msg["systemContext"] = body.SystemContext
-	}
+	msg := buildAgentRunRequest(body)
 
 	result, status := h.dispatch(target, key, timeout, msg)
 	switch status {
@@ -374,6 +445,10 @@ func writeText(w http.ResponseWriter, status int, value string) {
 }
 
 func writeMergedResult(w http.ResponseWriter, status int, success bool, result json.RawMessage) {
+	writeMergedResultWithMetadata(w, status, success, result, nil)
+}
+
+func writeMergedResultWithMetadata(w http.ResponseWriter, status int, success bool, result json.RawMessage, metadata map[string]any) {
 	merged := map[string]any{"success": success}
 	if len(result) > 0 {
 		var resultMap map[string]any
@@ -382,6 +457,9 @@ func writeMergedResult(w http.ResponseWriter, status int, success bool, result j
 				merged[k] = v
 			}
 		}
+	}
+	for key, value := range metadata {
+		merged[key] = value
 	}
 	writeJSON(w, status, merged)
 }

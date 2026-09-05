@@ -5,6 +5,7 @@ export interface RunCommandParams {
   cwd?: string;
   description?: string;
   env?: Record<string, string>;
+  envFiles?: string[];
   run_in_background?: boolean;
   /**
    * Maximum time to wait for this observation before returning.
@@ -78,6 +79,81 @@ export interface KillCommandResult {
   error?: string;
   success: boolean;
 }
+
+// ─── Device execution boundary ───
+
+export type PathAccessMode = 'exec' | 'read' | 'write';
+
+/**
+ * Device-side structural copy of the frozen ExecutionAccessRoot contract.
+ * Tuple fields are optional transport evidence for topic grants. A device
+ * rejects a topic grant when any of this evidence is absent or mismatched.
+ */
+export interface DeviceExecutionAccessRoot {
+  deviceId?: string;
+  expiresAt?: string;
+  grantId?: string;
+  modes: PathAccessMode[];
+  operationId?: string;
+  rootPath: string;
+  scope: 'operation' | 'primary' | 'topic';
+  source: 'direct-user-message' | 'user-approval' | 'workspace';
+  topicId?: string;
+}
+
+/** Structurally compatible with ToolCallExecutionContext from @lobechat/types. */
+export interface DeviceToolCallExecutionContext {
+  accessRoots?: DeviceExecutionAccessRoot[];
+  cwd?: string;
+  env?: Record<string, string>;
+  envFiles?: string[];
+  envRef?: { agentId: string; topicId?: string; workspaceId?: string };
+  workspaceKind?: 'device' | 'sandbox' | 'scratch';
+  workspaceRootPath?: string;
+}
+
+export interface ExecutionBoundaryTrace {
+  deviceId?: string;
+  operationId?: string;
+  toolCallId?: string;
+  topicId?: string;
+}
+
+export type ScopeVerdict = 'denied' | 'primary' | `consent:${string}` | `grant:${string}`;
+
+/** Redacted authorization evidence. Never contains file contents or env values. */
+export interface ScopeAuditEntry extends ExecutionBoundaryTrace {
+  cwdOverridden?: boolean;
+  mode: PathAccessMode;
+  /** The access target this call actually resolved to, canonicalized. */
+  path: string;
+  /**
+   * Device-canonical realpath of the access root that authorized `path`. `path` is
+   * the target and is usually a descendant of it, so anything that re-authorizes
+   * (a topic grant, for one) must use this root and never the target. Absent on a
+   * denial.
+   */
+  rootPath?: string;
+  scopeVerdict: ScopeVerdict;
+  /**
+   * Source of the root that authorized this path. `consent:` alone cannot tell an
+   * auto-allowed direct-user-message root from an explicitly approved one, so the
+   * source travels with the verdict. Absent on a denial.
+   */
+  source?: DeviceExecutionAccessRoot['source'];
+}
+
+export interface PreparedToolCallExecution<T extends Record<string, any> = Record<string, any>> {
+  args: T;
+  legacy: boolean;
+  scopeAudit: ScopeAuditEntry[];
+  warnings: Array<{ code: 'MODEL_CWD_OVERRIDDEN'; overridden: true }>;
+}
+
+export type ExecutionBoundaryErrorCode =
+  | 'INTERVENTION_REQUIRED'
+  | 'SCOPE_DENIED'
+  | 'WORKSPACE_REQUIRED';
 
 // ─── File Types ───
 

@@ -17,11 +17,50 @@ TRPC transport is replaced with a deterministic in-process fake. They verify the
 bounded retry path, terminal error UI, and recovery after the user clicks the production Retry
 button.
 
+## Workspace Runtime scenarios
+
+`workspace-runtime.spec.ts` mounts the production agent sidebar (`Sidebar/Body` → `Topic` →
+`TopicList` → `WorkspaceMode`) in the Electron renderer and runs the real data chains end to end:
+
+- `useWorkspaceTopicNavigation` → production `projectWorkspace` store `useFetchWorkspaces` →
+  `@/libs/swr` → `projectWorkspaceService` → `lambdaClient.projectWorkspace.list.query`
+- `useFetchChatTopics` → `useFetchTopics` → production chat store `useFetchTopics` action →
+  `@/libs/swr` → `topicService` → `lambdaClient.topic.getTopics.query` → production store writes,
+  `topicSelectors`, placement classification and sidebar UI
+
+The renderer only seeds conversation identity (active agent, active topic, gateway device). Topic
+rows and workspace rows are fetched by production code.
+
+Workspace lifecycle rows (W04 and W07–W10), path consent (P08), and compatibility (X02) execute in
+the Electron main process through the preload IPC bridge. They use the production workspace models,
+services, execution-context resolver and device execution boundary against an isolated PGlite
+database and a unique temporary filesystem. The harness reads rows and files back after each
+operation and records provider/device-port call counts. W10 invokes the production
+`AiAgentService.execAgent` entry for both the rejected unbound send and the bound resume; only its
+external device transport is injected, so message persistence, target capture, workspace gating,
+frozen context, JWT signing, session lookup, and dispatch argument construction remain real.
+
+### Remaining test doubles
+
+1. **Renderer TRPC transport** (`production-app/workspaceRuntimeTrpcClient.ts`) — supplies the
+   deterministic sidebar presentation rows without a server or account. It applies the same
+   `agentId` / `excludeTriggers` / `excludeStatuses` / `pageSize` filtering the real routers apply
+   and records every call, so the spec fails if the production params stop arriving.
+2. **External runtime ports** — the model-provider HTTP request, heterogeneous device dispatch,
+   and remote-device directory probe are deterministic and counted. The directory port resolves
+   against the real temporary filesystem; database models, workspace services, execution
+   boundaries, agent dispatch logic and IPC are not replaced.
+3. **Shell-only UI substitutions** (`workspace-runtime-product-boundaries` plugin) — the Topic and
+   TopicItem overflow menus (`useDropdownMenu`, `Actions`, `Editing`), the sidebar `Filter` and
+   `ToggleGroups` affordances, `AllTopicsDrawer` and `ThreadList`. These are presentation surfaces
+   outside the Topic navigation contract; they pull heavy portal/menu machinery into a headless
+   window without adding coverage. No store, action, selector, SWR hook or service is substituted.
+
 This remains a focused Electron-hosted contract rather than a signed packaged-app smoke test. The
-tool-call and Aihub scenarios use deterministic lifecycle adapters; the Notebook scenarios run the
-production renderer data and UI chain through the TRPC client boundary. Production Zustand adapters,
-approval actions, message services, routers, and database behavior remain covered by their Vitest
-and database integration suites. A packaged desktop smoke test remains separate follow-up work.
+tool-call and Aihub scenarios use deterministic lifecycle adapters; Notebook scenarios run through
+the renderer TRPC boundary; Workspace Runtime combines the production renderer chain with real
+main-process IPC, database, filesystem, workspace-service and execution-boundary seams. A packaged
+desktop smoke test remains separate follow-up work.
 
 It intentionally does not use the Chromium/Next.js harness under `e2e/src`: that harness cannot
 exercise Electron preload or IPC.
@@ -35,7 +74,9 @@ pnpm install --frozen-lockfile
 pnpm --dir apps/desktop install
 ```
 
-No Playwright browser download, database, Next.js server, or external network service is needed.
+No Playwright browser download, external database, Next.js server, account, or network service is
+needed. Workspace Runtime creates and removes its own in-process PGlite database and temporary
+filesystem.
 
 ## Run
 

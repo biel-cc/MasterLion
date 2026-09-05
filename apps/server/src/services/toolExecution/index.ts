@@ -19,6 +19,7 @@ import { DiscoverService } from '../discover';
 import { type MCPService } from '../mcp';
 import { type BuiltinToolsExecutor } from './builtin';
 import { classifyToolError } from './errorClassification';
+import { toGatewayExecutionContext } from './executionContext';
 import {
   type ToolExecutionContext,
   type ToolExecutionResult,
@@ -105,19 +106,10 @@ export class ToolExecutionService {
     const startTime = Date.now();
     try {
       const typeStr = type as string;
-      let data: ToolExecutionResult;
-      switch (typeStr) {
-        case 'mcp': {
-          data = await this.executeMCPTool(payload, context);
-          break;
-        }
-
-        case 'builtin':
-        default: {
-          data = await this.builtinToolsExecutor.execute(payload, context);
-          break;
-        }
-      }
+      const data: ToolExecutionResult =
+        typeStr === 'mcp'
+          ? await this.executeMCPTool(payload, context)
+          : await this.builtinToolsExecutor.execute(payload, context);
 
       const executionTime = Date.now() - startTime;
 
@@ -285,7 +277,9 @@ export class ToolExecutionService {
         apiName,
         arguments: args,
         deviceId: context.activeDeviceId!,
+        executionContext: toGatewayExecutionContext(context),
         identifier,
+        operationId: context.operationId,
         params: {
           args: mcpParams.args ?? [],
           command: mcpParams.command,
@@ -294,6 +288,8 @@ export class ToolExecutionService {
           type: 'stdio',
         },
         userId: context.userId!,
+        toolCallId: context.toolCallId,
+        topicId: context.topicId,
       },
       context.executionTimeoutMs,
     );

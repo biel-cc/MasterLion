@@ -41,7 +41,7 @@ test('stops after two retries and recovers when the user clicks Retry', async ()
     await expect(page.getByTestId('notebook-attempts')).toHaveText('3');
     await expectBoundedRetryDelays(page);
 
-    await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByRole('button', { exact: true, name: 'Retry' }).click();
 
     await expect(page.getByText('Existing report')).toBeVisible();
     await expect(page.getByTestId('notebook-attempts')).toHaveText('4');

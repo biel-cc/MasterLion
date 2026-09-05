@@ -93,49 +93,42 @@ export class SkillImporter {
     try {
       const buffer = await readFile(filePath);
       log('importFromZip: read buffer size=%d bytes', buffer.length);
-
-      // 2. Parse ZIP package
-      const { manifest, content, resources, zipHash } = await this.parser.parseZipPackage(buffer);
-      log(
-        'importFromZip: parsed manifest=%o, resources count=%d, zipHash=%s',
-        manifest,
-        resources.size,
-        zipHash,
-      );
-
-      // 3. Check if name already exists for this user
-      const existingByName = await this.skillModel.findByName(manifest.name);
-      if (existingByName) {
-        throw new SkillImportError(`Skill with name "${manifest.name}" already exists`, 'CONFLICT');
-      }
-
-      // 4. Store resource files
-      const resourceIds = zipHash
-        ? await this.resourceService.storeResources(zipHash, resources)
-        : {};
-      log('importFromZip: stored resources=%o', resourceIds);
-
-      // 5. Generate identifier
-      const identifier = `user.${nanoid(12)}`;
-      log('importFromZip: generated identifier=%s', identifier);
-
-      // 6. Create skill record
-      const skill = await this.skillModel.create({
-        content,
-        description: manifest.description,
-        identifier,
-        manifest,
-        name: manifest.name,
-        resources: resourceIds,
-        source: 'user',
-        zipFileHash: zipHash,
-      });
-      log('importFromZip: created skill id=%s', skill.id);
-      return { skill, status: 'created' };
+      return this.importFromZipBuffer(buffer);
     } finally {
       cleanup();
       log('importFromZip: cleaned up temp file');
     }
+  }
+
+  /** Import an already-authorized in-memory ZIP (for project-skill promotion). */
+  async importFromZipBuffer(buffer: Uint8Array): Promise<SkillImportResult> {
+    if (buffer.byteLength > MAX_REMOTE_SKILL_BYTES) {
+      throw new Error('Skill ZIP exceeds the size limit');
+    }
+
+    const { manifest, content, resources, zipHash } = await this.parser.parseZipPackage(
+      Buffer.from(buffer),
+    );
+    const existingByName = await this.skillModel.findByName(manifest.name);
+    if (existingByName) {
+      throw new SkillImportError(`Skill with name "${manifest.name}" already exists`, 'CONFLICT');
+    }
+
+    const resourceIds = zipHash
+      ? await this.resourceService.storeResources(zipHash, resources)
+      : {};
+    const identifier = `user.${nanoid(12)}`;
+    const skill = await this.skillModel.create({
+      content,
+      description: manifest.description,
+      identifier,
+      manifest,
+      name: manifest.name,
+      resources: resourceIds,
+      source: 'user',
+      zipFileHash: zipHash,
+    });
+    return { skill, status: 'created' };
   }
 
   /**

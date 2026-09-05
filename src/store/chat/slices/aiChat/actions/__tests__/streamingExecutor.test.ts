@@ -12,6 +12,7 @@ import * as agentConfigResolver from '@/services/chat/mecha/agentConfigResolver'
 import { messageService } from '@/services/message';
 import { useAgentStore } from '@/store/agent';
 import { useAiInfraStore } from '@/store/aiInfra';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 
 import { useChatStore } from '../../../../store';
@@ -136,6 +137,7 @@ const mockInternalCreateAgentState = (value: ReturnType<typeof realCreateAgentSt
 
 beforeEach(() => {
   resetTestEnvironment();
+  useProjectWorkspaceStore.setState({ operationConsentByMessage: {} });
   setupMockSelectors();
   spyOnMessageService();
   serverConfigMock.enableVisualUnderstanding = false;
@@ -157,6 +159,169 @@ afterEach(() => {
 
 describe('StreamingExecutor actions', () => {
   describe('executeClientAgent', () => {
+    it('projects a preparation failure on the current assistant so the user can retry', async () => {
+      const context = { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID };
+      const assistant = createMockMessage({
+        id: 'preparing-assistant',
+        role: 'assistant',
+        parentId: 'source-user',
+      });
+      const updateError = vi.fn().mockResolvedValue(undefined);
+      act(() =>
+        useChatStore.setState({
+          dbMessagesMap: { [messageMapKey(context)]: [assistant] },
+          optimisticUpdateMessageError: updateError,
+        }),
+      );
+      const { operationId } = useChatStore
+        .getState()
+        .startOperation({ type: 'execAgentRuntime', context });
+      const lifecycle = buildRunLifecycle(() => useChatStore.getState(), {
+        context,
+        parentMessageId: 'source-user',
+        parentMessageType: 'user',
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+      });
+      await lifecycle.onRunError({
+        context,
+        operationId,
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+        error: new Error('Project skill scan failed; retry after reconnecting'),
+      });
+      expect(updateError).toHaveBeenCalledWith(
+        'preparing-assistant',
+        expect.objectContaining({
+          message: 'Project skill scan failed; retry after reconnecting',
+        }),
+        { operationId },
+      );
+    });
+
+    it('carries one approved path from the pending tool into the new local operation', async () => {
+      act(() => useChatStore.setState({ executeClientAgent: realExecAgentRuntime }));
+      const request = {
+        actualCwd: '',
+        deviceId: 'device-local',
+        modes: ['read'] as const,
+        operationId: 'paused-operation',
+        primaryCwd: '',
+        requestedPath: '/tmp/probe.txt',
+        topicId: TEST_IDS.TOPIC_ID,
+        version: 1 as const,
+      };
+      const message = createMockMessage({
+        id: 'pending-path-tool',
+        role: 'tool',
+        pluginState: { workspacePathConsent: request },
+      });
+      act(() =>
+        useChatStore.setState({
+          dbMessagesMap: {
+            [messageMapKey({ agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID })]: [
+              message,
+            ],
+          },
+        }),
+      );
+      useProjectWorkspaceStore.getState().setOperationPathConsent(message.id, {
+        ...request,
+        modes: ['read'],
+        rootPath: '/private/tmp/probe.txt',
+        scope: 'operation',
+      });
+      vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
+        async ({ onFinish }) => {
+          await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+        },
+      );
+      await act(async () => {
+        await useChatStore.getState().executeClientAgent({
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+          executionContext: {
+            version: 1,
+            accessRoots: [],
+            plan: { kind: 'device', target: 'local', deviceId: 'device-local' },
+          },
+          messages: [
+            createMockMessage({
+              id: 'assistant-group',
+              role: 'assistantGroup',
+              children: [{ id: message.id, content: message.content ?? '' }],
+            }),
+          ],
+          parentMessageId: message.id,
+          parentMessageType: 'tool',
+          skipCreateFirstMessage: true,
+        });
+      });
+      const operation = Object.values(useChatStore.getState().operations).find(
+        (op) => op.type === 'execAgentRuntime',
+      );
+      expect(operation?.metadata.executionContext?.accessRoots).toContainEqual(
+        expect.objectContaining({
+          rootPath: '/private/tmp/probe.txt',
+          source: 'user-approval',
+          scope: 'operation',
+          modes: ['read'],
+          operationId: operation!.id,
+          topicId: TEST_IDS.TOPIC_ID,
+          deviceId: 'device-local',
+        }),
+      );
+    });
+
+    it.each([true, false])(
+      'grants absolute reads only to the explicit current UI submission (%s)',
+      async (explicitSubmission) => {
+        act(() => useChatStore.setState({ executeClientAgent: realExecAgentRuntime }));
+        const message = createMockMessage({
+          id: TEST_IDS.USER_MESSAGE_ID,
+          role: 'user',
+          content: 'Read /tmp/masterino-direct-read.txt',
+        });
+        vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
+          async ({ onFinish }) => {
+            await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+          },
+        );
+        await act(async () => {
+          await useChatStore.getState().executeClientAgent({
+            context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+            directUserMessageId: explicitSubmission ? message.id : undefined,
+            executionContext: {
+              version: 1,
+              accessRoots: [],
+              plan: { kind: 'device', target: 'local', deviceId: 'device-local' },
+            },
+            messages: [message],
+            parentMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+            parentMessageType: 'assistant',
+            skipCreateFirstMessage: true,
+          });
+        });
+        const operation = Object.values(useChatStore.getState().operations).find(
+          (op) => op.type === 'execAgentRuntime',
+        );
+        expect(operation?.metadata.executionContext?.accessRoots).toEqual(
+          explicitSubmission
+            ? [
+                expect.objectContaining({
+                  rootPath: '/tmp/masterino-direct-read.txt',
+                  modes: ['read'],
+                  scope: 'operation',
+                  source: 'direct-user-message',
+                  topicId: TEST_IDS.TOPIC_ID,
+                }),
+              ]
+            : [],
+        );
+      },
+    );
+
     it('should handle the core AI message processing', async () => {
       act(() => {
         useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
@@ -389,11 +554,26 @@ describe('StreamingExecutor actions', () => {
         enabled: true,
         maxWindowToken: 200_000,
       });
+      const operationState = stepSpy.mock.calls[0][0] as AgentState;
+      const snapshot = operationState.metadata?.modelCatalogSnapshot as any;
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          entry: expect.objectContaining({
+            contextWindowTokens: 200_000,
+            modelId: 'gpt-4o-mini',
+            providerId: 'openai',
+          }),
+          operationId: expect.any(String),
+          version: 1,
+        }),
+      );
+      expect(operationState.metadata?.compressionModelCatalogSnapshot).toBe(snapshot);
+      expect((operationState.metadata?.contextBudget as any).catalogSnapshot).toBe(snapshot);
 
       streamSpy.mockRestore();
     });
 
-    it('should fall back to undefined maxWindowToken for unknown models', async () => {
+    it('should freeze the conservative catalog fallback for unknown models', async () => {
       act(() => {
         useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
       });
@@ -433,9 +613,83 @@ describe('StreamingExecutor actions', () => {
 
       expect(getCreatedAgentCompressionConfig(stepSpy)).toEqual({
         enabled: true,
-        maxWindowToken: undefined,
+        maxWindowToken: 32_000,
       });
 
+      streamSpy.mockRestore();
+    });
+
+    it('freezes a dedicated compression model and its own context window', async () => {
+      act(() => {
+        useChatStore.setState({ executeClientAgent: realExecAgentRuntime });
+      });
+      useAiInfraStore.setState({
+        enabledAiModels: [
+          {
+            contextWindowTokens: 200_000,
+            id: 'main-model',
+            providerId: 'openai',
+            type: 'chat',
+          } as EnabledAiModel,
+          {
+            contextWindowTokens: 8192,
+            id: 'compact-model',
+            providerId: 'openai',
+            type: 'chat',
+          } as EnabledAiModel,
+        ],
+      });
+      const chatConfig = createMockChatConfig({ compressionModelId: 'compact-model' });
+      vi.spyOn(agentConfigResolver, 'resolveAgentConfig').mockReturnValue({
+        agentConfig: createMockAgentConfig({
+          chatConfig,
+          model: 'main-model',
+          provider: 'openai',
+        }),
+        chatConfig,
+        isBuiltinAgent: false,
+        plugins: [],
+      });
+      const stepSpy = vi.spyOn(agentRuntime.AgentRuntime.prototype, 'step');
+      const streamSpy = vi
+        .spyOn(chatService, 'createAssistantMessageStream')
+        .mockImplementation(async ({ onFinish }) => {
+          await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+        });
+      const { result } = renderHook(() => useChatStore());
+      const userMessage = {
+        content: TEST_CONTENT.USER_MESSAGE,
+        id: TEST_IDS.USER_MESSAGE_ID,
+        role: 'user',
+        sessionId: TEST_IDS.SESSION_ID,
+        topicId: TEST_IDS.TOPIC_ID,
+      } as UIChatMessage;
+
+      await act(async () => {
+        await result.current.executeClientAgent({
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+          messages: [userMessage],
+          parentMessageId: userMessage.id,
+          parentMessageType: 'user',
+        });
+      });
+
+      const operationState = stepSpy.mock.calls[0][0] as AgentState;
+      expect(operationState.modelRuntimeConfig).toEqual({
+        compressionModel: { model: 'compact-model', provider: 'openai' },
+        model: 'main-model',
+        provider: 'openai',
+      });
+      expect((operationState.metadata?.modelCatalogSnapshot as any).entry).toEqual(
+        expect.objectContaining({ contextWindowTokens: 200_000, modelId: 'main-model' }),
+      );
+      expect((operationState.metadata?.compressionModelCatalogSnapshot as any).entry).toEqual(
+        expect.objectContaining({ contextWindowTokens: 8192, modelId: 'compact-model' }),
+      );
+      expect(operationState.metadata?.compressionModelCatalogSnapshot).not.toBe(
+        operationState.metadata?.modelCatalogSnapshot,
+      );
+      expect(getCreatedAgentCompressionConfig(stepSpy).maxWindowToken).toBe(200_000);
       streamSpy.mockRestore();
     });
 

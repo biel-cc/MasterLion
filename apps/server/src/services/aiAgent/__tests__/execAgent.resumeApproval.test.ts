@@ -1,3 +1,5 @@
+import '../_testFixtures/emptySkills';
+
 import type { LobeChatDatabase } from '@lobechat/database';
 import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +12,8 @@ const {
   mockFindMessagePlugin,
   mockMessageCreate,
   mockMessageQuery,
+  mockGetWorkspaceState,
+  mockBindScratch,
   mockUpdateMessagePlugin,
   mockUpdateToolMessage,
 } = vi.hoisted(() => ({
@@ -18,8 +22,20 @@ const {
   mockFindMessagePlugin: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockMessageQuery: vi.fn(),
+  mockGetWorkspaceState: vi.fn(),
+  mockBindScratch: vi.fn(),
   mockUpdateMessagePlugin: vi.fn(),
   mockUpdateToolMessage: vi.fn(),
+}));
+
+const { mockDeviceProxy } = vi.hoisted(() => ({
+  mockDeviceProxy: {
+    isConfigured: false,
+    ensureScratchWorkspace: vi.fn(),
+    queryDeviceList: vi.fn().mockResolvedValue([]),
+    queryDeviceSystemInfo: vi.fn().mockResolvedValue(undefined),
+    resolveRealPath: vi.fn().mockResolvedValue('/outside/docs'),
+  },
 }));
 
 vi.mock('@/libs/trusted-client', () => ({
@@ -60,6 +76,12 @@ vi.mock('@/server/services/agent', () => ({
 
 vi.mock('@/database/models/plugin', () => ({
   PluginModel: vi.fn().mockImplementation(() => ({ query: vi.fn().mockResolvedValue([]) })),
+}));
+
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
+    findById: vi.fn().mockResolvedValue({ env: {}, id: 'workspace-a' }),
+  })),
 }));
 
 vi.mock('@/database/models/topic', () => ({
@@ -119,7 +141,27 @@ vi.mock('@/server/modules/Mecha', () => ({
 }));
 
 vi.mock('@/server/services/deviceGateway', () => ({
-  deviceGateway: { isConfigured: false, queryDeviceList: vi.fn().mockResolvedValue([]) },
+  deviceGateway: mockDeviceProxy,
+}));
+
+vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
+  DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    captureTargetIfAbsent: vi.fn(),
+    getState: mockGetWorkspaceState,
+  })),
+}));
+
+vi.mock('@/server/services/projectWorkspace', () => ({
+  ProjectWorkspaceService: vi.fn().mockImplementation(() => ({
+    bindScratchAfterToolSuccess: mockBindScratch,
+    resolveAndMigrateTopic: mockGetWorkspaceState,
+  })),
+}));
+
+vi.mock('@/server/services/workspaceAccessGrant', () => ({
+  WorkspaceAccessGrantService: vi.fn().mockImplementation(() => ({
+    buildAccessRoots: vi.fn().mockResolvedValue([]),
+  })),
 }));
 
 vi.mock('@/server/modules/ModelRuntime', () => ({
@@ -173,8 +215,18 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     mockFindMessagePlugin.mockResolvedValue(pendingToolPlugin);
     mockMessageQuery.mockResolvedValue([{ content: 'hi', id: 'history-1', role: 'user' }]);
     mockMessageCreate.mockResolvedValue({ id: 'assistant-msg-new' });
+    mockGetWorkspaceState.mockResolvedValue({
+      snapshot: {
+        target: 'none',
+        targetCapturedAt: '2026-09-04T00:00:00.000Z',
+        version: 1,
+      },
+    });
     mockUpdateMessagePlugin.mockResolvedValue(undefined);
     mockUpdateToolMessage.mockResolvedValue(undefined);
+    mockDeviceProxy.isConfigured = false;
+    mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
+    mockDeviceProxy.queryDeviceSystemInfo.mockResolvedValue(undefined);
     // `MessageModel` is fully mocked above, so the service never touches the
     // raw `db` arg — cast an empty stub through `unknown` to satisfy the
     // `LobeChatDatabase` parameter type without dragging the real schema.
@@ -187,6 +239,38 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     parentMessageId: 'tool-msg-1',
     prompt: '',
   };
+
+  describe('scratch runtime delegate seams', () => {
+    it('accepts only a device-authored absolute scratch root and does not bind it yet', async () => {
+      mockDeviceProxy.ensureScratchWorkspace.mockResolvedValue({ root: '/scratch/topic-1' });
+
+      await expect(
+        service.ensureScratchWorkspace({ deviceId: 'device-a', topicId: 'topic-1' }),
+      ).resolves.toEqual({ root: '/scratch/topic-1' });
+      expect(mockBindScratch).not.toHaveBeenCalled();
+    });
+
+    it('binds scratch only through the explicit successful-tool callback', async () => {
+      mockBindScratch.mockResolvedValue({ id: 'workspace-scratch' });
+
+      await service.bindScratchAfterToolSuccess({
+        deviceId: 'device-a',
+        rootPath: '/scratch/topic-1',
+        target: 'local',
+        toolSucceeded: true,
+        topicId: 'topic-1',
+      });
+
+      expect(mockBindScratch).toHaveBeenCalledWith({
+        deviceId: 'device-a',
+        rootPath: '/scratch/topic-1',
+        target: 'local',
+        toolSucceeded: true,
+        topicId: 'topic-1',
+        workspaceId: undefined,
+      });
+    });
+  });
 
   describe('decision=approved', () => {
     it('persists intervention=approved and seeds initialContext for human_approved_tool', async () => {
@@ -223,6 +307,80 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
           }),
         }),
       );
+    });
+
+    it('injects a matching allow-once decision into only the new operation', async () => {
+      mockDeviceProxy.isConfigured = true;
+      mockDeviceProxy.queryDeviceList.mockResolvedValue([
+        {
+          deviceId: 'device-a',
+          hostname: 'local',
+          online: true,
+          platform: 'darwin',
+        },
+      ]);
+      mockGetWorkspaceState.mockResolvedValue({
+        snapshot: {
+          boundDeviceId: 'device-a',
+          target: 'local',
+          targetCapturedAt: '2026-09-04T00:00:00.000Z',
+          version: 1,
+        },
+      });
+      mockFindMessagePlugin.mockResolvedValue({
+        ...pendingToolPlugin,
+        state: {
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-old',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-1',
+            version: 1,
+          },
+        },
+      });
+
+      await service.execAgent({
+        ...baseParams,
+        resumeApproval: {
+          decision: 'approved',
+          parentMessageId: 'tool-msg-1',
+          pathConsent: {
+            deviceId: 'device-a',
+            modes: ['read'],
+            requestedPath: '/outside/docs',
+            rootPath: '/outside/docs',
+            scope: 'operation',
+            sourceOperationId: 'op-old',
+            topicId: 'topic-1',
+            version: 1,
+          },
+          toolCallId: 'call_xyz',
+        },
+      });
+
+      const createOpArgs = mockCreateOperation.mock.calls[0][0];
+      expect(createOpArgs.executionContext.accessRoots).toContainEqual({
+        deviceId: 'device-a',
+        modes: ['read'],
+        operationId: createOpArgs.operationId,
+        rootPath: '/outside/docs',
+        scope: 'operation',
+        source: 'user-approval',
+        topicId: 'topic-1',
+      });
+      expect(createOpArgs.operationId).not.toBe('op-old');
+      expect(mockDeviceProxy.resolveRealPath).toHaveBeenCalledWith({
+        deviceId: 'device-a',
+        path: '/outside/docs',
+        userId: 'user-1',
+      });
+      expect(mockUpdateMessagePlugin).toHaveBeenCalledWith('tool-msg-1', {
+        intervention: { status: 'approved' },
+      });
     });
   });
 
@@ -267,6 +425,91 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
     });
   });
 
+  describe('resumeInteraction', () => {
+    it('seeds the explicit tool_result phase under a server-created operation', async () => {
+      await service.execAgent({
+        ...baseParams,
+        resumeInteraction: {
+          parentMessageId: 'tool-msg-1',
+          phase: 'tool_result',
+        },
+      });
+
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionContext: expect.any(Object),
+          initialContext: expect.objectContaining({
+            payload: expect.objectContaining({
+              isFirstMessage: false,
+              parentMessageId: 'tool-msg-1',
+            }),
+            phase: 'tool_result',
+          }),
+        }),
+      );
+    });
+
+    it('accepts user_input only when the persisted parent is a user message', async () => {
+      mockFindById.mockResolvedValue({
+        id: 'submitted-user-msg',
+        role: 'user',
+        sessionId: 'session-1',
+        threadId: 'thread-1',
+        topicId: 'topic-1',
+      });
+
+      await service.execAgent({
+        ...baseParams,
+        parentMessageId: 'submitted-user-msg',
+        resumeInteraction: {
+          parentMessageId: 'submitted-user-msg',
+          phase: 'user_input',
+        },
+      });
+
+      expect(mockCreateOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionContext: expect.any(Object),
+          initialContext: expect.objectContaining({
+            payload: expect.objectContaining({ parentMessageId: 'submitted-user-msg' }),
+            phase: 'user_input',
+          }),
+        }),
+      );
+    });
+
+    it('rejects a forged phase that does not match the persisted parent role', async () => {
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeInteraction: {
+            parentMessageId: 'tool-msg-1',
+            phase: 'user_input',
+          },
+        }),
+      ).rejects.toThrow("requires a role='user' parent message");
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
+    it('rejects conflicting approval and interaction resume authority', async () => {
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeApproval: {
+            decision: 'approved',
+            parentMessageId: 'tool-msg-1',
+            toolCallId: 'call_xyz',
+          },
+          resumeInteraction: {
+            parentMessageId: 'tool-msg-1',
+            phase: 'tool_result',
+          },
+        }),
+      ).rejects.toThrow('mutually exclusive');
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+  });
+
   it('falls back to the no-reason rejection string when rejectionReason is omitted', async () => {
     await service.execAgent({
       ...baseParams,
@@ -283,6 +526,47 @@ describe('AiAgentService.execAgent - resumeApproval', () => {
   });
 
   describe('validation guards', () => {
+    it('rejects an allow-once decision replayed from another operation', async () => {
+      mockFindMessagePlugin.mockResolvedValue({
+        ...pendingToolPlugin,
+        state: {
+          workspacePathConsent: {
+            actualCwd: '/workspace',
+            deviceId: 'device-a',
+            modes: ['read'],
+            operationId: 'op-old',
+            primaryCwd: '/workspace',
+            requestedPath: '/outside/docs',
+            topicId: 'topic-1',
+            version: 1,
+          },
+        },
+      });
+
+      await expect(
+        service.execAgent({
+          ...baseParams,
+          resumeApproval: {
+            decision: 'approved',
+            parentMessageId: 'tool-msg-1',
+            pathConsent: {
+              deviceId: 'device-a',
+              modes: ['read'],
+              requestedPath: '/outside/docs',
+              rootPath: '/outside/docs',
+              scope: 'operation',
+              sourceOperationId: 'op-replayed',
+              topicId: 'topic-1',
+              version: 1,
+            },
+            toolCallId: 'call_xyz',
+          },
+        }),
+      ).rejects.toThrow(/does not match/);
+      expect(mockUpdateMessagePlugin).not.toHaveBeenCalled();
+      expect(mockCreateOperation).not.toHaveBeenCalled();
+    });
+
     it('throws when the parent message is not role=tool', async () => {
       mockFindById.mockResolvedValue({ ...pendingToolMessage, role: 'user' });
 

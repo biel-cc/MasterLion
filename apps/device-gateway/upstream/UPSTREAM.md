@@ -29,5 +29,8 @@ The vendored server intentionally differs from the upstream blobs above:
   treated only as a consistency assertion; service-token clients still require it.
 - `auth_success` returns the verified `userId`, and structured logs contain connection metadata but
   never credentials or the user id.
+- Authentication records optional protocol capabilities for rolling upgrades. Tool-call responses
+  only report `executionContextValidation: hard` when the selected device explicitly advertised
+  protocol v2 validation; missing/legacy capability metadata remains `legacy`.
 - `internal/gateway/server_test.go` is a Masterino-owned protocol regression suite and has no
   upstream blob SHA.

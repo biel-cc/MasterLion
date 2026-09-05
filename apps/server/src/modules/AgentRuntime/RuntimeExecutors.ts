@@ -7,9 +7,12 @@ import {
   type AgentRuntimeContext,
   type AgentState,
   type CallLLMPayload,
+  compressContextHierarchically,
+  type ContextBudgetEvaluation,
   type GeneralAgentCallLLMResultPayload,
   type GeneralAgentCompressionResultPayload,
   type InstructionExecutor,
+  runContextBudgetedCall,
   UsageCounter,
 } from '@lobechat/agent-runtime';
 import { LobeActivatorIdentifier } from '@lobechat/builtin-tool-activator';
@@ -19,7 +22,7 @@ import {
   generateComposioServicesList,
   generateCredsList,
 } from '@lobechat/builtin-tool-creds';
-import { LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
+import { LocalSystemIdentifier, LocalSystemManifest } from '@lobechat/builtin-tool-local-system';
 import { BRANDING_PROVIDER } from '@lobechat/business-const';
 import { COMPOSIO_APP_TYPES } from '@lobechat/const';
 import {
@@ -72,6 +75,16 @@ import {
   TraceNameMap,
   type UIChatMessage,
 } from '@lobechat/types';
+import type { ContextCompressionOutcome } from '@lobechat/types/src/contextBudget';
+import type {
+  ExecutionContext,
+  ToolCallExecutionContext,
+} from '@lobechat/types/src/executionContext';
+import type {
+  ContextWindowRejectionObservation,
+  ModelCatalogSnapshot,
+} from '@lobechat/types/src/modelCatalog';
+import type { TopicExecutionSnapshot, WorkspaceRef } from '@lobechat/types/src/projectWorkspace';
 import {
   isLocalOrPrivateUrl,
   sanitizeToolCallArguments,
@@ -87,10 +100,14 @@ import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
 import { type LobeChatDatabase } from '@/database/type';
 import { fileEnv } from '@/envs/file';
+import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
 import { type ExecutionPlan, isDeviceCapablePlan } from '@/helpers/executionTarget';
 import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering';
 import { type EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
-import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import type {
+  createTraceOptions as CreateTraceOptionsFn,
+  initModelRuntimeFromDB as InitModelRuntimeFromDBFn,
+} from '@/server/modules/ModelRuntime';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import type { HookDispatcher } from '@/server/services/agentRuntime/hooks/HookDispatcher';
 import type {
@@ -115,7 +132,7 @@ import { archiveToolResultIfNeeded } from '@/server/services/toolExecution/archi
 import { toAgentContextDocuments } from '@/utils/agentDocumentContextMapping';
 import { nanoid } from '@/utils/uuid';
 
-import { assertFinalContextWithinWindow } from './contextWindowPreflight';
+import { FinalContextWindowError } from './contextWindowPreflight';
 import { dispatchClientTool } from './dispatchClientTool';
 import { formatErrorEventData } from './formatErrorEventData';
 import { classifyLLMError, type LLMErrorKind } from './llmErrorClassification';
@@ -128,9 +145,15 @@ import {
 import { ModelEmptyError } from './ModelEmptyError';
 import { resolveToolTimeoutMs } from './resolveToolTimeout';
 import { type IStreamEventManager } from './types';
+import {
+  buildPendingWorkspacePathConsent,
+  getPostDispatchWorkspacePathConsent,
+  requiresPrimaryCwdForTool,
+} from './workspacePathConsent';
 
 const log = debug('lobe-server:agent-runtime:streaming-executors');
 const timing = debug('lobe-server:agent-runtime:timing');
+const isAbortError = (error: unknown) => error instanceof Error && error.name === 'AbortError';
 
 // Tool pricing configuration (USD per call)
 const TOOL_PRICING: Record<string, number> = {
@@ -344,10 +367,11 @@ const archiveRuntimeToolResult = async (
 const buildPostProcessUrl = (
   ctx: Pick<RuntimeExecutorContext, 'serverDB' | 'userId' | 'workspaceId'>,
 ) => {
-  if (!ctx.userId || !ctx.serverDB) return undefined;
+  const userId = ctx.userId;
+  if (!userId || !ctx.serverDB) return undefined;
   let fileService: FileService | undefined;
   try {
-    fileService = new FileService(ctx.serverDB, ctx.userId, ctx.workspaceId);
+    fileService = new FileService(ctx.serverDB, userId, ctx.workspaceId);
   } catch {
     return undefined;
   }
@@ -376,17 +400,11 @@ const buildProviderImageDataUrlResolver = (
   ctx: Pick<RuntimeExecutorContext, 'serverDB' | 'userId' | 'workspaceId'>,
   workspaceId?: string,
 ) => {
-  if (!ctx.userId || !ctx.serverDB) return undefined;
+  const userId = ctx.userId;
+  if (!userId || !ctx.serverDB) return undefined;
 
-  let fileModel: FileModel;
-  let fileService: FileService;
-  try {
-    fileModel = new FileModel(ctx.serverDB, ctx.userId, workspaceId ?? ctx.workspaceId);
-    fileService = new FileService(ctx.serverDB, ctx.userId, workspaceId ?? ctx.workspaceId);
-  } catch {
-    return undefined;
-  }
-
+  let fileModel: FileModel | undefined;
+  let fileService: FileService | undefined;
   const cache = new Map<string, Promise<string | undefined>>();
 
   return (fileId: string) => {
@@ -394,6 +412,8 @@ const buildProviderImageDataUrlResolver = (
       cache.set(
         fileId,
         (async () => {
+          fileModel ??= new FileModel(ctx.serverDB, userId, workspaceId ?? ctx.workspaceId);
+          fileService ??= new FileService(ctx.serverDB, userId, workspaceId ?? ctx.workspaceId);
           const file = await fileModel.findById(fileId);
           if (!file?.url || !file.fileType?.startsWith('image')) return undefined;
 
@@ -467,6 +487,70 @@ const inlineProviderImageContentParts = async (
   );
 
   return changed ? nextMessages : messages;
+};
+
+const PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE = 1000;
+
+/**
+ * Build redacted accounting records from the exact provider message shape.
+ * URLs and base64 bytes deliberately never leave this function.
+ */
+export const collectProviderMediaTokenEstimates = (
+  messages: Readonly<ChatStreamPayload['messages']>,
+  sourceMessages: UIChatMessage[] = [],
+) => {
+  const fileIdLookup = buildProviderImageFileIdLookup(sourceMessages);
+  const estimates: Array<{ estimatedTokens: number; id: string; messageId?: string }> = [];
+
+  messages.forEach((message, messageIndex) => {
+    if (!Array.isArray(message.content)) return;
+
+    message.content.forEach((part: any, partIndex) => {
+      if (part?.type !== 'image_url' && part?.type !== 'video_url') return;
+
+      const url = part.image_url?.url ?? part.video_url?.url;
+      const messageId = typeof (message as any).id === 'string' ? (message as any).id : undefined;
+      estimates.push({
+        estimatedTokens: PROVIDER_VISUAL_INPUT_TOKEN_ESTIMATE,
+        id:
+          (typeof url === 'string' && fileIdLookup.get(url)) ||
+          `${messageId ?? `message-${messageIndex}`}:media-${partIndex}`,
+        messageId,
+      });
+    });
+  });
+
+  return estimates;
+};
+
+export const resolveCompressionSummaryBudgetTokens = (params: {
+  compressionModel: { model: string; provider: string };
+  compressionModelCatalogSnapshot?: ModelCatalogSnapshot;
+  mainModelCatalogSnapshot?: ModelCatalogSnapshot;
+}) => {
+  const { compressionModel, compressionModelCatalogSnapshot, mainModelCatalogSnapshot } = params;
+  const matchingSnapshot = [compressionModelCatalogSnapshot, mainModelCatalogSnapshot].find(
+    (snapshot) =>
+      snapshot?.entry.modelId === compressionModel.model &&
+      snapshot.entry.providerId === compressionModel.provider,
+  );
+
+  // Keep room for the summary output even on unusually small catalog windows.
+  // A fixed 2k floor could make the request budget larger than the model's
+  // actual prompt capacity and recreate the context error during recovery.
+  return Math.max(1, (matchingSnapshot?.entry.contextWindowTokens ?? 32_000) - 1024);
+};
+
+const renderMessageForCompression = (message: UIChatMessage) => {
+  const content = Array.isArray(message.content)
+    ? message.content.map((part: any) => {
+        if (part?.type === 'image_url') return '[image attachment]';
+        if (part?.type === 'video_url') return '[video attachment]';
+        return part?.text ?? part;
+      })
+    : message.content;
+
+  return `${message.role}: ${typeof content === 'string' ? content : JSON.stringify(content)}`;
 };
 
 /**
@@ -896,11 +980,33 @@ const buildToolDiscoveryConfig = (operationToolSet: OperationToolSet, enabledToo
   return { availableTools };
 };
 
+type InitModelRuntime = typeof InitModelRuntimeFromDBFn;
+type CreateTraceOptions = typeof CreateTraceOptionsFn;
+
 export interface RuntimeExecutorContext {
   agentConfig?: any;
+  bindScratchAfterToolSuccess?: (params: {
+    deviceId: string;
+    rootPath: string;
+    target?: 'device' | 'local';
+    toolSucceeded: true;
+    topicId: string;
+  }) => Promise<{ snapshot: TopicExecutionSnapshot; workspace: WorkspaceRef }>;
   botContext?: unknown;
   botPlatformContext?: BotPlatformContext;
+  /** Persist the operation-scoped terminal topic state. */
+  completeTopicOperation?: (params: {
+    operationId: string;
+    status: 'active' | 'failed';
+    topicId: string;
+  }) => Promise<unknown>;
+  /** External trace-export boundary, wired by AgentRuntimeService in production. */
+  createTraceOptions?: CreateTraceOptions;
   discordContext?: any;
+  ensureScratchWorkspace?: (params: {
+    deviceId: string;
+    topicId: string;
+  }) => Promise<{ root: string }>;
   evalContext?: EvalContext;
   /**
    * Callback to fork a group member ("call agent member") under a
@@ -921,8 +1027,11 @@ export interface RuntimeExecutorContext {
    */
   execVirtualSubAgent?: (params: ExecVirtualSubAgentParams) => Promise<unknown>;
   hookDispatcher?: HookDispatcher;
+  /** External model-provider boundary, wired by AgentRuntimeService in production. */
+  initModelRuntime?: InitModelRuntime;
   loadAgentState?: (operationId: string) => Promise<AgentState | null>;
   messageModel: MessageModel;
+  onContextWindowObserved?: (input: ContextWindowRejectionObservation) => Promise<void> | void;
   operationId: string;
   serverDB: LobeChatDatabase;
   stepIndex: number;
@@ -952,6 +1061,312 @@ export interface RuntimeExecutorContext {
    */
   workspaceId?: string;
 }
+
+const requireRuntimeBoundary = <T>(boundary: T | undefined, name: string): T => {
+  if (boundary) return boundary;
+  throw new Error(`Runtime executor boundary "${name}" is not configured`);
+};
+
+const getFrozenExecutionContext = (state: AgentState): ExecutionContext | undefined =>
+  state.metadata?.executionContext as ExecutionContext | undefined;
+
+interface PreparedToolExecutionContext {
+  executionContext?: ExecutionContext;
+  scratchRoot?: string;
+}
+
+const withPrimaryScratchRoot = (
+  executionContext: ExecutionContext,
+  deviceId: string,
+  rootPath: string,
+): ExecutionContext => ({
+  ...executionContext,
+  accessRoots: [
+    ...(executionContext.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+    {
+      deviceId,
+      modes: ['exec', 'read', 'write'],
+      rootPath,
+      scope: 'primary',
+      source: 'workspace',
+    },
+  ],
+  cwd: rootPath,
+  unresolvedReason: undefined,
+  workspace: { deviceId, kind: 'scratch', rootPath },
+});
+
+/**
+ * Lazily materialize a deterministic topic scratch root only for a tool that
+ * actually needs a default cwd. Explicit absolute-path operations use their
+ * grants directly and pure chat never reaches this seam.
+ */
+const prepareToolExecutionContext = async (
+  ctx: RuntimeExecutorContext,
+  state: AgentState,
+  tool: ChatToolPayload,
+): Promise<PreparedToolExecutionContext> => {
+  const executionContext = getFrozenExecutionContext(state);
+  if (!requiresPrimaryCwdForTool({ executionContext, tool })) return { executionContext };
+  if (!executionContext) throw new Error('WORKSPACE_REQUIRED');
+
+  const topicId = ctx.topicId ?? state.metadata?.topicId;
+  const deviceId =
+    executionContext.plan.kind === 'device' ? executionContext.plan.deviceId : undefined;
+  if (!topicId || !deviceId || !ctx.ensureScratchWorkspace) throw new Error('WORKSPACE_REQUIRED');
+
+  const { root } = await ctx.ensureScratchWorkspace({ deviceId, topicId });
+  if (!root || !isAbsoluteFilesystemPath(root)) throw new Error('WORKSPACE_REQUIRED');
+
+  return {
+    executionContext: withPrimaryScratchRoot(executionContext, deviceId, root),
+    scratchRoot: root,
+  };
+};
+
+const bindPreparedScratchContext = async (
+  ctx: RuntimeExecutorContext,
+  state: AgentState,
+  prepared: PreparedToolExecutionContext,
+): Promise<ExecutionContext | undefined> => {
+  if (!prepared.scratchRoot || !prepared.executionContext) return prepared.executionContext;
+
+  const topicId = ctx.topicId ?? state.metadata?.topicId;
+  const plan = prepared.executionContext.plan;
+  const deviceId = plan.kind === 'device' ? plan.deviceId : undefined;
+  if (!topicId || !deviceId || !ctx.bindScratchAfterToolSuccess) {
+    throw new Error('WORKSPACE_REQUIRED');
+  }
+
+  const bound = await ctx.bindScratchAfterToolSuccess({
+    deviceId,
+    rootPath: prepared.scratchRoot,
+    target: plan.target === 'local' ? 'local' : 'device',
+    toolSucceeded: true,
+    topicId,
+  });
+  const authoritativePlan: ExecutionContext['plan'] =
+    bound.workspace.kind === 'sandbox'
+      ? { kind: 'sandbox', target: 'sandbox' }
+      : {
+          deviceId: bound.workspace.deviceId!,
+          kind: 'device',
+          target: bound.snapshot.target === 'local' ? 'local' : 'device',
+        };
+  return {
+    ...prepared.executionContext,
+    accessRoots: [
+      ...(prepared.executionContext.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+      {
+        ...(bound.workspace.deviceId ? { deviceId: bound.workspace.deviceId } : {}),
+        modes: ['exec', 'read', 'write'],
+        rootPath: bound.workspace.rootPath,
+        scope: 'primary',
+        source: 'workspace',
+      },
+    ],
+    cwd: bound.workspace.rootPath,
+    plan: authoritativePlan,
+    snapshot: bound.snapshot,
+    unresolvedReason: undefined,
+    workspace: bound.workspace,
+  };
+};
+
+/**
+ * Stable, secret-free reason for a scratch bind that never committed. The bind
+ * delegate already absorbs a concurrent formal bind: it catches
+ * `WorkspaceAlreadyBoundError`, resolves the winning topic binding, and returns
+ * it as its own result. A rejection is therefore never a harmless lost race —
+ * it means no authoritative workspace could be resolved at all. The raw error
+ * stays in the server log; persisted state and client events carry only this
+ * code, never a driver message, stack, or filesystem path.
+ */
+export const WORKSPACE_BIND_FAILED = 'WORKSPACE_BIND_FAILED';
+
+/**
+ * A batch may have to park for a client/deferred/human tool after a server tool
+ * has already succeeded but its scratch workspace failed to bind. Keep that
+ * debt separate from the ordinary parking interruption: the pending tool still
+ * owns its result, but no later LLM turn may start until the bind failure has
+ * been surfaced. The value is deliberately just a boolean — no driver error or
+ * filesystem detail crosses the persistence boundary.
+ */
+const PENDING_WORKSPACE_BIND_FAILURE_KEY = '_pendingWorkspaceBindFailure';
+
+export const hasPendingWorkspaceBindFailure = (state: AgentState): boolean =>
+  state.metadata?.[PENDING_WORKSPACE_BIND_FAILURE_KEY] === true;
+
+const clearPendingWorkspaceBindFailure = (state: AgentState): void => {
+  if (!state.metadata || !(PENDING_WORKSPACE_BIND_FAILURE_KEY in state.metadata)) return;
+
+  const metadata = { ...state.metadata };
+  delete metadata[PENDING_WORKSPACE_BIND_FAILURE_KEY];
+  state.metadata = metadata;
+};
+
+/**
+ * Outcome of the post-success workspace coordination shared by `call_tool` and
+ * `call_tools_batch`. The tool has already run and owns its result, so settling
+ * a bind never rejects and never rewrites that result; `executionContext` is
+ * always safe to freeze onto the next state.
+ */
+interface ScratchBindSettlement {
+  /** A proposed scratch root was committed as the authoritative workspace. */
+  committed?: boolean;
+  /** Context the next step may run in: a committed bind, or the last persisted one. */
+  executionContext?: ExecutionContext;
+  /** A bind was owed but never committed; the step must interrupt rather than continue. */
+  failed?: boolean;
+}
+
+/**
+ * Bind the lazily created scratch root now that the tool that needed it has
+ * succeeded, without ever letting the binding decide the fate of that success.
+ */
+const settleScratchBindAfterToolSuccess = async (params: {
+  ctx: RuntimeExecutorContext;
+  operationLogId: string;
+  prepared: PreparedToolExecutionContext;
+  state: AgentState;
+  toolName: string;
+}): Promise<ScratchBindSettlement> => {
+  const { ctx, operationLogId, prepared, state, toolName } = params;
+  if (!prepared.scratchRoot) return { executionContext: prepared.executionContext };
+  // Device RPC can return success after the user stopped the server operation.
+  // Its late completion must not change the topic's workspace binding.
+  if (await isOperationInterrupted(ctx)) {
+    return { executionContext: getFrozenExecutionContext(state) };
+  }
+
+  try {
+    return {
+      committed: true,
+      executionContext: await bindPreparedScratchContext(ctx, state, prepared),
+    };
+  } catch (error) {
+    // The tool succeeded before this bind ran, so its result stands whatever
+    // happened here. What must NOT stand is `prepared.executionContext`: its
+    // scratch primary root was only ever a local proposal, and with no
+    // committed binding behind it, freezing it would make later steps act on a
+    // workspace this topic is not bound to. Fall back to the last persisted
+    // context, which still carries whatever binding/snapshot the topic has.
+    console.error(
+      `[StreamingToolExecutor] ${WORKSPACE_BIND_FAILED} after successful tool ${toolName} for operation ${operationLogId}; keeping the tool result and interrupting the run:`,
+      error,
+    );
+    return { executionContext: getFrozenExecutionContext(state), failed: true };
+  }
+};
+
+/** Freeze the settled execution context onto the next state. */
+const applyScratchBindSettlement = (state: AgentState, settlement: ScratchBindSettlement) => {
+  if (settlement.executionContext) {
+    state.metadata = {
+      ...state.metadata,
+      executionContext: settlement.executionContext,
+      executionPlan: settlement.executionContext.plan,
+    };
+  }
+
+  if (settlement.failed) {
+    state.metadata = {
+      ...state.metadata,
+      [PENDING_WORKSPACE_BIND_FAILURE_KEY]: true,
+    };
+  } else if (settlement.committed) {
+    // A later approved cwd tool may repair the debt while a human-consent batch
+    // is being resumed. Only an authoritative scratch commit can clear it.
+    clearPendingWorkspaceBindFailure(state);
+  }
+};
+
+/**
+ * Stop the run after a bind that never committed, keeping every already
+ * persisted tool result. The step must not fail — that would re-run a tool
+ * whose side effects already happened — and must not report an `error` event,
+ * which clients read as a failed tool call. Returning no `nextContext` leaves
+ * nothing queued: no further LLM step and no further cwd-dependent tool runs
+ * against an unbound topic until a resume (or a user-picked workspace) can
+ * supply one.
+ */
+export const interruptForPendingWorkspaceBindFailure = (
+  state: AgentState,
+  events: AgentEvent[],
+) => {
+  const interruptedAt = new Date().toISOString();
+  clearPendingWorkspaceBindFailure(state);
+  state.status = 'interrupted';
+  state.lastModified = interruptedAt;
+  state.interruption = { canResume: true, interruptedAt, reason: WORKSPACE_BIND_FAILED };
+
+  return {
+    events: [
+      ...events,
+      {
+        canResume: true,
+        interruptedAt,
+        reason: WORKSPACE_BIND_FAILED,
+        type: 'interrupted' as const,
+      },
+    ],
+    newState: state,
+    nextContext: undefined,
+  };
+};
+
+/** Never send resolved environment values to a renderer-facing gateway event. */
+const projectExecutionContextForClient = (
+  state: AgentState,
+  override?: ExecutionContext,
+): ToolCallExecutionContext | undefined => {
+  const frozen = override ?? getFrozenExecutionContext(state);
+  if (!frozen) return;
+
+  return {
+    accessRoots: frozen.accessRoots,
+    cwd: frozen.cwd,
+    envRef: state.metadata?.agentId
+      ? {
+          agentId: state.metadata.agentId,
+          topicId: state.metadata?.topicId,
+          workspaceId: frozen.workspace?.id,
+        }
+      : undefined,
+    workspaceKind: frozen.workspace?.kind,
+    workspaceRootPath: frozen.workspace?.rootPath,
+  };
+};
+
+/**
+ * Local-system calls with a frozen device plan must take the server-to-device
+ * channel. That channel can carry the server-resolved operation env and
+ * envFiles without exposing plaintext secrets to the renderer-facing
+ * `tool_execute` event. Other client executors continue to use that event.
+ */
+const requiresServerDeviceTransport = (state: AgentState, tool: ChatToolPayload): boolean => {
+  const frozen = getFrozenExecutionContext(state);
+  return tool.identifier === LocalSystemIdentifier && !!frozen && isDeviceCapablePlan(frozen.plan);
+};
+
+const getExecutionDeviceId = (
+  state: AgentState,
+  executionContext?: ExecutionContext,
+): string | undefined => {
+  const frozen = executionContext ?? getFrozenExecutionContext(state);
+  if (frozen) return frozen.plan.kind === 'device' ? frozen.plan.deviceId : undefined;
+  return state.metadata?.activeDeviceId;
+};
+
+/**
+ * Context budgeting only reads the common UI-message fields (content/id/role),
+ * while the provider runtime consumes its narrower OpenAI-compatible shape.
+ * Keep the one explicit boundary cast at the two adapters below.
+ */
+type BudgetedChatStreamPayload = Omit<ChatStreamPayload, 'messages'> & {
+  messages: UIChatMessage[];
+  providerMedia?: Array<{ estimatedTokens: number; id?: string; messageId?: string }>;
+};
 
 export const createRuntimeExecutors = (
   ctx: RuntimeExecutorContext,
@@ -1108,7 +1523,14 @@ export const createRuntimeExecutors = (
       let shouldReplayAssistantReasoning = false;
       let preserveThinkingForPayload: boolean | undefined;
       let resolvedExtendParams: ModelExtendParams | undefined;
-      let resolvedContextWindowTokens: number | undefined;
+      const operationModelCatalogSnapshot = state.metadata?.modelCatalogSnapshot as
+        | ModelCatalogSnapshot
+        | undefined;
+      const operationCatalogEntry = operationModelCatalogSnapshot?.entry;
+      let resolvedContextWindowTokens =
+        operationCatalogEntry?.modelId === model && operationCatalogEntry.providerId === provider
+          ? operationCatalogEntry.contextWindowTokens
+          : undefined;
       let sourceMessagesForProviderImages = llmPayload.messages as UIChatMessage[];
 
       // Process messages through serverMessagesEngine to inject system role, knowledge, etc.
@@ -1141,7 +1563,11 @@ export const createRuntimeExecutors = (
             item.providerId === provider &&
             (item.id === model || item.config?.deploymentName === model),
         );
-        resolvedContextWindowTokens = modelCard?.contextWindowTokens;
+        const frozenMatches =
+          operationCatalogEntry?.modelId === model && operationCatalogEntry.providerId === provider;
+        resolvedContextWindowTokens = frozenMatches
+          ? operationCatalogEntry.contextWindowTokens
+          : modelCard?.contextWindowTokens;
 
         let modelExtendParams = readExtendParams(modelCard);
 
@@ -1612,15 +2038,9 @@ export const createRuntimeExecutors = (
         processedMessages = llmPayload.messages;
       }
 
-      assertFinalContextWithinWindow({
-        contextWindowTokens: resolvedContextWindowTokens,
-        messages: processedMessages as UIChatMessage[],
-        model,
-        tools,
-      });
-
       // Initialize ModelRuntime (read user's keyVaults from database)
-      const modelRuntime = await initModelRuntimeFromDB(
+      const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+      const modelRuntime = await initModelRuntime(
         ctx.serverDB,
         ctx.userId!,
         provider,
@@ -1629,6 +2049,10 @@ export const createRuntimeExecutors = (
 
       // Construct ChatStreamPayload
       const stream = ctx.stream ?? true;
+      const providerMedia = collectProviderMediaTokenEstimates(
+        processedMessages,
+        sourceMessagesForProviderImages,
+      );
       const providerMessages = await inlineProviderImageContentParts(
         processedMessages,
         sourceMessagesForProviderImages,
@@ -1637,6 +2061,7 @@ export const createRuntimeExecutors = (
       const chatPayload = {
         messages: providerMessages,
         model,
+        providerMedia,
         stream,
         tools,
         // ModelExtendParams keeps provider-specific effort/thinking values as loose
@@ -1654,6 +2079,7 @@ export const createRuntimeExecutors = (
       if (executionBudget) {
         const projectedInputTokens = countContextTokens({
           messages: providerMessages as UIChatMessage[],
+          providerMedia,
           tools,
         }).adjustedTotal;
         const preflightBudgetReason = getExecutionBudgetReason(state, projectedInputTokens);
@@ -1661,6 +2087,10 @@ export const createRuntimeExecutors = (
           return interruptForExecutionGuard(state, preflightBudgetReason, instruction);
         }
       }
+      const createTraceOptions = requireRuntimeBoundary(
+        ctx.createTraceOptions,
+        'createTraceOptions',
+      );
       const runtimeTraceOptions = createTraceOptions(chatPayload as ChatStreamPayload, {
         includeInput: false,
         metadata: {
@@ -1747,11 +2177,10 @@ export const createRuntimeExecutors = (
 
       // File service + date shard used to persist model-generated images
       // (Gemini multimodal `content_part`/`reasoning_part` images) to object
-      // storage, built once and reused across parts. The `userId` check only
-      // satisfies its optional type — it is always present in this executor.
-      // A missing-S3-config failure surfaces later at uploadBase64 (caught per
-      // image in uploadPartImage), never at construction.
-      const imageUploadService = ctx.userId ? new FileService(ctx.serverDB, ctx.userId) : undefined;
+      // storage. Construct it lazily on the first image: pure-text turns must
+      // not require object-storage configuration merely because they share the
+      // streaming executor with multimodal turns.
+      let imageUploadService: FileService | undefined;
       const imageUploadDate = new Date().toISOString().split('T')[0];
 
       // Coalesce a streamed text chunk into the trailing text part (mirrors the
@@ -1776,7 +2205,13 @@ export const createRuntimeExecutors = (
         base64: string,
         mimeType: string | undefined,
       ): Promise<void> => {
-        if (!imageUploadService) return Promise.resolve();
+        if (!ctx.userId) return Promise.resolve();
+        try {
+          imageUploadService ??= new FileService(ctx.serverDB, ctx.userId);
+        } catch (error) {
+          console.error(`[${operationLogId}][content_part] image upload setup failed:`, error);
+          return Promise.resolve();
+        }
         const ext = mimeType?.split('/')[1] || 'png';
         const pathname = `${fileEnv.NEXT_PUBLIC_S3_FILE_PATH}/generations/${imageUploadDate}/${nanoid()}.${ext}`;
         return imageUploadService
@@ -1787,6 +2222,211 @@ export const createRuntimeExecutors = (
           .catch((error) => {
             console.error(`[${operationLogId}][content_part] image upload failed:`, error);
           });
+      };
+
+      let persistedAutoCompression:
+        | {
+            inputFingerprint: string;
+            outcome: ContextCompressionOutcome;
+            providerMessages: UIChatMessage[];
+            stateMessages: UIChatMessage[];
+          }
+        | undefined;
+
+      const compressFinalPayload = async (
+        payload: BudgetedChatStreamPayload,
+        evaluation: ContextBudgetEvaluation,
+      ) => {
+        if (persistedAutoCompression?.inputFingerprint === evaluation.payloadFingerprint) {
+          return {
+            outcome: persistedAutoCompression.outcome,
+            payload: { ...payload, messages: persistedAutoCompression.providerMessages },
+          };
+        }
+
+        const topicId = state.metadata?.topicId ?? ctx.topicId;
+        if (!topicId || !ctx.userId) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+
+        const stateMessageIds = new Set(
+          state.messages.map((message) => message.id).filter((id): id is string => Boolean(id)),
+        );
+        const persistedCandidateIds = evaluation.partition.candidateIds.filter((id) =>
+          stateMessageIds.has(id),
+        );
+        if (persistedCandidateIds.length === 0) {
+          throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+        }
+
+        const messageService = new MessageService(
+          ctx.serverDB,
+          ctx.userId,
+          state.metadata?.workspaceId ?? ctx.workspaceId,
+        );
+        const compressionGroup = await messageService.createCompressionGroup(
+          topicId,
+          persistedCandidateIds,
+          {
+            agentId: state.metadata?.agentId,
+            threadId: state.metadata?.threadId,
+            topicId,
+          },
+        );
+        const compressionQuery = {
+          agentId: state.metadata?.agentId,
+          threadId: state.metadata?.threadId,
+          topicId,
+        };
+
+        try {
+          const compressionModel = state.modelRuntimeConfig?.compressionModel ?? {
+            model,
+            provider,
+          };
+          const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+          const compressionRuntime = await initModelRuntime(
+            ctx.serverDB,
+            ctx.userId!,
+            compressionModel.provider,
+            ctx.workspaceId,
+          );
+          const summaryWindow = resolveCompressionSummaryBudgetTokens({
+            compressionModel,
+            compressionModelCatalogSnapshot: state.metadata?.compressionModelCatalogSnapshot as
+              | ModelCatalogSnapshot
+              | undefined,
+            mainModelCatalogSnapshot: operationModelCatalogSnapshot,
+          });
+
+          let finalSummary = '';
+          const result = await compressContextHierarchically<
+            UIChatMessage,
+            Partial<ChatStreamPayload>
+          >({
+            buildRequest: (items) =>
+              chainCompressContext(
+                items.map(
+                  (item, index) =>
+                    ({
+                      content: item.text,
+                      createdAt: Date.now(),
+                      id: `summary-input-${index}`,
+                      role: 'user',
+                      updatedAt: Date.now(),
+                    }) as UIChatMessage,
+                ),
+              ),
+            candidateIds: evaluation.partition.candidateIds,
+            createSummaryMessage: (summary, candidateIds, groupId) => {
+              finalSummary = summary;
+              return {
+                content: `[Conversation summary]\n${summary}`,
+                createdAt: Date.now(),
+                id: groupId,
+                metadata: { contextBudget: { candidateIds } },
+                // This replacement is sent directly to the provider; keep a
+                // provider-valid role instead of the UI-only compressedGroup.
+                role: 'user',
+                updatedAt: Date.now(),
+              } as UIChatMessage;
+            },
+            getMessageId: (message, index) => message.id || `payload-message-${index}`,
+            groupId: compressionGroup.messageGroupId,
+            measurePayload: (messages) => {
+              const accounting = countContextTokens({
+                messages: [...messages],
+                providerMedia: collectProviderMediaTokenEstimates(
+                  messages as Readonly<ChatStreamPayload['messages']>,
+                  sourceMessagesForProviderImages,
+                ),
+                tools,
+              });
+              return {
+                payloadFingerprint: accounting.payloadFingerprint,
+                tokens: accounting.adjustedTotal,
+              };
+            },
+            measureRequest: (request) =>
+              countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
+                .adjustedTotal,
+            messages: payload.messages as UIChatMessage[],
+            renderMessage: renderMessageForCompression,
+            summarize: async (request) => {
+              let summary = '';
+              let summaryError: unknown;
+              const response = await compressionRuntime.chat(
+                {
+                  ...request,
+                  messages: request.messages ?? [],
+                  model: compressionModel.model,
+                  stream: true,
+                },
+                {
+                  callback: {
+                    onError: async (error) => {
+                      summaryError = error;
+                    },
+                    onText: async (text) => {
+                      summary += text;
+                    },
+                  },
+                  user: ctx.userId,
+                },
+              );
+              await consumeStreamUntilDone(response);
+              if (summaryError) throw summaryError;
+              return summary;
+            },
+            summaryModelBudgetTokens: summaryWindow,
+            trigger:
+              evaluation.decision.kind === 'compress'
+                ? evaluation.decision.trigger
+                : 'final-preflight',
+          });
+
+          if (result.outcome.outcome !== 'compressed' || !finalSummary) {
+            throw new Error(('code' in result.outcome && result.outcome.code) || 'SUMMARY_FAILED');
+          }
+
+          const finalized = await messageService.finalizeCompression(
+            compressionGroup.messageGroupId,
+            finalSummary,
+            compressionQuery,
+          );
+          if (!Array.isArray(finalized.messages)) throw new Error('SUMMARY_PERSISTENCE_REQUIRED');
+
+          const stateMessages = (finalized.messages as UIChatMessage[]).filter(
+            (message) => message.id !== assistantMessageItem.id,
+          );
+          persistedAutoCompression = {
+            inputFingerprint: evaluation.payloadFingerprint,
+            outcome: result.outcome,
+            providerMessages: result.messages,
+            stateMessages,
+          };
+          events.push({ groupId: compressionGroup.messageGroupId, type: 'compression_complete' });
+
+          return {
+            outcome: result.outcome,
+            payload: {
+              ...payload,
+              messages: result.messages,
+              providerMedia: collectProviderMediaTokenEstimates(
+                result.messages as ChatStreamPayload['messages'],
+                sourceMessagesForProviderImages,
+              ),
+            },
+          };
+        } catch (error) {
+          if (isAbortError(error)) {
+            await messageService.cancelCompression(
+              compressionGroup.messageGroupId,
+              compressionQuery,
+            );
+          } else {
+            await messageService.failCompression(compressionGroup.messageGroupId, compressionQuery);
+          }
+          throw error;
+        }
       };
 
       const maxAttempts = resolveLLMMaxAttempts(provider);
@@ -1816,16 +2456,16 @@ export const createRuntimeExecutors = (
             let toolsCalling: ChatToolPayload[] = [];
             let tool_calls: MessageToolCall[] = [];
             let thinkingContent = '';
-            const imageList: any[] = [];
+            let imageList: any[] = [];
             let grounding: any = null;
             let currentStepUsage: any = undefined;
             let currentStepSpeed: any = undefined;
             let currentStepFinishReason: string | undefined = undefined;
             let streamError: any = undefined;
-            const contentParts: ContentPart[] = [];
-            const reasoningParts: ContentPart[] = [];
-            const contentImageUploads: Promise<void>[] = [];
-            const reasoningImageUploads: Promise<void>[] = [];
+            let contentParts: ContentPart[] = [];
+            let reasoningParts: ContentPart[] = [];
+            let contentImageUploads: Promise<void>[] = [];
+            let reasoningImageUploads: Promise<void>[] = [];
             let hasContentImages = false;
             let hasReasoningImages = false;
             textBuffer = '';
@@ -1846,6 +2486,49 @@ export const createRuntimeExecutors = (
               reasoningBuffer = '';
             };
 
+            // `runContextBudgetedCall` may invoke the provider twice inside one
+            // executor retry attempt. Keep a hard boundary between those two
+            // streams: a rejected attempt must not contribute content, usage,
+            // images or executable tool calls to the compressed retry.
+            let providerAttemptEpoch = 0;
+            let providerAttemptEventStart = events.length;
+            let providerAttemptActive = false;
+
+            const discardProviderAttempt = () => {
+              providerAttemptEpoch += 1;
+              clearAttemptBuffers();
+
+              if (providerAttemptActive) {
+                events.splice(providerAttemptEventStart);
+              }
+
+              content = '';
+              toolsCalling = [];
+              tool_calls = [];
+              thinkingContent = '';
+              imageList = [];
+              grounding = null;
+              currentStepUsage = undefined;
+              currentStepSpeed = undefined;
+              currentStepFinishReason = undefined;
+              streamError = undefined;
+              contentParts = [];
+              reasoningParts = [];
+              contentImageUploads = [];
+              reasoningImageUploads = [];
+              hasContentImages = false;
+              hasReasoningImages = false;
+              providerAttemptActive = false;
+            };
+
+            const startProviderAttempt = () => {
+              if (providerAttemptActive) discardProviderAttempt();
+              providerAttemptEpoch += 1;
+              providerAttemptEventStart = events.length;
+              providerAttemptActive = true;
+              return providerAttemptEpoch;
+            };
+
             try {
               log(
                 `${stagePrefix} calling model-runtime chat (attempt %d/%d, model: %s, messages: %d, tools: %d)`,
@@ -1856,222 +2539,294 @@ export const createRuntimeExecutors = (
                 tools?.length ?? 0,
               );
 
-              // Call model-runtime chat
+              // Call model-runtime chat through the final, post-injection
+              // budget boundary. Provider context-limit failures are handled
+              // by the same bounded one-retry flow as preflight compression.
               const remainingExecutionTimeMs = getRemainingExecutionTimeMs(state);
-              const response = await modelRuntime.chat(chatPayload, {
-                ...(remainingExecutionTimeMs === undefined
-                  ? {}
-                  : { signal: AbortSignal.timeout(Math.max(1, remainingExecutionTimeMs)) }),
-                callback: {
-                  onCompletion: async (data) => {
-                    // Capture usage (may or may not include cost)
-                    if (data.usage) {
-                      currentStepUsage = data.usage;
-                    }
-                    // Capture performance metrics (tps / ttft / duration / latency)
-                    if (data.speed) {
-                      currentStepSpeed = data.speed;
-                    }
-                    // Capture provider's terminal finishReason so soft interrupts
-                    // (e.g. Gemini RECITATION / MAX_TOKENS with empty content)
-                    // are visible in tracing instead of being silently swallowed.
-                    if (data.finishReason) {
-                      currentStepFinishReason = data.finishReason;
-                    }
-                    await runtimeTraceOptions.callback.onCompletion?.(data);
+              const callProvider = async (budgetPayload: BudgetedChatStreamPayload) => {
+                const currentProviderAttemptEpoch = startProviderAttempt();
+                const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
+                const response = await modelRuntime.chat(
+                  providerPayload as unknown as ChatStreamPayload,
+                  {
+                    ...(remainingExecutionTimeMs === undefined
+                      ? {}
+                      : { signal: AbortSignal.timeout(Math.max(1, remainingExecutionTimeMs)) }),
+                    callback: {
+                      onCompletion: async (data) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        // Capture usage (may or may not include cost)
+                        if (data.usage) {
+                          currentStepUsage = data.usage;
+                        }
+                        // Capture performance metrics (tps / ttft / duration / latency)
+                        if (data.speed) {
+                          currentStepSpeed = data.speed;
+                        }
+                        // Capture provider's terminal finishReason so soft interrupts
+                        // (e.g. Gemini RECITATION / MAX_TOKENS with empty content)
+                        // are visible in tracing instead of being silently swallowed.
+                        if (data.finishReason) {
+                          currentStepFinishReason = data.finishReason;
+                        }
+                        await runtimeTraceOptions.callback.onCompletion?.(data);
+                      },
+                      onFinal: runtimeTraceOptions.callback.onFinal,
+                      onGrounding: async (groundingData) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        log(`[${operationLogId}][grounding] %O`, groundingData);
+                        grounding = groundingData;
+
+                        await streamManager.publishStreamChunk(operationId, stepIndex, {
+                          chunkType: 'grounding',
+                          grounding: groundingData,
+                        });
+                      },
+                      onText: async (text) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        if (firstChunkAt === undefined) {
+                          firstChunkAt = Date.now() - llmStartTime;
+                        }
+                        timing(
+                          '[%s] onText received chunk at %d, length: %d',
+                          operationLogId,
+                          Date.now(),
+                          text.length,
+                        );
+                        content += text;
+
+                        textBuffer += text;
+
+                        // If no timer exists, create one
+                        if (!textBufferTimer) {
+                          textBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                            await flushTextBuffer();
+                            textBufferTimer = null;
+                          }, BUFFER_INTERVAL);
+                        }
+                      },
+                      onThinking: async (reasoning) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        if (firstChunkAt === undefined) {
+                          firstChunkAt = Date.now() - llmStartTime;
+                        }
+                        timing(
+                          '[%s] onThinking received chunk at %d, length: %d',
+                          operationLogId,
+                          Date.now(),
+                          reasoning.length,
+                        );
+                        thinkingContent += reasoning;
+
+                        // Buffer reasoning content
+                        reasoningBuffer += reasoning;
+
+                        // If no timer exists, create one
+                        if (!reasoningBufferTimer) {
+                          reasoningBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                            await flushReasoningBuffer();
+                            reasoningBufferTimer = null;
+                          }, BUFFER_INTERVAL);
+                        }
+                      },
+                      // Gemini 2.5+/3 multimodal streams deliver assistant text and
+                      // reasoning as `content_part`/`reasoning_part` events (triggered by
+                      // thought parts / thoughtSignature) instead of plain `text`/
+                      // `reasoning`. Without these handlers the text is silently dropped:
+                      // `onCompletion` still reports usage tokens, so the empty-completion
+                      // guard sees outputTokens > 0 and finalizes the turn to a blank
+                      // `done`. Mirror onText/onThinking for text parts so streaming,
+                      // persistence and tracing all capture the content; upload image
+                      // parts to object storage and serialize the multimodal content
+                      // (text + image URLs, in order) — never persist raw base64.
+                      onContentPart: async (part) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        if (firstChunkAt === undefined) {
+                          firstChunkAt = Date.now() - llmStartTime;
+                        }
+
+                        if (part.partType === 'image') {
+                          const partIndex = contentParts.length;
+                          contentParts.push({
+                            image: `data:${part.mimeType || 'image/png'};base64,${part.content}`,
+                            type: 'image',
+                          });
+                          hasContentImages = true;
+                          contentImageUploads.push(
+                            uploadPartImage(contentParts, partIndex, part.content, part.mimeType),
+                          );
+                          return;
+                        }
+
+                        content += part.content;
+                        appendTextPart(contentParts, part.content);
+                        textBuffer += part.content;
+
+                        if (!textBufferTimer) {
+                          textBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                            await flushTextBuffer();
+                            textBufferTimer = null;
+                          }, BUFFER_INTERVAL);
+                        }
+                      },
+                      onReasoningPart: async (part) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        if (firstChunkAt === undefined) {
+                          firstChunkAt = Date.now() - llmStartTime;
+                        }
+
+                        if (part.partType === 'image') {
+                          const partIndex = reasoningParts.length;
+                          reasoningParts.push({
+                            image: `data:${part.mimeType || 'image/png'};base64,${part.content}`,
+                            type: 'image',
+                          });
+                          hasReasoningImages = true;
+                          reasoningImageUploads.push(
+                            uploadPartImage(reasoningParts, partIndex, part.content, part.mimeType),
+                          );
+                          return;
+                        }
+
+                        thinkingContent += part.content;
+                        appendTextPart(reasoningParts, part.content);
+                        reasoningBuffer += part.content;
+
+                        if (!reasoningBufferTimer) {
+                          reasoningBufferTimer = setTimeout(async () => {
+                            if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                            await flushReasoningBuffer();
+                            reasoningBufferTimer = null;
+                          }, BUFFER_INTERVAL);
+                        }
+                      },
+                      onStart: runtimeTraceOptions.callback.onStart,
+                      onToolsCalling: async ({ toolsCalling: raw }) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        await runtimeTraceOptions.callback.onToolsCalling?.({
+                          chunk: [],
+                          toolsCalling: raw,
+                        });
+                        const resolvedCalls = new ToolNameResolver().resolve(
+                          raw,
+                          resolved.manifestMap,
+                        );
+                        // Attach source (origin) and executor (dispatch target) for routing.
+                        // `arguments` are kept RAW here on purpose so the tool executor can
+                        // still detect malformed JSON and return an `INVALID_JSON_ARGUMENTS`
+                        // tool-result with the original bad string — that's the
+                        // self-reflection signal the model needs to fix its own output.
+                        // Sanitization happens later, only at the persist boundaries
+                        // (DB write and state.messages push) to protect strict providers
+                        // replaying history. See .
+                        const payload = resolvedCalls.map((p) => ({
+                          ...p,
+                          executor: resolved.executorMap?.[p.identifier],
+                          source: resolved.sourceMap[p.identifier],
+                        }));
+                        // log(`[${operationLogId}][toolsCalling]`, payload);
+                        toolsCalling = payload;
+                        tool_calls = raw;
+
+                        // If textBuffer exists, flush it first
+                        if (!!textBuffer) {
+                          await flushTextBuffer();
+                        }
+
+                        await streamManager.publishStreamChunk(operationId, stepIndex, {
+                          chunkType: 'tools_calling',
+                          toolsCalling: payload,
+                        });
+                      },
+                      onError: async (errorData) => {
+                        if (currentProviderAttemptEpoch !== providerAttemptEpoch) return;
+                        streamError = errorData;
+                        console.error(`[${operationLogId}][stream_error]`, errorData);
+                      },
+                    },
+                    metadata: {
+                      operationId,
+                      topicId: state.metadata?.topicId,
+                      trigger: state.metadata?.trigger,
+                    },
+                    headers: runtimeTraceOptions.headers,
+                    user: ctx.userId,
                   },
-                  onFinal: runtimeTraceOptions.callback.onFinal,
-                  onGrounding: async (groundingData) => {
-                    log(`[${operationLogId}][grounding] %O`, groundingData);
-                    grounding = groundingData;
-
-                    await streamManager.publishStreamChunk(operationId, stepIndex, {
-                      chunkType: 'grounding',
-                      grounding: groundingData,
-                    });
-                  },
-                  onText: async (text) => {
-                    if (firstChunkAt === undefined) {
-                      firstChunkAt = Date.now() - llmStartTime;
-                    }
-                    timing(
-                      '[%s] onText received chunk at %d, length: %d',
-                      operationLogId,
-                      Date.now(),
-                      text.length,
-                    );
-                    content += text;
-
-                    textBuffer += text;
-
-                    // If no timer exists, create one
-                    if (!textBufferTimer) {
-                      textBufferTimer = setTimeout(async () => {
-                        await flushTextBuffer();
-                        textBufferTimer = null;
-                      }, BUFFER_INTERVAL);
-                    }
-                  },
-                  onThinking: async (reasoning) => {
-                    if (firstChunkAt === undefined) {
-                      firstChunkAt = Date.now() - llmStartTime;
-                    }
-                    timing(
-                      '[%s] onThinking received chunk at %d, length: %d',
-                      operationLogId,
-                      Date.now(),
-                      reasoning.length,
-                    );
-                    thinkingContent += reasoning;
-
-                    // Buffer reasoning content
-                    reasoningBuffer += reasoning;
-
-                    // If no timer exists, create one
-                    if (!reasoningBufferTimer) {
-                      reasoningBufferTimer = setTimeout(async () => {
-                        await flushReasoningBuffer();
-                        reasoningBufferTimer = null;
-                      }, BUFFER_INTERVAL);
-                    }
-                  },
-                  // Gemini 2.5+/3 multimodal streams deliver assistant text and
-                  // reasoning as `content_part`/`reasoning_part` events (triggered by
-                  // thought parts / thoughtSignature) instead of plain `text`/
-                  // `reasoning`. Without these handlers the text is silently dropped:
-                  // `onCompletion` still reports usage tokens, so the empty-completion
-                  // guard sees outputTokens > 0 and finalizes the turn to a blank
-                  // `done`. Mirror onText/onThinking for text parts so streaming,
-                  // persistence and tracing all capture the content; upload image
-                  // parts to object storage and serialize the multimodal content
-                  // (text + image URLs, in order) — never persist raw base64.
-                  onContentPart: async (part) => {
-                    if (firstChunkAt === undefined) {
-                      firstChunkAt = Date.now() - llmStartTime;
-                    }
-
-                    if (part.partType === 'image') {
-                      const partIndex = contentParts.length;
-                      contentParts.push({
-                        image: `data:${part.mimeType || 'image/png'};base64,${part.content}`,
-                        type: 'image',
-                      });
-                      hasContentImages = true;
-                      contentImageUploads.push(
-                        uploadPartImage(contentParts, partIndex, part.content, part.mimeType),
-                      );
-                      return;
-                    }
-
-                    content += part.content;
-                    appendTextPart(contentParts, part.content);
-                    textBuffer += part.content;
-
-                    if (!textBufferTimer) {
-                      textBufferTimer = setTimeout(async () => {
-                        await flushTextBuffer();
-                        textBufferTimer = null;
-                      }, BUFFER_INTERVAL);
-                    }
-                  },
-                  onReasoningPart: async (part) => {
-                    if (firstChunkAt === undefined) {
-                      firstChunkAt = Date.now() - llmStartTime;
-                    }
-
-                    if (part.partType === 'image') {
-                      const partIndex = reasoningParts.length;
-                      reasoningParts.push({
-                        image: `data:${part.mimeType || 'image/png'};base64,${part.content}`,
-                        type: 'image',
-                      });
-                      hasReasoningImages = true;
-                      reasoningImageUploads.push(
-                        uploadPartImage(reasoningParts, partIndex, part.content, part.mimeType),
-                      );
-                      return;
-                    }
-
-                    thinkingContent += part.content;
-                    appendTextPart(reasoningParts, part.content);
-                    reasoningBuffer += part.content;
-
-                    if (!reasoningBufferTimer) {
-                      reasoningBufferTimer = setTimeout(async () => {
-                        await flushReasoningBuffer();
-                        reasoningBufferTimer = null;
-                      }, BUFFER_INTERVAL);
-                    }
-                  },
-                  onStart: runtimeTraceOptions.callback.onStart,
-                  onToolsCalling: async ({ toolsCalling: raw }) => {
-                    await runtimeTraceOptions.callback.onToolsCalling?.({
-                      chunk: [],
-                      toolsCalling: raw,
-                    });
-                    const resolvedCalls = new ToolNameResolver().resolve(raw, resolved.manifestMap);
-                    // Attach source (origin) and executor (dispatch target) for routing.
-                    // `arguments` are kept RAW here on purpose so the tool executor can
-                    // still detect malformed JSON and return an `INVALID_JSON_ARGUMENTS`
-                    // tool-result with the original bad string — that's the
-                    // self-reflection signal the model needs to fix its own output.
-                    // Sanitization happens later, only at the persist boundaries
-                    // (DB write and state.messages push) to protect strict providers
-                    // replaying history. See .
-                    const payload = resolvedCalls.map((p) => ({
-                      ...p,
-                      executor: resolved.executorMap?.[p.identifier],
-                      source: resolved.sourceMap[p.identifier],
-                    }));
-                    // log(`[${operationLogId}][toolsCalling]`, payload);
-                    toolsCalling = payload;
-                    tool_calls = raw;
-
-                    // If textBuffer exists, flush it first
-                    if (!!textBuffer) {
-                      await flushTextBuffer();
-                    }
-
-                    await streamManager.publishStreamChunk(operationId, stepIndex, {
-                      chunkType: 'tools_calling',
-                      toolsCalling: payload,
-                    });
-                  },
-                  onError: async (errorData) => {
-                    streamError = errorData;
-                    console.error(`[${operationLogId}][stream_error]`, errorData);
-                  },
-                },
-                metadata: {
-                  operationId,
-                  topicId: state.metadata?.topicId,
-                  trigger: state.metadata?.trigger,
-                },
-                headers: runtimeTraceOptions.headers,
-                user: ctx.userId,
-              });
-
-              // Consume stream to ensure all callbacks complete execution
-              await consumeStreamUntilDone(response);
-
-              // If a stream error was captured via onError callback, throw to propagate the error
-              if (streamError) {
-                const streamExecutionError = new Error(
-                  typeof streamError.message === 'string'
-                    ? `LLM stream error: ${streamError.message}`
-                    : `LLM stream error: ${JSON.stringify(streamError)}`,
                 );
-                const { message: _message, ...restStreamError } = streamError as Record<
-                  string,
-                  unknown
-                >;
-                Object.assign(streamExecutionError, restStreamError);
-                throw streamExecutionError;
+
+                await consumeStreamUntilDone(response);
+                if (streamError) {
+                  const streamExecutionError = new Error(
+                    typeof streamError.message === 'string'
+                      ? `LLM stream error: ${streamError.message}`
+                      : `LLM stream error: ${JSON.stringify(streamError)}`,
+                  );
+                  const { message: _message, ...restStreamError } = streamError as Record<
+                    string,
+                    unknown
+                  >;
+                  Object.assign(streamExecutionError, restStreamError);
+                  throw streamExecutionError;
+                }
+                return response;
+              };
+
+              const budgetedCall = await runContextBudgetedCall<
+                BudgetedChatStreamPayload,
+                Awaited<ReturnType<typeof callProvider>>
+              >({
+                attemptState: state.metadata?.contextBudget?.attemptState,
+                callProvider,
+                catalogSnapshot: operationModelCatalogSnapshot,
+                compress: compressFinalPayload,
+                configuredWindowTokens: resolvedContextWindowTokens,
+                modelId: model,
+                onContextWindowObserved: ctx.onContextWindowObserved,
+                onProviderAttemptDiscard: async ({ attempt: providerAttempt, willRetry }) => {
+                  discardProviderAttempt();
+                  if (!willRetry) return;
+
+                  await streamManager.publishStreamEvent(operationId, {
+                    data: {
+                      attempt: providerAttempt + 1,
+                      delayMs: 0,
+                      maxAttempts: 2,
+                      reason: 'context_window',
+                      reset: true,
+                    },
+                    stepIndex,
+                    type: 'stream_retry',
+                  });
+                },
+                operationId,
+                outputReserveTokens: 1024,
+                payload: chatPayload as unknown as BudgetedChatStreamPayload,
+                providerId: provider,
+              });
+              if (budgetedCall.kind === 'fail') {
+                const evaluation = budgetedCall.evaluations.at(-1);
+                const budgetError = new FinalContextWindowError({
+                  contextWindowTokens: evaluation?.window.windowTokens ?? 32_000,
+                  model,
+                  promptTokens: evaluation?.estimatedPromptTokens ?? 0,
+                });
+                Object.assign(budgetError, {
+                  contextBudget: {
+                    decision: budgetedCall.decision,
+                    trace: evaluation?.trace,
+                  },
+                  contextBudgetAttemptState: budgetedCall.attemptState,
+                });
+                throw budgetError;
               }
 
               await flushTextBuffer();
               await flushReasoningBuffer();
               clearAttemptBuffers();
+              providerAttemptActive = false;
 
               // Wait for any model-generated image uploads to finish so the
               // persisted multimodal content references S3 URLs, not base64.
@@ -2230,6 +2985,17 @@ export const createRuntimeExecutors = (
 
               // ===== 2. Then accumulate to AgentState =====
               const newState = structuredClone(state);
+              if (persistedAutoCompression) {
+                newState.messages = structuredClone(persistedAutoCompression.stateMessages);
+              }
+              newState.metadata = {
+                ...newState.metadata,
+                contextBudget: {
+                  ...newState.metadata?.contextBudget,
+                  attemptState: budgetedCall.attemptState,
+                  trace: budgetedCall.evaluations.at(-1)?.trace,
+                },
+              };
 
               // state.messages flows into the next LLM call payload, so entries
               // must be safe for strict-provider history replay:
@@ -2445,6 +3211,15 @@ export const createRuntimeExecutors = (
   compress_context: async (instruction, state) => {
     const { payload } = instruction as AgentInstructionCompressContext;
     const { messages, currentTokenCount } = payload;
+    const budgetPayload = payload as AgentInstructionCompressContext['payload'] & {
+      catalogSnapshot?: ModelCatalogSnapshot;
+      observedWindowTokens?: number;
+      outputReserveTokens?: number;
+      payloadFingerprint?: string;
+      providerMedia?: unknown[];
+      sentPayloadFingerprints?: readonly string[];
+      trigger?: 'final-preflight' | 'manual' | 'provider-error' | 'threshold';
+    };
     const { operationId, stepIndex } = ctx;
     const operationLogId = `${operationId}:${stepIndex}`;
     const stagePrefix = `[${operationLogId}][compress_context]`;
@@ -2459,6 +3234,69 @@ export const createRuntimeExecutors = (
     );
     const messagesToCompress = preservedMessages.length > 0 ? messages.slice(0, -1) : messages;
     const compressedMessagesFallback = [...messagesToCompress, ...preservedMessages];
+    const inputMeasurement = countContextTokens({ messages, tools: state.tools });
+    const payloadFingerprint =
+      budgetPayload.payloadFingerprint || inputMeasurement.payloadFingerprint;
+    const compressionTrigger = budgetPayload.trigger ?? 'threshold';
+    const forwardedBudgetContext = {
+      catalogSnapshot: budgetPayload.catalogSnapshot,
+      observedWindowTokens: budgetPayload.observedWindowTokens,
+      outputReserveTokens: budgetPayload.outputReserveTokens,
+      providerMedia: budgetPayload.providerMedia,
+      sentPayloadFingerprints: budgetPayload.sentPayloadFingerprints,
+    };
+    const skippedCompressionPayload = (params: {
+      compressedMessages: unknown[];
+      groupId?: string;
+      parentMessageId?: string;
+    }) => ({
+      ...forwardedBudgetContext,
+      afterTokens: currentTokenCount,
+      attempt: 1 as const,
+      beforeTokens: currentTokenCount,
+      code: 'NO_CANDIDATES' as const,
+      compressedMessages: params.compressedMessages,
+      groupId: params.groupId ?? '',
+      outcome: 'skipped' as const,
+      parentMessageId: params.parentMessageId,
+      payloadFingerprint,
+      skipped: true,
+      trigger: compressionTrigger,
+    });
+    const failedCompressionPayload = (params: {
+      compressedMessages: unknown[];
+      groupId?: string;
+      parentMessageId?: string;
+    }) => ({
+      ...forwardedBudgetContext,
+      afterTokens: currentTokenCount,
+      attempt: 1 as const,
+      beforeTokens: currentTokenCount,
+      code: 'SUMMARY_FAILED' as const,
+      compressedMessages: params.compressedMessages,
+      groupId: params.groupId ?? '',
+      outcome: 'failed' as const,
+      parentMessageId: params.parentMessageId,
+      payloadFingerprint,
+      trigger: compressionTrigger,
+    });
+    let pendingCompression:
+      | {
+          groupId: string;
+          messageService: MessageService;
+          query: { agentId?: string; threadId?: string; topicId: string };
+        }
+      | undefined;
+    const settlePendingCompression = async (cancelled: boolean) => {
+      if (!pendingCompression) return;
+      const pending = pendingCompression;
+      if (cancelled) {
+        await pending.messageService.cancelCompression(pending.groupId, pending.query);
+      } else {
+        await pending.messageService.failCompression(pending.groupId, pending.query);
+      }
+      pendingCompression = undefined;
+    };
 
     if (!topicId || !ctx.userId) {
       return {
@@ -2466,10 +3304,7 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
-            compressedMessages: compressedMessagesFallback,
-            groupId: '',
-            parentMessageId: undefined,
-            skipped: true,
+            ...skippedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -2524,10 +3359,7 @@ export const createRuntimeExecutors = (
           newState,
           nextContext: {
             payload: {
-              compressedMessages: compressedMessagesFallback,
-              groupId: '',
-              parentMessageId: undefined,
-              skipped: true,
+              ...skippedCompressionPayload({ compressedMessages: compressedMessagesFallback }),
             } as GeneralAgentCompressionResultPayload,
             phase: 'compression_result',
             session: {
@@ -2551,20 +3383,31 @@ export const createRuntimeExecutors = (
         threadId: state.metadata?.threadId,
         topicId,
       });
+      pendingCompression = {
+        groupId: compressionResult.messageGroupId,
+        messageService,
+        query: {
+          agentId: state.metadata?.agentId,
+          threadId: state.metadata?.threadId,
+          topicId,
+        },
+      };
 
       const compressionModel =
         newState.modelRuntimeConfig?.compressionModel || newState.modelRuntimeConfig;
 
       if (!compressionModel?.model || !compressionModel?.provider) {
+        await settlePendingCompression(false);
         return {
           events,
           newState,
           nextContext: {
             payload: {
-              compressedMessages: compressedMessagesFallback,
-              groupId: '',
-              parentMessageId: latestAssistantMessage?.id,
-              skipped: true,
+              ...failedCompressionPayload({
+                compressedMessages: compressedMessagesFallback,
+                groupId: compressionResult.messageGroupId,
+                parentMessageId: latestAssistantMessage?.id,
+              }),
             } as GeneralAgentCompressionResultPayload,
             phase: 'compression_result',
             session: {
@@ -2577,8 +3420,8 @@ export const createRuntimeExecutors = (
         };
       }
 
-      const compressionPayload = chainCompressContext(compressionResult.messagesToSummarize);
-      const compressionRuntime = await initModelRuntimeFromDB(
+      const initModelRuntime = requireRuntimeBoundary(ctx.initModelRuntime, 'initModelRuntime');
+      const compressionRuntime = await initModelRuntime(
         ctx.serverDB,
         ctx.userId,
         compressionModel.provider,
@@ -2586,38 +3429,105 @@ export const createRuntimeExecutors = (
       );
 
       let summaryContent = '';
-      let summaryUsage: any;
-      let summaryError: any;
-
-      const compressionResponse = await compressionRuntime.chat(
-        {
-          messages: compressionPayload.messages!,
-          model: compressionModel.model,
-          stream: true,
+      const summaryUsages: any[] = [];
+      const summaryWindow = resolveCompressionSummaryBudgetTokens({
+        compressionModel,
+        compressionModelCatalogSnapshot: newState.metadata?.compressionModelCatalogSnapshot as
+          | ModelCatalogSnapshot
+          | undefined,
+        mainModelCatalogSnapshot: newState.metadata?.modelCatalogSnapshot as
+          | ModelCatalogSnapshot
+          | undefined,
+      });
+      const hierarchy = await compressContextHierarchically<
+        UIChatMessage,
+        Partial<ChatStreamPayload>
+      >({
+        buildRequest: (items) =>
+          chainCompressContext(
+            items.map(
+              (item, index) =>
+                ({
+                  content: item.text,
+                  createdAt: Date.now(),
+                  id: `summary-input-${index}`,
+                  role: 'user',
+                  updatedAt: Date.now(),
+                }) as UIChatMessage,
+            ),
+          ),
+        candidateIds: messageIds,
+        createSummaryMessage: (summary) => {
+          summaryContent = summary;
+          return {
+            content: summary,
+            createdAt: Date.now(),
+            id: compressionResult.messageGroupId,
+            role: 'user',
+            updatedAt: Date.now(),
+          } as UIChatMessage;
         },
-        {
-          callback: {
-            onCompletion: async (data) => {
-              if (data.usage) summaryUsage = data.usage;
-            },
-            onError: async (errorData) => {
-              summaryError = errorData;
-            },
-            onText: async (text) => {
-              summaryContent += text;
-            },
-          },
-          user: ctx.userId,
+        getMessageId: (message, index) => message.id || `compression-message-${index}`,
+        groupId: compressionResult.messageGroupId,
+        measurePayload: (payloadMessages) => {
+          const measurement = countContextTokens({
+            messages: [...payloadMessages],
+            providerMedia: collectProviderMediaTokenEstimates(
+              payloadMessages as Readonly<ChatStreamPayload['messages']>,
+              messages as UIChatMessage[],
+            ),
+          });
+          return {
+            payloadFingerprint: measurement.payloadFingerprint,
+            tokens: measurement.adjustedTotal,
+          };
         },
-      );
-
-      await consumeStreamUntilDone(compressionResponse);
-
-      if (summaryError) {
+        measureRequest: (request) =>
+          countContextTokens({ messages: (request.messages ?? []) as UIChatMessage[] })
+            .adjustedTotal,
+        messages: compressionResult.messagesToSummarize as UIChatMessage[],
+        renderMessage: renderMessageForCompression,
+        summarize: async (request) => {
+          let chunkSummary = '';
+          let summaryError: any;
+          const compressionResponse = await compressionRuntime.chat(
+            {
+              ...request,
+              messages: request.messages ?? [],
+              model: compressionModel.model,
+              stream: true,
+            },
+            {
+              callback: {
+                onCompletion: async (data) => {
+                  if (data.usage) summaryUsages.push(data.usage);
+                },
+                onError: async (errorData) => {
+                  summaryError = errorData;
+                },
+                onText: async (text) => {
+                  chunkSummary += text;
+                },
+              },
+              user: ctx.userId,
+            },
+          );
+          await consumeStreamUntilDone(compressionResponse);
+          if (summaryError) {
+            throw new Error(
+              typeof summaryError.message === 'string'
+                ? summaryError.message
+                : JSON.stringify(summaryError),
+            );
+          }
+          return chunkSummary;
+        },
+        summaryModelBudgetTokens: summaryWindow,
+        trigger: compressionTrigger,
+      });
+      if (hierarchy.outcome.outcome !== 'compressed' || !summaryContent) {
         throw new Error(
-          typeof summaryError.message === 'string'
-            ? summaryError.message
-            : JSON.stringify(summaryError),
+          ('code' in hierarchy.outcome && hierarchy.outcome.code) || 'SUMMARY_FAILED',
         );
       }
 
@@ -2630,6 +3540,7 @@ export const createRuntimeExecutors = (
           topicId,
         },
       );
+      pendingCompression = undefined;
 
       const compressedMessagesBase =
         finalCompression.messages || compressionResult.messagesToSummarize;
@@ -2651,7 +3562,7 @@ export const createRuntimeExecutors = (
 
       newState.messages = compressedMessages;
 
-      if (summaryUsage) {
+      for (const summaryUsage of summaryUsages) {
         const { usage, cost } = UsageCounter.accumulateLLM({
           cost: newState.cost,
           model: compressionModel.model,
@@ -2694,9 +3605,17 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
+            ...forwardedBudgetContext,
+            afterTokens: countContextTokens({ messages: compressedMessages, tools: state.tools })
+              .adjustedTotal,
+            attempt: 1,
+            beforeTokens: currentTokenCount,
             compressedMessages,
             groupId: compressionResult.messageGroupId,
+            outcome: 'compressed',
             parentMessageId: latestAssistantMessage?.id,
+            payloadFingerprint,
+            trigger: compressionTrigger,
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -2708,6 +3627,12 @@ export const createRuntimeExecutors = (
         },
       };
     } catch (error) {
+      const failedGroupId = pendingCompression?.groupId;
+      try {
+        await settlePendingCompression(isAbortError(error));
+      } catch (rollbackError) {
+        log(`${stagePrefix} Compression rollback failed. error=%O`, rollbackError);
+      }
       log(
         `${stagePrefix} Compression failed. originalTokens=%d error=%O`,
         currentTokenCount,
@@ -2738,10 +3663,10 @@ export const createRuntimeExecutors = (
         newState,
         nextContext: {
           payload: {
-            compressedMessages: compressedMessagesFallback,
-            groupId: '',
-            parentMessageId: undefined,
-            skipped: true,
+            ...failedCompressionPayload({
+              compressedMessages: compressedMessagesFallback,
+              groupId: failedGroupId,
+            }),
           } as GeneralAgentCompressionResultPayload,
           phase: 'compression_result',
           session: {
@@ -2865,7 +3790,8 @@ export const createRuntimeExecutors = (
         // Falls through to the normal server path if either is unavailable.
         const canDispatchToClient =
           chatToolPayload.executor === 'client' &&
-          typeof streamManager.sendToolExecute === 'function';
+          typeof streamManager.sendToolExecute === 'function' &&
+          !requiresServerDeviceTransport(state, chatToolPayload);
 
         let toolCallMocked = false;
         const hookResult = ctx.hookDispatcher
@@ -2899,6 +3825,9 @@ export const createRuntimeExecutors = (
           : null;
 
         let execution: { result: ToolExecutionResultResponse; attempts: number };
+        let preparedExecutionContext: PreparedToolExecutionContext = {
+          executionContext: getFrozenExecutionContext(state),
+        };
         if (isDeviceToolIdentifier(chatToolPayload.identifier) && !hookResult?.isMocked) {
           // Per-call audit for device tools (local-system / remote-device).
           // Emitted before dispatch so the record exists even if dispatch
@@ -2929,6 +3858,7 @@ export const createRuntimeExecutors = (
             result: { content: hookResult.content, executionTime: 0, success: true },
           };
         } else if (canDispatchToClient) {
+          preparedExecutionContext = await prepareToolExecutionContext(ctx, state, chatToolPayload);
           log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
           const timeoutMs = clampToolTimeoutToExecutionBudget(
             state,
@@ -2939,12 +3869,22 @@ export const createRuntimeExecutors = (
             }),
           );
           const dispatchResult = await dispatchClientTool(chatToolPayload, {
+            deviceId:
+              preparedExecutionContext.executionContext?.plan.kind === 'device'
+                ? preparedExecutionContext.executionContext.plan.deviceId
+                : undefined,
+            executionContext: projectExecutionContextForClient(
+              state,
+              preparedExecutionContext.executionContext,
+            ),
             operationId,
             streamManager,
             timeoutMs,
+            topicId: state.metadata?.topicId ?? ctx.topicId,
           });
           execution = { attempts: 1, result: dispatchResult };
         } else {
+          preparedExecutionContext = await prepareToolExecutionContext(ctx, state, chatToolPayload);
           // Inject source from sourceMap so BuiltinToolsExecutor can route
           // lobehubSkill / composio tools correctly (LLM responses don't carry source)
           if (toolSource && !chatToolPayload.source) {
@@ -2964,7 +3904,10 @@ export const createRuntimeExecutors = (
           execution = await executeToolWithRetry(
             () =>
               toolExecutionService.executeTool(chatToolPayload, {
-                activeDeviceId: state.metadata?.activeDeviceId,
+                activeDeviceId: getExecutionDeviceId(
+                  state,
+                  preparedExecutionContext.executionContext,
+                ),
                 agentId: state.metadata?.agentId,
                 agentMember: buildServerAgentMemberRunner(
                   ctx,
@@ -2975,13 +3918,19 @@ export const createRuntimeExecutors = (
                 documentId: state.metadata?.documentId,
                 editingAgentId: state.metadata?.editingAgentId,
                 execSubAgent: ctx.execSubAgent,
+                executionContext: preparedExecutionContext.executionContext,
                 executionTimeoutMs: timeoutMs,
                 groupId: state.metadata?.groupId,
                 isSubAgent: state.metadata?.isSubAgent === true,
                 memoryToolPermission: agentConfig?.chatConfig?.memory?.toolPermission,
                 messageId: state.metadata?.sourceMessageId,
+                modelCatalogSnapshot: state.metadata?.modelCatalogSnapshot,
                 operationId,
-                projectSkills: (state.metadata?.operationSkillSet?.skills ?? [])
+                projectSkills: (
+                  state.metadata?.skillRegistryResult?.skills ??
+                  state.metadata?.operationSkillSet?.skills ??
+                  []
+                )
                   .filter(
                     (skill: { location?: string; source?: string }) =>
                       skill.source === 'project' && !!skill.location,
@@ -2993,6 +3942,7 @@ export const createRuntimeExecutors = (
                 scope: state.metadata?.scope,
                 serverDB: ctx.serverDB,
                 skipResultTruncation: true,
+                skillRegistryResult: state.metadata?.skillRegistryResult,
                 subAgent: buildServerVirtualSubAgentRunner(
                   ctx,
                   state,
@@ -3048,6 +3998,102 @@ export const createRuntimeExecutors = (
                 reason: 'async_tool',
                 type: 'interrupted',
               },
+            ],
+            newState,
+          };
+        }
+
+        // Post-success workspace coordination. Shared with call_tools_batch:
+        // the bind can change which context the next step runs in, but it can
+        // never fail, drop, or delay the result of the tool that just ran.
+        // Without a success there is no bind to owe, and a scratch root merely
+        // proposed for a failed tool is dropped rather than frozen — only a
+        // committed bind may move the topic's execution context, and the next
+        // cwd-dependent tool re-proposes the same deterministic root.
+        const scratchSettlement: ScratchBindSettlement = execution.result.success
+          ? await settleScratchBindAfterToolSuccess({
+              ctx,
+              operationLogId,
+              prepared: preparedExecutionContext,
+              state,
+              toolName,
+            })
+          : {
+              executionContext: preparedExecutionContext.scratchRoot
+                ? getFrozenExecutionContext(state)
+                : preparedExecutionContext.executionContext,
+            };
+
+        const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
+          activeDeviceId: state.metadata?.activeDeviceId,
+          operationId,
+          result: execution.result,
+          topicId: ctx.topicId ?? state.metadata?.topicId,
+        });
+        if (postDispatchPathConsent && state.userInterventionConfig?.approvalMode !== 'headless') {
+          const pendingState = {
+            ...(execution.result.state && typeof execution.result.state === 'object'
+              ? execution.result.state
+              : {}),
+            workspacePathConsent: postDispatchPathConsent,
+          };
+          let toolMessageId: string;
+          if (payload.skipCreateToolMessage) {
+            toolMessageId = payload.parentMessageId;
+            await ctx.messageModel.updateToolMessage(toolMessageId, {
+              content: '',
+              pluginState: pendingState,
+            });
+            await ctx.messageModel.updateMessagePlugin(toolMessageId, {
+              intervention: { status: 'pending' },
+            });
+          } else {
+            const toolMessage = await ctx.messageModel.create({
+              agentId: state.metadata!.agentId!,
+              content: '',
+              parentId: payload.parentMessageId,
+              plugin: chatToolPayload as any,
+              pluginIntervention: { status: 'pending' },
+              pluginState: pendingState,
+              role: 'tool',
+              threadId: state.metadata?.threadId,
+              tool_call_id: chatToolPayload.id,
+              topicId: state.metadata?.topicId,
+            });
+            toolMessageId = toolMessage.id;
+          }
+
+          await streamManager.publishStreamEvent(operationId, {
+            data: {
+              pendingToolsCalling: [chatToolPayload],
+              phase: 'human_approval',
+              requiresApproval: true,
+            },
+            stepIndex,
+            type: 'step_start',
+          });
+          await streamManager.publishStreamChunk(operationId, stepIndex, {
+            chunkType: 'tools_calling',
+            toolMessageIds: { [chatToolPayload.id]: toolMessageId },
+            toolsCalling: [chatToolPayload] as any,
+          } as any);
+
+          executeToolSpan.setAttributes(
+            buildExecuteToolResultAttributes({ attempts: execution.attempts, success: false }),
+          );
+          const newState = structuredClone(state);
+          applyScratchBindSettlement(newState, scratchSettlement);
+          newState.lastModified = new Date().toISOString();
+          newState.pendingToolsCalling = [chatToolPayload];
+          newState.status = 'waiting_for_human';
+          return {
+            events: [
+              {
+                operationId,
+                pendingToolsCalling: [chatToolPayload],
+                type: 'human_approve_required',
+              },
+              { toolCalls: [chatToolPayload] as any, type: 'tool_pending' },
             ],
             newState,
           };
@@ -3165,11 +4211,25 @@ export const createRuntimeExecutors = (
 
         const newState = structuredClone(state);
 
-        newState.messages.push({
+        applyScratchBindSettlement(newState, scratchSettlement);
+
+        const resultMessage = {
           content: executionResult.content,
-          role: 'tool',
+          id: toolMessageId,
+          role: 'tool' as const,
           tool_call_id: chatToolPayload.id,
-        });
+        };
+        // Approval resumes already contain the pending tool message. Replace it
+        // so context reordering cannot retain its empty content over the result.
+        const pendingToolIndex = payload.skipCreateToolMessage
+          ? newState.messages.findIndex(
+              (message) =>
+                message.role === 'tool' &&
+                (message.id === toolMessageId || message.tool_call_id === chatToolPayload.id),
+            )
+          : -1;
+        if (pendingToolIndex >= 0) newState.messages[pendingToolIndex] = resultMessage;
+        else newState.messages.push(resultMessage);
 
         events.push({ id: chatToolPayload.id, result: executionResult, type: 'tool_result' });
 
@@ -3268,6 +4328,11 @@ export const createRuntimeExecutors = (
         executeToolSpan.setAttributes(
           buildExecuteToolResultAttributes({ attempts: execution.attempts, success: isSuccess }),
         );
+
+        // Last: the tool result is persisted, reported and accounted for by
+        // now, so interrupting here loses none of it.
+        if (scratchSettlement.failed)
+          return interruptForPendingWorkspaceBindFailure(newState, events);
 
         return {
           events,
@@ -3429,6 +4494,28 @@ export const createRuntimeExecutors = (
     // Deferred (async) tools whose result is delivered out-of-band later;
     // collected here so the batch parks for them after server tools finish.
     const deferredTools: ChatToolPayload[] = [];
+    // A path may pass the lexical pre-dispatch audit and still resolve outside
+    // the frozen roots on the device (for example through a symlink). Keep
+    // those device-authored interventions out of the LLM result stream and
+    // park the whole batch on the same approval UI used by call_tool.
+    const pathConsentTools: ChatToolPayload[] = [];
+    const pathConsentToolMessageIds: Record<string, string> = {};
+    let scratchPreparedPromise: Promise<PreparedToolExecutionContext> | undefined;
+    // One shared post-success settlement for the whole batch: the first tool
+    // that succeeds against the scratch root starts it, every other tool awaits
+    // the same outcome, and it never rejects — a bind must not decide whether a
+    // sibling tool's successful result gets persisted.
+    let scratchBindPromise: Promise<ScratchBindSettlement> | undefined;
+    let scratchSettlement: ScratchBindSettlement | undefined;
+    const prepareBatchExecutionContext = (tool: ChatToolPayload) => {
+      if (
+        !requiresPrimaryCwdForTool({ executionContext: getFrozenExecutionContext(state), tool })
+      ) {
+        return Promise.resolve({ executionContext: getFrozenExecutionContext(state) });
+      }
+      scratchPreparedPromise ??= prepareToolExecutionContext(ctx, state, tool);
+      return scratchPreparedPromise;
+    };
 
     // Execute server tools concurrently (skip client tools in mixed batch)
     const toolsToExecute = serverTools.length > 0 ? serverTools : toolsCalling;
@@ -3490,7 +4577,8 @@ export const createRuntimeExecutors = (
 
             const canDispatchToClient =
               chatToolPayload.executor === 'client' &&
-              typeof streamManager.sendToolExecute === 'function';
+              typeof streamManager.sendToolExecute === 'function' &&
+              !requiresServerDeviceTransport(state, chatToolPayload);
 
             let batchToolCallMocked = false;
             const batchHookResult = ctx.hookDispatcher
@@ -3539,6 +4627,9 @@ export const createRuntimeExecutors = (
             }
 
             let execution: { result: ToolExecutionResultResponse; attempts: number };
+            let preparedExecutionContext: PreparedToolExecutionContext = {
+              executionContext: getFrozenExecutionContext(state),
+            };
             if (batchHookResult?.isMocked) {
               log(`[${operationLogId}] Tool ${toolName} mocked by beforeToolCall hook`);
               batchToolCallMocked = true;
@@ -3547,6 +4638,7 @@ export const createRuntimeExecutors = (
                 result: { content: batchHookResult.content, executionTime: 0, success: true },
               };
             } else if (canDispatchToClient) {
+              preparedExecutionContext = await prepareBatchExecutionContext(chatToolPayload);
               log(`[${operationLogId}] Dispatching tool ${toolName} to client via Agent Gateway`);
               const timeoutMs = clampToolTimeoutToExecutionBudget(
                 state,
@@ -3557,12 +4649,22 @@ export const createRuntimeExecutors = (
                 }),
               );
               const dispatchResult = await dispatchClientTool(chatToolPayload, {
+                deviceId:
+                  preparedExecutionContext.executionContext?.plan.kind === 'device'
+                    ? preparedExecutionContext.executionContext.plan.deviceId
+                    : undefined,
+                executionContext: projectExecutionContextForClient(
+                  state,
+                  preparedExecutionContext.executionContext,
+                ),
                 operationId,
                 streamManager,
                 timeoutMs,
+                topicId: state.metadata?.topicId ?? ctx.topicId,
               });
               execution = { attempts: 1, result: dispatchResult };
             } else {
+              preparedExecutionContext = await prepareBatchExecutionContext(chatToolPayload);
               // Inject source from sourceMap so BuiltinToolsExecutor can route
               // lobehubSkill / composio tools correctly (LLM responses don't carry source)
               const batchToolSource =
@@ -3584,7 +4686,10 @@ export const createRuntimeExecutors = (
               execution = await executeToolWithRetry(
                 () =>
                   toolExecutionService.executeTool(chatToolPayload, {
-                    activeDeviceId: state.metadata?.activeDeviceId,
+                    activeDeviceId: getExecutionDeviceId(
+                      state,
+                      preparedExecutionContext.executionContext,
+                    ),
                     agentId: state.metadata?.agentId,
                     agentMember: buildServerAgentMemberRunner(
                       ctx,
@@ -3594,15 +4699,31 @@ export const createRuntimeExecutors = (
                     ),
                     documentId: state.metadata?.documentId,
                     execSubAgent: ctx.execSubAgent,
+                    executionContext: preparedExecutionContext.executionContext,
                     executionTimeoutMs: timeoutMs,
                     groupId: state.metadata?.groupId,
                     isSubAgent: state.metadata?.isSubAgent === true,
                     memoryToolPermission: batchAgentConfig?.chatConfig?.memory?.toolPermission,
                     messageId: state.metadata?.sourceMessageId,
+                    modelCatalogSnapshot: state.metadata?.modelCatalogSnapshot,
                     operationId,
+                    projectSkills: (
+                      state.metadata?.skillRegistryResult?.skills ??
+                      state.metadata?.operationSkillSet?.skills ??
+                      []
+                    )
+                      .filter(
+                        (skill: { location?: string; source?: string }) =>
+                          skill.source === 'project' && !!skill.location,
+                      )
+                      .map((skill: { location: string; name: string }) => ({
+                        location: skill.location,
+                        name: skill.name,
+                      })),
                     scope: state.metadata?.scope,
                     serverDB: ctx.serverDB,
                     skipResultTruncation: true,
+                    skillRegistryResult: state.metadata?.skillRegistryResult,
                     subAgent: buildServerVirtualSubAgentRunner(
                       ctx,
                       state,
@@ -3635,6 +4756,54 @@ export const createRuntimeExecutors = (
               deferredTools.push(chatToolPayload);
               batchExecuteToolSpan.setAttributes(
                 buildExecuteToolResultAttributes({ attempts: execution.attempts, success: true }),
+              );
+              return;
+            }
+
+            if (execution.result.success && preparedExecutionContext.scratchRoot) {
+              scratchBindPromise ??= settleScratchBindAfterToolSuccess({
+                ctx,
+                operationLogId,
+                prepared: preparedExecutionContext,
+                state,
+                toolName,
+              });
+              scratchSettlement = await scratchBindPromise;
+            }
+
+            const postDispatchPathConsent = getPostDispatchWorkspacePathConsent({
+              activeDeviceId: state.metadata?.activeDeviceId,
+              operationId,
+              result: execution.result,
+              topicId: ctx.topicId ?? state.metadata?.topicId,
+            });
+            if (
+              postDispatchPathConsent &&
+              state.userInterventionConfig?.approvalMode !== 'headless'
+            ) {
+              const pendingState = {
+                ...(execution.result.state && typeof execution.result.state === 'object'
+                  ? execution.result.state
+                  : {}),
+                workspacePathConsent: postDispatchPathConsent,
+              };
+              const toolMessage = await ctx.messageModel.create({
+                agentId: state.metadata!.agentId!,
+                content: '',
+                parentId: parentMessageId,
+                plugin: chatToolPayload as any,
+                pluginIntervention: { status: 'pending' },
+                pluginState: pendingState,
+                role: 'tool',
+                threadId: state.metadata?.threadId,
+                tool_call_id: chatToolPayload.id,
+                topicId: state.metadata?.topicId,
+              });
+              pathConsentTools.push(chatToolPayload);
+              pathConsentToolMessageIds[chatToolPayload.id] = toolMessage.id;
+              toolMessageIds.push(toolMessage.id);
+              batchExecuteToolSpan.setAttributes(
+                buildExecuteToolResultAttributes({ attempts: execution.attempts, success: false }),
               );
               return;
             }
@@ -3819,6 +4988,7 @@ export const createRuntimeExecutors = (
 
     // Accumulate tool usage sequentially after all tools have finished
     const newState = structuredClone(state);
+    if (scratchSettlement) applyScratchBindSettlement(newState, scratchSettlement);
     for (const result of toolResults) {
       if (result.usageParams) {
         const { usage, cost } = UsageCounter.accumulateTool({
@@ -3894,6 +5064,35 @@ export const createRuntimeExecutors = (
     // Get the last tool message ID as parentMessageId for next LLM call
     const lastToolMessageId = toolMessageIds.at(-1);
 
+    if (pathConsentTools.length > 0) {
+      await streamManager.publishStreamEvent(operationId, {
+        data: {
+          pendingToolsCalling: pathConsentTools,
+          phase: 'human_approval',
+          requiresApproval: true,
+        },
+        stepIndex,
+        type: 'step_start',
+      });
+      await streamManager.publishStreamChunk(operationId, stepIndex, {
+        chunkType: 'tools_calling',
+        toolMessageIds: pathConsentToolMessageIds,
+        toolsCalling: pathConsentTools as any,
+      } as any);
+
+      newState.lastModified = new Date().toISOString();
+      newState.pendingToolsCalling = pathConsentTools;
+      newState.status = 'waiting_for_human';
+      return {
+        events: [
+          ...events,
+          { operationId, pendingToolsCalling: pathConsentTools, type: 'human_approve_required' },
+          { toolCalls: pathConsentTools as any, type: 'tool_pending' },
+        ],
+        newState,
+      };
+    }
+
     // Park if any tools still owe an out-of-band result: client tools (run on
     // the client) and/or deferred async tools (e.g. sub-agents). The operation
     // resumes once every pending tool's result is delivered.
@@ -3933,6 +5132,10 @@ export const createRuntimeExecutors = (
         newState,
       };
     }
+
+    // Same post-success workspace semantics as call_tool, applied once for the
+    // whole batch and only after every tool result is persisted and reported.
+    if (scratchSettlement?.failed) return interruptForPendingWorkspaceBindFailure(newState, events);
 
     return {
       events,
@@ -4221,13 +5424,23 @@ export const createRuntimeExecutors = (
 
     log('[%s:%d] Finishing execution: (%s)', operationId, stepIndex, reason);
 
-    // Clear runningOperation from topic metadata so reconnect doesn't trigger after completion
+    // Persist the terminal status on the server as well as clearing the
+    // reconnect pointer. The renderer may have refreshed or disconnected, so
+    // its best-effort terminal write cannot be the source of truth.
     if (ctx.topicId && ctx.userId) {
       try {
-        const topicModel = new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId);
-        await topicModel.updateMetadata(ctx.topicId, { runningOperation: null });
+        if (ctx.completeTopicOperation) {
+          await ctx.completeTopicOperation({
+            operationId,
+            status: 'active',
+            topicId: ctx.topicId,
+          });
+        } else {
+          const topicModel = new TopicModel(ctx.serverDB, ctx.userId, ctx.workspaceId);
+          await topicModel.completeRunningOperation(ctx.topicId, operationId, 'active');
+        }
       } catch (e) {
-        log('[%s] Failed to clear runningOperation metadata: %O', operationId, e);
+        log('[%s] Failed to persist terminal topic state: %O', operationId, e);
       }
     }
 
@@ -4385,6 +5598,13 @@ export const createRuntimeExecutors = (
 
       for (const toolPayload of pendingToolsCalling) {
         const toolName = `${toolPayload.identifier}/${toolPayload.apiName}`;
+        const workspacePathConsent = buildPendingWorkspacePathConsent({
+          activeDeviceId: state.metadata?.activeDeviceId,
+          executionContext: getFrozenExecutionContext(state),
+          operationId,
+          tool: toolPayload,
+          topicId: ctx.topicId ?? state.metadata?.topicId,
+        });
         try {
           const toolMessage = await ctx.messageModel.create({
             agentId: state.metadata!.agentId!,
@@ -4392,6 +5612,9 @@ export const createRuntimeExecutors = (
             parentId: parentAssistantId,
             plugin: toolPayload as any,
             pluginIntervention: { status: 'pending' },
+            ...(workspacePathConsent && {
+              pluginState: { workspacePathConsent },
+            }),
             role: 'tool',
             threadId: state.metadata?.threadId,
             tool_call_id: toolPayload.id,

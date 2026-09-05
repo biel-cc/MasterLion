@@ -140,9 +140,64 @@ describe('GatewayHttpClient', () => {
       expect(result).toEqual({
         content: 'file contents',
         error: undefined,
+        executionContextValidation: undefined,
         state: undefined,
         success: true,
+        warning: undefined,
       });
+    });
+
+    it('only reports hard validation when the gateway explicitly confirms it', async () => {
+      mockFetch({
+        json: vi.fn().mockResolvedValue({
+          content: 'ok',
+          executionContextValidation: 'hard',
+          success: true,
+        }),
+        ok: true,
+      });
+
+      const result = await client.executeToolCall(
+        { executionContext: { cwd: '/workspace' }, userId: 'user-1' },
+        { apiName: 'readFile', arguments: '{}', identifier: 'test' },
+      );
+
+      expect(result.executionContextValidation).toBe('hard');
+      expect(result.warning).toBeUndefined();
+    });
+
+    it('marks missing capability acknowledgement as legacy and recommends an upgrade', async () => {
+      mockFetch({
+        json: vi.fn().mockResolvedValue({ content: 'ok', success: true }),
+        ok: true,
+      });
+
+      const result = await client.executeToolCall(
+        { executionContext: { cwd: '/workspace' }, userId: 'user-1' },
+        { apiName: 'readFile', arguments: '{}', identifier: 'test' },
+      );
+
+      expect(result.executionContextValidation).toBe('legacy');
+      expect(result.warning?.code).toBe('DEVICE_UPGRADE_RECOMMENDED');
+    });
+
+    it('treats an unknown capability acknowledgement as legacy', async () => {
+      mockFetch({
+        json: vi.fn().mockResolvedValue({
+          content: 'ok',
+          executionContextValidation: 'hard-v3',
+          success: true,
+        }),
+        ok: true,
+      });
+
+      const result = await client.executeToolCall(
+        { executionContext: { cwd: '/workspace' }, userId: 'user-1' },
+        { apiName: 'readFile', arguments: '{}', identifier: 'test' },
+      );
+
+      expect(result.executionContextValidation).toBe('legacy');
+      expect(result.warning?.code).toBe('DEVICE_UPGRADE_RECOMMENDED');
     });
 
     it('should preserve structured state alongside content', async () => {
@@ -231,6 +286,22 @@ describe('GatewayHttpClient', () => {
       expect(result.content).toContain('HTTP 500');
     });
 
+    it('marks a non-ok response with requested context as legacy', async () => {
+      mockFetch({
+        ok: false,
+        status: 503,
+        text: vi.fn().mockResolvedValue('old gateway unavailable'),
+      });
+
+      const result = await client.executeToolCall(
+        { executionContext: { cwd: '/workspace' }, userId: 'user-1' },
+        { apiName: 'readFile', arguments: '{}', identifier: 'test' },
+      );
+
+      expect(result.executionContextValidation).toBe('legacy');
+      expect(result.warning?.code).toBe('DEVICE_UPGRADE_RECOMMENDED');
+    });
+
     it('should handle non-ok response with text() failure', async () => {
       mockFetch({
         ok: false,
@@ -290,6 +361,45 @@ describe('GatewayHttpClient', () => {
       expect(body.operationId).toBe('op-1');
     });
 
+    it('should carry the frozen execution context and grant trace evidence', async () => {
+      mockFetch({
+        json: vi.fn().mockResolvedValue({ content: 'ok', success: true }),
+        ok: true,
+      });
+
+      await client.executeToolCall(
+        {
+          deviceId: 'device-1',
+          executionContext: {
+            accessRoots: [
+              {
+                modes: ['read'],
+                rootPath: '/approved/project',
+                scope: 'primary',
+                source: 'workspace',
+              },
+            ],
+            cwd: '/approved/project',
+          },
+          operationId: 'op-1',
+          toolCallId: 'call-1',
+          topicId: 'topic-1',
+          userId: 'user-1',
+        },
+        { apiName: 'readFile', arguments: '{"path":"README.md"}', identifier: 'local-system' },
+      );
+
+      const init = vi.mocked(fetch).mock.calls[0][1];
+      const body = JSON.parse((init as RequestInit).body as string);
+      expect(body).toMatchObject({
+        deviceId: 'device-1',
+        executionContext: { cwd: '/approved/project' },
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
+    });
+
     it('should use default gateway timeout plus HTTP caller padding when timeout is absent', async () => {
       mockFetch({
         json: vi.fn().mockResolvedValue({ content: 'ok', success: true }),
@@ -312,10 +422,11 @@ describe('GatewayHttpClient', () => {
   });
 
   describe('executeMcpCall', () => {
-    it('should tunnel the call over the tool-call relay with stdio params', async () => {
+    it('never accepts hard execution-context validation for an MCP call', async () => {
       mockFetch({
         json: vi.fn().mockResolvedValue({
           content: 'stock data',
+          executionContextValidation: 'hard',
           state: { rows: 3 },
           success: true,
         }),
@@ -326,7 +437,25 @@ describe('GatewayHttpClient', () => {
         apiName: 'getStock',
         arguments: '{"symbol":"AAPL"}',
         deviceId: 'device-1',
+        executionContext: {
+          accessRoots: [
+            {
+              deviceId: 'device-1',
+              modes: ['read'],
+              operationId: 'op-1',
+              rootPath: '/approved/project',
+              scope: 'primary',
+              source: 'workspace',
+              topicId: 'topic-1',
+            },
+          ],
+          cwd: '/approved/project',
+          env: { TOKEN: 'resolved-secret' },
+          workspaceKind: 'device',
+          workspaceRootPath: '/approved/project',
+        },
         identifier: 'kimi-datasource',
+        operationId: 'op-1',
         params: {
           args: ['stock-mcp'],
           command: 'npx',
@@ -334,14 +463,18 @@ describe('GatewayHttpClient', () => {
           name: 'kimi-datasource',
           type: 'stdio',
         },
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
         userId: 'user-1',
       });
 
       expect(result).toEqual({
         content: 'stock data',
         error: undefined,
+        executionContextValidation: 'legacy',
         state: { rows: 3 },
         success: true,
+        warning: expect.objectContaining({ code: 'DEVICE_UPGRADE_RECOMMENDED' }),
       });
 
       // Rides the same endpoint as executeToolCall; the device routes on the
@@ -356,6 +489,16 @@ describe('GatewayHttpClient', () => {
       // Routing fields are lifted out of the call descriptor, not tunneled.
       expect(body.toolCall.deviceId).toBeUndefined();
       expect(body.deviceId).toBe('device-1');
+      expect(body).toMatchObject({
+        executionContext: {
+          cwd: '/approved/project',
+          env: { TOKEN: 'resolved-secret' },
+          workspaceRootPath: '/approved/project',
+        },
+        operationId: 'op-1',
+        toolCallId: 'call-1',
+        topicId: 'topic-1',
+      });
     });
 
     it('should surface non-ok responses as a failed result', async () => {

@@ -3,10 +3,13 @@ import type {
   BotPlatformContext,
   LobeToolManifest,
   OperationSkillSet,
+  SkillRegistryResult,
   ToolExecutor,
   ToolSource,
 } from '@lobechat/context-engine';
 import type { ChatTopicBotContext, UserInterventionConfig } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 
 import type { ExecutionPlan } from '@/helpers/executionTarget';
 import { type ServerUserMemoryConfig } from '@/server/modules/Mecha/ContextEngineering/types';
@@ -341,6 +344,8 @@ export interface OperationCreationParams {
   botContext?: ChatTopicBotContext;
   /** Bot platform context for injecting platform capabilities (e.g. markdown support) */
   botPlatformContext?: BotPlatformContext;
+  /** Model evidence frozen together with this operation. */
+  compressionModelCatalogSnapshot?: ModelCatalogSnapshot;
   /**
    * Device-access policy decision computed once per turn by
    * `resolveDeviceAccessPolicy`. Forwarded into `state.metadata.deviceAccessPolicy`
@@ -359,6 +364,8 @@ export interface OperationCreationParams {
     maxSteps: number;
     maxTotalTokens: number;
   };
+  /** Immutable operation-scoped workspace/cwd/access/env authority. */
+  executionContext?: ExecutionContext;
   /**
    * Resolved execution plan for the run (see `resolveExecutionPlan`).
    * Forwarded into `state.metadata.executionPlan` so step-level layers (the
@@ -376,6 +383,7 @@ export interface OperationCreationParams {
   /** Initial step count offset for resumed operations (accumulated from previous runs) */
   initialStepCount?: number;
   maxSteps?: number;
+  modelCatalogSnapshot?: ModelCatalogSnapshot;
   modelRuntimeConfig?: any;
   operationId: string;
   /** Operation-level skill set for SkillResolver */
@@ -391,6 +399,8 @@ export interface OperationCreationParams {
   queueRetryDelay?: string;
   /** Abort startup before the first step is scheduled */
   signal?: AbortSignal;
+  /** Full registry decision/trace frozen at operation creation. */
+  skillRegistryResult?: SkillRegistryResult;
   /**
    * Whether the LLM call should use streaming.
    * Defaults to true. Set to false for non-streaming scenarios (e.g., bot integrations).

@@ -1,6 +1,8 @@
-import { type LobeToolManifest } from '@lobechat/context-engine';
+import { type LobeToolManifest, type SkillRegistryResult } from '@lobechat/context-engine';
 import { type LobeChatDatabase } from '@lobechat/database';
 import { type ChatToolPayload, type ExecSubAgentParams } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
+import type { ModelCatalogSnapshot } from '@lobechat/types/src/modelCatalog';
 
 export interface ServerSubAgentRunParams {
   /** Target agent id; defaults to the parent agent when omitted. */
@@ -120,6 +122,8 @@ export interface ToolExecutionContext {
    * flows; `lobe-agent.callSubAgent` uses the per-call `subAgent` runner below.
    */
   execSubAgent?: (params: ExecSubAgentParams) => Promise<unknown>;
+  /** Immutable operation authority projected into every server/device tool call. */
+  executionContext?: ExecutionContext;
   /** Per-call execution timeout resolved by the agent runtime. */
   executionTimeoutMs?: number;
   /** Current group ID for group chat context */
@@ -130,6 +134,8 @@ export interface ToolExecutionContext {
   memoryToolPermission?: 'read-only' | 'read-write';
   /** Source user message ID used by Agent Signal procedure suppression. */
   messageId?: string;
+  /** Frozen model evidence for audit/debug parity with call_llm. */
+  modelCatalogSnapshot?: ModelCatalogSnapshot;
   /** Agent runtime operation ID for structured tool outcome identity. */
   operationId?: string;
   /**
@@ -142,6 +148,8 @@ export interface ToolExecutionContext {
   scope?: string | null;
   /** Server database for LobeHub Skills execution */
   serverDB?: LobeChatDatabase;
+  /** Frozen registry result; never re-enumerate mutable skill sources mid-operation. */
+  skillRegistryResult?: SkillRegistryResult;
   /** Skip low-level result truncation so the AgentRuntime boundary can archive full content first. */
   skipResultTruncation?: boolean;
   /**

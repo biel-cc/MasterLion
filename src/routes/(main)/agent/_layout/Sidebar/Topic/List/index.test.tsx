@@ -13,6 +13,8 @@ const permissionMock = vi.hoisted(() => ({
   create_content: true,
 }));
 
+vi.mock('@lobechat/const', () => ({ isDesktop: true }));
+
 vi.mock('@/features/NavPanel/components/EmptyNavItem', () => ({
   default: ({
     disabled,
@@ -93,7 +95,7 @@ vi.mock('../hooks/useAgentTopicGroupMode', () => ({
 }));
 
 vi.mock('../TopicListContent/ByProjectMode', () => ({
-  default: () => <div data-testid="by-project-mode" />,
+  default: () => <div data-testid="workspace-mode" />,
 }));
 
 vi.mock('../TopicListContent/ByTimeMode', () => ({
@@ -102,6 +104,10 @@ vi.mock('../TopicListContent/ByTimeMode', () => ({
 
 vi.mock('../TopicListContent/FlatMode', () => ({
   default: () => <div data-testid="flat-mode" />,
+}));
+
+vi.mock('@/features/AgentTopicSidebar', () => ({
+  WorkspaceMode: () => <div data-testid="workspace-mode" />,
 }));
 
 vi.mock('@lobehub/ui', () => ({
@@ -117,6 +123,9 @@ describe('Agent topic list', () => {
 
   it('opens the agent chat route from the empty start topic entry', () => {
     render(<TopicList />);
+
+    expect(screen.getByTestId('workspace-mode')).toBeInTheDocument();
+    expect(screen.queryByTestId('flat-mode')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'actions.addNewTopic' }));
 

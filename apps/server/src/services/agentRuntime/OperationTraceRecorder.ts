@@ -295,7 +295,23 @@ export class OperationTraceRecorder {
               // activatedStepTools is kept since it's the cumulative record
               ...restState
             } = e.finalState;
-            return { ...e, finalState: restState };
+            const executionContext = restState.metadata?.executionContext;
+            if (!executionContext?.env) return { ...e, finalState: restState };
+
+            // Resolved env values must remain only in the operation state and
+            // server-to-device call. Trace snapshots are durable diagnostics,
+            // so keep the frozen cwd/access evidence but remove plaintext env.
+            const { env: _env, ...safeExecutionContext } = executionContext;
+            return {
+              ...e,
+              finalState: {
+                ...restState,
+                metadata: {
+                  ...restState.metadata,
+                  executionContext: safeExecutionContext,
+                },
+              },
+            };
           }
           return e;
         }),

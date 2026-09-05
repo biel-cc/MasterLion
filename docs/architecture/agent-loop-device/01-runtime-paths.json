@@ -1,0 +1,319 @@
+{
+  "slug": "01-runtime-paths",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1500,
+  "height": 880,
+  "title": "01  谁在运行 agent loop？",
+  "subtitle": "先分清 loop 的宿主，再看工具在哪台机器执行。Gateway 是传输与调度链路的一部分。",
+  "containers": [
+    {
+      "id": "native-gw",
+      "x": 40,
+      "y": 120,
+      "width": 1420,
+      "height": 134,
+      "label": "A · 原生 agent / Gateway 模式"
+    },
+    {
+      "id": "native-client",
+      "x": 40,
+      "y": 285,
+      "width": 1420,
+      "height": 134,
+      "label": "B · 原生 agent / Client 模式"
+    },
+    {
+      "id": "hetero-local",
+      "x": 40,
+      "y": 450,
+      "width": 1420,
+      "height": 134,
+      "label": "C · Claude Code / Codex / 本机 local"
+    },
+    {
+      "id": "hetero-gw",
+      "x": 40,
+      "y": 615,
+      "width": 1420,
+      "height": 134,
+      "label": "D · Claude Code / Codex / device 或 sandbox"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "native-gw0",
+      "kind": "rect",
+      "x": 70,
+      "y": 162,
+      "width": 386,
+      "height": 70,
+      "label": "Web / Electron Renderer",
+      "sublabel": "executeGatewayAgent → execAgent",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "native-gw1",
+      "kind": "rect",
+      "x": 556,
+      "y": 162,
+      "width": 386,
+      "height": 70,
+      "label": "服务端 AgentRuntime",
+      "sublabel": "LLM ↔ 工具结果；每步保存状态",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "native-gw2",
+      "kind": "rect",
+      "x": 1042,
+      "y": 162,
+      "width": 386,
+      "height": 70,
+      "label": "目标设备上的工具",
+      "sublabel": "Gateway → Electron Main / CLI daemon",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "native-client0",
+      "kind": "rect",
+      "x": 70,
+      "y": 327,
+      "width": 386,
+      "height": 70,
+      "label": "Renderer AgentRuntime",
+      "sublabel": "executeClientAgent 内 while 循环",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "native-client1",
+      "kind": "rect",
+      "x": 556,
+      "y": 327,
+      "width": 386,
+      "height": 70,
+      "label": "客户端工具 Executor",
+      "sublabel": "LocalSystemExecutionRuntime",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "native-client2",
+      "kind": "rect",
+      "x": 1042,
+      "y": 327,
+      "width": 386,
+      "height": 70,
+      "label": "Electron Main",
+      "sublabel": "IPC → ShellCommandCtr / LocalFileCtr",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-local0",
+      "kind": "rect",
+      "x": 70,
+      "y": 492,
+      "width": 386,
+      "height": 70,
+      "label": "Renderer 编排会话",
+      "sublabel": "保存 topic、选择 cwd、接收流",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-local1",
+      "kind": "rect",
+      "x": 556,
+      "y": 492,
+      "width": 386,
+      "height": 70,
+      "label": "Electron Main 启动 CLI",
+      "sublabel": "HeterogeneousAgentCtr → spawn",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-local2",
+      "kind": "rect",
+      "x": 1042,
+      "y": 492,
+      "width": 386,
+      "height": 70,
+      "label": "外部 CLI 自己运行 loop",
+      "sublabel": "Claude Code / Codex → 模型与工具",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-gw0",
+      "kind": "rect",
+      "x": 70,
+      "y": 657,
+      "width": 386,
+      "height": 70,
+      "label": "服务端分发运行",
+      "sublabel": "设备：dispatchAgentRun；云：sandboxRunner",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-gw1",
+      "kind": "rect",
+      "x": 556,
+      "y": 657,
+      "width": 386,
+      "height": 70,
+      "label": "lh hetero exec",
+      "sublabel": "设备或云容器中启动并适配事件",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "hetero-gw2",
+      "kind": "rect",
+      "x": 1042,
+      "y": 657,
+      "width": 386,
+      "height": 70,
+      "label": "外部 CLI 自己运行 loop",
+      "sublabel": "事件 → heteroIngest / Finish → UI",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "native-gw0--native-gw1",
+      "source": "native-gw0",
+      "target": "native-gw1",
+      "label": "创建 operation",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "native-gw1--native-gw2",
+      "source": "native-gw1",
+      "target": "native-gw2",
+      "label": "远程工具调用",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "native-client0--native-client1",
+      "source": "native-client0",
+      "target": "native-client1",
+      "label": "调用工具",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "native-client1--native-client2",
+      "source": "native-client1",
+      "target": "native-client2",
+      "label": "IPC",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "hetero-local0--hetero-local1",
+      "source": "hetero-local0",
+      "target": "hetero-local1",
+      "label": "IPC",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "hetero-local1--hetero-local2",
+      "source": "hetero-local1",
+      "target": "hetero-local2",
+      "label": "子进程",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "hetero-gw0--hetero-gw1",
+      "source": "hetero-gw0",
+      "target": "hetero-gw1",
+      "label": "下发参数",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "hetero-gw1--hetero-gw2",
+      "source": "hetero-gw1",
+      "target": "hetero-gw2",
+      "label": "启动 CLI",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 790,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 850
+}

@@ -113,5 +113,56 @@ describe('localSystemRuntime', () => {
         undefined,
       );
     });
+
+    it('projects server-resolved workspace env only onto the direct device-gateway call', async () => {
+      const context: ToolExecutionContext = {
+        activeDeviceId: 'device-1',
+        executionContext: {
+          accessRoots: [],
+          cwd: '/approved/project',
+          env: {
+            secretKeys: ['TOKEN'],
+            sources: { TOKEN: 'workspace' },
+            values: { TOKEN: 'resolved-secret' },
+          },
+          envFiles: ['.env', '.env.local'],
+          operationId: 'op-1',
+          plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+          version: 1,
+          workspace: {
+            deviceId: 'device-1',
+            id: 'workspace-1',
+            kind: 'device',
+            rootPath: '/approved/project',
+          },
+        },
+        operationId: 'op-1',
+        toolManifestMap: {},
+        topicId: 'topic-1',
+        userId: 'user-1',
+      };
+      mockExecuteToolCall.mockResolvedValue({ content: 'ok', success: true });
+
+      const proxy = localSystemRuntime.factory(context);
+      const apiName = LocalSystemManifest.api[0].name;
+      await proxy[apiName]({ path: 'README.md' });
+
+      expect(mockExecuteToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'device-1',
+          executionContext: expect.objectContaining({
+            cwd: '/approved/project',
+            env: { TOKEN: 'resolved-secret' },
+            envFiles: ['.env', '.env.local'],
+            workspaceRootPath: '/approved/project',
+          }),
+          operationId: 'op-1',
+          topicId: 'topic-1',
+          userId: 'user-1',
+        }),
+        expect.objectContaining({ apiName, identifier: LocalSystemIdentifier }),
+        undefined,
+      );
+    });
   });
 });

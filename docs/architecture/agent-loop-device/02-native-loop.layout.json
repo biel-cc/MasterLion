@@ -1,0 +1,97 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "llm--brain",
+      "source": "llm",
+      "target": "brain",
+      "route": [
+        [
+          440,
+          224.0
+        ],
+        [
+          580,
+          224.0
+        ]
+      ]
+    },
+    {
+      "id": "brain--exec",
+      "source": "brain",
+      "target": "exec",
+      "route": [
+        [
+          920,
+          224.0
+        ],
+        [
+          1060,
+          224.0
+        ]
+      ]
+    },
+    {
+      "id": "exec--device",
+      "source": "exec",
+      "target": "device",
+      "route": [
+        [
+          1230.0,
+          268
+        ],
+        [
+          1230.0,
+          480
+        ]
+      ]
+    },
+    {
+      "id": "device--result",
+      "source": "device",
+      "target": "result",
+      "route": [
+        [
+          1060,
+          524.0
+        ],
+        [
+          920,
+          524.0
+        ]
+      ]
+    },
+    {
+      "id": "result--save",
+      "source": "result",
+      "target": "save",
+      "route": [
+        [
+          580,
+          524.0
+        ],
+        [
+          440,
+          524.0
+        ]
+      ]
+    },
+    {
+      "id": "save--llm",
+      "source": "save",
+      "target": "llm",
+      "route": [
+        [
+          270.0,
+          480
+        ],
+        [
+          270.0,
+          268
+        ]
+      ]
+    }
+  ]
+}

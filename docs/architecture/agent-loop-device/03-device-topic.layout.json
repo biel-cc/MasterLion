@@ -1,0 +1,97 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "agent--device",
+      "source": "agent",
+      "target": "device",
+      "route": [
+        [
+          565,
+          219.0
+        ],
+        [
+          450,
+          219.0
+        ]
+      ]
+    },
+    {
+      "id": "topic--agent",
+      "source": "topic",
+      "target": "agent",
+      "route": [
+        [
+          1050,
+          219.0
+        ],
+        [
+          935,
+          219.0
+        ]
+      ]
+    },
+    {
+      "id": "op--topic",
+      "source": "op",
+      "target": "topic",
+      "route": [
+        [
+          1235.0,
+          460
+        ],
+        [
+          1235.0,
+          263
+        ]
+      ]
+    },
+    {
+      "id": "op--plan",
+      "source": "op",
+      "target": "plan",
+      "route": [
+        [
+          1050,
+          504.0
+        ],
+        [
+          935,
+          504.0
+        ]
+      ]
+    },
+    {
+      "id": "plan--channels",
+      "source": "plan",
+      "target": "channels",
+      "route": [
+        [
+          565,
+          504.0
+        ],
+        [
+          450,
+          504.0
+        ]
+      ]
+    },
+    {
+      "id": "channels--device",
+      "source": "channels",
+      "target": "device",
+      "route": [
+        [
+          265.0,
+          460
+        ],
+        [
+          265.0,
+          263
+        ]
+      ]
+    }
+  ]
+}

@@ -409,6 +409,33 @@ describe('BackendProxyProtocolManager', () => {
       );
     });
 
+    it('proxies agent event streams to the authenticated backend instead of Vite', async () => {
+      const fetchMock = vi.fn<FetchMock>(
+        async () =>
+          new Response('data: {}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      );
+      vi.stubGlobal('fetch', fetchMock as any);
+      const manager = new BackendProxyProtocolManager();
+      manager.registerWithRemoteBaseUrl(electronSession.defaultSession as any, {
+        getAccessToken: async () => 'synthetic-token',
+        getRemoteBaseUrl: async () => 'https://remote.example.com',
+        isAuthActiveForUrl: async () => true,
+      });
+      const res = await manager.createAppRequestInterceptor()(
+        new Request('app://renderer/api/agent/events?operationId=op&topicId=topic&lastEventId=0'),
+      );
+      expect(res).not.toBeNull();
+      expect(res!.headers.get('Content-Type')).toBe('text/event-stream');
+      expect(await res!.text()).toBe('data: {}\n\n');
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(url).toBe(
+        'https://remote.example.com/api/agent/events?operationId=op&topicId=topic&lastEventId=0',
+      );
+      expect(new Headers(init?.headers).get('Oidc-Auth')).toBe('synthetic-token');
+    });
+
     it('proxies the object-storage upload endpoint with query, content type, and body intact', async () => {
       let forwardedBody: Uint8Array | undefined;
       const fetchMock = vi.fn<FetchMock>(async (_input, init) => {
@@ -457,25 +484,27 @@ describe('BackendProxyProtocolManager', () => {
       expect(JSON.stringify(mockLogger.debug.mock.calls)).not.toContain('signature=sig');
     });
 
-    it.each(['/api/upload/s3-proxy/extra', '/api/upload/s3-proxy-lookalike'])(
-      'does not proxy non-existent upload endpoint %s',
-      async (pathname) => {
-        const fetchMock = vi.fn<FetchMock>(async () => new Response('unexpected'));
-        vi.stubGlobal('fetch', fetchMock as any);
+    it.each([
+      '/api/upload/s3-proxy/extra',
+      '/api/upload/s3-proxy-lookalike',
+      '/api/agent/events-extra',
+      '/api/agent/events/extra',
+    ])('does not proxy non-existent upload endpoint %s', async (pathname) => {
+      const fetchMock = vi.fn<FetchMock>(async () => new Response('unexpected'));
+      vi.stubGlobal('fetch', fetchMock as any);
 
-        const manager = new BackendProxyProtocolManager();
-        manager.registerWithRemoteBaseUrl(electronSession.defaultSession as any, {
-          getAccessToken: async () => null,
-          getRemoteBaseUrl: async () => 'https://remote.example.com',
-        });
+      const manager = new BackendProxyProtocolManager();
+      manager.registerWithRemoteBaseUrl(electronSession.defaultSession as any, {
+        getAccessToken: async () => null,
+        getRemoteBaseUrl: async () => 'https://remote.example.com',
+      });
 
-        const response = await manager.createAppRequestInterceptor()(
-          new Request(`app://renderer${pathname}`),
-        );
+      const response = await manager.createAppRequestInterceptor()(
+        new Request(`app://renderer${pathname}`),
+      );
 
-        expect(response).toBeNull();
-        expect(fetchMock).not.toHaveBeenCalled();
-      },
-    );
+      expect(response).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });

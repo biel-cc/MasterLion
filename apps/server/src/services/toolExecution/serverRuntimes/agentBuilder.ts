@@ -14,8 +14,10 @@ import { AgentModel } from '@/database/models/agent';
 import { PluginModel } from '@/database/models/plugin';
 import { AiInfraRepos } from '@/database/repositories/aiInfra';
 import { DiscoverService } from '@/server/services/discover';
+import { assertConfigurableAgentExecutionEnv } from '@/server/services/executionEnv/validation';
 
 import { type ToolExecutionContext, type ToolExecutionResult } from '../types';
+import { parseAgentMetadataUpdate } from './agentMetadata';
 import { type ServerRuntimeRegistration } from './types';
 
 const MAX_MODELS = 20;
@@ -209,6 +211,14 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
             finalConfig = { ...finalConfig, editorData: null };
           }
 
+          // Validate every candidate before the first write so a malicious
+          // metadata payload cannot leave a partially-applied config update.
+          assertConfigurableAgentExecutionEnv(finalConfig);
+          const finalMeta =
+            rawMeta && Object.keys(rawMeta).length > 0
+              ? parseAgentMetadataUpdate(rawMeta)
+              : undefined;
+
           if (Object.keys(finalConfig).length > 0) {
             await agentModel.updateConfig(agentId, finalConfig);
             const nonPluginFields = Object.keys(finalConfig).filter((f) => f !== 'plugins');
@@ -217,9 +227,9 @@ export const agentBuilderRuntime: ServerRuntimeRegistration = {
             }
           }
 
-          if (rawMeta && Object.keys(rawMeta).length > 0) {
-            await agentModel.update(agentId, rawMeta as Record<string, unknown>);
-            updatedParts.push(`meta fields: ${Object.keys(rawMeta).join(', ')}`);
+          if (finalMeta) {
+            await agentModel.update(agentId, finalMeta);
+            updatedParts.push(`meta fields: ${Object.keys(finalMeta).join(', ')}`);
           }
 
           if (updatedParts.length === 0) {

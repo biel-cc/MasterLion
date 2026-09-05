@@ -5,16 +5,21 @@ import { PluginModel } from '@/database/models/plugin';
 
 import { agentManagementRuntime } from '../agentManagement';
 
-const { mockCountAgents, mockGetAssistantList, mockQueryAgents } = vi.hoisted(() => ({
-  mockCountAgents: vi.fn(),
-  mockGetAssistantList: vi.fn(),
-  mockQueryAgents: vi.fn(),
-}));
+const { mockCountAgents, mockGetAssistantList, mockQueryAgents, mockUpdate, mockUpdateConfig } =
+  vi.hoisted(() => ({
+    mockCountAgents: vi.fn(),
+    mockGetAssistantList: vi.fn(),
+    mockQueryAgents: vi.fn(),
+    mockUpdate: vi.fn(),
+    mockUpdateConfig: vi.fn(),
+  }));
 
 vi.mock('@/database/models/agent', () => ({
   AgentModel: vi.fn(() => ({
     countAgents: mockCountAgents,
     queryAgents: mockQueryAgents,
+    update: mockUpdate,
+    updateConfig: mockUpdateConfig,
   })),
 }));
 
@@ -305,6 +310,49 @@ describe('agentManagementRuntime', () => {
 
       expect(result.success).toBe(false);
       expect(result.content).toContain('Failed to search agents');
+    });
+  });
+
+  describe('updateAgent', () => {
+    it('rejects reserved agent env keys before arbitrary config persistence', async () => {
+      const runtime = createRuntime();
+
+      const result = await runtime.updateAgent({
+        agentId: 'agent-1',
+        config: { agencyConfig: { env: { PATH: '/attacker/bin' } } },
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('managed by the execution runtime: PATH');
+      expect(mockUpdateConfig).not.toHaveBeenCalled();
+    });
+
+    it('applies reserved-env validation to a malicious meta payload at the final write boundary', async () => {
+      const runtime = createRuntime();
+
+      const result = await runtime.updateAgent({
+        agentId: 'agent-1',
+        config: { model: 'safe-model' },
+        meta: { agencyConfig: { env: { PATH: '/attacker/bin' } } },
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('managed by the execution runtime: PATH');
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockUpdateConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects unknown meta fields instead of forwarding them to AgentModel.update', async () => {
+      const runtime = createRuntime();
+
+      const result = await runtime.updateAgent({
+        agentId: 'agent-1',
+        meta: { title: 'Allowed title', userId: 'victim-user' },
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('Unsupported agent metadata fields: userId');
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 });

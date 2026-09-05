@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="805" viewBox="0 0 1660 805" data-generator="fireworks-tech-graph" data-authoring-mode="explicit-python-list" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-quality-profile="showcase" data-semantic-profile="generic">
+<defs>
+<style>text{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif}</style>
+<marker id="arrow-data" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
+<marker id="arrow-feedback" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#9333ea"/></marker>
+<marker id="arrow-read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#16a34a"/></marker>
+</defs>
+<rect width="1660" height="805" fill="#fff"/>
+<g data-graph-role="reserved" data-graph-bounds="40,22,1620,103"><text x="60" y="55" font-size="28" font-weight="700">06  Skill 执行目录与项目目录是两条链路</text><text x="60" y="86" font-size="15" fill="#64748b">桌面 execScript 会显式选择 Skill 解压目录；项目 workspace init 则只准备模型上下文。</text></g>
+<g id="skillzip" data-graph-role="container" data-graph-bounds="40,135,1620,269"><rect x="40" y="135" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4"/><g data-graph-role="reserved" data-graph-bounds="52,143,1608,167"><text x="60" y="160" font-size="14" font-weight="600" fill="#526176">A · 桌面 lobe-skills.execScript：下载型 Skill</text></g></g>
+<g id="project" data-graph-role="container" data-graph-bounds="40,325,1620,459"><rect x="40" y="325" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4"/><g data-graph-role="reserved" data-graph-bounds="52,333,1608,357"><text x="60" y="350" font-size="14" font-weight="600" fill="#526176">B · 设备项目 workspace init：在服务端原生运行准备阶段</text></g></g>
+<g id="cloudskill" data-graph-role="container" data-graph-bounds="40,515,1620,649"><rect x="40" y="515" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4"/><g data-graph-role="reserved" data-graph-bounds="52,523,1608,547"><text x="60" y="540" font-size="14" font-weight="600" fill="#526176">C · 服务端 SkillsService 的脚本路径</text></g></g>
+<path id="skillzip0--skillzip1" data-graph-role="edge" data-edge-id="skillzip0--skillzip1" data-source="skillzip0" data-target="skillzip1" data-flow="data" d="M 397 212.0 L 467 212.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="skillzip1--skillzip2" data-graph-role="edge" data-edge-id="skillzip1--skillzip2" data-source="skillzip1" data-target="skillzip2" data-flow="data" d="M 794 212.0 L 864 212.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="skillzip2--skillzip3" data-graph-role="edge" data-edge-id="skillzip2--skillzip3" data-source="skillzip2" data-target="skillzip3" data-flow="data" d="M 1191 212.0 L 1261 212.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="project0--project1" data-graph-role="edge" data-edge-id="project0--project1" data-source="project0" data-target="project1" data-flow="read" d="M 397 402.0 L 467 402.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="project1--project2" data-graph-role="edge" data-edge-id="project1--project2" data-source="project1" data-target="project2" data-flow="read" d="M 794 402.0 L 864 402.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="project2--project3" data-graph-role="edge" data-edge-id="project2--project3" data-source="project2" data-target="project3" data-flow="read" d="M 1191 402.0 L 1261 402.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)"/>
+<path id="cloudskill0--cloudskill1" data-graph-role="edge" data-edge-id="cloudskill0--cloudskill1" data-source="cloudskill0" data-target="cloudskill1" data-flow="data" d="M 510 592.0 L 610 592.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<path id="cloudskill1--cloudskill2" data-graph-role="edge" data-edge-id="cloudskill1--cloudskill2" data-source="cloudskill1" data-target="cloudskill2" data-flow="data" d="M 1050 592.0 L 1150 592.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)"/>
+<g id="node-skillzip0" data-graph-role="node" data-node-id="skillzip0" data-graph-bounds="70,177,397,247"><rect x="70" y="177" width="327" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<text x="233.5" y="207.0" text-anchor="middle" font-size="18" font-weight="600">首个 activatedSkill</text>
+<text x="233.5" y="229.0" text-anchor="middle" font-size="12" fill="#526176">resolveExecutionDirectory</text>
+</g>
+<g id="node-skillzip1" data-graph-role="node" data-node-id="skillzip1" data-graph-bounds="467,177,794,247"><rect x="467" y="177" width="327" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="630.5" y="207.0" text-anchor="middle" font-size="18" font-weight="600">按 zipHash 准备缓存</text>
+<text x="630.5" y="229.0" text-anchor="middle" font-size="12" fill="#526176">下载 zip  &gt;  extracted/{zipHash}</text>
+</g>
+<g id="node-skillzip2" data-graph-role="node" data-node-id="skillzip2" data-graph-bounds="864,177,1191,247"><rect x="864" y="177" width="327" height="70" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="1027.5" y="207.0" text-anchor="middle" font-size="18" font-weight="600">解压目录作为 cwd</text>
+<text x="1027.5" y="229.0" text-anchor="middle" font-size="12" fill="#526176">localFileService.runCommand({ cwd })</text>
+</g>
+<g id="node-skillzip3" data-graph-role="node" data-node-id="skillzip3" data-graph-bounds="1261,177,1588,247"><rect x="1261" y="177" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="1424.5" y="207.0" text-anchor="middle" font-size="18" font-weight="600">脚本子进程</text>
+<text x="1424.5" y="229.0" text-anchor="middle" font-size="12" fill="#526176">相对资源路径从此目录解析</text>
+</g>
+<g id="node-project0" data-graph-role="node" data-node-id="project0" data-graph-bounds="70,367,397,437"><rect x="70" y="367" width="327" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="233.5" y="397.0" text-anchor="middle" font-size="18" font-weight="600">解析项目根目录</text>
+<text x="233.5" y="419.0" text-anchor="middle" font-size="12" fill="#526176">Topic / Agent per-device / Device default</text>
+</g>
+<g id="node-project1" data-graph-role="node" data-node-id="project1" data-graph-bounds="467,367,794,437"><rect x="467" y="367" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="630.5" y="397.0" text-anchor="middle" font-size="18" font-weight="600">设备扫描 + 缓存</text>
+<text x="630.5" y="419.0" text-anchor="middle" font-size="12" fill="#526176">AGENTS.md / CLAUDE.md / skills</text>
+</g>
+<g id="node-project2" data-graph-role="node" data-node-id="project2" data-graph-bounds="864,367,1191,437"><rect x="864" y="367" width="327" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<text x="1027.5" y="397.0" text-anchor="middle" font-size="18" font-weight="600">模型上下文</text>
+<text x="1027.5" y="419.0" text-anchor="middle" font-size="12" fill="#526176">指令正文 + project Skill 元数据</text>
+</g>
+<g id="node-project3" data-graph-role="node" data-node-id="project3" data-graph-bounds="1261,367,1588,437"><rect x="1261" y="367" width="327" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="1424.5" y="397.0" text-anchor="middle" font-size="18" font-weight="600">按需读取 Skill</text>
+<text x="1424.5" y="419.0" text-anchor="middle" font-size="12" fill="#526176">readFile / globFiles 指向绝对路径</text>
+</g>
+<g id="node-cloudskill0" data-graph-role="node" data-node-id="cloudskill0" data-graph-bounds="70,557,510,627"><rect x="70" y="557" width="440" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+<text x="290.0" y="587.0" text-anchor="middle" font-size="18" font-weight="600">runCommand / execScript</text>
+<text x="290.0" y="609.0" text-anchor="middle" font-size="12" fill="#526176">要求 topicId</text>
+</g>
+<g id="node-cloudskill1" data-graph-role="node" data-node-id="cloudskill1" data-graph-bounds="610,557,1050,627"><rect x="610" y="557" width="440" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="830.0" y="587.0" text-anchor="middle" font-size="18" font-weight="600">createSandboxService</text>
+<text x="830.0" y="609.0" text-anchor="middle" font-size="12" fill="#526176">以 userId + topicId 构造服务</text>
+</g>
+<g id="node-cloudskill2" data-graph-role="node" data-node-id="cloudskill2" data-graph-bounds="1150,557,1590,627"><rect x="1150" y="557" width="440" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="1370.0" y="587.0" text-anchor="middle" font-size="18" font-weight="600">sandbox.callTool</text>
+<text x="1370.0" y="609.0" text-anchor="middle" font-size="12" fill="#526176">下载型 Skill 的 zip URL 随参数传入</text>
+</g>
+<g data-graph-role="label" data-owner="skillzip0--skillzip1" data-graph-bounds="405.12,186.0,458.88,202.0"><text x="432.0" y="199.0" font-size="12" text-anchor="middle" fill="#2563eb">查找 Skill</text></g>
+<g data-graph-role="label" data-owner="skillzip1--skillzip2" data-graph-bounds="805.0,186.0,853.0,202.0"><text x="829.0" y="199.0" font-size="12" text-anchor="middle" fill="#2563eb">返回目录</text></g>
+<g data-graph-role="label" data-owner="skillzip2--skillzip3" data-graph-bounds="1208.6,186.0,1243.3999999999999,202.0"><text x="1226.0" y="199.0" font-size="12" text-anchor="middle" fill="#2563eb">spawn</text></g>
+<g data-graph-role="label" data-owner="project0--project1" data-graph-bounds="407.4,376.0,456.59999999999997,392.0"><text x="432.0" y="389.0" font-size="12" text-anchor="middle" fill="#16a34a">扫描 RPC</text></g>
+<g data-graph-role="label" data-owner="project1--project2" data-graph-bounds="817.0,376.0,841.0,392.0"><text x="829.0" y="389.0" font-size="12" text-anchor="middle" fill="#16a34a">注入</text></g>
+<g data-graph-role="label" data-owner="project2--project3" data-graph-bounds="1196.0,376.0,1256.0,392.0"><text x="1226.0" y="389.0" font-size="12" text-anchor="middle" fill="#16a34a">激活时读取</text></g>
+<g data-graph-role="label" data-owner="cloudskill0--cloudskill1" data-graph-bounds="530.0,566.0,590.0,582.0"><text x="560.0" y="579.0" font-size="12" text-anchor="middle" fill="#2563eb">绑定 topic</text></g>
+<g data-graph-role="label" data-owner="cloudskill1--cloudskill2" data-graph-bounds="1082.0,566.0,1118.0,582.0"><text x="1100.0" y="579.0" font-size="12" text-anchor="middle" fill="#2563eb">云工具</text></g>
+<g data-graph-role="reserved" data-graph-bounds="50,700,760,735">
+<line x1="60" y1="716" x2="92" y2="716" stroke="#2563eb" stroke-width="2"/><text x="104" y="720" font-size="13" fill="#64748b">传递 / 引用</text>
+<line x1="285" y1="716" x2="317" y2="716" stroke="#9333ea" stroke-width="2"/><text x="329" y="720" font-size="13" fill="#64748b">循环 / 反馈</text>
+<line x1="510" y1="716" x2="542" y2="716" stroke="#16a34a" stroke-width="2"/><text x="554" y="720" font-size="13" fill="#64748b">读取 / 上下文</text>
+</g>
+<g data-graph-role="reserved" data-graph-bounds="50,756,1630,791"><text x="60" y="776" font-size="12" fill="#64748b">Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪</text></g>
+</svg>

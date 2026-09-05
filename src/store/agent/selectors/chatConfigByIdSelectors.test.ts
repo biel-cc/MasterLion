@@ -500,14 +500,14 @@ describe('chatConfigByIdSelectors', () => {
       expect(chatConfigByIdSelectors.getRuntimeModeById('non-existent')(state)).toBe('none');
     });
 
-    it('should coerce executionTarget=local to cloud on web (no local filesystem)', () => {
+    it('should disable executionTarget=local on web instead of promoting it to cloud', () => {
       const state = createState({
         agentMap: {
           'agent-1': { agencyConfig: { executionTarget: 'local' } },
         },
       });
 
-      expect(chatConfigByIdSelectors.getRuntimeModeById('agent-1')(state)).toBe('cloud');
+      expect(chatConfigByIdSelectors.getRuntimeModeById('agent-1')(state)).toBe('none');
     });
 
     it('should gate device target to "none" (device tools are routed separately)', () => {
@@ -536,7 +536,7 @@ describe('chatConfigByIdSelectors', () => {
   });
 
   describe('isLocalSystemEnabledById', () => {
-    it('should return false on web even with executionTarget=local (coerced to sandbox)', () => {
+    it('should return false on web even with executionTarget=local (disabled)', () => {
       const state = createState({
         agentMap: {
           'agent-1': { agencyConfig: { executionTarget: 'local' } },

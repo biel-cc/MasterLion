@@ -1,15 +1,26 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, mkdir, open, readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { detectRepoType } from '@lobechat/local-file-shell';
 
 import type {
+  CleanupScratchWorkspaceParams,
+  CleanupScratchWorkspaceResult,
+  EnsureScratchWorkspaceParams,
+  EnsureScratchWorkspaceResult,
   InitWorkspaceParams,
   InitWorkspaceResult,
   ListProjectSkillsParams,
   ListProjectSkillsResult,
   ProjectSkillItem,
+  ResolveRealPathParams,
+  ResolveRealPathResult,
   StatPathResult,
+  VerifySkillPathsParams,
+  VerifySkillPathsResult,
   WorkspaceInstructionsItem,
   WorkspaceScanDeps,
 } from './types';
@@ -21,7 +32,109 @@ const MAX_SKILL_FILE_COUNT = 1000;
 
 const SKILL_SOURCES = ['.agents/skills', '.claude/skills'] as const;
 
+const toSafeTopicSegment = (topicId: unknown): string => {
+  if (typeof topicId !== 'string') throw new Error('topicId is required');
+  const trimmed = topicId.trim();
+  if (!trimmed) throw new Error('topicId is required');
+  if (/^[A-Z0-9][\w.-]{0,127}$/i.test(trimmed) && trimmed !== '.' && trimmed !== '..') {
+    return trimmed;
+  }
+  return `topic-${createHash('sha256').update(trimmed).digest('hex').slice(0, 32)}`;
+};
+
+const assertSafeScratchRoot = (root: string): void => {
+  const resolved = path.resolve(root);
+  if (resolved === path.parse(resolved).root || resolved === path.resolve(os.homedir())) {
+    throw new Error('SCOPE_DENIED');
+  }
+};
+
 const toPosixRelativePath = (filePath: string) => filePath.split(path.sep).join('/');
+
+const isPathContained = (root: string, candidate: string): boolean => {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  );
+};
+
+const resolveScanRoot = async (root: string): Promise<string | undefined> => {
+  try {
+    const canonicalRoot = await realpath(root);
+    return (await stat(canonicalRoot)).isDirectory() ? canonicalRoot : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Read an automatically-discovered file only when it is a regular file whose
+ * canonical path remains inside both containment roots. Re-checking the path
+ * and inode around the open descriptor closes the practical symlink-swap
+ * window; the descriptor itself keeps the bytes stable during the read.
+ */
+const readRegularContainedFile = async (
+  workspaceRoot: string,
+  candidate: string,
+  nearestRoot: string = workspaceRoot,
+): Promise<string | undefined> => {
+  try {
+    const lexicalStat = await lstat(candidate);
+    if (!lexicalStat.isFile() || lexicalStat.isSymbolicLink()) return undefined;
+
+    const canonicalCandidate = await realpath(candidate);
+    if (
+      !isPathContained(workspaceRoot, canonicalCandidate) ||
+      !isPathContained(nearestRoot, canonicalCandidate)
+    ) {
+      return undefined;
+    }
+
+    const file = await open(canonicalCandidate, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const openedStat = await file.stat();
+      if (!openedStat.isFile()) return undefined;
+
+      const beforeReadPath = await realpath(candidate);
+      const beforeReadStat = await lstat(candidate);
+      if (
+        beforeReadPath !== canonicalCandidate ||
+        !beforeReadStat.isFile() ||
+        beforeReadStat.isSymbolicLink() ||
+        beforeReadStat.dev !== openedStat.dev ||
+        beforeReadStat.ino !== openedStat.ino
+      ) {
+        return undefined;
+      }
+
+      const content = await file.readFile('utf8');
+      const afterReadPath = await realpath(candidate);
+      const afterReadStat = await lstat(candidate);
+      if (
+        afterReadPath !== canonicalCandidate ||
+        !afterReadStat.isFile() ||
+        afterReadStat.isSymbolicLink() ||
+        afterReadStat.dev !== openedStat.dev ||
+        afterReadStat.ino !== openedStat.ino
+      ) {
+        return undefined;
+      }
+
+      return content;
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    rethrowScanFailure(error);
+    return undefined;
+  }
+};
+
+const rethrowScanFailure = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'ELOOP') throw error;
+};
 
 const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
   const results: string[] = [];
@@ -32,17 +145,40 @@ const listSkillFilesRecursive = async (dir: string): Promise<string[]> => {
     let entries;
     try {
       entries = await readdir(current, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      rethrowScanFailure(error);
       continue;
     }
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
-        stack.push(full);
+        try {
+          const entryStat = await lstat(full);
+          const canonicalEntry = await realpath(full);
+          if (entryStat.isDirectory() && isPathContained(dir, canonicalEntry)) {
+            stack.push(canonicalEntry);
+          }
+        } catch (error) {
+          rethrowScanFailure(error);
+          // Entry disappeared or was swapped while scanning; ignore it.
+        }
       } else if (entry.isFile()) {
-        results.push(toPosixRelativePath(path.relative(dir, full)));
-        if (results.length >= MAX_SKILL_FILE_COUNT) break;
+        try {
+          const entryStat = await lstat(full);
+          const canonicalEntry = await realpath(full);
+          if (
+            entryStat.isFile() &&
+            !entryStat.isSymbolicLink() &&
+            isPathContained(dir, canonicalEntry)
+          ) {
+            results.push(toPosixRelativePath(path.relative(dir, canonicalEntry)));
+            if (results.length >= MAX_SKILL_FILE_COUNT) break;
+          }
+        } catch (error) {
+          rethrowScanFailure(error);
+          // Entry disappeared or was swapped while scanning; ignore it.
+        }
       }
     }
   }
@@ -79,17 +215,21 @@ const parseSkillFrontmatter = (raw: string): Record<string, string> => {
 /**
  * Scan one skill source directory (e.g. `.agents/skills`) under `root` and
  * return parsed frontmatter for each `SKILL.md`. Returns `[]` when the source
- * directory is absent or unreadable. Unsorted — callers sort/merge.
+ * directory is absent; I/O failures propagate. Unsorted — callers sort/merge.
  */
 const scanSkillsInSource = async (
   root: string,
   source: ProjectSkillItem['source'],
 ): Promise<ProjectSkillItem[]> => {
-  const dir = path.join(root, source);
+  const requestedDir = path.join(root, source);
+  let dir: string;
   let entries;
   try {
+    dir = await realpath(requestedDir);
+    if (!isPathContained(root, dir) || !(await stat(dir)).isDirectory()) return [];
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    rethrowScanFailure(error);
     return [];
   }
 
@@ -97,10 +237,20 @@ const scanSkillsInSource = async (
     entries
       .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
       .map(async (entry): Promise<ProjectSkillItem | null> => {
-        const skillDir = path.join(dir, entry.name);
-        const skillFile = path.join(skillDir, 'SKILL.md');
+        const requestedSkillDir = path.join(dir, entry.name);
         try {
-          const raw = await readFile(skillFile, 'utf8');
+          const skillDir = await realpath(requestedSkillDir);
+          if (
+            !isPathContained(root, skillDir) ||
+            !isPathContained(dir, skillDir) ||
+            !(await stat(skillDir)).isDirectory()
+          ) {
+            return null;
+          }
+
+          const skillFile = path.join(skillDir, 'SKILL.md');
+          const raw = await readRegularContainedFile(root, skillFile, skillDir);
+          if (raw === undefined) return null;
           const fields = parseSkillFrontmatter(raw);
           const files = await listSkillFilesRecursive(skillDir);
           return {
@@ -112,7 +262,8 @@ const scanSkillsInSource = async (
             skillDir,
             source,
           };
-        } catch {
+        } catch (error) {
+          rethrowScanFailure(error);
           return null;
         }
       }),
@@ -133,13 +284,11 @@ const readWorkspaceInstructions = async (root: string): Promise<WorkspaceInstruc
 
   const instructions: WorkspaceInstructionsItem[] = [];
   for (const source of candidates) {
-    try {
-      const raw = await readFile(path.join(root, source), 'utf8');
+    const raw = await readRegularContainedFile(root, path.join(root, source));
+    if (raw !== undefined) {
       const content =
         raw.length > MAX_INSTRUCTIONS_BYTES ? raw.slice(0, MAX_INSTRUCTIONS_BYTES) : raw;
       instructions.push({ content, source });
-    } catch {
-      // File absent or unreadable; skip it.
     }
   }
 
@@ -156,9 +305,11 @@ export const listProjectSkills = async (
   deps: WorkspaceScanDeps = {},
 ): Promise<ListProjectSkillsResult> => {
   const root = params.scope;
+  const scanRoot = await resolveScanRoot(root);
+  if (!scanRoot) throw new Error('Workspace scan root is unavailable');
 
   for (const source of SKILL_SOURCES) {
-    const skills = (await scanSkillsInSource(root, source)).sort((a, b) =>
+    const skills = (await scanSkillsInSource(scanRoot, source)).sort((a, b) =>
       a.name.localeCompare(b.name),
     );
 
@@ -183,11 +334,13 @@ export const initWorkspace = async (
   deps: WorkspaceScanDeps = {},
 ): Promise<InitWorkspaceResult> => {
   const root = params.scope;
+  const scanRoot = await resolveScanRoot(root);
+  if (!scanRoot) throw new Error('Workspace scan root is unavailable');
 
   const seen = new Set<string>();
   const skills: ProjectSkillItem[] = [];
   for (const source of SKILL_SOURCES) {
-    for (const skill of await scanSkillsInSource(root, source)) {
+    for (const skill of await scanSkillsInSource(scanRoot, source)) {
       if (seen.has(skill.name)) continue;
       seen.add(skill.name);
       skills.push(skill);
@@ -195,7 +348,7 @@ export const initWorkspace = async (
   }
   skills.sort((a, b) => a.name.localeCompare(b.name));
 
-  const instructions = await readWorkspaceInstructions(root);
+  const instructions = await readWorkspaceInstructions(scanRoot);
 
   await deps.approveProjectRoot?.(root);
 
@@ -216,4 +369,132 @@ export const statPath = async (params: { path: string }): Promise<StatPathResult
   } catch {
     return { exists: false, isDirectory: false };
   }
+};
+
+/** Canonicalize an existing absolute path on the target device. */
+export const resolveRealPath = async (
+  params: ResolveRealPathParams,
+): Promise<ResolveRealPathResult> => {
+  if (!path.isAbsolute(params.path)) throw new Error('ABSOLUTE_PATH_REQUIRED');
+  return { path: await realpath(params.path) };
+};
+
+/**
+ * Resolve the operation workspace and a selected project skill on the device,
+ * then prove the skill remains inside that workspace after symlink expansion.
+ * The server cannot perform this check because device paths are not mounted on
+ * the server host.
+ */
+export const verifySkillPaths = async (
+  params: VerifySkillPathsParams,
+  skillCacheRoot?: string,
+): Promise<VerifySkillPathsResult> => {
+  if (!path.isAbsolute(params.workspaceRoot) || !path.isAbsolute(params.skillDir)) {
+    throw new Error('WORKSPACE_REQUIRED');
+  }
+
+  const [workspaceRoot, skillDir] = await Promise.all([
+    realpath(params.workspaceRoot),
+    realpath(params.skillDir),
+  ]);
+  const relative = path.relative(workspaceRoot, skillDir);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    // Only device-owned, completely prepared bundles may live outside the
+    // project. The cache root is injected by the host, never taken from RPC.
+    let prepared = false;
+    if (skillCacheRoot) {
+      try {
+        const cache = await realpath(path.join(skillCacheRoot, 'extracted'));
+        const cacheRelative = path.relative(cache, skillDir);
+        const [hash] = cacheRelative.split(path.sep);
+        if (/^[a-f0-9]{64}$/i.test(hash) && !path.isAbsolute(cacheRelative)) {
+          const bundleRoot = path.join(cache, hash);
+          prepared =
+            !(await lstat(bundleRoot)).isSymbolicLink() &&
+            (await readFile(path.join(bundleRoot, '.prepared'), 'utf8')) === hash;
+        }
+      } catch {
+        // Incomplete or escaped caches do not authorize execution.
+      }
+    }
+    if (!prepared) throw new Error('SCOPE_DENIED');
+  }
+
+  const skillStat = await stat(skillDir);
+  if (!skillStat.isDirectory()) throw new Error('SKILL_DIRECTORY_REQUIRED');
+
+  return { skillDir, workspaceRoot };
+};
+
+/**
+ * Explicit-only scratch creation. Merely importing the module or handling chat
+ * never touches the filesystem; the directory is created only through this RPC.
+ */
+export const ensureScratchWorkspace = async (
+  params: EnsureScratchWorkspaceParams | string,
+  scratchRoot: string | undefined,
+): Promise<EnsureScratchWorkspaceResult> => {
+  if (!scratchRoot || !path.isAbsolute(scratchRoot)) {
+    throw new Error('SCRATCH_ROOT_REQUIRED');
+  }
+
+  const normalizedRoot = path.resolve(scratchRoot);
+  assertSafeScratchRoot(normalizedRoot);
+
+  const topicId = typeof params === 'string' ? params : params?.topicId;
+  const topicSegment = toSafeTopicSegment(topicId);
+
+  await mkdir(normalizedRoot, { recursive: true });
+  const realRoot = await realpath(normalizedRoot);
+  assertSafeScratchRoot(realRoot);
+  const requested = path.join(realRoot, topicSegment);
+  await mkdir(requested, { recursive: true });
+  const realRequested = await realpath(requested);
+  const relative = path.relative(realRoot, realRequested);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  return { root: realRequested, topicSegment };
+};
+
+/**
+ * Delete only the deterministic topic directory below the configured scratch
+ * root. The RPC deliberately accepts no path, so it cannot become an arbitrary
+ * recursive-delete primitive.
+ */
+export const cleanupScratchWorkspace = async (
+  params: CleanupScratchWorkspaceParams,
+  scratchRoot: string | undefined,
+): Promise<CleanupScratchWorkspaceResult> => {
+  if (!scratchRoot || !path.isAbsolute(scratchRoot)) throw new Error('SCRATCH_ROOT_REQUIRED');
+
+  const normalizedRoot = path.resolve(scratchRoot);
+  assertSafeScratchRoot(normalizedRoot);
+
+  const topicSegment = toSafeTopicSegment(params?.topicId);
+  let realRoot: string;
+  try {
+    realRoot = await realpath(normalizedRoot);
+    assertSafeScratchRoot(realRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { removed: false, root: path.join(normalizedRoot, topicSegment), topicSegment };
+  }
+
+  const requested = path.join(realRoot, topicSegment);
+  const relative = path.relative(realRoot, requested);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('SCOPE_DENIED');
+  }
+
+  try {
+    await lstat(requested);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { removed: false, root: requested, topicSegment };
+  }
+
+  await rm(requested, { force: true, recursive: true });
+  return { removed: true, root: requested, topicSegment };
 };

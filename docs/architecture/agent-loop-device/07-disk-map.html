@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:">
+  <title>07  磁盘目录地图：哪些长期存在，哪些按运行变化</title>
+  <style>
+    :root { color-scheme: dark; --page:#0f0f1a; --panel:#0f172a; --border:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#a855f7; }
+    html[data-theme="light"] { color-scheme:light; --page:#f8fafc; --panel:#fff; --border:#cbd5e1; --text:#0f172a; --muted:#475569; --accent:#7c3aed; }
+    * { box-sizing:border-box; }
+    html,body { width:100%; height:100%; margin:0; overflow:hidden; background:linear-gradient(135deg,var(--page),#1a1a2e); color:var(--text); font-family:'SF Mono','Fira Code',ui-monospace,monospace; }
+    body { display:grid; grid-template-rows:auto 1fr; }
+    .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:color-mix(in srgb,var(--panel) 92%,transparent); border-bottom:1px solid var(--border); z-index:2; }
+    .title { margin-right:auto; font-size:13px; font-weight:700; }
+    button,select { min-height:34px; padding:6px 10px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:8px; font:inherit; cursor:pointer; }
+    button:hover,button:focus-visible,select:focus-visible { border-color:var(--accent); outline:2px solid color-mix(in srgb,var(--accent) 35%,transparent); outline-offset:1px; }
+    #stage { position:relative; overflow:hidden; touch-action:none; cursor:grab; }
+    #stage.dragging { cursor:grabbing; }
+    #canvas { width:100%; height:100%; display:grid; place-items:center; transform-origin:0 0; will-change:transform; }
+    #canvas svg { max-width:calc(100vw - 40px); max-height:calc(100vh - 92px); width:auto; height:auto; filter:drop-shadow(0 22px 60px rgba(0,0,0,.28)); user-select:none; }
+    #status { min-width:76px; color:var(--muted); font-size:12px; text-align:center; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
+  </style>
+</head>
+<body>
+  <header class="toolbar" aria-label="Diagram controls">
+    <span class="title">07  磁盘目录地图：哪些长期存在，哪些按运行变化</span>
+    <button type="button" data-action="zoom-out" aria-label="Zoom out">−</button>
+    <button type="button" data-action="reset" aria-label="Reset view">Reset</button>
+    <button type="button" data-action="zoom-in" aria-label="Zoom in">+</button>
+    <span id="status" aria-live="polite">100%</span>
+    <button type="button" data-action="theme" aria-label="Toggle theme">Theme</button>
+    <button type="button" data-action="copy" aria-label="Copy SVG source">Copy SVG</button>
+    <select id="scale" aria-label="Raster export scale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4×</option></select>
+    <select id="format" aria-label="Export format"><option>SVG</option><option>PNG</option><option>JPEG</option><option>WebP</option></select>
+    <button type="button" data-action="download">Export</button>
+  </header>
+  <main id="stage" tabindex="0" aria-label="Interactive diagram. Drag to pan; use plus and minus to zoom.">
+    <div id="canvas"><svg xmlns="http://www.w3.org/2000/svg" width="1660" height="850" viewBox="0 0 1660 850" data-generator="fireworks-tech-graph" data-authoring-mode="explicit-python-list" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-quality-profile="showcase" data-semantic-profile="generic" role="img" focusable="false">
+<defs>
+<style>text{font-family:"PingFang SC","Helvetica Neue",Arial,sans-serif}</style>
+<marker id="arrow-data" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb" /></marker>
+<marker id="arrow-feedback" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#9333ea" /></marker>
+<marker id="arrow-read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#16a34a" /></marker>
+</defs>
+<rect width="1660" height="850" fill="#fff" />
+<g data-graph-role="reserved" data-graph-bounds="40,22,1620,103"><text x="60" y="55" font-size="28" font-weight="700">07  磁盘目录地图：哪些长期存在，哪些按运行变化</text><text x="60" y="86" font-size="15" fill="#64748b">以下为代码中的路径规则；用户目录使用符号值，不代表已读取当前机器或线上配置。</text></g>
+<g id="userdisk" data-graph-role="container" data-graph-bounds="40,130,1620,264"><rect x="40" y="130" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,138,1608,162"><text x="60" y="155" font-size="14" font-weight="600" fill="#526176">用户资料与项目 · 随用户与所选机器变化</text></g></g>
+<g id="appdisk" data-graph-role="container" data-graph-bounds="40,305,1620,439"><rect x="40" y="305" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,313,1608,337"><text x="60" y="330" font-size="14" font-weight="600" fill="#526176">应用数据 · 应用维护缓存，不是项目工作区</text></g></g>
+<g id="clisession" data-graph-role="container" data-graph-bounds="40,480,1620,614"><rect x="40" y="480" width="1580" height="134" rx="8" fill="#fbfcfe" stroke="#d1d5db" stroke-dasharray="6 4" /><g data-graph-role="reserved" data-graph-bounds="52,488,1608,512"><text x="60" y="505" font-size="14" font-weight="600" fill="#526176">外部 CLI 会话 · topic 与磁盘会话通过 sessionId 联系</text></g></g>
+<path id="userdisk0--userdisk1" data-graph-role="edge" data-edge-id="userdisk0--userdisk1" data-source="userdisk0" data-target="userdisk1" data-flow="read" d="M 510 207.0 L 610 207.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="userdisk1--userdisk2" data-graph-role="edge" data-edge-id="userdisk1--userdisk2" data-source="userdisk1" data-target="userdisk2" data-flow="read" d="M 1050 207.0 L 1150 207.0" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-read)" />
+<path id="appdisk0--appdisk1" data-graph-role="edge" data-edge-id="appdisk0--appdisk1" data-source="appdisk0" data-target="appdisk1" data-flow="data" d="M 510 382.0 L 610 382.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="appdisk1--appdisk2" data-graph-role="edge" data-edge-id="appdisk1--appdisk2" data-source="appdisk1" data-target="appdisk2" data-flow="data" d="M 1050 382.0 L 1150 382.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="clisession0--clisession1" data-graph-role="edge" data-edge-id="clisession0--clisession1" data-source="clisession0" data-target="clisession1" data-flow="data" d="M 510 557.0 L 610 557.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<path id="clisession1--clisession2" data-graph-role="edge" data-edge-id="clisession1--clisession2" data-source="clisession1" data-target="clisession2" data-flow="data" d="M 1050 557.0 L 1150 557.0" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-data)" />
+<g id="node-userdisk0" data-graph-role="node" data-node-id="userdisk0" data-graph-bounds="70,172,510,242"><rect x="70" y="172" width="440" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="290.0" y="202.0" text-anchor="middle" font-size="18" font-weight="600">homePath / desktopPath</text>
+<text x="290.0" y="224.0" text-anchor="middle" font-size="12" fill="#526176">Electron app.getPath(...)</text>
+</g>
+<g id="node-userdisk1" data-graph-role="node" data-node-id="userdisk1" data-graph-bounds="610,172,1050,242"><rect x="610" y="172" width="440" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="830.0" y="202.0" text-anchor="middle" font-size="18" font-weight="600">用户项目目录</text>
+<text x="830.0" y="224.0" text-anchor="middle" font-size="12" fill="#526176">例如 /Users/me/projects/demo</text>
+</g>
+<g id="node-userdisk2" data-graph-role="node" data-node-id="userdisk2" data-graph-bounds="1150,172,1590,242"><rect x="1150" y="172" width="440" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1370.0" y="202.0" text-anchor="middle" font-size="18" font-weight="600">代码与项目约定</text>
+<text x="1370.0" y="224.0" text-anchor="middle" font-size="12" fill="#526176">文件 / .git / AGENTS.md / .agents/skills</text>
+</g>
+<g id="node-appdisk0" data-graph-role="node" data-node-id="appdisk0" data-graph-bounds="70,347,510,417"><rect x="70" y="347" width="440" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="290.0" y="377.0" text-anchor="middle" font-size="18" font-weight="600">userDataPath</text>
+<text x="290.0" y="399.0" text-anchor="middle" font-size="12" fill="#526176">app.getPath("userData")</text>
+</g>
+<g id="node-appdisk1" data-graph-role="node" data-node-id="appdisk1" data-graph-bounds="610,347,1050,417"><rect x="610" y="347" width="440" height="70" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+<text x="830.0" y="377.0" text-anchor="middle" font-size="18" font-weight="600">appStoragePath</text>
+<text x="830.0" y="399.0" text-anchor="middle" font-size="12" fill="#526176">userData/lobehub-storage</text>
+</g>
+<g id="node-appdisk2" data-graph-role="node" data-node-id="appdisk2" data-graph-bounds="1150,347,1590,417"><rect x="1150" y="347" width="440" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1370.0" y="377.0" text-anchor="middle" font-size="18" font-weight="600">缓存 / trace</text>
+<text x="1370.0" y="399.0" text-anchor="middle" font-size="12" fill="#526176">file-storage/skills；heteroAgent/files、tracing</text>
+</g>
+<g id="node-clisession0" data-graph-role="node" data-node-id="clisession0" data-graph-bounds="70,522,510,592"><rect x="70" y="522" width="440" height="70" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" />
+<text x="290.0" y="552.0" text-anchor="middle" font-size="18" font-weight="600">Topic metadata</text>
+<text x="290.0" y="574.0" text-anchor="middle" font-size="12" fill="#526176">workingDirectory + heteroSessionId</text>
+</g>
+<g id="node-clisession1" data-graph-role="node" data-node-id="clisession1" data-graph-bounds="610,522,1050,592"><rect x="610" y="522" width="440" height="70" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5" />
+<text x="830.0" y="552.0" text-anchor="middle" font-size="18" font-weight="600">CLI 的恢复参数</text>
+<text x="830.0" y="574.0" text-anchor="middle" font-size="12" fill="#526176">Claude --resume / Codex exec resume</text>
+</g>
+<g id="node-clisession2" data-graph-role="node" data-node-id="clisession2" data-graph-bounds="1150,522,1590,592"><rect x="1150" y="522" width="440" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" />
+<text x="1370.0" y="552.0" text-anchor="middle" font-size="18" font-weight="600">CLI 自身会话存储</text>
+<text x="1370.0" y="574.0" text-anchor="middle" font-size="12" fill="#526176">Claude 按 cwd 组织；由 CLI 管理</text>
+</g>
+<g data-graph-role="label" data-owner="userdisk0--userdisk1" data-graph-bounds="536.0,181.0,584.0,197.0"><text x="560.0" y="194.0" font-size="12" text-anchor="middle" fill="#16a34a">选择目录</text></g>
+<g data-graph-role="label" data-owner="userdisk1--userdisk2" data-graph-bounds="1088.0,181.0,1112.0,197.0"><text x="1100.0" y="194.0" font-size="12" text-anchor="middle" fill="#16a34a">包含</text></g>
+<g data-graph-role="label" data-owner="appdisk0--appdisk1" data-graph-bounds="548.0,356.0,572.0,372.0"><text x="560.0" y="369.0" font-size="12" text-anchor="middle" fill="#2563eb">派生</text></g>
+<g data-graph-role="label" data-owner="appdisk1--appdisk2" data-graph-bounds="1088.0,356.0,1112.0,372.0"><text x="1100.0" y="369.0" font-size="12" text-anchor="middle" fill="#2563eb">存放</text></g>
+<g data-graph-role="label" data-owner="clisession0--clisession1" data-graph-bounds="530.0,531.0,590.0,547.0"><text x="560.0" y="544.0" font-size="12" text-anchor="middle" fill="#2563eb">下一轮读取</text></g>
+<g data-graph-role="label" data-owner="clisession1--clisession2" data-graph-bounds="1076.0,531.0,1124.0,547.0"><text x="1100.0" y="544.0" font-size="12" text-anchor="middle" fill="#2563eb">加载会话</text></g>
+<g data-graph-role="reserved" data-graph-bounds="50,745,760,780">
+<line x1="60" y1="761" x2="92" y2="761" stroke="#2563eb" stroke-width="2" /><text x="104" y="765" font-size="13" fill="#64748b">传递 / 引用</text>
+<line x1="285" y1="761" x2="317" y2="761" stroke="#9333ea" stroke-width="2" /><text x="329" y="765" font-size="13" fill="#64748b">循环 / 反馈</text>
+<line x1="510" y1="761" x2="542" y2="761" stroke="#16a34a" stroke-width="2" /><text x="554" y="765" font-size="13" fill="#64748b">读取 / 上下文</text>
+</g>
+<g data-graph-role="reserved" data-graph-bounds="50,801,1630,836"><text x="60" y="821" font-size="12" fill="#64748b">Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪</text></g>
+</svg></div>
+    <p class="sr-only">Keyboard shortcuts: plus and minus zoom, zero resets, T toggles theme, S exports.</p>
+  </main>
+  <script>
+  (() => {
+    'use strict';
+    const metadata = {"slug": "07-disk-map"};
+    const stage = document.getElementById('stage');
+    const canvas = document.getElementById('canvas');
+    const svg = canvas.querySelector('svg');
+    const status = document.getElementById('status');
+    const scaleSelect = document.getElementById('scale');
+    const formatSelect = document.getElementById('format');
+    let view = { x:0, y:0, scale:1 };
+    let drag = null;
+    const clamp = value => Math.max(.2, Math.min(8, value));
+    const render = () => {
+      canvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
+      status.textContent = `${Math.round(view.scale * 100)}%`;
+    };
+    const zoom = (factor, originX=stage.clientWidth/2, originY=stage.clientHeight/2) => {
+      const next = clamp(view.scale * factor);
+      const ratio = next / view.scale;
+      view.x = originX - (originX - view.x) * ratio;
+      view.y = originY - (originY - view.y) * ratio;
+      view.scale = next; render();
+    };
+    const reset = () => { view = {x:0,y:0,scale:1}; render(); };
+    stage.addEventListener('wheel', event => { event.preventDefault(); const rect=stage.getBoundingClientRect(); zoom(event.deltaY < 0 ? 1.12 : .89, event.clientX-rect.left, event.clientY-rect.top); }, {passive:false});
+    stage.addEventListener('pointerdown', event => { drag={id:event.pointerId,x:event.clientX,y:event.clientY,vx:view.x,vy:view.y}; stage.setPointerCapture(event.pointerId); stage.classList.add('dragging'); });
+    stage.addEventListener('pointermove', event => { if(!drag||drag.id!==event.pointerId)return; view.x=drag.vx+event.clientX-drag.x; view.y=drag.vy+event.clientY-drag.y; render(); });
+    const endDrag = () => { drag=null; stage.classList.remove('dragging'); };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    const source = () => new XMLSerializer().serializeToString(svg);
+    const saveBlob = (blob, extension) => { const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${(metadata.slug||'fireworks-tech-graph')}.${extension}`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); };
+    const copySource = async () => {
+      const value=source();
+      try { await navigator.clipboard.writeText(value); status.textContent='Copied'; return; } catch {}
+      const area=document.createElement('textarea'); area.value=value; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0'; document.body.appendChild(area); area.select();
+      status.textContent=document.execCommand('copy')?'Copied':'Copy failed'; area.remove();
+    };
+    const exportDiagram = async () => {
+      const format = formatSelect.value.toLowerCase();
+      if(format==='svg') { saveBlob(new Blob([source()],{type:'image/svg+xml;charset=utf-8'}),'svg'); return; }
+      const scale = Math.max(1,Math.min(4,Number(scaleSelect.value)||2));
+      const box = svg.viewBox.baseVal; const width=box.width||svg.clientWidth; const height=box.height||svg.clientHeight;
+      const image = new Image(); const url=URL.createObjectURL(new Blob([source()],{type:'image/svg+xml'}));
+      await new Promise((resolve,reject)=>{ image.onload=resolve; image.onerror=reject; image.src=url; });
+      const raster=document.createElement('canvas'); raster.width=Math.round(width*scale); raster.height=Math.round(height*scale);
+      const ctx=raster.getContext('2d'); if(format==='jpeg'){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,raster.width,raster.height);} ctx.drawImage(image,0,0,raster.width,raster.height); URL.revokeObjectURL(url);
+      const mime=format==='jpeg'?'image/jpeg':format==='webp'?'image/webp':'image/png';
+      const blob=await new Promise(resolve=>raster.toBlob(resolve,mime,.94)); if(blob) saveBlob(blob,format==='jpeg'?'jpg':format);
+    };
+    document.querySelector('.toolbar').addEventListener('click', async event => {
+      const action=event.target.closest('[data-action]')?.dataset.action; if(!action)return;
+      if(action==='zoom-in')zoom(1.2); else if(action==='zoom-out')zoom(.83); else if(action==='reset')reset();
+      else if(action==='theme')document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
+      else if(action==='download')await exportDiagram();
+      else if(action==='copy') await copySource();
+    });
+    document.addEventListener('keydown', event => {
+      if(event.target.matches('select'))return;
+      if(event.key==='+'||event.key==='=')zoom(1.2); else if(event.key==='-')zoom(.83); else if(event.key==='0'||event.key.toLowerCase()==='r')reset();
+      else if(event.key.toLowerCase()==='t')document.querySelector('[data-action=theme]').click(); else if(event.key.toLowerCase()==='s'){event.preventDefault();exportDiagram();}
+    });
+    render();
+  })();
+  </script>
+</body>
+</html>

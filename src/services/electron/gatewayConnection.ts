@@ -17,6 +17,14 @@ class GatewayConnectionService {
     return ensureElectronIpc().gatewayConnection.getDeviceInfo();
   };
 
+  executeLocalToolCall = async (
+    params: Parameters<
+      ReturnType<typeof ensureElectronIpc>['gatewayConnection']['executeLocalToolCall']
+    >[0],
+  ) => {
+    return ensureElectronIpc().gatewayConnection.executeLocalToolCall(params);
+  };
+
   setDeviceDescription = async (description: string) => {
     return ensureElectronIpc().gatewayConnection.setDeviceDescription({ description });
   };

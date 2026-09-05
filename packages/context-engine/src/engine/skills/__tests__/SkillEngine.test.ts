@@ -58,4 +58,22 @@ describe('SkillEngine', () => {
     const artifacts = result.skills.find((s) => s.identifier === 'artifacts');
     expect(artifacts?.content).toBe('<artifacts_guide>...</artifacts_guide>');
   });
+
+  it('preserves registry trace evidence on the operation skill set', () => {
+    const registry = {
+      entries: [],
+      errors: [],
+      policy: {
+        includeAgentSkills: true,
+        includeProjectSkills: true,
+        includeUserSkills: true,
+        materializeForHeteroCli: 'off' as const,
+        pinned: [],
+      },
+      precedence: { agent: 200, builtin: 100, project: 400, user: 300, workspace: 350 },
+    };
+    const result = new SkillEngine({ registry, skills: rawSkills }).generate([]);
+
+    expect(result.registry).toBe(registry);
+  });
 });

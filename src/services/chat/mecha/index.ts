@@ -16,6 +16,9 @@ export { contextEngineering } from './contextEngineering';
 // Client model runtime
 export { initializeWithClientStore } from './clientModelRuntime';
 
+// Skill registry
+export { resolveClientSkillRegistry } from './clientSkillRegistry';
+
 // Model parameters
 export type { ModelExtendParams, ModelParamsContext } from './modelParamsResolver';
 export { resolveModelExtendParams } from './modelParamsResolver';

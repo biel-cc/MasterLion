@@ -94,6 +94,13 @@ func (c *connection) attachAuthenticated(h *hub) bool {
 	return true
 }
 
+func (c *connection) setProtocolMetadata(msg authMessage) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.att.Capabilities = msg.Capabilities
+	c.att.ProtocolVersion = msg.ProtocolVersion
+}
+
 func (c *connection) currentHub() *hub {
 	c.stateMu.RLock()
 	defer c.stateMu.RUnlock()
@@ -167,6 +174,7 @@ func (c *connection) readLoop(auth *authResolver, heartbeatTimeout time.Duration
 				return
 			}
 
+			c.setProtocolMetadata(msg)
 			if !c.attachAuthenticated(c.server.hub(verifiedUserID)) {
 				return
 			}

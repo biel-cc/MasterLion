@@ -418,6 +418,32 @@ export const createGatewayEventHandler = (
         break;
       }
 
+      case 'stream_retry': {
+        if (!(event.data as { reset?: boolean } | undefined)?.reset) break;
+
+        enqueue(() => {
+          accumulatedContent = '';
+          accumulatedReasoning = '';
+          endReasoningIfNeeded();
+          get().internal_toggleToolCallingStreaming(currentAssistantMessageId, undefined);
+          get().internal_dispatchMessage(
+            {
+              id: currentAssistantMessageId,
+              type: 'updateMessage',
+              value: {
+                content: '',
+                imageList: undefined,
+                reasoning: undefined,
+                search: undefined,
+                tools: undefined,
+              },
+            },
+            dispatchContext,
+          );
+        });
+        break;
+      }
+
       case 'stream_end': {
         enqueue(() => {
           // Only clear tool calling streaming — keep message loading active
@@ -491,7 +517,11 @@ export const createGatewayEventHandler = (
         // — NOT the local `operationId` used for `dispatchContext`.
         const data = event.data as ToolExecuteData | undefined;
         if (!data) break;
-        void get().internal_executeClientTool(data, { operationId: gatewayOperationId });
+        void get().internal_executeClientTool(data, {
+          localOperationId: operationId,
+          operationId: gatewayOperationId,
+          topicId: context.topicId ?? undefined,
+        });
         break;
       }
 

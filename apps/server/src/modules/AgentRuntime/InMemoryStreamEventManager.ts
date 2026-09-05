@@ -29,6 +29,7 @@ type EventCallback = (events: StreamEvent[]) => void;
  */
 export class InMemoryStreamEventManager implements IStreamEventManager {
   private streams: Map<string, StreamEvent[]> = new Map();
+  private owners = new Map<string, string>();
   private subscribers: Map<string, EventCallback[]> = new Map();
   private eventIdCounter = 0;
 
@@ -98,7 +99,12 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
     });
   }
 
+  async getStreamOwner(operationId: string): Promise<string | undefined> {
+    return this.owners.get(operationId);
+  }
+
   async publishAgentRuntimeInit(operationId: string, initialState: any): Promise<string> {
+    if (typeof initialState?.userId === 'string') this.owners.set(operationId, initialState.userId);
     return this.publishStreamEvent(operationId, {
       data: initialState,
       stepIndex: 0,
@@ -140,6 +146,7 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
   }
 
   async cleanupOperation(operationId: string): Promise<void> {
+    this.owners.delete(operationId);
     this.streams.delete(operationId);
     this.subscribers.delete(operationId);
     log('Cleaned up operation %s', operationId);
@@ -160,33 +167,31 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
    */
   async subscribeStreamEvents(
     operationId: string,
-    _lastEventId: string,
+    lastEventId: string,
     onEvents: (events: StreamEvent[]) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     return new Promise<void>((resolve) => {
-      const unsubscribe = this.subscribe(operationId, (events) => {
+      let unsubscribe = () => {};
+      const finish = () => {
+        unsubscribe();
+        signal?.removeEventListener('abort', finish);
+        resolve();
+      };
+      const deliver = (events: StreamEvent[]) => {
+        if (signal?.aborted) return finish();
         onEvents(events);
-        // Check if agent_runtime_end was received — caller will handle closing
-        const hasEnd = events.some((e) => e.type === 'agent_runtime_end');
-        if (hasEnd) {
-          unsubscribe();
-          resolve();
-        }
+        if (events.some((event) => event.type === 'agent_runtime_end')) finish();
+      };
+      if (signal?.aborted) return finish();
+      unsubscribe = this.subscribe(operationId, deliver);
+      signal?.addEventListener('abort', finish, { once: true });
+      const [cursorTime, cursorSequence = 0] = lastEventId.split('-').map(Number);
+      const history = (this.streams.get(operationId) ?? []).filter((event) => {
+        const [time, sequence = 0] = (event.id ?? '0').split('-').map(Number);
+        return time > cursorTime || (time === cursorTime && sequence > cursorSequence);
       });
-
-      // Handle abort signal
-      if (signal) {
-        const onAbort = () => {
-          unsubscribe();
-          resolve();
-        };
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        signal.addEventListener('abort', onAbort, { once: true });
-      }
+      if (history.length) deliver(history);
     });
   }
 
@@ -218,6 +223,7 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
    */
   clear(): void {
     this.streams.clear();
+    this.owners.clear();
     this.subscribers.clear();
     this.eventIdCounter = 0;
     log('All data cleared');

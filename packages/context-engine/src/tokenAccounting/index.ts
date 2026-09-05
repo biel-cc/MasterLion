@@ -1,5 +1,6 @@
 // cspell:ignore tokenx
 import { estimateTokenCount } from 'tokenx';
+import { Md5 } from 'ts-md5';
 
 import type {
   ContextTokenAccounting,
@@ -14,6 +15,7 @@ export * from './attachmentTokenBuckets';
 export const DEFAULT_DRIFT_MULTIPLIER = 1.25;
 
 const ZERO_BY_SOURCE = (): Record<TokenSourceType, number> => ({
+  attachment: 0,
   content: 0,
   reasoning: 0,
   thoughtSignature: 0,
@@ -21,6 +23,67 @@ const ZERO_BY_SOURCE = (): Record<TokenSourceType, number> => ({
   toolCalls: 0,
   toolDefinition: 0,
 });
+
+const stableSerialize = (value: unknown): string => {
+  if (value === undefined) return 'undefined';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+    .join(',')}}`;
+};
+
+const projectProviderTextContent = (content: unknown): unknown => {
+  if (!Array.isArray(content)) return content;
+
+  return content.map((part) => {
+    if (!part || typeof part !== 'object') return part;
+
+    const value = part as Record<string, unknown>;
+    if (value.type === 'image_url' || value.type === 'video_url') {
+      return { type: value.type };
+    }
+
+    return part;
+  });
+};
+
+const messagePayloadProjection = (message: CountContextTokensParams['messages'][number]) => ({
+  content: projectProviderTextContent(message.content),
+  reasoning: message.reasoning,
+  role: message.role,
+  toolCallId: message.tool_call_id,
+  tools:
+    message.role === 'assistant'
+      ? message.tools?.map((tool) => ({
+          apiName: tool.apiName,
+          arguments: tool.arguments,
+          id: tool.id,
+          thoughtSignature: tool.thoughtSignature,
+          type: tool.type,
+        }))
+      : undefined,
+});
+
+const fingerprintPayload = ({
+  messages,
+  providerMedia,
+  tools,
+}: Pick<CountContextTokensParams, 'messages' | 'providerMedia' | 'tools'>): string =>
+  `ctx-v1-${Md5.hashStr(
+    stableSerialize({
+      messages: messages.map(messagePayloadProjection),
+      providerMedia: providerMedia?.map(({ estimatedTokens, id, messageId }) => ({
+        estimatedTokens,
+        id,
+        messageId,
+      })),
+      tools,
+    }),
+  ).toString()}`;
 
 const estimate = (value: unknown): number => {
   if (value == null) return 0;
@@ -96,6 +159,7 @@ const bumpSource = (
  */
 export const countContextTokens = ({
   messages,
+  providerMedia = [],
   tools = [],
   options,
 }: CountContextTokensParams): ContextTokenAccounting => {
@@ -116,7 +180,7 @@ export const countContextTokens = ({
       bumpSource(bySource, 'content', recordedOutputTokens);
     } else {
       // Per-field estimation
-      bumpSource(bySource, 'content', estimate(msg.content));
+      bumpSource(bySource, 'content', estimate(projectProviderTextContent(msg.content)));
 
       // Tool calls: lobe stores these on `msg.tools` (NOT OpenAI's `tool_calls`)
       // We project to what's actually sent: id + apiName + arguments + type.
@@ -177,14 +241,24 @@ export const countContextTokens = ({
   }
   bySource.toolDefinition = toolBreakdowns.reduce((s, t) => s + t.total, 0);
 
+  const attachments = providerMedia.map((item, index) => ({
+    estimatedTokens: Math.max(0, Math.ceil(item.estimatedTokens)),
+    id: item.id,
+    index,
+    messageId: item.messageId,
+  }));
+  bySource.attachment = attachments.reduce((sum, item) => sum + item.estimatedTokens, 0);
+
   let rawTotal = 0;
   for (const v of Object.values(bySource)) rawTotal += v;
 
   return {
     adjustedTotal: Math.ceil(rawTotal * driftMultiplier),
+    attachments,
     bySource,
     driftMultiplier,
     messages: messageBreakdowns,
+    payloadFingerprint: fingerprintPayload({ messages, providerMedia, tools }),
     rawTotal,
     tools: toolBreakdowns,
   };
@@ -194,6 +268,8 @@ export type {
   ContextTokenAccounting,
   CountContextTokensParams,
   MessageTokenBreakdown,
+  ProviderMediaTokenBreakdown,
+  ProviderMediaTokenEstimate,
   TokenSourceType,
   ToolDefinitionTokenBreakdown,
 } from './types';

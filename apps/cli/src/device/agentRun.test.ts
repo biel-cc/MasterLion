@@ -1,12 +1,30 @@
+import type * as childProcessModule from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as localFileShellModule from '@lobechat/local-file-shell';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { spawnHeteroAgentRun } from './agentRun';
 
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+const { materializeSkillsForCliMock, spawnMock } = vi.hoisted(() => ({
+  materializeSkillsForCliMock: vi.fn(),
+  spawnMock: vi.fn(),
+}));
 
-vi.mock('node:child_process', () => ({ spawn: spawnMock }));
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof childProcessModule>()),
+  spawn: spawnMock,
+}));
+vi.mock('@lobechat/device-control', () => ({
+  materializeSkillsForCli: materializeSkillsForCliMock,
+}));
+vi.mock('@lobechat/local-file-shell', async (importOriginal) => ({
+  ...(await importOriginal<typeof localFileShellModule>()),
+  resolveLoginShellPath: vi.fn().mockResolvedValue('/login/bin'),
+}));
 
 const makeFakeChild = () => {
   const child = new EventEmitter() as EventEmitter & {
@@ -18,6 +36,7 @@ const makeFakeChild = () => {
 
 const baseParams = {
   agentType: 'claudeCode',
+  cwd: '/work/dir',
   jwt: 'jwt',
   operationId: 'op',
   prompt: 'hi',
@@ -26,8 +45,50 @@ const baseParams = {
 };
 
 describe('spawnHeteroAgentRun', () => {
+  beforeEach(() => {
+    materializeSkillsForCliMock.mockResolvedValue({ errors: [] });
+  });
+
   afterEach(() => {
     spawnMock.mockReset();
+  });
+
+  it('rejects a missing workspace without spawning', async () => {
+    await expect(spawnHeteroAgentRun({ ...baseParams, cwd: undefined })).resolves.toEqual({
+      reason: 'WORKSPACE_REQUIRED',
+      status: 'rejected',
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('materializes enabled skills before spawning and fails closed on an error', async () => {
+    materializeSkillsForCliMock.mockResolvedValue({
+      errors: [{ key: 'builtin:test', message: 'foreign skill directory' }],
+    });
+
+    await expect(
+      spawnHeteroAgentRun({
+        ...baseParams,
+        skillPolicy: 'project',
+        skills: [
+          {
+            content: '# Test',
+            description: 'Test',
+            identifier: 'test',
+            key: 'builtin:test',
+            name: 'test',
+            source: 'builtin',
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      reason: 'SKILL_MATERIALIZATION_FAILED: foreign skill directory',
+      status: 'rejected',
+    });
+    expect(materializeSkillsForCliMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/work/dir', policy: 'project' }),
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it('spawns `lh hetero exec` in server-ingest mode via the current CLI entry', async () => {
@@ -42,7 +103,7 @@ describe('spawnHeteroAgentRun', () => {
       topicId: 'tpc-1',
     });
 
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
     const [bin, args, opts] = spawnMock.mock.calls[0];
 
     expect(bin).toBe(process.execPath);
@@ -86,18 +147,20 @@ describe('spawnHeteroAgentRun', () => {
     spawnMock.mockReturnValue(child);
 
     const ackPromise = spawnHeteroAgentRun({ ...baseParams, cwd: '/missing' });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
     child.emit('error', new Error('spawn ENOENT'));
 
     await expect(ackPromise).resolves.toEqual({ reason: 'spawn ENOENT', status: 'rejected' });
     expect(child.stdin.write).not.toHaveBeenCalled();
   });
 
-  it('appends --resume when resuming a session', () => {
+  it('appends --resume when resuming a session', async () => {
     const child = makeFakeChild();
     spawnMock.mockReturnValue(child);
 
     void spawnHeteroAgentRun({ ...baseParams, resumeSessionId: 'sess-9' });
 
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
     const [, args] = spawnMock.mock.calls[0];
     expect(args).toContain('--resume');
     expect(args).toContain('sess-9');
@@ -112,6 +175,7 @@ describe('spawnHeteroAgentRun', () => {
       prompt: 'do it',
       systemContext: 'workspace rules',
     });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
     child.emit('spawn');
     await ackPromise;
 
@@ -132,6 +196,7 @@ describe('spawnHeteroAgentRun', () => {
       imageList: [{ id: 'file-1', url: 'https://signed/a.png' }],
       prompt: 'look at this',
     });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
     child.emit('spawn');
     await ackPromise;
 
@@ -141,5 +206,43 @@ describe('spawnHeteroAgentRun', () => {
         { source: { id: 'file-1', type: 'url', url: 'https://signed/a.png' }, type: 'image' },
       ]),
     );
+  });
+
+  it('preserves resolved env without allowing it to replace gateway auth', async () => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    void spawnHeteroAgentRun({
+      ...baseParams,
+      env: { LOBEHUB_JWT: 'wrong', WORKSPACE_VALUE: 'kept' },
+      jwt: 'trusted-jwt',
+    });
+
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(options.env).toMatchObject({
+      LOBEHUB_JWT: 'trusted-jwt',
+      WORKSPACE_VALUE: 'kept',
+    });
+  });
+
+  it('loads env_files before spawn and lets server-resolved env win', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'masterino-agent-run-env-'));
+    await writeFile(path.join(cwd, '.env'), 'FROM_FILE=1\nSHARED=file\n');
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const ack = spawnHeteroAgentRun({
+      ...baseParams,
+      cwd,
+      env: { SHARED: 'server' },
+      envFiles: ['.env'],
+    });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(options.env).toMatchObject({ FROM_FILE: '1', SHARED: 'server' });
+    child.emit('spawn');
+    await ack;
+    await rm(cwd, { force: true, recursive: true });
   });
 });

@@ -269,23 +269,43 @@ async function runConnect(options: ConnectOptions, isDaemonChild: boolean) {
 
   // Handle tool call requests
   client.on('tool_call_request', async (request: ToolCallRequestMessage) => {
-    const { operationId, requestId, timeout, toolCall } = request;
+    const {
+      deviceId,
+      executionContext,
+      operationId,
+      requestId,
+      timeout,
+      toolCall,
+      toolCallId,
+      topicId,
+    } = request;
     if (isDaemonChild) {
       appendLog(
         `[TOOL] ${toolCall.apiName}${operationId ? ` op=${operationId}` : ''} (${requestId})`,
       );
     } else {
-      log.toolCall(toolCall.apiName, requestId, toolCall.arguments, operationId);
+      log.toolCall(toolCall.apiName, requestId, undefined, operationId);
     }
 
-    const result = await executeToolCall(toolCall.apiName, toolCall.arguments, timeout);
+    const result = await executeToolCall(
+      toolCall.apiName,
+      toolCall.arguments,
+      timeout,
+      executionContext,
+      {
+        deviceId: deviceId ?? client.currentDeviceId,
+        operationId,
+        toolCallId: toolCallId ?? requestId,
+        topicId,
+      },
+    );
 
     if (isDaemonChild) {
       appendLog(
         `[RESULT] ${result.success ? 'OK' : 'FAIL'}${operationId ? ` op=${operationId}` : ''} (${requestId})`,
       );
     } else {
-      log.toolResult(requestId, result.success, result.content, operationId);
+      log.toolResult(requestId, result.success, undefined, operationId);
     }
 
     client.sendToolCallResponse({
@@ -306,6 +326,9 @@ async function runConnect(options: ConnectOptions, isDaemonChild: boolean) {
   const deviceControlDeps: DeviceControlDeps = {
     getLocalFilePreview: defaultGetLocalFilePreview,
     getProjectFileIndex: defaultGetProjectFileIndex,
+    runHeterogeneousAgent: (request) =>
+      spawnHeteroAgentRun({ ...request, serverUrl: auth.serverUrl }, { error, info }),
+    scratchRoot: resolveCliScratchRoot(),
   };
 
   client.on('rpc_request', async (request: RpcRequestMessage) => {
@@ -337,8 +360,12 @@ async function runConnect(options: ConnectOptions, isDaemonChild: boolean) {
       const ack = await spawnHeteroAgentRun(
         {
           agentType: request.agentType,
-          cwd: request.cwd,
+          cwd: request.executionContext?.cwd ?? request.cwd,
+          env: request.executionContext?.env ?? request.env,
+          envFiles: request.executionContext?.envFiles,
           imageList: request.imageList,
+          skills: request.skills,
+          skillPolicy: request.skillPolicy,
           jwt: request.jwt,
           operationId: request.operationId,
           prompt: request.prompt,
@@ -591,4 +618,10 @@ function collectSystemInfo(): DeviceSystemInfo {
     videosPath: path.join(home, videosDir),
     workingDirectory: process.cwd(),
   };
+}
+
+function resolveCliScratchRoot(): string {
+  const configured = process.env.LOBEHUB_CLI_HOME || '.lobehub';
+  const cliRoot = path.isAbsolute(configured) ? configured : path.join(os.homedir(), configured);
+  return path.join(cliRoot, 'scratch-workspaces');
 }

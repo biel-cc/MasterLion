@@ -11,6 +11,7 @@ import {
   type AgentRuntimeType,
   selectRuntimeType,
 } from './agentDispatcher';
+import { routeDesktopWorkspaceRuntime } from './managedEnvRuntime';
 
 /**
  * Execution context supplied by the caller at dispatch time.
@@ -48,6 +49,8 @@ export interface NonHeteroSubAgentDispatchContext {
    * the parent's execution environment for the child invocation.
    */
   parentRuntime?: AgentRuntimeType;
+  /** Frozen primary workspace inherited from the parent topic, if already bound. */
+  workspaceId?: string;
 }
 
 /**
@@ -74,12 +77,18 @@ export async function dispatchNonHeteroSubAgent(
   ctx: NonHeteroSubAgentDispatchContext,
   store: Pick<ChatStore, 'executeClientAgent' | 'executeGatewayAgent'>,
 ): Promise<void> {
-  const runtimeType = selectRuntimeType({
-    boundDeviceId: ctx.boundDeviceId,
-    heterogeneousProvider: ctx.heterogeneousProvider,
-    isGatewayMode: ctx.isGatewayMode,
-    parentRuntime: ctx.parentRuntime,
-  });
+  const runtimeType = await routeDesktopWorkspaceRuntime(
+    selectRuntimeType({
+      boundDeviceId: ctx.boundDeviceId,
+      heterogeneousProvider: ctx.heterogeneousProvider,
+      isGatewayMode: ctx.isGatewayMode,
+      parentRuntime: ctx.parentRuntime,
+    }),
+    {
+      topicId: ctx.conversationContext.topicId ?? undefined,
+      workspaceId: ctx.workspaceId,
+    },
+  );
 
   switch (runtimeType) {
     case 'client': {

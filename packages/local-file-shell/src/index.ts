@@ -1,4 +1,5 @@
 export * from './contentSearch';
+export * from './env';
 export * from './file';
 export * from './fileSearch';
 export * from './git';

@@ -19,14 +19,36 @@ import {
   writeLocalFile,
 } from '@lobechat/local-file-shell';
 
+import {
+  createProjectSkillOnDevice,
+  deleteProjectSkillOnDevice,
+  packProjectSkillOnDevice,
+  renameProjectSkillOnDevice,
+  updateProjectSkillOnDevice,
+  validateProjectSkillOnDevice,
+} from './projectSkillAuthoring';
+import { type PrepareDeviceSkillPackage, prepareSkillPackage } from './skillPackage';
 import type {
+  CleanupScratchWorkspaceParams,
   DeviceControlDeps,
+  EnsureScratchWorkspaceParams,
+  HeterogeneousAgentRunParams,
   InitWorkspaceParams,
   ListProjectSkillsParams,
   LocalFilePreviewUrlParams,
   ProjectFileIndexParams,
+  ResolveRealPathParams,
+  VerifySkillPathsParams,
 } from './types';
-import { initWorkspace, listProjectSkills, statPath } from './workspace';
+import {
+  cleanupScratchWorkspace,
+  ensureScratchWorkspace,
+  initWorkspace,
+  listProjectSkills,
+  resolveRealPath,
+  statPath,
+  verifySkillPaths,
+} from './workspace';
 
 /**
  * Every method name the device-control RPC dispatcher understands. Mirrors the
@@ -35,9 +57,22 @@ import { initWorkspace, listProjectSkills, statPath } from './workspace';
  * handler, with no per-method gateway route.
  */
 export const DEVICE_RPC_METHODS = [
+  'prepareSkillPackage',
+  'getLocalScratchExecution',
   'initWorkspace',
+  'ensureScratchWorkspace',
+  'cleanupScratchWorkspace',
+  'runHeterogeneousAgent',
   'listProjectSkills',
   'statPath',
+  'resolveRealPath',
+  'verifySkillPaths',
+  'createProjectSkill',
+  'updateProjectSkill',
+  'renameProjectSkill',
+  'deleteProjectSkill',
+  'validateProjectSkill',
+  'packProjectSkill',
   'getProjectFileIndex',
   'getLocalFilePreview',
   'moveLocalFiles',
@@ -79,6 +114,35 @@ export const executeDeviceRpc = async (
   deps: DeviceControlDeps,
 ): Promise<unknown> => {
   switch (method) {
+    case 'prepareSkillPackage': {
+      return prepareSkillPackage(params as PrepareDeviceSkillPackage, deps.skillCacheRoot);
+    }
+
+    case 'getLocalScratchExecution': {
+      if (!deps.getLocalScratchExecution) throw new Error('Local scratch evidence unavailable');
+      return (
+        deps.getLocalScratchExecution(
+          params as { operationId: string; toolCallId: string; topicId: string },
+        ) ?? null
+      );
+    }
+
+    case 'cleanupScratchWorkspace': {
+      return cleanupScratchWorkspace(params as CleanupScratchWorkspaceParams, deps.scratchRoot);
+    }
+
+    case 'ensureScratchWorkspace': {
+      return ensureScratchWorkspace(
+        params as EnsureScratchWorkspaceParams | string,
+        deps.scratchRoot,
+      );
+    }
+
+    case 'runHeterogeneousAgent': {
+      if (!deps.runHeterogeneousAgent) throw new Error('Heterogeneous agent handler unavailable');
+      return deps.runHeterogeneousAgent(params as HeterogeneousAgentRunParams);
+    }
+
     case 'initWorkspace': {
       return initWorkspace(params as InitWorkspaceParams, deps);
     }
@@ -89,6 +153,38 @@ export const executeDeviceRpc = async (
 
     case 'statPath': {
       return statPath(params as { path: string });
+    }
+
+    case 'resolveRealPath': {
+      return resolveRealPath(params as ResolveRealPathParams);
+    }
+
+    case 'verifySkillPaths': {
+      return verifySkillPaths(params as VerifySkillPathsParams, deps.skillCacheRoot);
+    }
+
+    case 'createProjectSkill': {
+      return createProjectSkillOnDevice(params as never);
+    }
+
+    case 'updateProjectSkill': {
+      return updateProjectSkillOnDevice(params as never);
+    }
+
+    case 'renameProjectSkill': {
+      return renameProjectSkillOnDevice(params as never);
+    }
+
+    case 'deleteProjectSkill': {
+      return deleteProjectSkillOnDevice(params as never);
+    }
+
+    case 'validateProjectSkill': {
+      return validateProjectSkillOnDevice(params as never);
+    }
+
+    case 'packProjectSkill': {
+      return packProjectSkillOnDevice(params as never);
     }
 
     case 'getProjectFileIndex': {

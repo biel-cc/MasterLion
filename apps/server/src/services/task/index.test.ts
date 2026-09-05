@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentModel } from '@/database/models/agent';
 import { BriefModel } from '@/database/models/brief';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TaskModel } from '@/database/models/task';
 import { TaskTopicModel } from '@/database/models/taskTopic';
+import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
 import { BriefService } from '@/server/services/brief';
+import { ScratchWorkspaceCleanupError } from '@/server/services/projectWorkspace/topicDeletion';
 
 import { TaskService } from './index';
 
@@ -25,6 +28,14 @@ vi.mock('@/database/models/taskTopic', () => ({
 
 vi.mock('@/database/models/brief', () => ({
   BriefModel: vi.fn(),
+}));
+
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn(),
+}));
+
+vi.mock('@/database/models/topic', () => ({
+  TopicModel: vi.fn(),
 }));
 
 vi.mock('@/database/models/user', () => ({
@@ -46,7 +57,10 @@ vi.mock('@/server/services/file/resolveAttachments', () => ({
 }));
 
 describe('TaskService', () => {
-  const db = {} as LobeChatDatabase;
+  const transaction = vi.fn(async (callback: (transactionDb: LobeChatDatabase) => unknown) =>
+    callback(db),
+  );
+  const db = { transaction } as unknown as LobeChatDatabase;
   const userId = 'user-1';
 
   const mockAgentModel = {
@@ -75,8 +89,21 @@ describe('TaskService', () => {
   const mockTaskTopicModel = {
     cancelIfRunning: vi.fn(),
     findByTaskId: vi.fn(),
+    findByTopicId: vi.fn(),
     findWithHandoff: vi.fn(),
+    remove: vi.fn(),
     timeoutRunning: vi.fn(),
+  };
+
+  const mockTopicModel = {
+    delete: vi.fn(),
+    findById: vi.fn(),
+    listForDeletion: vi.fn(),
+  };
+
+  const mockProjectWorkspaceModel = {
+    deleteScratch: vi.fn(),
+    findById: vi.fn(),
   };
 
   const mockBriefModel = {
@@ -89,6 +116,174 @@ describe('TaskService', () => {
     (TaskModel as any).mockImplementation(() => mockTaskModel);
     (TaskTopicModel as any).mockImplementation(() => mockTaskTopicModel);
     (BriefModel as any).mockImplementation(() => mockBriefModel);
+    (ProjectWorkspaceModel as any).mockImplementation(() => mockProjectWorkspaceModel);
+    (TopicModel as any).mockImplementation(() => mockTopicModel);
+    transaction.mockImplementation(async (callback) => callback(db));
+  });
+
+  describe('deleteTopic', () => {
+    const target = { operationId: null, status: 'completed', taskId: 'task-1', topicId: 'topic-1' };
+
+    it('removes the task link exactly once before deleting a regular topic', async () => {
+      mockTaskTopicModel.findByTopicId.mockResolvedValue(target);
+      mockTaskTopicModel.remove.mockResolvedValue(true);
+      mockTopicModel.findById.mockResolvedValue({ id: 'topic-1', metadata: null });
+      mockTopicModel.delete.mockResolvedValue(true);
+      const cleanupScratchWorkspace = vi.fn();
+
+      const service = new TaskService(db, userId, undefined, {
+        deviceGateway: { cleanupScratchWorkspace },
+        projectWorkspaceModel: mockProjectWorkspaceModel,
+      });
+      await service.deleteTopic('topic-1');
+
+      expect(cleanupScratchWorkspace).not.toHaveBeenCalled();
+      expect(mockTaskTopicModel.remove).toHaveBeenCalledOnce();
+      expect(mockTaskTopicModel.remove).toHaveBeenCalledWith('task-1', 'topic-1');
+      expect(mockTopicModel.delete).toHaveBeenCalledWith('topic-1');
+      expect(mockTaskTopicModel.remove.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTopicModel.delete.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('cleans scratch before removing the task link and preserves the totalTopics decrement path', async () => {
+      mockTaskTopicModel.findByTopicId.mockResolvedValue(target);
+      mockTaskTopicModel.remove.mockResolvedValue(true);
+      mockTopicModel.findById.mockResolvedValue({
+        id: 'topic-1',
+        metadata: {
+          executionSnapshot: { boundDeviceId: 'device-1', workspaceId: 'scratch-1' },
+          workspaceKind: 'scratch',
+        },
+      });
+      mockTopicModel.delete.mockResolvedValue(true);
+      const cleanupScratchWorkspace = vi
+        .fn()
+        .mockResolvedValue({ removed: true, root: '/tmp/masterino/topic-1' });
+      const deleteScratch = vi.fn();
+      const findById = vi.fn().mockResolvedValue({
+        deviceId: 'device-1',
+        id: 'scratch-1',
+        kind: 'scratch',
+        rootPath: '/tmp/masterino/topic-1',
+      });
+
+      const service = new TaskService(db, userId, undefined, {
+        deviceGateway: { cleanupScratchWorkspace },
+        projectWorkspaceModel: mockProjectWorkspaceModel,
+      });
+      mockProjectWorkspaceModel.deleteScratch.mockImplementation(deleteScratch);
+      mockProjectWorkspaceModel.findById.mockImplementation(findById);
+      await service.deleteTopic('topic-1');
+
+      expect(cleanupScratchWorkspace).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        topicId: 'topic-1',
+        userId,
+      });
+      expect(mockTaskTopicModel.remove).toHaveBeenCalledOnce();
+      expect(cleanupScratchWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTaskTopicModel.remove.mock.invocationCallOrder[0],
+      );
+      expect(deleteScratch).toHaveBeenCalledWith('scratch-1');
+    });
+
+    it('keeps the task link and topic intact when the scratch device is offline', async () => {
+      mockTaskTopicModel.findByTopicId.mockResolvedValue(target);
+      mockTopicModel.findById.mockResolvedValue({
+        id: 'topic-1',
+        metadata: { workspaceId: 'scratch-1', workspaceKind: 'scratch' },
+      });
+      const cleanupScratchWorkspace = vi.fn().mockResolvedValue(undefined);
+      const deleteScratch = vi.fn();
+      const findById = vi.fn().mockResolvedValue({
+        deviceId: 'device-offline',
+        id: 'scratch-1',
+        kind: 'scratch',
+        rootPath: '/tmp/masterino/topic-1',
+      });
+
+      const service = new TaskService(db, userId, undefined, {
+        deviceGateway: { cleanupScratchWorkspace },
+        projectWorkspaceModel: mockProjectWorkspaceModel,
+      });
+      mockProjectWorkspaceModel.deleteScratch.mockImplementation(deleteScratch);
+      mockProjectWorkspaceModel.findById.mockImplementation(findById);
+
+      await expect(service.deleteTopic('topic-1')).rejects.toBeInstanceOf(
+        ScratchWorkspaceCleanupError,
+      );
+      expect(mockTaskTopicModel.remove).not.toHaveBeenCalled();
+      expect(mockTopicModel.delete).not.toHaveBeenCalled();
+      expect(deleteScratch).not.toHaveBeenCalled();
+    });
+
+    it('rolls back relation/counter state when topic deletion fails and succeeds on retry', async () => {
+      const state = { linked: true, scratchCatalog: true, topic: true, totalTopics: 1 };
+      const cleanupScratchWorkspace = vi
+        .fn()
+        .mockResolvedValueOnce({ removed: true, root: '/tmp/masterino/topic-1' })
+        .mockResolvedValueOnce({ removed: false, root: '/tmp/masterino/topic-1' });
+
+      mockTaskTopicModel.findByTopicId.mockImplementation(async () =>
+        state.linked ? target : undefined,
+      );
+      mockTaskTopicModel.remove.mockImplementation(async () => {
+        if (!state.linked) return false;
+        state.linked = false;
+        state.totalTopics -= 1;
+        return true;
+      });
+      mockTopicModel.findById.mockImplementation(async () =>
+        state.topic
+          ? {
+              id: 'topic-1',
+              metadata: { workspaceId: 'scratch-1', workspaceKind: 'scratch' },
+            }
+          : undefined,
+      );
+      mockTopicModel.delete
+        .mockRejectedValueOnce(new Error('topic delete failed'))
+        .mockImplementationOnce(async () => {
+          state.topic = false;
+          return true;
+        });
+      mockProjectWorkspaceModel.findById.mockResolvedValue({
+        deviceId: 'device-1',
+        id: 'scratch-1',
+        kind: 'scratch',
+        rootPath: '/tmp/masterino/topic-1',
+      });
+      mockProjectWorkspaceModel.deleteScratch.mockImplementation(async () => {
+        state.scratchCatalog = false;
+      });
+      transaction.mockImplementation(async (callback) => {
+        const snapshot = { ...state };
+        try {
+          return await callback(db);
+        } catch (error) {
+          Object.assign(state, snapshot);
+          throw error;
+        }
+      });
+
+      const service = new TaskService(db, userId, undefined, {
+        deviceGateway: { cleanupScratchWorkspace },
+        projectWorkspaceModel: mockProjectWorkspaceModel,
+      });
+
+      await expect(service.deleteTopic('topic-1')).rejects.toThrow('topic delete failed');
+      expect(state).toEqual({ linked: true, scratchCatalog: true, topic: true, totalTopics: 1 });
+
+      await expect(service.deleteTopic('topic-1')).resolves.toBeUndefined();
+      expect(state).toEqual({ linked: false, scratchCatalog: false, topic: false, totalTopics: 0 });
+      expect(cleanupScratchWorkspace).toHaveBeenNthCalledWith(2, {
+        deviceId: 'device-1',
+        topicId: 'topic-1',
+        userId,
+      });
+      expect(transaction).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('getTaskDetail', () => {

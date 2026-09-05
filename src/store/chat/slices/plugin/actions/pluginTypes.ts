@@ -4,14 +4,17 @@ import {
   type RuntimeStepContext,
   type SubAgentCallbacks,
 } from '@lobechat/types';
+import type { ExecutionContext } from '@lobechat/types/src/executionContext';
 import debug from 'debug';
 
 import { type MCPToolCallResult } from '@/libs/mcp';
+import { lambdaClient } from '@/libs/trpc/client';
 import { mcpService } from '@/services/mcp';
 import { messageService } from '@/services/message';
 import { archiveToolResultViaServer } from '@/services/toolResultArchive';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation';
 import { type ChatStore } from '@/store/chat/store';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { useToolStore } from '@/store/tool';
 import { composioStoreSelectors, lobehubSkillStoreSelectors } from '@/store/tool/selectors';
 import { hasExecutor } from '@/store/tool/slices/builtin/executors';
@@ -146,12 +149,14 @@ export class PluginTypesActionImpl {
       const operationId = this.#get().messageOperationMap[id];
       const operation = operationId ? this.#get().operations[operationId] : undefined;
       let rootRuntimeOperationId: string | undefined;
+      let rootRuntimeOperation = operation;
       let rootRuntimeOperationContext = operation?.context;
       if (operationId) {
         let currentOp = operation;
         while (currentOp) {
           if (AI_RUNTIME_OPERATION_TYPES.includes(currentOp.type)) {
             rootRuntimeOperationId = currentOp.id;
+            rootRuntimeOperation = currentOp;
             rootRuntimeOperationContext = currentOp.context;
             break;
           }
@@ -171,6 +176,9 @@ export class PluginTypesActionImpl {
       const viewedTask = operation?.context?.viewedTask ?? rootRuntimeOperationContext?.viewedTask;
       const taskId = viewedTask?.type === 'detail' ? viewedTask.taskId : undefined;
       const topicId = operation?.context?.topicId ?? rootRuntimeOperationContext?.topicId;
+      const executionContext: ExecutionContext | undefined =
+        rootRuntimeOperation?.metadata?.executionContext;
+      const operationSkills = rootRuntimeOperation?.metadata?.operationSkills;
       const isSubAgent =
         operation?.context?.isSubAgent ?? rootRuntimeOperationContext?.isSubAgent ?? false;
 
@@ -257,11 +265,13 @@ export class PluginTypesActionImpl {
         .invokeBuiltinTool(payload.identifier, payload.apiName, params, {
           agentId,
           documentId,
+          executionContext,
           groupId,
           groupOrchestration,
           isSubAgent,
           messageId: id,
           operationId,
+          operationSkills,
           registerAfterCompletion,
           scope,
           signal: signal ?? operation?.abortController?.signal,
@@ -274,7 +284,62 @@ export class PluginTypesActionImpl {
           taskId,
           toolCallId: payload.id,
           topicId,
+          workingDirectory: executionContext?.cwd,
         });
+
+      // IPC tools may finish after the renderer has stopped the operation.
+      // Never publish their late workspace binding (or result) into a cancelled run.
+      signal?.throwIfAborted();
+      operation?.abortController?.signal.throwIfAborted();
+      rootRuntimeOperation?.abortController?.signal.throwIfAborted();
+
+      if (
+        result.success &&
+        result.state?.localScratch &&
+        executionContext?.plan.kind === 'device' &&
+        executionContext.plan.target === 'local' &&
+        topicId &&
+        payload.id &&
+        rootRuntimeOperationId
+      ) {
+        try {
+          const bound = await lambdaClient.projectWorkspace.finalizeLocalScratch.mutate({
+            deviceId: executionContext.plan.deviceId,
+            operationId: executionContext.operationId ?? operationId!,
+            toolCallId: payload.id,
+            topicId,
+          });
+          const next = {
+            ...executionContext,
+            cwd: bound.workspace.rootPath,
+            workspace: bound.workspace,
+            snapshot: bound.snapshot,
+            unresolvedReason: undefined,
+            accessRoots: [
+              ...(executionContext.accessRoots ?? []).filter((root) => root.scope !== 'primary'),
+              {
+                deviceId: bound.workspace.deviceId,
+                rootPath: bound.workspace.rootPath,
+                modes: ['read' as const, 'write' as const, 'exec' as const],
+                scope: 'primary' as const,
+                source: 'workspace' as const,
+              },
+            ],
+          };
+          this.#get().updateOperationMetadata(rootRuntimeOperationId, { executionContext: next });
+          useProjectWorkspaceStore.setState((current) => ({
+            topicStatesById: { ...current.topicStatesById, [topicId]: bound },
+          }));
+        } catch (error) {
+          // The local command has already succeeded. Preserve that result so a
+          // transient binding failure cannot cause the model to repeat its side effects.
+          // The next cwd-dependent call will reuse the same per-topic scratch root
+          // and retry persistence with fresh main-process execution evidence.
+          log('Local scratch finalization is pending: %O', error);
+          result.content = `${result.content ?? ''}\n\nThe tool completed successfully. Workspace synchronization is pending because the server could not confirm the local execution. Do not repeat this command solely to synchronize the workspace; reconnect the device before continuing.`;
+          result.state = { ...result.state, workspaceSynchronizationPending: true };
+        }
+      }
 
       log('[BuiltinToolCall] invoke:end', {
         apiName: payload.apiName,

@@ -4,6 +4,7 @@ import {
   type RecentTopicGroupMember,
 } from '@lobechat/types';
 import { cleanObject } from '@lobechat/utils';
+import { TRPCError } from '@trpc/server';
 import { inArray } from 'drizzle-orm';
 import { after } from 'next/server';
 import { z } from 'zod';
@@ -14,6 +15,7 @@ import { AgentModel } from '@/database/models/agent';
 import { AgentOperationModel } from '@/database/models/agentOperation';
 import { ChatGroupModel } from '@/database/models/chatGroup';
 import { MessageModel } from '@/database/models/message';
+import { ProjectWorkspaceModel } from '@/database/models/projectWorkspace';
 import { TopicModel } from '@/database/models/topic';
 import { TopicShareModel } from '@/database/models/topicShare';
 import { AgentMigrationRepo } from '@/database/repositories/agentMigration';
@@ -21,6 +23,12 @@ import { TopicImporterRepo } from '@/database/repositories/topicImporter';
 import { chatGroups } from '@/database/schemas';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { resolveTopicCreationExecutionMetadata } from '@/server/services/aiAgent/topicExecutionIntent';
+import { DeviceGateway } from '@/server/services/deviceGateway';
+import {
+  ScratchWorkspaceCleanupError,
+  TopicDeletionService,
+} from '@/server/services/projectWorkspace/topicDeletion';
 import { type BatchTaskResult } from '@/types/service';
 
 import {
@@ -33,6 +41,8 @@ import { basicContextSchema } from './_schema/context';
 const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
   const wsId = ctx.workspaceId ?? undefined;
+  const projectWorkspaceModel = new ProjectWorkspaceModel(ctx.serverDB, ctx.userId);
+  const topicModel = new TopicModel(ctx.serverDB, ctx.userId, wsId);
 
   return opts.next({
     ctx: {
@@ -40,12 +50,43 @@ const topicProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) =>
       agentModel: new AgentModel(ctx.serverDB, ctx.userId, wsId),
       agentOperationModel: new AgentOperationModel(ctx.serverDB, ctx.userId, wsId),
       chatGroupModel: new ChatGroupModel(ctx.serverDB, ctx.userId, wsId),
+      projectWorkspaceModel,
+      topicDeletionService: new TopicDeletionService({
+        deviceGateway: new DeviceGateway(),
+        projectWorkspaceModel,
+        topicModel,
+        userId: ctx.userId,
+      }),
       topicImporterRepo: new TopicImporterRepo(ctx.serverDB, ctx.userId, wsId),
-      topicModel: new TopicModel(ctx.serverDB, ctx.userId, wsId),
+      topicModel,
       topicShareModel: new TopicShareModel(ctx.serverDB, ctx.userId, wsId),
     },
   });
 });
+
+const runTopicDeletion = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ScratchWorkspaceCleanupError) {
+      throw new TRPCError({
+        cause: error,
+        code: 'PRECONDITION_FAILED',
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+};
+
+const topicExecutionIntentSchema = z
+  .object({
+    platform: z.enum(['desktop', 'web']),
+    target: z.enum(['local', 'device', 'sandbox', 'none']),
+    targetDeviceId: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const topicRouter = router({
   getTopicDetail: topicProcedure
@@ -137,14 +178,14 @@ export const topicRouter = router({
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ ids: z.array(z.string()) }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDelete(input.ids);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeByIds(input.ids));
     }),
 
   batchDeleteByAgentId: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ agentId: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.batchDeleteByAgentId(input.agentId);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeByAgentId(input.agentId));
     }),
 
   batchDeleteBySessionId: topicProcedure
@@ -163,7 +204,7 @@ export const topicRouter = router({
         ctx.workspaceId ?? undefined,
       );
 
-      return ctx.topicModel.batchDeleteBySessionId(resolved.sessionId);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeBySessionId(resolved.sessionId));
     }),
 
   batchMoveTopics: topicProcedure
@@ -208,6 +249,7 @@ export const topicRouter = router({
     .input(
       z
         .object({
+          executionIntent: topicExecutionIntentSchema.optional(),
           favorite: z.boolean().optional(),
           groupId: z.string().nullable().optional(),
           messages: z.array(z.string()).optional(),
@@ -217,7 +259,7 @@ export const topicRouter = router({
         .extend(basicContextSchema.shape),
     )
     .mutation(async ({ input, ctx }) => {
-      const { agentId, ...rest } = input;
+      const { agentId, executionIntent, ...rest } = input;
       const resolved = await resolveContext(
         { agentId, sessionId: rest.sessionId },
         ctx.serverDB,
@@ -225,7 +267,17 @@ export const topicRouter = router({
         ctx.workspaceId ?? undefined,
       );
 
-      const data = await ctx.topicModel.create({ ...rest, sessionId: resolved.sessionId });
+      const metadata = await resolveTopicCreationExecutionMetadata({
+        intent: executionIntent,
+        organizationWorkspaceId: ctx.workspaceId ?? undefined,
+        workspaceModel: new ProjectWorkspaceModel(ctx.serverDB, ctx.userId),
+      });
+
+      const data = await ctx.topicModel.create({
+        ...rest,
+        metadata,
+        sessionId: resolved.sessionId,
+      });
 
       return data.id;
     }),
@@ -541,14 +593,14 @@ export const topicRouter = router({
   removeAllTopics: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .mutation(async ({ ctx }) => {
-      return ctx.topicModel.deleteAll();
+      return runTopicDeletion(() => ctx.topicDeletionService.removeAll());
     }),
 
   removeTopic: topicProcedure
     .use(withScopedPermission('topic:delete'))
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.delete(input.id);
+      return runTopicDeletion(() => ctx.topicDeletionService.removeById(input.id));
     }),
 
   searchTopics: topicProcedure
@@ -712,7 +764,15 @@ export const topicRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return ctx.topicModel.updateMetadata(input.id, input.metadata);
+      // Keep accepting authority-shaped fields for rolling-upgrade compatibility, but never let
+      // renderer payloads author the execution binding. Only ProjectWorkspaceService may persist
+      // these mirrors together with the server-authored executionSnapshot.
+      const {
+        boundDeviceId: _boundDeviceId,
+        workingDirectory: _workingDirectory,
+        ...metadata
+      } = input.metadata;
+      return ctx.topicModel.updateMetadata(input.id, metadata);
     }),
 });
 

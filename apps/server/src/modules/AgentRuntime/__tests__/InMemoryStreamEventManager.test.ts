@@ -68,7 +68,60 @@ describe('InMemoryStreamEventManager', () => {
     });
   });
 
+  it('retains stream ownership after completion and removes it with stream cleanup', async () => {
+    await manager.publishAgentRuntimeInit('owned-op', { userId: 'owner' });
+    for (let i = 0; i < 1001; i++) {
+      await manager.publishStreamEvent('owned-op', {
+        data: {},
+        stepIndex: i,
+        type: 'stream_chunk',
+      });
+    }
+    expect(
+      manager.getAllEvents('owned-op').some((event) => event.type === 'agent_runtime_init'),
+    ).toBe(false);
+    expect(await manager.getStreamOwner('owned-op')).toBe('owner');
+    await manager.cleanupOperation('owned-op');
+    expect(await manager.getStreamOwner('owned-op')).toBeUndefined();
+  });
+
   describe('subscribeStreamEvents', () => {
+    it('replays after the exact cursor once, including an already completed run', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(100);
+      try {
+        const cursor = await manager.publishStreamEvent('op-replay', {
+          data: {},
+          stepIndex: 0,
+          type: 'stream_start',
+        });
+        await manager.publishStreamEvent('op-replay', {
+          data: { content: 'one' },
+          stepIndex: 0,
+          type: 'stream_chunk',
+        });
+        await manager.publishStreamEvent('op-replay', {
+          data: {},
+          stepIndex: 0,
+          type: 'agent_runtime_end',
+        });
+        const received = vi.fn();
+        await manager.subscribeStreamEvents('op-replay', cursor, received);
+        expect(received).toHaveBeenCalledTimes(1);
+        expect(received.mock.calls[0][0].map((event: StreamEvent) => event.type)).toEqual([
+          'stream_chunk',
+          'agent_runtime_end',
+        ]);
+        await manager.publishStreamEvent('op-replay', {
+          data: {},
+          stepIndex: 0,
+          type: 'stream_chunk',
+        });
+        expect(received).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     it('should resolve when agent_runtime_end event is received', async () => {
       const receivedEvents: StreamEvent[] = [];
 

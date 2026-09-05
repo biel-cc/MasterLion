@@ -1,0 +1,391 @@
+{
+  "slug": "05-environment",
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "showcase",
+  "width": 1660,
+  "height": 880,
+  "title": "05  环境变量如何进入子进程",
+  "subtitle": "左侧是继承来源，右侧同名变量覆盖左侧；不同执行路径有不同的拼装规则。",
+  "containers": [
+    {
+      "id": "shellenv",
+      "x": 40,
+      "y": 120,
+      "width": 1580,
+      "height": 134,
+      "label": "A · 普通 local-system.runCommand"
+    },
+    {
+      "id": "localenv",
+      "x": 40,
+      "y": 285,
+      "width": 1580,
+      "height": 134,
+      "label": "B · 桌面 local 的 Claude Code / Codex"
+    },
+    {
+      "id": "gatewayenv",
+      "x": 40,
+      "y": 450,
+      "width": 1580,
+      "height": 134,
+      "label": "C · Gateway 下发到 Electron 的外部 CLI"
+    },
+    {
+      "id": "prompt",
+      "x": 40,
+      "y": 615,
+      "width": 1580,
+      "height": 134,
+      "label": "D · 提示词上下文：是模型输入文本，不是操作系统环境变量"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "shellenv0",
+      "kind": "rect",
+      "x": 70,
+      "y": 162,
+      "width": 327,
+      "height": 70,
+      "label": "Electron process.env",
+      "sublabel": "启动环境 + fixPath + bundled bin",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "shellenv1",
+      "kind": "rect",
+      "x": 467,
+      "y": 162,
+      "width": 327,
+      "height": 70,
+      "label": "单次 params.env",
+      "sublabel": "模型工具参数 / 调用方传入",
+      "fill": "#fff7ed",
+      "stroke": "#fdba74",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "shellenv2",
+      "kind": "rect",
+      "x": 864,
+      "y": 162,
+      "width": 327,
+      "height": 70,
+      "label": "childEnv",
+      "sublabel": "{ ...process.env, ...extraEnv }",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "shellenv3",
+      "kind": "rect",
+      "x": 1261,
+      "y": 162,
+      "width": 327,
+      "height": 70,
+      "label": "新 shell 进程",
+      "sublabel": "/bin/sh -c；Windows 为 cmd.exe /c",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "localenv0",
+      "kind": "rect",
+      "x": 70,
+      "y": 327,
+      "width": 327,
+      "height": 70,
+      "label": "清理后的父环境",
+      "sublabel": "移除 3 个 ANTHROPIC_* 认证变量",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "localenv1",
+      "kind": "rect",
+      "x": 467,
+      "y": 327,
+      "width": 327,
+      "height": 70,
+      "label": "PATH + 代理配置",
+      "sublabel": "CLI 检测 PATH；buildProxyEnv",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "localenv2",
+      "kind": "rect",
+      "x": 864,
+      "y": 327,
+      "width": 327,
+      "height": 70,
+      "label": "session.env",
+      "sublabel": "heterogeneousProvider.env 最后覆盖",
+      "fill": "#fff7ed",
+      "stroke": "#fdba74",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "localenv3",
+      "kind": "rect",
+      "x": 1261,
+      "y": 327,
+      "width": 327,
+      "height": 70,
+      "label": "CLI 子进程",
+      "sublabel": "spawnEnv 与 cwd 分别传给 spawn",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "gatewayenv0",
+      "kind": "rect",
+      "x": 70,
+      "y": 492,
+      "width": 327,
+      "height": 70,
+      "label": "Electron process.env",
+      "sublabel": "此路径未使用本地 CLI 的清理函数",
+      "fill": "#f8fafc",
+      "stroke": "#cbd5e1",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "gatewayenv1",
+      "kind": "rect",
+      "x": 467,
+      "y": 492,
+      "width": 327,
+      "height": 70,
+      "label": "应用代理设置",
+      "sublabel": "HTTP(S)_PROXY / ALL_PROXY / NO_PROXY",
+      "fill": "#eff6ff",
+      "stroke": "#93c5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "gatewayenv2",
+      "kind": "rect",
+      "x": 864,
+      "y": 492,
+      "width": 327,
+      "height": 70,
+      "label": "运行认证变量",
+      "sublabel": "LOBEHUB_JWT / LOBEHUB_SERVER",
+      "fill": "#fff7ed",
+      "stroke": "#fdba74",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "gatewayenv3",
+      "kind": "rect",
+      "x": 1261,
+      "y": 492,
+      "width": 327,
+      "height": 70,
+      "label": "lh → 外部 CLI",
+      "sublabel": "CLI spawn 再继承它的 process.env",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "prompt0",
+      "kind": "rect",
+      "x": 70,
+      "y": 657,
+      "width": 440,
+      "height": 70,
+      "label": "设备 / 项目资料",
+      "sublabel": "systemInfo + AGENTS.md + Skill metadata",
+      "fill": "#f0fdf4",
+      "stroke": "#86efac",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "prompt1",
+      "kind": "rect",
+      "x": 610,
+      "y": 657,
+      "width": 440,
+      "height": 70,
+      "label": "模板与上下文引擎",
+      "sublabel": "{{workingDirectory}} 等占位符",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    },
+    {
+      "id": "prompt2",
+      "kind": "rect",
+      "x": 1150,
+      "y": 657,
+      "width": 440,
+      "height": 70,
+      "label": "发送给模型的消息",
+      "sublabel": "改变模型所见信息；不会自动 export 或 chdir",
+      "fill": "#faf5ff",
+      "stroke": "#c4b5fd",
+      "flat": true,
+      "title_size": 18
+    }
+  ],
+  "arrows": [
+    {
+      "id": "shellenv0--shellenv1",
+      "source": "shellenv0",
+      "target": "shellenv1",
+      "label": "覆盖合并",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "shellenv1--shellenv2",
+      "source": "shellenv1",
+      "target": "shellenv2",
+      "label": "得到",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "shellenv2--shellenv3",
+      "source": "shellenv2",
+      "target": "shellenv3",
+      "label": "spawn",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "localenv0--localenv1",
+      "source": "localenv0",
+      "target": "localenv1",
+      "label": "补充",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "localenv1--localenv2",
+      "source": "localenv1",
+      "target": "localenv2",
+      "label": "覆盖",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "localenv2--localenv3",
+      "source": "localenv2",
+      "target": "localenv3",
+      "label": "spawn",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "gatewayenv0--gatewayenv1",
+      "source": "gatewayenv0",
+      "target": "gatewayenv1",
+      "label": "覆盖",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "gatewayenv1--gatewayenv2",
+      "source": "gatewayenv1",
+      "target": "gatewayenv2",
+      "label": "覆盖",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "gatewayenv2--gatewayenv3",
+      "source": "gatewayenv2",
+      "target": "gatewayenv3",
+      "label": "继承",
+      "flow": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "prompt0--prompt1",
+      "source": "prompt0",
+      "target": "prompt1",
+      "label": "读取",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    },
+    {
+      "id": "prompt1--prompt2",
+      "source": "prompt1",
+      "target": "prompt2",
+      "label": "注入文本",
+      "flow": "read",
+      "source_port": "right",
+      "target_port": "left",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 790,
+  "legend_locked": true,
+  "legend": [
+    {
+      "flow": "data",
+      "label": "传递 / 引用"
+    },
+    {
+      "flow": "feedback",
+      "label": "循环 / 反馈"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 上下文"
+    }
+  ],
+  "footer": "Masterino · feat/workspace-runtime · 73e2ea9a · 2026-09-03 · 静态代码追踪",
+  "footer_x": 60,
+  "footer_y": 850
+}

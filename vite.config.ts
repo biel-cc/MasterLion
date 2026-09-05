@@ -21,7 +21,10 @@ const isMobile = process.env.MOBILE === 'true';
 const isAuth = process.env.AUTH === 'true';
 const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development';
 
-Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
+const isolatedDevelopment =
+  process.env.NODE_ENV === 'development' &&
+  ['local', 'test'].includes(process.env.MASTERINO_DEV_ENV || '');
+if (!isolatedDevelopment) Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
 
 const isDev = process.env.NODE_ENV !== 'production';
 const platform = isAuth ? 'auth' : isMobile ? 'mobile' : 'web';
@@ -102,6 +105,9 @@ const openExternalBrowser = async (
 };
 
 export default defineConfig({
+  ...(isolatedDevelopment
+    ? { envDir: false, cacheDir: path.resolve('node_modules/.cache/masterino/web') }
+    : {}),
   base: isDev ? '/' : process.env.VITE_CDN_BASE || (isAuth ? '/_spa-auth/' : '/_spa/'),
   build: {
     modulePreload: sharedModulePreload,
@@ -153,6 +159,8 @@ export default defineConfig({
         const isBundledDev = (server.config.experimental as any)?.bundledDev;
 
         const getProxyUrl = () => {
+          if (isolatedDevelopment)
+            return `${process.env.APP_URL || 'http://localhost:3010'}/__local-dev`;
           const urls = server.resolvedUrls;
           if (!urls?.local?.[0]) return;
           const localHost = urls.local[0].replace(/\/$/, '');
@@ -303,6 +311,7 @@ export default defineConfig({
   ].filter(Boolean) as PluginOption[],
 
   server: {
+    fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.local-dev/**'] },
     cors: true,
     host: true,
     port: 9876,
@@ -312,57 +321,65 @@ export default defineConfig({
       '/trpc': `http://localhost:${process.env.PORT || 3010}`,
       '/webapi': `http://localhost:${process.env.PORT || 3010}`,
     },
-    warmup: {
-      clientFiles: [
-        // src/ business code
-        './src/initialize.ts',
-        './src/spa/**/*.tsx',
-        './src/business/**/*.{ts,tsx}',
-        './src/components/**/*.{ts,tsx}',
-        './src/const/**/*.ts',
-        './src/features/**/*.{ts,tsx}',
-        './src/helpers/**/*.ts',
-        './src/hooks/**/*.{ts,tsx}',
-        './src/layout/**/*.{ts,tsx}',
-        './src/libs/**/*.{ts,tsx}',
-        './src/routes/**/*.{ts,tsx}',
-        './src/services/**/*.ts',
-        './src/store/**/*.{ts,tsx}',
-        './src/styles/**/*.ts',
-        './src/utils/**/*.{ts,tsx}',
+    warmup: isolatedDevelopment
+      ? undefined
+      : {
+          clientFiles: [
+            // src/ business code
+            './src/initialize.ts',
+            './src/spa/**/*.tsx',
+            './src/business/**/*.{ts,tsx}',
+            './src/components/**/*.{ts,tsx}',
+            './src/const/**/*.ts',
+            './src/features/**/*.{ts,tsx}',
+            './src/helpers/**/*.ts',
+            './src/hooks/**/*.{ts,tsx}',
+            './src/layout/**/*.{ts,tsx}',
+            './src/libs/**/*.{ts,tsx}',
+            './src/routes/**/*.{ts,tsx}',
+            './src/services/**/*.ts',
+            './src/store/**/*.{ts,tsx}',
+            './src/styles/**/*.ts',
+            './src/utils/**/*.{ts,tsx}',
 
-        // monorepo packages
-        './packages/types/src/**/*.ts',
-        './packages/const/src/**/*.ts',
-        './packages/utils/src/**/*.ts',
-        './packages/context-engine/src/**/*.ts',
-        './packages/prompts/src/**/*.ts',
-        './packages/model-bank/src/**/*.ts',
-        './packages/model-runtime/src/**/*.ts',
-        './packages/agent-runtime/src/**/*.ts',
-        './packages/conversation-flow/src/**/*.ts',
-        './packages/electron-client-ipc/src/**/*.ts',
-        './packages/builtin-agents/src/**/*.ts',
-        './packages/builtin-skills/src/**/*.ts',
-        './packages/builtin-tool-*/src/**/*.ts',
-        './packages/builtin-tools/src/**/*.ts',
-        './packages/business/*/src/**/*.ts',
-        './packages/business-server/src/**/*.ts',
-        './packages/config/src/**/*.ts',
-        './packages/edge-config/src/**/*.ts',
-        './packages/editor-runtime/src/**/*.ts',
-        './packages/env/src/**/*.ts',
-        './packages/trpc/src/**/*.{ts,tsx}',
-        './packages/app-config/src/**/*.ts',
-        './packages/locales/src/**/*.ts',
-        './packages/fetch-sse/src/**/*.ts',
-        './packages/desktop-bridge/src/**/*.ts',
-        './packages/python-interpreter/src/**/*.ts',
-        './packages/agent-manager-runtime/src/**/*.ts',
-      ],
-    },
+            // monorepo packages
+            './packages/types/src/**/*.ts',
+            './packages/const/src/**/*.ts',
+            './packages/utils/src/**/*.ts',
+            './packages/context-engine/src/**/*.ts',
+            './packages/prompts/src/**/*.ts',
+            './packages/model-bank/src/**/*.ts',
+            './packages/model-runtime/src/**/*.ts',
+            './packages/agent-runtime/src/**/*.ts',
+            './packages/conversation-flow/src/**/*.ts',
+            './packages/electron-client-ipc/src/**/*.ts',
+            './packages/builtin-agents/src/**/*.ts',
+            './packages/builtin-skills/src/**/*.ts',
+            './packages/builtin-tool-*/src/**/*.ts',
+            './packages/builtin-tools/src/**/*.ts',
+            './packages/business/*/src/**/*.ts',
+            './packages/business-server/src/**/*.ts',
+            './packages/config/src/**/*.ts',
+            './packages/edge-config/src/**/*.ts',
+            './packages/editor-runtime/src/**/*.ts',
+            './packages/env/src/**/*.ts',
+            './packages/trpc/src/**/*.{ts,tsx}',
+            './packages/app-config/src/**/*.ts',
+            './packages/locales/src/**/*.ts',
+            './packages/fetch-sse/src/**/*.ts',
+            './packages/desktop-bridge/src/**/*.ts',
+            './packages/python-interpreter/src/**/*.ts',
+            './packages/agent-manager-runtime/src/**/*.ts',
+          ],
+        },
     watch: {
-      ignored: ['**/.codex/**', '**/.tmp*/**', '**/e2e/reports/**', '**/e2e/screenshots/**'],
+      ignored: [
+        '**/.codex/**',
+        '**/.local-dev/**',
+        '**/.tmp*/**',
+        '**/e2e/reports/**',
+        '**/e2e/screenshots/**',
+      ],
     },
   },
 });

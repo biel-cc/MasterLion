@@ -11,12 +11,15 @@ import {
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { selectRuntimeType } from '@/store/chat/slices/aiChat/actions/agentDispatcher';
+import { routeDesktopWorkspaceRuntime } from '@/store/chat/slices/aiChat/actions/managedEnvRuntime';
 import { operationSelectors } from '@/store/chat/slices/operation/selectors';
 import { AI_RUNTIME_OPERATION_TYPES } from '@/store/chat/slices/operation/types';
 import { type ChatStore } from '@/store/chat/store';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace';
+import { resolvePendingTopicExecutionIntent } from '@/store/projectWorkspace/topicExecutionIntent';
 import { type StoreSetter } from '@/store/types';
 
-import { displayMessageSelectors } from '../../../selectors';
+import { displayMessageSelectors, topicSelectors } from '../../../selectors';
 import { messageMapKey } from '../../../utils/messageMapKey';
 import { type OptimisticUpdateContext } from '../../message/actions/optimisticUpdate';
 import { dbMessageSelectors } from '../../message/selectors';
@@ -56,17 +59,39 @@ export class ConversationControlActionImpl {
    * scanning for it would flip us back into client-mode against a live
    * Gateway backend.
    */
-  #shouldUseGatewayResume = (context: ConversationContext): boolean => {
+  #shouldUseGatewayResume = async (context: ConversationContext): Promise<boolean> => {
     const agentConfig = context.agentId
       ? agentSelectors.getAgentConfigById(context.agentId)(getAgentStoreState())
       : undefined;
+    const topicId = context.topicId ?? undefined;
+    const workspaceId = topicId
+      ? (getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot?.workspaceId ??
+        topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.executionSnapshot?.workspaceId)
+      : undefined;
+    const topicSnapshot = topicId
+      ? (getProjectWorkspaceStoreState().topicStatesById?.[topicId]?.snapshot ??
+        topicSelectors.getTopicById(topicId)(this.#get())?.metadata?.executionSnapshot)
+      : undefined;
+    const pendingExecution = await resolvePendingTopicExecutionIntent({
+      agentId: context.agentId,
+      groupId: context.groupId,
+      isNewTopic: false,
+      topicId,
+      topicSnapshot,
+    });
     return (
-      selectRuntimeType({
-        boundDeviceId: agentConfig?.agencyConfig?.boundDeviceId,
-        executionTarget: agentConfig?.agencyConfig?.executionTarget,
-        heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
-        isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
-      }) === 'gateway'
+      (await routeDesktopWorkspaceRuntime(
+        selectRuntimeType({
+          boundDeviceId: pendingExecution?.intent.targetDeviceId ?? agentConfig?.agencyConfig?.boundDeviceId,
+          executionTarget: pendingExecution?.intent.target ?? agentConfig?.agencyConfig?.executionTarget,
+          heterogeneousProvider: agentConfig?.agencyConfig?.heterogeneousProvider,
+          isGatewayMode: this.#get().isGatewayModeEnabled(context.agentId),
+        }),
+        {
+          topicId,
+          workspaceId,
+        },
+      )) === 'gateway'
     );
   };
 
@@ -291,12 +316,27 @@ export class ConversationControlActionImpl {
       // message, persists `intervention=approved`, dispatches the approved
       // tool, and streams results back on the new op. No in-place resume of
       // the paused op — simpler state + avoids stepIndex races.
-      if (this.#shouldUseGatewayResume(effectiveContext)) {
+      if (await this.#shouldUseGatewayResume(effectiveContext)) {
         // Snapshot paused op IDs before the resume call; retire them only
         // after executeGatewayAgent succeeds so a transient failure leaves
         // the running marker intact and `#shouldUseGatewayResume` still flags
         // Gateway mode on retry.
         const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+        const pathDecision =
+          getProjectWorkspaceStoreState().operationConsentByMessage[toolMessageId];
+        const pathConsent =
+          pathDecision?.scope === 'operation' && pathDecision.modes.length > 0
+            ? {
+                deviceId: pathDecision.deviceId,
+                modes: [...pathDecision.modes],
+                requestedPath: pathDecision.requestedPath,
+                rootPath: pathDecision.rootPath,
+                scope: 'operation' as const,
+                sourceOperationId: pathDecision.operationId,
+                topicId: pathDecision.topicId,
+                version: 1 as const,
+              }
+            : undefined;
         try {
           await this.#get().executeGatewayAgent({
             context: effectiveContext,
@@ -305,10 +345,14 @@ export class ConversationControlActionImpl {
             parentMessageId: toolMessageId,
             resumeApproval: {
               decision: 'approved',
+              ...(pathConsent && { pathConsent }),
               parentMessageId: toolMessageId,
               toolCallId,
             },
           });
+          if (pathConsent) {
+            getProjectWorkspaceStoreState().clearOperationPathConsent(toolMessageId);
+          }
           this.#completeOpsById(pausedOpIds);
           completeOperation(operationId);
         } catch (error) {
@@ -448,6 +492,32 @@ export class ConversationControlActionImpl {
         currentMessages,
       );
 
+      if (await this.#shouldUseGatewayResume(effectiveContext)) {
+        const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+        try {
+          await this.#get().executeGatewayAgent({
+            context: effectiveContext,
+            message: '',
+            metadata: requestMetadata,
+            parentMessageId: toolMessageId,
+            resumeInteraction: {
+              parentMessageId: toolMessageId,
+              phase: 'tool_result',
+            },
+          });
+          this.#completeOpsById(pausedOpIds);
+          completeOperation(operationId);
+        } catch (error) {
+          const err = error as Error;
+          console.error('[submitToolInteraction][server] Gateway resume failed:', err);
+          this.#get().failOperation(operationId, {
+            type: 'submitToolInteraction',
+            message: err.message || 'Unknown error',
+          });
+        }
+        return;
+      }
+
       const { state, context: initialContext } = this.#get().internal_createAgentState({
         messages: currentMessages,
         parentMessageId: toolMessageId,
@@ -516,6 +586,32 @@ export class ConversationControlActionImpl {
         type: 'submitToolInteraction',
         message: 'Failed to create user message',
       });
+      return;
+    }
+
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
+      const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+      try {
+        await this.#get().executeGatewayAgent({
+          context: effectiveContext,
+          message: '',
+          metadata: requestMetadata,
+          parentMessageId: userMsg.id,
+          resumeInteraction: {
+            parentMessageId: userMsg.id,
+            phase: 'user_input',
+          },
+        });
+        this.#completeOpsById(pausedOpIds);
+        completeOperation(operationId);
+      } catch (error) {
+        const err = error as Error;
+        console.error('[submitToolInteraction][server] Gateway resume failed:', err);
+        this.#get().failOperation(operationId, {
+          type: 'submitToolInteraction',
+          message: err.message || 'Unknown error',
+        });
+      }
       return;
     }
 
@@ -622,6 +718,32 @@ export class ConversationControlActionImpl {
         type: 'skipToolInteraction',
         message: 'Failed to create user message',
       });
+      return;
+    }
+
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
+      const pausedOpIds = this.#getRunningServerOps(effectiveContext).map((op) => op.id);
+      try {
+        await this.#get().executeGatewayAgent({
+          context: effectiveContext,
+          message: '',
+          metadata: requestMetadata,
+          parentMessageId: userMsg.id,
+          resumeInteraction: {
+            parentMessageId: userMsg.id,
+            phase: 'user_input',
+          },
+        });
+        this.#completeOpsById(pausedOpIds);
+        completeOperation(operationId);
+      } catch (error) {
+        const err = error as Error;
+        console.error('[skipToolInteraction][server] Gateway resume failed:', err);
+        this.#get().failOperation(operationId, {
+          type: 'skipToolInteraction',
+          message: err.message || 'Unknown error',
+        });
+      }
       return;
     }
 
@@ -965,7 +1087,7 @@ export class ConversationControlActionImpl {
     // `rejected_continue` share the same code path (both surface the
     // rejection to the LLM as user feedback), so a separate `rejected`
     // decision adds complexity without behavioural difference.
-    if (this.#shouldUseGatewayResume(effectiveContext)) {
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
       const toolCallId = toolMessage.tool_call_id;
       if (!toolCallId) {
         console.warn(
@@ -1021,7 +1143,7 @@ export class ConversationControlActionImpl {
     // the LLM loop with the rejection content surfaced as user feedback.
     // Skip the client-mode `rejectToolCalling` chain below — that would fire
     // a duplicate halting `reject` before this continue signal.
-    if (this.#shouldUseGatewayResume(effectiveContext)) {
+    if (await this.#shouldUseGatewayResume(effectiveContext)) {
       const requestMetadata = this.#getRequestMetadataFromMessageChain(messageId);
       const toolCallId = toolMessage.tool_call_id;
       if (!toolCallId) {

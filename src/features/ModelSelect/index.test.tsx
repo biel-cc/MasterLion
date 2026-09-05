@@ -8,8 +8,15 @@ import { describe, expect, it, vi } from 'vitest';
 import ModelSelect from '.';
 
 const selectMock = vi.fn();
+const modelItemMock = vi.fn();
 
 vi.mock('@lobehub/ui', () => ({
+  Avatar: () => null,
+  Flexbox: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Icon: () => null,
+  Tag: () => null,
+  Text: () => null,
+  Tooltip: () => null,
   TooltipGroup: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -18,21 +25,43 @@ vi.mock('@lobehub/ui/base-ui', () => ({
     selectMock(props);
     return <button onClick={() => props.onChange('newapi/glm-5.1', { provider: 'newapi' })} />;
   },
+  Tooltip: () => null,
+}));
+
+vi.mock('@lobehub/icons', () => ({
+  LobeHub: { Morden: () => null },
+  ModelIcon: () => null,
+  ProviderIcon: () => null,
 }));
 
 vi.mock('antd-style', () => ({
-  createStaticStyles: () => ({
-    popup: 'popup',
-    select: 'select',
-  }),
+  createStaticStyles: () => new Proxy({}, { get: (_, key) => String(key) }),
+  cssVar: new Proxy({}, { get: (_, key) => `var(--${String(key)})` }),
+  cx: (...classNames: unknown[]) => classNames.filter(Boolean).join(' '),
+  useResponsive: () => ({ mobile: false }),
 }));
 
-vi.mock('@/components/ModelSelect', () => ({
-  ModelItemRender: ({ displayName, id }: { displayName?: string; id: string }) => (
-    <span>{displayName || id}</span>
-  ),
+// Keep the real catalog hooks so the eligibility gate under test is the production one.
+vi.mock('@/components/ModelSelect', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ModelItemRender: (props: { displayName?: string; id: string; providerId?: string }) => {
+    modelItemMock(props);
+    return <span>{props.displayName || props.id}</span>;
+  },
   ProviderItemRender: ({ name }: { name: string }) => <span>{name}</span>,
-  TAG_CLASSNAME: 'model-tag',
+}));
+
+const storeState = {
+  enabledAiModels: [
+    { abilities: { functionCall: true }, id: 'glm-5.1', providerId: 'newapi', type: 'chat' },
+    // legacy remote rows whose type still says chat; B1 reclassifies them from the id
+    { abilities: {}, id: 'qwen3-vl-rerank', providerId: 'newapi', type: 'chat' },
+    { abilities: {}, id: 'text-embedding-3-small', providerId: 'newapi', type: 'chat' },
+  ],
+};
+
+vi.mock('@/store/aiInfra', () => ({
+  useAiInfraStore: (selector: (state: typeof storeState) => unknown) => selector(storeState),
 }));
 
 vi.mock('@/hooks/useEnabledChatModels', () => ({
@@ -44,6 +73,8 @@ vi.mock('@/hooks/useEnabledChatModels', () => ({
           displayName: 'GLM-5.1',
           id: 'glm-5.1',
         },
+        { abilities: {}, displayName: 'Qwen3 VL Rerank', id: 'qwen3-vl-rerank' },
+        { abilities: {}, displayName: 'Embedding', id: 'text-embedding-3-small' },
       ],
       id: 'newapi',
       name: 'Aihub',
@@ -70,5 +101,18 @@ describe('ModelSelect', () => {
     container.querySelector('button')?.click();
 
     expect(onChange).toHaveBeenCalledWith({ model: 'glm-5.1', provider: 'newapi' });
+  });
+
+  it('only offers B1 chat-eligible rows, never a rerank or embedding model', () => {
+    render(<ModelSelect value={{ model: 'glm-5.1', provider: 'newapi' }} />);
+
+    const { options } = selectMock.mock.calls.at(-1)![0];
+    expect(options.map((option: { value: string }) => option.value)).toEqual(['newapi/glm-5.1']);
+
+    // the row label carries the provider so the catalog lookup matches the exact pair
+    expect(
+      options.map((option: { label: { props: { id: string } } }) => option.label.props.id),
+    ).toEqual(['glm-5.1']);
+    expect(options[0].label.props).toMatchObject({ id: 'glm-5.1', providerId: 'newapi' });
   });
 });

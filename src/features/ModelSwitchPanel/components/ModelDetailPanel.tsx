@@ -12,6 +12,7 @@ import {
   GlobeIcon,
   ImageIcon,
   PaperclipIcon,
+  ScanEye,
   VideoIcon,
   WrenchIcon,
 } from 'lucide-react';
@@ -28,7 +29,14 @@ import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useBusinessModelPricing } from '@/business/client/hooks/useBusinessModelPricing';
-import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
+import {
+  InputModalityTags,
+  MODALITY_ICONS,
+  NON_TEXT_INPUT_MODALITIES,
+  useChatEligibleModelList,
+  useChatModelCatalog,
+  useInputModalityLabels,
+} from '@/components/ModelSelect';
 import { useGlobalStore } from '@/store/global';
 import type { ModelDetailPanelExpandedKey } from '@/store/global/initialState';
 import { systemStatusSelectors } from '@/store/global/selectors';
@@ -42,6 +50,11 @@ import {
 } from '@/utils/index';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
+  abilityTag: css`
+    min-width: 0;
+    padding: 0 4px;
+    border-radius: 4px;
+  `,
   actionText: css`
     font-size: 14px;
     font-weight: 500;
@@ -49,6 +62,11 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
   `,
   container: css`
     padding-block-end: 8px;
+  `,
+  evidenceText: css`
+    font-size: 11px;
+    color: ${cssVar.colorTextTertiary};
+    text-align: end;
   `,
   row: css`
     padding-block: 4px;
@@ -306,6 +324,15 @@ const ABILITY_CONFIG: AbilityItem[] = [
   { color: 'cyan', icon: GlobeIcon, key: 'search' },
 ];
 
+/**
+ * For chat models image/file/video come from the B1 `inputModalities` evidence, so only
+ * the independent abilities stay in this list.
+ */
+const EVIDENCE_DERIVED_ABILITIES = new Set(['files', 'video', 'vision']);
+const CHAT_ABILITY_CONFIG = ABILITY_CONFIG.filter(
+  (ability) => !EVIDENCE_DERIVED_ABILITIES.has(ability.key),
+);
+
 export type PricingMode = 'image' | 'video';
 
 interface ModelDetailPanelProps {
@@ -319,7 +346,7 @@ const ModelDetailPanel: FC<ModelDetailPanelProps> = memo(
   ({ model: modelId, provider, enabledList: enabledListProp, pricingMode }) => {
     const { t } = useTranslation('components');
 
-    const enabledListFromHook = useEnabledChatModels();
+    const enabledListFromHook = useChatEligibleModelList();
     const enabledList = enabledListProp ?? enabledListFromHook;
     const model = useMemo(() => {
       if (!modelId || !provider) return undefined;
@@ -330,6 +357,13 @@ const ModelDetailPanel: FC<ModelDetailPanelProps> = memo(
     const expandedKeys = useGlobalStore(systemStatusSelectors.modelDetailPanelExpandedKeys);
     const updateExpandedKeys = useGlobalStore((s) => s.updateModelDetailPanelExpandedKeys);
     const applyBusinessModelPricing = useBusinessModelPricing();
+    // Same hook as the list rows, so the detail panel and the row state the same conclusion.
+    const catalog = useChatModelCatalog({
+      abilities: model?.abilities,
+      id: modelId ?? '',
+      providerId: provider,
+    });
+    const modalityLabels = useInputModalityLabels();
 
     const pricing = model?.pricing;
     const displayPricing = useMemo(
@@ -403,10 +437,11 @@ const ModelDetailPanel: FC<ModelDetailPanelProps> = memo(
     if (!model) return null;
 
     const hasContext = typeof model.contextWindowTokens === 'number';
-    const enabledAbilities = ABILITY_CONFIG.filter(
+    const showInputModality = catalog.chatEligible;
+    const enabledAbilities = (showInputModality ? CHAT_ABILITY_CONFIG : ABILITY_CONFIG).filter(
       (a) => model.abilities[a.key as keyof typeof model.abilities],
     );
-    const hasAbilities = enabledAbilities.length > 0;
+    const hasAbilities = showInputModality || enabledAbilities.length > 0;
 
     return (
       <Flexbox className={styles.container}>
@@ -460,6 +495,13 @@ const ModelDetailPanel: FC<ModelDetailPanelProps> = memo(
                 action={
                   !expandedKeys.includes('abilities') && (
                     <Flexbox horizontal gap={2}>
+                      {showInputModality && (
+                        <InputModalityTags
+                          disableTooltip
+                          conclusion={catalog.inputModality}
+                          tagClassName={styles.abilityTag}
+                        />
+                      )}
                       {enabledAbilities.map((ability) => (
                         <Tag
                           color={ability.color}
@@ -490,6 +532,59 @@ const ModelDetailPanel: FC<ModelDetailPanelProps> = memo(
                 }
               >
                 <Flexbox gap={4}>
+                  {showInputModality && (
+                    <>
+                      <Flexbox
+                        horizontal
+                        align={'center'}
+                        className={styles.row}
+                        justify={'space-between'}
+                      >
+                        <Flexbox horizontal align={'center'} gap={6}>
+                          <Icon icon={ScanEye} style={{ fontSize: 12 }} />
+                          <span>
+                            {t('ModelSwitchPanel.detail.inputModality' as any, {
+                              defaultValue: 'Input modality',
+                            })}
+                          </span>
+                        </Flexbox>
+                        <span
+                          className={styles.evidenceText}
+                          data-input-modality={catalog.inputModality.kind}
+                        >
+                          {modalityLabels.conclusionLabel(catalog.inputModality)}
+                        </span>
+                      </Flexbox>
+                      {NON_TEXT_INPUT_MODALITIES.map((modality) => {
+                        const evidence = catalog.inputModality.evidence[modality];
+
+                        return (
+                          <Flexbox
+                            horizontal
+                            align={'center'}
+                            className={styles.row}
+                            justify={'space-between'}
+                            key={modality}
+                          >
+                            <Flexbox horizontal align={'center'} gap={6}>
+                              <Icon icon={MODALITY_ICONS[modality]} style={{ fontSize: 12 }} />
+                              <span>{modalityLabels.modalityName(modality)}</span>
+                            </Flexbox>
+                            <span
+                              className={styles.evidenceText}
+                              data-evidence-state={evidence.state}
+                            >
+                              {[
+                                modalityLabels.stateLabel(evidence.state),
+                                modalityLabels.sourceLabel(evidence.source),
+                                modalityLabels.verifiedLabel(evidence.verifiedAt),
+                              ].join(' · ')}
+                            </span>
+                          </Flexbox>
+                        );
+                      })}
+                    </>
+                  )}
                   {enabledAbilities.map((ability) => (
                     <Flexbox
                       horizontal

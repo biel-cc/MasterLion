@@ -159,9 +159,14 @@ export const createServerAgentToolsEngine = (
   // tools, local → local-system tools, device → gateway). Callers that don't
   // resolve a plan (focused sub-agent engines) fall back to deriving the
   // effective target from agencyConfig.
+  const platformTarget =
+    agentConfig.agencyConfig?.executionTargetByPlatform?.[platform] ??
+    agentConfig.agencyConfig?.executionTarget;
   const executionTarget =
     executionPlan?.target ??
+    platformTarget ??
     resolveExecutionTarget(agentConfig.agencyConfig, {
+      executionTargetByPlatform: agentConfig.agencyConfig?.executionTargetByPlatform,
       isDesktop: platform === 'desktop',
     });
   const runtimeMode: RuntimeEnvMode = executionTargetToRuntimeMode(executionTarget);
@@ -282,9 +287,26 @@ export const createServerAgentToolsEngine = (
     excludeIdentifiers: canUseDevice ? undefined : DEVICE_TOOL_IDENTIFIERS,
     // Memory consent is a privacy boundary and cannot be bypassed by explicit
     // activation, even though other agent-mode tools may use that mechanism.
-    enableChecker: (params) =>
-      params.pluginId === MemoryManifest.identifier && !globalMemoryEnabled
-        ? false
-        : enableChecker(params),
+    enableChecker: (params) => {
+      // Device runtime boundaries are hard gates. Agent-mode explicit
+      // activation and a user-declared plugin must never re-enable a device
+      // tool when this operation resolved to sandbox/none, or when the
+      // selected device is not eligible for the requested tool.
+      if (
+        params.pluginId === LocalSystemManifest.identifier &&
+        !agentModeRules[LocalSystemManifest.identifier]
+      ) {
+        return false;
+      }
+      if (
+        params.pluginId === RemoteDeviceManifest.identifier &&
+        !agentModeRules[RemoteDeviceManifest.identifier]
+      ) {
+        return false;
+      }
+      if (params.pluginId === MemoryManifest.identifier && !globalMemoryEnabled) return false;
+
+      return enableChecker(params);
+    },
   });
 };

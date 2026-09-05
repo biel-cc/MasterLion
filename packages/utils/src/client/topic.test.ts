@@ -224,6 +224,10 @@ describe('groupTopicsByStatus', () => {
     id,
     title: id,
     createdAt: updatedAt,
+    metadata:
+      status === 'running'
+        ? { runningOperation: { assistantMessageId: `${id}-msg`, operationId: `${id}-op` } }
+        : undefined,
     status,
     updatedAt,
   });
@@ -309,6 +313,15 @@ describe('groupTopicsByStatus', () => {
     expect(result.map((g) => g.id)).toEqual(['running', 'active']);
     expect(result[0].children.map((t) => t.id)).toEqual(['loading']);
     expect(result[1].children.map((t) => t.id)).toEqual(['idle']);
+  });
+
+  it('should treat an unrecoverable persisted running status as active', () => {
+    const stale = { ...createTopic('stale', 'running'), metadata: undefined };
+
+    const result = groupTopicsByStatus([stale], 'updatedAt');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('active');
   });
 
   it('should keep a loading topic in pending (it outranks the running overlay)', () => {

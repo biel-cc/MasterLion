@@ -71,6 +71,7 @@ const ModelSwitch = memo(() => {
 
   const trigger = (
     <Center
+      data-chat-model-switcher-trigger
       className={cx(styles.model, !canCreateContent && styles.modelDisabled)}
       height={blockSize}
       width={blockSize}

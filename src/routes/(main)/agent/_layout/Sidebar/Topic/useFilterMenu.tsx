@@ -4,6 +4,7 @@ import { LucideCheck } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { isDesktop } from '@/const/version';
 import { useUserStore } from '@/store/user';
 import { preferenceSelectors } from '@/store/user/selectors';
 import type { TopicGroupMode, TopicSortBy } from '@/types/topic';
@@ -21,7 +22,9 @@ export const useTopicFilterDropdownMenu = (): DropdownItem[] => {
   ]);
 
   return useMemo(() => {
-    const groupModes: TopicGroupMode[] = ['byStatus', 'byTime', 'byProject', 'flat'];
+    const groupModes: TopicGroupMode[] = isDesktop
+      ? ['byStatus', 'byTime', 'byProject', 'flat']
+      : ['byStatus', 'byTime', 'flat'];
     const sortByOptions: TopicSortBy[] = ['createdAt', 'updatedAt'];
 
     return [

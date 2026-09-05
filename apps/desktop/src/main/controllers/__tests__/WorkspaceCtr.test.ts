@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type App } from '@/core/App';
 
@@ -23,11 +27,6 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('node:fs/promises', () => ({
-  readFile: vi.fn(),
-  readdir: vi.fn(),
-}));
-
 const mockLocalFileProtocolManager = {
   approveIndexedProjectRoot: vi.fn(),
 };
@@ -36,89 +35,71 @@ const mockApp = {
   localFileProtocolManager: mockLocalFileProtocolManager,
 } as unknown as App;
 
+const frontmatter = (name: string, description: string) =>
+  `---\nname: ${name}\ndescription: ${description}\n---\nbody`;
+
 describe('WorkspaceCtr', () => {
+  let projectRoot: string;
   let workspaceCtr: WorkspaceCtr;
-  let mockFsPromises: any;
+
+  const createSkill = async (
+    source: '.agents/skills' | '.claude/skills',
+    name: string,
+    description: string,
+  ) => {
+    const skillDir = path.join(projectRoot, source, name);
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, 'SKILL.md'), frontmatter(name, description));
+    return skillDir;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockFsPromises = await import('node:fs/promises');
+    projectRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'workspace-ctr-')));
     workspaceCtr = new WorkspaceCtr(mockApp);
   });
 
-  const dirent = (name: string, kind: 'dir' | 'file') => ({
-    isDirectory: () => kind === 'dir',
-    isFile: () => kind === 'file',
-    isSymbolicLink: () => false,
-    name,
+  afterEach(async () => {
+    await rm(projectRoot, { force: true, recursive: true });
   });
-
-  const frontmatter = (name: string, description: string) =>
-    `---\nname: ${name}\ndescription: ${description}\n---\nbody`;
 
   describe('initWorkspace', () => {
     it('merges skills from both sources and reads instruction files', async () => {
-      vi.mocked(mockFsPromises.readdir).mockImplementation(async (dir: string) => {
-        if (dir === '/proj/.agents/skills') return [dirent('spa-routes', 'dir')];
-        if (dir === '/proj/.agents/skills/spa-routes') return [dirent('SKILL.md', 'file')];
-        if (dir === '/proj/.claude/skills') return [dirent('reviewer', 'dir')];
-        if (dir === '/proj/.claude/skills/reviewer') return [dirent('SKILL.md', 'file')];
-        throw new Error('ENOENT');
-      });
-      vi.mocked(mockFsPromises.readFile).mockImplementation(async (file: string) => {
-        if (file === '/proj/.agents/skills/spa-routes/SKILL.md')
-          return frontmatter('spa-routes', 'SPA routing');
-        if (file === '/proj/.claude/skills/reviewer/SKILL.md')
-          return frontmatter('reviewer', 'Code review');
-        if (file === '/proj/AGENTS.md') return '# Agents';
-        if (file === '/proj/CLAUDE.md') return '# Claude';
-        throw new Error('ENOENT');
-      });
+      await createSkill('.agents/skills', 'spa-routes', 'SPA routing');
+      await createSkill('.claude/skills', 'reviewer', 'Code review');
+      await writeFile(path.join(projectRoot, 'AGENTS.md'), '# Agents');
+      await writeFile(path.join(projectRoot, 'CLAUDE.md'), '# Claude');
 
-      const result = await workspaceCtr.initWorkspace({ scope: '/proj' });
+      const result = await workspaceCtr.initWorkspace({ scope: projectRoot });
 
       expect(result.skills.map((s) => s.name)).toEqual(['reviewer', 'spa-routes']);
       expect(result.instructions).toEqual([
         { content: '# Agents', source: 'AGENTS.md' },
         { content: '# Claude', source: 'CLAUDE.md' },
       ]);
-      // Approves the scanned root for the lobe-file:// preview protocol.
-      expect(mockLocalFileProtocolManager.approveIndexedProjectRoot).toHaveBeenCalledWith('/proj');
+      expect(mockLocalFileProtocolManager.approveIndexedProjectRoot).toHaveBeenCalledWith(
+        projectRoot,
+      );
     });
 
     it('dedupes skills by name with .agents/skills winning', async () => {
-      vi.mocked(mockFsPromises.readdir).mockImplementation(async (dir: string) => {
-        if (dir === '/proj/.agents/skills') return [dirent('shared', 'dir')];
-        if (dir === '/proj/.claude/skills') return [dirent('shared', 'dir')];
-        if (dir.endsWith('/shared')) return [dirent('SKILL.md', 'file')];
-        throw new Error('ENOENT');
-      });
-      vi.mocked(mockFsPromises.readFile).mockImplementation(async (file: string) => {
-        if (file === '/proj/.agents/skills/shared/SKILL.md')
-          return frontmatter('shared', 'from agents');
-        if (file === '/proj/.claude/skills/shared/SKILL.md')
-          return frontmatter('shared', 'from claude');
-        throw new Error('ENOENT');
-      });
+      await createSkill('.agents/skills', 'shared', 'from agents');
+      await createSkill('.claude/skills', 'shared', 'from claude');
 
-      const result = await workspaceCtr.initWorkspace({ scope: '/proj' });
+      const result = await workspaceCtr.initWorkspace({ scope: projectRoot });
 
       expect(result.skills).toHaveLength(1);
       expect(result.skills[0]).toMatchObject({
         description: 'from agents',
-        path: '/proj/.agents/skills/shared/SKILL.md',
+        path: path.join(projectRoot, '.agents/skills/shared/SKILL.md'),
       });
     });
 
     it('caps instruction file content', async () => {
-      vi.mocked(mockFsPromises.readdir).mockRejectedValue(new Error('ENOENT'));
       const huge = 'x'.repeat(100 * 1024);
-      vi.mocked(mockFsPromises.readFile).mockImplementation(async (file: string) => {
-        if (file === '/proj/AGENTS.md') return huge;
-        throw new Error('ENOENT');
-      });
+      await writeFile(path.join(projectRoot, 'AGENTS.md'), huge);
 
-      const result = await workspaceCtr.initWorkspace({ scope: '/proj' });
+      const result = await workspaceCtr.initWorkspace({ scope: projectRoot });
 
       expect(result.skills).toEqual([]);
       expect(result.instructions).toHaveLength(1);
@@ -126,36 +107,27 @@ describe('WorkspaceCtr', () => {
     });
 
     it('returns empty skills and instructions when nothing is present', async () => {
-      vi.mocked(mockFsPromises.readdir).mockRejectedValue(new Error('ENOENT'));
-      vi.mocked(mockFsPromises.readFile).mockRejectedValue(new Error('ENOENT'));
+      const result = await workspaceCtr.initWorkspace({ scope: projectRoot });
 
-      const result = await workspaceCtr.initWorkspace({ scope: '/proj' });
-
-      expect(result).toEqual({ instructions: [], root: '/proj', skills: [] });
+      expect(result).toEqual({ instructions: [], root: projectRoot, skills: [] });
     });
   });
 
   describe('listProjectSkills', () => {
     it('returns the first source with skills (.agents/skills wins) and ignores .claude', async () => {
-      vi.mocked(mockFsPromises.readdir).mockImplementation(async (dir: string) => {
-        if (dir === '/proj/.agents/skills') return [dirent('alpha', 'dir')];
-        if (dir === '/proj/.agents/skills/alpha') return [dirent('SKILL.md', 'file')];
-        throw new Error('ENOENT');
-      });
-      vi.mocked(mockFsPromises.readFile).mockResolvedValue(frontmatter('alpha', 'A'));
+      await createSkill('.agents/skills', 'alpha', 'A');
+      await createSkill('.claude/skills', 'ignored', 'Ignored');
 
-      const result = await workspaceCtr.listProjectSkills({ scope: '/proj' });
+      const result = await workspaceCtr.listProjectSkills({ scope: projectRoot });
 
       expect(result.source).toBe('.agents/skills');
       expect(result.skills.map((s) => s.name)).toEqual(['alpha']);
     });
 
     it('returns empty + null source when no skills exist', async () => {
-      vi.mocked(mockFsPromises.readdir).mockRejectedValue(new Error('ENOENT'));
+      const result = await workspaceCtr.listProjectSkills({ scope: projectRoot });
 
-      const result = await workspaceCtr.listProjectSkills({ scope: '/proj' });
-
-      expect(result).toEqual({ root: '/proj', skills: [], source: null });
+      expect(result).toEqual({ root: projectRoot, skills: [], source: null });
     });
   });
 });

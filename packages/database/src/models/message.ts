@@ -9,6 +9,7 @@ import type {
   ChatVideoItem,
   CommitToolResultInput,
   CommitToolResultResult,
+  CompressionGroupMetadata,
   CreateMessageParams,
   DBMessageItem,
   EnsureToolMessageInput,
@@ -329,6 +330,9 @@ export class MessageModel {
 
   private pluginsOwnership = () =>
     buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messagePlugins);
+
+  private filesOwnership = () =>
+    buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messagesFiles);
 
   /**
    * Lock the message row before merging metadata so a stale caller snapshot cannot overwrite
@@ -1263,7 +1267,7 @@ export class MessageModel {
       );
     }
 
-    const groups = await runTimedStage(
+    const queriedGroups = await runTimedStage(
       timing,
       'db.message.messageGroups.groups.select',
       () =>
@@ -1274,7 +1278,22 @@ export class MessageModel {
           .orderBy(asc(messageGroups.createdAt)),
       { hasTimeRange: !!timeRange, topicId },
     );
-    logTiming(timing, 'db.message.messageGroups.groups.select:rows', { rowCount: groups.length });
+    logTiming(timing, 'db.message.messageGroups.groups.select:rows', {
+      rowCount: queriedGroups.length,
+    });
+
+    // Failed compression attempts remain in message_groups for audit/retry diagnosis, but their
+    // original messages have been restored and the failed placeholder must not enter the visible
+    // conversation trajectory.
+    const groups = queriedGroups.filter((group) => {
+      if (!group.description) return true;
+      try {
+        const metadata = JSON.parse(group.description) as CompressionGroupMetadata;
+        return metadata.compressionStatus !== 'failed';
+      } catch {
+        return true;
+      }
+    });
 
     if (groups.length === 0) return [];
 
@@ -2144,11 +2163,30 @@ export class MessageModel {
         const fingerprintMatches = existingLifecycle?.intentFingerprint
           ? existingLifecycle.intentFingerprint === intentFingerprint
           : canAdoptLegacyApproval;
+        const pendingState = asRecord(existing?.state);
+        const pendingPath = asRecord(pendingState.workspacePathConsent);
+        // Only a prepared, never-committed local tool can resume a path request.
+        // Existing terminal execution markers remain an unconditional barrier.
+        const hasPendingPathRequest =
+          !!existingLifecycle?.intentFingerprint &&
+          existing?.identifier === 'lobe-local-system' &&
+          pendingState.code === 'INTERVENTION_REQUIRED' &&
+          pendingPath.version === 1 &&
+          pendingPath.topicId === existing?.topicId &&
+          typeof pendingPath.operationId === 'string' &&
+          !!pendingPath.operationId &&
+          typeof pendingPath.deviceId === 'string' &&
+          !!pendingPath.deviceId &&
+          typeof pendingPath.requestedPath === 'string' &&
+          !!pendingPath.requestedPath &&
+          Array.isArray(pendingPath.modes) &&
+          pendingPath.modes.length > 0 &&
+          pendingPath.modes.every((mode) => ['read', 'write', 'exec'].includes(mode));
         const existingConfirmationMatches =
           mode !== 'confirm-existing' ||
           (existing?.content === '' &&
             existing.error == null &&
-            existing.state == null &&
+            (existing.state == null || hasPendingPathRequest) &&
             existing.intervention?.status === 'approved' &&
             !hasPartialLifecycleResult);
 
@@ -2404,7 +2442,19 @@ export class MessageModel {
         'db.message.update.transaction',
         () =>
           this.db.transaction(async (trx) => {
-            // 1. insert message files
+            // 1. imageList has replace semantics. An explicit [] detaches every
+            // file association; omitting the field preserves existing files.
+            if (imageList !== undefined) {
+              await runTimedStage(
+                timing,
+                'db.message.update.imageFiles.delete',
+                () =>
+                  trx
+                    .delete(messagesFiles)
+                    .where(and(eq(messagesFiles.messageId, id), this.filesOwnership())),
+                { imageCount: imageList.length },
+              );
+            }
             if (imageList && imageList.length > 0) {
               await runTimedStage(
                 timing,
@@ -2466,7 +2516,7 @@ export class MessageModel {
             }
           }),
         {
-          hasImageList: !!imageList?.length,
+          hasImageList: imageList !== undefined,
           hasMetadata: !!metadataPatch,
           valueKeys: Object.keys(message),
         },

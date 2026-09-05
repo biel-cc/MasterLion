@@ -152,12 +152,32 @@ describe('GatewayClient', () => {
       const ws = (client as any).ws;
       expect(ws.send).toHaveBeenCalledWith(
         JSON.stringify({
+          capabilities: { executionContextValidation: true },
+          protocolVersion: 2,
           serverUrl: 'https://app.test.com',
           token: 'test-token',
           tokenType: 'apiKey',
           type: 'auth',
         }),
       );
+    });
+
+    it('can explicitly advertise a legacy capability envelope', async () => {
+      const legacy = new GatewayClient({
+        autoReconnect: false,
+        capabilities: {},
+        gatewayUrl: 'https://gateway.test.com',
+        protocolVersion: 1,
+        token: 'legacy-token',
+      });
+
+      legacy.connect();
+      await vi.advanceTimersByTimeAsync(1);
+
+      const ws = (legacy as any).ws;
+      const auth = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(auth).toMatchObject({ capabilities: {}, protocolVersion: 1, type: 'auth' });
+      await legacy.disconnect();
     });
 
     it('should not reconnect if already connected', async () => {

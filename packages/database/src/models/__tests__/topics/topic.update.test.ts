@@ -125,6 +125,66 @@ describe('TopicModel - Update', () => {
     });
   });
 
+  describe('completeRunningOperation', () => {
+    it('atomically clears the matching operation and returns the topic to active', async () => {
+      const topicId = 'complete-operation-1';
+      await serverDB.insert(topics).values({
+        id: topicId,
+        metadata: {
+          model: 'gpt-4o',
+          runningOperation: { assistantMessageId: 'msg-1', operationId: 'op-1' },
+        },
+        status: 'running',
+        title: 'Running topic',
+        userId,
+      });
+
+      const result = await topicModel.completeRunningOperation(topicId, 'op-1', 'active');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].status).toBe('active');
+      expect(result[0].metadata).toEqual({ model: 'gpt-4o', runningOperation: null });
+    });
+
+    it('does not let an older completion clear a newer running operation', async () => {
+      const topicId = 'complete-operation-2';
+      await serverDB.insert(topics).values({
+        id: topicId,
+        metadata: {
+          runningOperation: { assistantMessageId: 'msg-new', operationId: 'op-new' },
+        },
+        status: 'running',
+        title: 'Newer run',
+        userId,
+      });
+
+      const result = await topicModel.completeRunningOperation(topicId, 'op-old', 'active');
+      const [topic] = await serverDB.select().from(topics).where(eq(topics.id, topicId));
+
+      expect(result).toHaveLength(0);
+      expect(topic.status).toBe('running');
+      expect(topic.metadata?.runningOperation?.operationId).toBe('op-new');
+    });
+
+    it('persists a terminal failure while clearing the matching operation', async () => {
+      const topicId = 'complete-operation-3';
+      await serverDB.insert(topics).values({
+        id: topicId,
+        metadata: {
+          runningOperation: { assistantMessageId: 'msg-3', operationId: 'op-3' },
+        },
+        status: 'running',
+        title: 'Failed run',
+        userId,
+      });
+
+      const result = await topicModel.completeRunningOperation(topicId, 'op-3', 'failed');
+
+      expect(result[0].status).toBe('failed');
+      expect(result[0].metadata?.runningOperation).toBeNull();
+    });
+  });
+
   describe('recomputeUsage', () => {
     it('rolls the topic assistant messages into the denormalized usage/cost columns', async () => {
       const topicId = 'usage-recompute-1';

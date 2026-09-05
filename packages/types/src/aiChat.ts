@@ -6,6 +6,7 @@ import { ChatToolPayloadSchema, MessageMetadataSchema } from './message/common';
 import type { CreateMessageParams, PageSelection } from './message/ui/params';
 import { PageSelectionSchema } from './message/ui/params';
 import type { OpenAIChatMessage } from './openai/chat';
+import type { TopicExecutionIntent } from './projectWorkspace';
 import type { LobeUniformTool } from './tool';
 import { LobeUniformToolSchema } from './tool';
 import type { ChatTopic, ChatTopicMetadata } from './topic';
@@ -67,6 +68,8 @@ export interface SendMessageServerParams {
    */
   newThread?: CreateThreadWithMessageParams;
   newTopic?: {
+    /** One-shot draft intent validated and atomically frozen by the server. */
+    executionIntent?: TopicExecutionIntent;
     /**
      * Topic metadata persisted at creation time. For CC/heterogeneous
      * agents this carries `workingDirectory` so the topic is bound to a
@@ -83,6 +86,8 @@ export interface SendMessageServerParams {
   preloadMessages?: SendPreloadMessage[];
   sessionId?: string;
   threadId?: string;
+  /** One-shot intent used only to freeze a legacy topic that has no snapshot yet. */
+  topicExecutionIntent?: TopicExecutionIntent;
   /**
    * Filters applied to the topic list returned alongside the message.
    * Callers pass whatever filter the active sidebar is using so the server
@@ -108,6 +113,15 @@ export const CreateThreadWithMessageSchema = z.object({
   title: z.string().optional(),
   type: z.enum([ThreadType.Continuation, ThreadType.Standalone, ThreadType.Isolation]),
 });
+
+const TopicExecutionIntentSchema = z
+  .object({
+    platform: z.enum(['desktop', 'web']),
+    target: z.enum(['local', 'device', 'sandbox', 'none']),
+    targetDeviceId: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+  })
+  .strict();
 
 const SendPreloadMessageSchema = z.object({
   content: z.string(),
@@ -136,6 +150,7 @@ export const AiSendMessageServerSchema = z.object({
   newThread: CreateThreadWithMessageSchema.optional(),
   newTopic: z
     .object({
+      executionIntent: TopicExecutionIntentSchema.optional(),
       metadata: z.custom<ChatTopicMetadata>().optional(),
       title: z.string().optional(),
       topicMessageIds: z.array(z.string()).optional(),
@@ -162,6 +177,7 @@ export const AiSendMessageServerSchema = z.object({
     .optional(),
   topicPageSize: z.number().int().min(1).max(100).optional(),
   topicId: z.string().optional(),
+  topicExecutionIntent: TopicExecutionIntentSchema.optional(),
 });
 
 export interface SendMessageServerResponse {

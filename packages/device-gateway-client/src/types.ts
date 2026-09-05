@@ -1,12 +1,19 @@
+import type {
+  ExecutionAccessRoot,
+  ToolCallExecutionContext,
+} from '@lobechat/types';
+
 // ─── Device Info ───
 
 /** A single live gateway WebSocket connection belonging to a device. */
 export interface DeviceConnection {
+  capabilities?: DeviceGatewayCapabilities;
   /** Freeform routing label, e.g. `desktop` / `desktop-dev` / `cli` / `cli-dev`. */
   channel?: string;
   connectedAt: number;
   /** Per-install random UUID — the gateway's stale-connection dedupe key. */
   connectionId: string;
+  protocolVersion?: number;
 }
 
 /**
@@ -39,8 +46,21 @@ export interface DeviceSystemInfo {
 
 // ─── WebSocket Protocol Messages (mirrors the device-gateway service's types) ───
 
+/**
+ * Optional features negotiated during authentication. Absence always means
+ * legacy/unknown; callers must not infer hard validation from a new server or
+ * from the presence of an executionContext request alone.
+ */
+export interface DeviceGatewayCapabilities {
+  executionContextValidation?: boolean;
+}
+
+export const CURRENT_DEVICE_GATEWAY_PROTOCOL_VERSION = 2;
+
 // Client → Server
 export interface AuthMessage {
+  capabilities?: DeviceGatewayCapabilities;
+  protocolVersion?: number;
   serverUrl?: string;
   token: string;
   tokenType?: 'apiKey' | 'jwt' | 'serviceToken';
@@ -116,7 +136,30 @@ export interface GatewayMcpStdioParams {
  */
 export type GatewayToolCallType = 'tool' | 'mcp';
 
+/**
+ * Topic grants need their tuple on the untrusted device so it can independently
+ * reject stale or misrouted grants. The base fields remain the frozen C0
+ * ToolCallExecutionContext shape.
+ */
+export type GatewayExecutionAccessRoot = ExecutionAccessRoot & {
+  deviceId?: string;
+  expiresAt?: string;
+  operationId?: string;
+  topicId?: string;
+};
+
+export interface GatewayToolCallExecutionContext extends Omit<
+  ToolCallExecutionContext,
+  'accessRoots'
+> {
+  accessRoots?: GatewayExecutionAccessRoot[];
+}
+
 export interface ToolCallRequestMessage {
+  /** Device identity repeated on the wire for topic-grant tuple verification. */
+  deviceId?: string;
+  /** Frozen, operation-scoped execution boundary. Omitted by legacy servers. */
+  executionContext?: GatewayToolCallExecutionContext;
   /** Operation that triggered the call, propagated by the gateway for tracing. */
   operationId?: string;
   requestId: string;
@@ -135,6 +178,9 @@ export interface ToolCallRequestMessage {
      */
     type?: GatewayToolCallType;
   };
+  /** Stable id of this model tool invocation, distinct from the relay request id. */
+  toolCallId?: string;
+  topicId?: string;
   type: 'tool_call_request';
 }
 
@@ -198,6 +244,10 @@ export interface RpcResponseMessage {
 export interface AgentRunRequestMessage {
   agentType: string;
   cwd?: string;
+  /** Server-resolved execution environment. Optional for legacy requests. */
+  env?: Record<string, string>;
+  /** Frozen operation authority. New devices prefer this over legacy cwd/env fields. */
+  executionContext?: GatewayToolCallExecutionContext;
   /**
    * Image attachments from the user message, as URLs the device can fetch
    * (signed S3 URLs). Appended as image content blocks after the prompt so
@@ -206,9 +256,28 @@ export interface AgentRunRequestMessage {
    */
   imageList?: Array<{ id?: string; url: string }>;
   jwt: string;
+  /** Frozen chat-model reference; devices reject cross-operation reuse. */
+  modelRef?: {
+    capturedAt: string;
+    kind: string;
+    modelId: string;
+    operationId: string;
+    providerId: string;
+  };
   operationId: string;
   prompt: string;
   resumeSessionId?: string;
+  /** Workspace policy. Missing means the safe default `off`. */
+  skillPolicy?: 'off' | 'project' | 'user';
+  /** Frozen registry winners that have inline content and may be materialized for the CLI. */
+  skills?: Array<{
+    content?: string;
+    description: string;
+    identifier: string;
+    key: string;
+    name: string;
+    source: string;
+  }>;
   /**
    * Static context injected before the user prompt (workspace conventions,
    * conversation history on resume). The desktop sends it to `lh hetero exec`

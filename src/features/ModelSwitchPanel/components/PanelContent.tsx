@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Rnd } from 'react-rnd';
 
 import { useBusinessModelPricingPrefetch } from '@/business/client/hooks/useBusinessModelPricing';
-import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
+import { useChatEligibleModelList } from '@/components/ModelSelect';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/slices/settings/selectors/general';
 import type { EnabledProviderWithModels } from '@/types/aiProvider';
@@ -35,7 +35,8 @@ export const PanelContent: FC<PanelContentProps> = ({
   pricingMode,
   provider: providerProp,
 }) => {
-  const chatEnabledList = useEnabledChatModels();
+  // Generation UIs pass their own list; the chat path only consumes B1 chat-eligible rows.
+  const chatEnabledList = useChatEligibleModelList();
   const enabledList = enabledListProp ?? chatEnabledList;
   const [searchKeyword, setSearchKeyword] = useState('');
   const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);

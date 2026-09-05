@@ -23,4 +23,12 @@ const nextConfig = defineConfig({
   ...(isVercel ? vercelConfig : {}),
 });
 
+if (process.env.NODE_ENV === 'development' && process.env.MASTERINO_DEV_ENV === 'local') {
+  nextConfig.distDir = '.local-dev/cache/next';
+  nextConfig.experimental = {
+    ...nextConfig.experimental,
+    turbopackMemoryLimit: 2 * 1024 * 1024 * 1024,
+  };
+}
+
 export default nextConfig;

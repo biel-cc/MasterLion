@@ -1,8 +1,11 @@
+import type * as LobechatConstModule from '@lobechat/const';
 import { type ConversationContext, RequestTrigger } from '@lobechat/types';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { heterogeneousAgentService } from '@/services/electron/heterogeneousAgent';
+import { initialState as projectWorkspaceInitialState } from '@/store/projectWorkspace/initialState';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace/store';
 
 import { useChatStore } from '../../../../store';
 import { messageMapKey } from '../../../../utils/messageMapKey';
@@ -11,6 +14,17 @@ import { resetTestEnvironment } from './helpers';
 
 // Keep zustand mock as it's needed globally
 vi.mock('zustand/traditional');
+
+const mockConstEnv = vi.hoisted(() => ({ isDesktop: false }));
+vi.mock('@lobechat/const', async (importOriginal) => {
+  const actual = await importOriginal<typeof LobechatConstModule>();
+  return {
+    ...actual,
+    get isDesktop() {
+      return mockConstEnv.isDesktop;
+    },
+  };
+});
 
 // Mock the tRPC client & agentRuntimeService so the import chain doesn't pull
 // server-only code (cloud business packages, redis envs) into the test env.
@@ -44,6 +58,8 @@ vi.mock('@/utils/localStorage', () => {
 
 beforeEach(() => {
   resetTestEnvironment();
+  mockConstEnv.isDesktop = false;
+  useProjectWorkspaceStore.setState(projectWorkspaceInitialState);
 });
 
 afterEach(() => {
@@ -819,6 +835,20 @@ describe('ConversationControl actions', () => {
           .spyOn(result.current, 'executeClientAgent')
           .mockResolvedValue(undefined);
 
+        act(() => {
+          useProjectWorkspaceStore.getState().setOperationPathConsent('tool-msg-1', {
+            actualCwd: '/workspace/project',
+            deviceId: 'device-1',
+            modes: ['read'],
+            operationId: 'source-op-1',
+            primaryCwd: '/workspace/project',
+            requestedPath: '/workspace/shared',
+            rootPath: '/workspace/shared',
+            scope: 'operation',
+            topicId,
+          });
+        });
+
         await act(async () => {
           await result.current.approveToolCalling('tool-msg-1', 'group-1');
         });
@@ -829,6 +859,16 @@ describe('ConversationControl actions', () => {
             parentMessageId: 'tool-msg-1',
             resumeApproval: {
               decision: 'approved',
+              pathConsent: {
+                deviceId: 'device-1',
+                modes: ['read'],
+                requestedPath: '/workspace/shared',
+                rootPath: '/workspace/shared',
+                scope: 'operation',
+                sourceOperationId: 'source-op-1',
+                topicId,
+                version: 1,
+              },
               parentMessageId: 'tool-msg-1',
               toolCallId: 'call_xyz',
             },
@@ -836,6 +876,9 @@ describe('ConversationControl actions', () => {
           }),
         );
         expect(executeClientAgentSpy).not.toHaveBeenCalled();
+        expect(
+          useProjectWorkspaceStore.getState().operationConsentByMessage['tool-msg-1'],
+        ).toBeUndefined();
 
         // Fallback guard: the paused `execServerAgentRuntime` op in this
         // context must be completed so the loading state doesn't bleed
@@ -1024,6 +1067,55 @@ describe('ConversationControl actions', () => {
         expect(executeClientAgentSpy).toHaveBeenCalled();
 
         executeGatewayAgentSpy.mockRestore();
+      });
+
+      it('resumes an unbound desktop local topic in the client runtime', async () => {
+        mockConstEnv.isDesktop = true;
+        const { result } = renderHook(() => useChatStore());
+        const agentId = 'local-agent';
+        const topicId = 'unbound-topic';
+        const chatKey = messageMapKey({ agentId, topicId });
+        const toolMessage = createMockMessage({
+          id: 'tool-msg-unbound',
+          plugin: { apiName: 'listFiles', arguments: '{}', identifier: 'x', type: 'default' },
+          role: 'tool',
+          tool_call_id: 'call_unbound',
+        } as any);
+
+        act(() => {
+          useChatStore.setState({
+            activeAgentId: agentId,
+            activeTopicId: topicId,
+            dbMessagesMap: { [chatKey]: [toolMessage] },
+            messagesMap: { [chatKey]: [toolMessage] },
+          });
+        });
+        vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+        vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+        const executeGatewayAgent = vi
+          .spyOn(result.current, 'executeGatewayAgent')
+          .mockResolvedValue({} as any);
+        const executeClientAgent = vi
+          .spyOn(result.current, 'executeClientAgent')
+          .mockResolvedValue(undefined);
+        vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+          agentConfig: createMockResolvedAgentConfig(),
+          context: { phase: 'init' } as any,
+          state: {} as any,
+        });
+
+        await act(async () => {
+          await result.current.approveToolCalling('tool-msg-unbound', 'group-1');
+        });
+
+        expect(executeClientAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: expect.objectContaining({ agentId, topicId }),
+            parentMessageId: 'tool-msg-unbound',
+            parentMessageType: 'tool',
+          }),
+        );
+        expect(executeGatewayAgent).not.toHaveBeenCalled();
       });
 
       it('resolves the running server op in a group scope context (scope/groupId forwarded to the lookup)', async () => {
@@ -1221,6 +1313,116 @@ describe('ConversationControl actions', () => {
   });
 
   describe('submitToolInteraction', () => {
+    it('routes a desktop tool-result-only submit through the client resume contract', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({
+        id: 'tool-msg-result-only',
+        plugin: {
+          apiName: 'selectAgentTemplate',
+          arguments: '{}',
+          identifier: 'lobe-agent-marketplace',
+          type: 'default',
+        },
+        role: 'tool',
+      });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
+
+      await act(async () => {
+        await result.current.submitToolInteraction(
+          toolMessage.id,
+          { templateId: 'template-1' },
+          undefined,
+          { createUserMessage: false, toolResultContent: 'Selected template' },
+        );
+      });
+
+      expect(executeClientAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({ agentId, topicId }),
+          initialContext: expect.objectContaining({ phase: 'tool_result' }),
+          parentMessageId: toolMessage.id,
+          parentMessageType: 'tool',
+        }),
+      );
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
+    });
+
+    it('routes a desktop submit with a synthetic user message through the client runtime', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({ id: 'tool-msg-submit', role: 'tool' });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticCreateMessage').mockResolvedValue({
+        id: 'submitted-user-msg',
+        messages: [],
+      });
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
+
+      await act(async () => {
+        await result.current.submitToolInteraction(toolMessage.id, { answer: 'yes' });
+      });
+
+      expect(executeClientAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentMessageId: 'submitted-user-msg',
+          parentMessageType: 'user',
+        }),
+      );
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
+    });
+
     it('should create a user message and resume runtime from that user message', async () => {
       const { result } = renderHook(() => useChatStore());
 
@@ -1527,6 +1729,55 @@ describe('ConversationControl actions', () => {
   });
 
   describe('skipToolInteraction', () => {
+    it('routes a desktop skip through the client runtime', async () => {
+      mockConstEnv.isDesktop = true;
+      const { result } = renderHook(() => useChatStore());
+      const agentId = 'desktop-agent';
+      const topicId = 'desktop-topic';
+      const chatKey = messageMapKey({ agentId, topicId });
+      const toolMessage = createMockMessage({ id: 'tool-msg-skip', role: 'tool' });
+
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: agentId,
+          activeTopicId: topicId,
+          dbMessagesMap: { [chatKey]: [toolMessage] },
+          messagesMap: { [chatKey]: [toolMessage] },
+        });
+      });
+
+      vi.spyOn(result.current, 'isGatewayModeEnabled').mockReturnValue(false);
+      vi.spyOn(result.current, 'optimisticUpdateMessagePlugin').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticUpdateMessageContent').mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'optimisticCreateMessage').mockResolvedValue({
+        id: 'skipped-user-msg',
+        messages: [],
+      });
+      const executeGatewayAgent = vi
+        .spyOn(result.current, 'executeGatewayAgent')
+        .mockResolvedValue({} as any);
+      const executeClientAgent = vi
+        .spyOn(result.current, 'executeClientAgent')
+        .mockResolvedValue(undefined);
+      vi.spyOn(result.current, 'internal_createAgentState').mockReturnValue({
+        agentConfig: createMockResolvedAgentConfig(),
+        context: { phase: 'init' } as any,
+        state: {} as any,
+      });
+
+      await act(async () => {
+        await result.current.skipToolInteraction(toolMessage.id, 'later');
+      });
+
+      expect(executeClientAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentMessageId: 'skipped-user-msg',
+          parentMessageType: 'user',
+        }),
+      );
+      expect(executeGatewayAgent).not.toHaveBeenCalled();
+    });
+
     it('should create a user message and resume runtime from that user message', async () => {
       const { result } = renderHook(() => useChatStore());
 

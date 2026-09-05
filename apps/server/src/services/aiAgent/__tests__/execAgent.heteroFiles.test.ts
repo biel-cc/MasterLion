@@ -1,17 +1,42 @@
+import '../_testFixtures/emptySkills';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AiAgentService } from '../index';
 
 const {
+  mockBindingGetState,
+  mockDecryptWorkspaceEnv,
+  mockDeviceProxy,
+  mockDispatchAgentRun,
+  mockFindWorkspaceById,
+  mockGetUserSettings,
   mockMessageCreate,
   mockResolveAttachmentsByFileIds,
   mockSpawnHeteroSandbox,
   mockIngestAttachment,
 } = vi.hoisted(() => ({
+  mockBindingGetState: vi.fn(),
+  mockDecryptWorkspaceEnv: vi.fn(),
+  mockDeviceProxy: {
+    dispatchAgentRun: vi.fn(),
+    isConfigured: false,
+    queryDeviceList: vi.fn().mockResolvedValue([]),
+  },
+  mockDispatchAgentRun: vi.fn(),
+  mockFindWorkspaceById: vi.fn(),
+  mockGetUserSettings: vi.fn(),
   mockIngestAttachment: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockResolveAttachmentsByFileIds: vi.fn(),
   mockSpawnHeteroSandbox: vi.fn().mockResolvedValue(undefined),
+}));
+
+const { mockStreamInit } = vi.hoisted(() => ({
+  mockStreamInit: vi.fn().mockResolvedValue('init'),
+}));
+vi.mock('@/server/modules/AgentRuntime/factory', () => ({
+  createStreamEventManager: vi.fn(() => ({ publishAgentRuntimeInit: mockStreamInit })),
 }));
 
 const emptyResolvedAttachments = {
@@ -50,7 +75,11 @@ vi.mock('@/database/models/message', () => ({
 }));
 
 const heteroAgentConfig = {
-  agencyConfig: { heterogeneousProvider: { type: 'claude-code' } },
+  agencyConfig: {
+    env: { AGENT_ONLY: 'agent', SHARED: 'agent' },
+    executionTargetByPlatform: { desktop: 'local', web: 'sandbox' },
+    heterogeneousProvider: { type: 'claude-code' },
+  },
   chatConfig: {},
   files: [],
   id: 'agent-1',
@@ -74,9 +103,46 @@ vi.mock('@/server/services/agent', () => ({
   })),
 }));
 
+vi.mock('@/database/models/device', () => ({
+  DeviceModel: vi.fn().mockImplementation(() => ({
+    findByDeviceId: vi.fn().mockResolvedValue(undefined),
+  })),
+}));
+
 vi.mock('@/database/models/plugin', () => ({
   PluginModel: vi.fn().mockImplementation(() => ({
     query: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+vi.mock('@/database/models/projectWorkspace', () => ({
+  ProjectWorkspaceModel: vi.fn().mockImplementation(() => ({
+    findById: mockFindWorkspaceById,
+  })),
+}));
+
+vi.mock('@/database/models/user', () => ({
+  UserModel: vi.fn().mockImplementation(() => ({
+    getUserSettings: mockGetUserSettings,
+  })),
+}));
+
+vi.mock('@/server/modules/KeyVaultsEncrypt', () => ({
+  KeyVaultsGateKeeper: {
+    initWithEnvKey: vi.fn().mockResolvedValue({ decrypt: mockDecryptWorkspaceEnv }),
+  },
+}));
+
+vi.mock('@/server/services/projectWorkspace/bindingStore', () => ({
+  DatabaseTopicWorkspaceBindingStore: vi.fn().mockImplementation(() => ({
+    captureTargetIfAbsent: vi.fn(),
+    getState: mockBindingGetState,
+  })),
+}));
+
+vi.mock('@/server/services/workspaceAccessGrant', () => ({
+  WorkspaceAccessGrantService: vi.fn().mockImplementation(() => ({
+    buildAccessRoots: vi.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -149,10 +215,7 @@ vi.mock('@/server/modules/Mecha', () => ({
 }));
 
 vi.mock('@/server/services/deviceGateway', () => ({
-  deviceGateway: {
-    isConfigured: false,
-    queryDeviceList: vi.fn().mockResolvedValue([]),
-  },
+  deviceGateway: mockDeviceProxy,
 }));
 
 describe('AiAgentService.execAgent - hetero early-exit file attachments', () => {
@@ -169,6 +232,17 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     mockResolveAttachmentsByFileIds.mockResolvedValue({ ...emptyResolvedAttachments });
     mockSpawnHeteroSandbox.mockResolvedValue(undefined);
     mockIngestAttachment.mockReset();
+    mockBindingGetState.mockResolvedValue({});
+    mockFindWorkspaceById.mockResolvedValue(undefined);
+    mockGetUserSettings.mockResolvedValue({});
+    mockDecryptWorkspaceEnv.mockImplementation(async (value: string) => ({
+      plaintext: value.replace(/^enc:/, ''),
+      wasAuthentic: true,
+    }));
+    mockDeviceProxy.isConfigured = false;
+    mockDeviceProxy.queryDeviceList.mockResolvedValue([]);
+    mockDeviceProxy.dispatchAgentRun = mockDispatchAgentRun;
+    mockDispatchAgentRun.mockResolvedValue({ success: true });
 
     service = new AiAgentService(mockDb, userId);
   });
@@ -179,6 +253,91 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
 
   const findUserMessageCreate = () =>
     mockMessageCreate.mock.calls.find((call) => call[0].role === 'user');
+
+  it('decrypts managed workspace env and dispatches an existing local snapshot only to its bound device', async () => {
+    mockDeviceProxy.isConfigured = true;
+    mockBindingGetState.mockResolvedValue({
+      snapshot: {
+        boundDeviceId: 'device-workspace-1',
+        target: 'local',
+        targetCapturedAt: '2026-09-03T00:00:00.000Z',
+        version: 1,
+        workspaceBoundAt: '2026-09-03T00:00:00.000Z',
+        workspaceId: 'workspace-1',
+        workspaceKind: 'device',
+      },
+      workspace: {
+        deviceId: 'device-workspace-1',
+        id: 'workspace-1',
+        kind: 'device',
+        rootPath: '/approved/project',
+      },
+    });
+    mockFindWorkspaceById.mockResolvedValue({
+      env: {
+        PUBLIC_FLAG: { secret: false, value: 'enc:enabled' },
+        SHARED: { secret: false, value: 'enc:workspace' },
+        TOKEN: { secret: true, value: 'enc:resolved-secret' },
+      },
+      envFiles: ['.env'],
+      id: 'workspace-1',
+    });
+    mockGetUserSettings.mockResolvedValue({
+      executionEnv: {
+        SHARED: { secret: false, value: 'enc:user' },
+        USER_TOKEN: { secret: true, value: 'enc:user-secret' },
+      },
+    });
+
+    await service.execAgent({
+      agentId: 'agent-1',
+      appContext: {
+        topicExecutionIntent: {
+          platform: 'desktop',
+          target: 'local',
+          targetDeviceId: 'device-workspace-1',
+        },
+        topicId: 'topic-existing',
+      },
+      deviceId: 'device-workspace-1',
+      prompt: 'Use the managed project environment',
+    });
+
+    expect(mockStreamInit).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        userId,
+        topicId: 'topic-existing',
+        heteroType: 'claude-code',
+      }),
+    );
+    expect(mockStreamInit.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDispatchAgentRun.mock.invocationCallOrder[0],
+    );
+
+    // Losing user/workspace SHARED values are never decrypted; only the three
+    // winning persisted values cross the decryption boundary.
+    expect(mockDecryptWorkspaceEnv).toHaveBeenCalledTimes(3);
+    expect(mockDispatchAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-workspace-1',
+        executionContext: expect.objectContaining({
+          cwd: '/approved/project',
+          env: {
+            AGENT_ONLY: 'agent',
+            PUBLIC_FLAG: 'enabled',
+            SHARED: 'agent',
+            TOKEN: 'resolved-secret',
+            USER_TOKEN: 'user-secret',
+          },
+          envFiles: ['.env'],
+          workspaceKind: 'device',
+          workspaceRootPath: '/approved/project',
+        }),
+      }),
+    );
+    expect(mockSpawnHeteroSandbox).not.toHaveBeenCalled();
+  });
 
   it('should attach fileIds to the user message (SPA gateway device/sandbox mode)', async () => {
     // regression: the hetero early exit used to create the user message
@@ -270,6 +429,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
 
       expect(mockSpawnHeteroSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
+          env: { AGENT_ONLY: 'agent', SHARED: 'agent' },
           imageList: [{ id: 'file-1', url: 'https://signed/file-1.png' }],
         }),
       );

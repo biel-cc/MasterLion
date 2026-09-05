@@ -1,4 +1,7 @@
 export default {
+  'workspaceRuntime.hetero.gate.webDesc':
+    'Create a project topic in the desktop app, then continue it here.',
+
   'ModelSwitch.title': 'Model',
   'active': 'Active',
   'agentBuilder.installPlugin.authRequired': 'Cloud MCP requires sign-in to continue',
@@ -63,6 +66,9 @@ export default {
   'compression.cancelConfirm':
     'Are you sure you want to uncompress? This will restore the original messages.',
   'compression.history': 'History',
+  'compression.inProgress': 'Compressing context…',
+  'compression.inProgressHint':
+    'Earlier messages are being summarized so the conversation can continue.',
   'compression.summary': 'Summary',
   'confirmClearCurrentMessages':
     'You are about to clear the current conversation messages. Once cleared, they cannot be retrieved. Please confirm your action.',
@@ -189,6 +195,11 @@ export default {
   'heteroAgent.executionTarget.loading': 'Loading devices…',
   'heteroAgent.executionTarget.local': 'This device',
   'heteroAgent.executionTarget.localDesc': 'Run as a local process on this desktop app',
+  'heteroAgent.executionTarget.localGatewayConnected':
+    'Connected to gateway · Available from other clients',
+  'heteroAgent.executionTarget.localGatewayConnecting': 'Connecting to gateway…',
+  'heteroAgent.executionTarget.localGatewayDisconnected':
+    'Gateway disconnected · Unavailable from other clients',
   'heteroAgent.executionTarget.noDevices':
     'No remote devices yet. Run `lh connect` on another machine to add one.',
   'heteroAgent.executionTarget.none': 'No device',
@@ -1037,6 +1048,7 @@ export default {
   'viewSwitcher.page': 'Page',
   'viewSwitcher.task': 'Task',
   'workflow.failedSuffix': '(failed)',
+  'workflow.summaryRejected': 'Rejected tool calls: {{count}}',
   'workflow.summaryFailed': '{{count}} failed',
   'workflow.summaryMoreTools': '{{count}} tool kinds',
   'workflow.summaryTotalCalls': '{{count}} calls total',
@@ -1243,4 +1255,96 @@ export default {
   'workingPanel.documents.unsaved': 'Unsaved changes',
   'workingPanel.title': 'Working Panel',
   'you': 'You',
+  // Workspace runtime
+  'workspaceRuntime.chip.alreadyBoundHint':
+    'This topic already has a project. Create a new referenced topic to use another folder.',
+  'workspaceRuntime.chip.boundTooltip': 'Project locked for this topic: {{path}}',
+  'workspaceRuntime.chip.newReferencedTopic': 'New referenced topic',
+  'workspaceRuntime.chip.scratch': 'Temporary',
+  'workspaceRuntime.chip.scratchTooltip': 'Temporary directory locked for this topic: {{path}}',
+  'workspaceRuntime.hetero.gate.action': 'Choose project',
+  'workspaceRuntime.hetero.gate.desc': 'Choose a project before this agent can start or resume.',
+  'workspaceRuntime.hetero.gate.scratchDesc':
+    'Temporary directories cannot run this agent. Create a referenced topic in a project.',
+  'workspaceRuntime.hetero.gate.scratchTitle': 'Project required',
+  'workspaceRuntime.hetero.gate.title': 'Project required',
+  'workspaceRuntime.hetero.gate.unrouted.ambiguous-online-devices':
+    'Several devices are online. Choose one before selecting a project.',
+  'workspaceRuntime.hetero.gate.unrouted.bound-device-offline':
+    'The device bound to this topic is offline.',
+  'workspaceRuntime.hetero.gate.unrouted.no-bound-device':
+    'Choose a target device before selecting a project.',
+  'workspaceRuntime.hetero.gate.unrouted.no-online-device':
+    'No online device is available for this topic.',
+  'workspaceRuntime.hetero.gate.unroutedTitle': 'Execution target unavailable',
+  'workspaceRuntime.intent.confirm': 'Use as project',
+  'workspaceRuntime.intent.confirmDescription':
+    'Use {{path}} as this topic’s project? This folder will stay fixed for the topic.',
+  'workspaceRuntime.intent.confirmTitle': 'Use this folder as the current project?',
+  'workspaceRuntime.intent.keepUnbound': 'Continue without binding',
+  'workspaceRuntime.picker.addPath': 'Add directory path',
+  'workspaceRuntime.picker.alreadyBound':
+    'This topic already has a project. Create a new referenced topic to use another project.',
+  'workspaceRuntime.picker.bindFailed': "Couldn't select this project. Try again.",
+  'workspaceRuntime.picker.clearProject': 'No project',
+  'workspaceRuntime.picker.chooseFolder': 'Choose folder',
+  'workspaceRuntime.picker.empty': 'No project or recent folder yet.',
+  'workspaceRuntime.picker.loadError': "Couldn't load project information.",
+  'workspaceRuntime.picker.loading': 'Loading project information…',
+  'workspaceRuntime.picker.pathNotDirectory': 'This path is not a directory.',
+  'workspaceRuntime.picker.pathNotExist': 'This path does not exist on the selected device.',
+  'workspaceRuntime.picker.recentDirs': 'Recent directories',
+  'workspaceRuntime.picker.recommended': 'Recommended',
+  'workspaceRuntime.picker.recommendedAgent': 'Agent',
+  'workspaceRuntime.picker.recommendedDevice': 'Device',
+  'workspaceRuntime.picker.recommendedNote':
+    'Recommendations do not bind the topic until you select one.',
+  'workspaceRuntime.picker.retry': 'Retry',
+  'workspaceRuntime.picker.referenceTitle': 'Create a referenced topic in',
+  'workspaceRuntime.picker.sandboxFixed':
+    'Sandbox must be selected explicitly from the execution target menu.',
+  'workspaceRuntime.picker.seamUnavailable':
+    'This server uses legacy folder settings. You can select a folder, but it will not appear as a locked project.',
+  'workspaceRuntime.picker.selectWorkspace': 'Select project',
+  'workspaceRuntime.picker.targetNone':
+    'This chat has no execution target and does not need a project.',
+  'workspaceRuntime.picker.title': 'Choose a project',
+  'workspaceRuntime.picker.unboundTooltip':
+    'Choosing a project is optional until you send the first message.',
+  'workspaceRuntime.picker.unrouted.ambiguous-online-devices':
+    'Several devices are online. Choose a target device first.',
+  'workspaceRuntime.picker.unrouted.bound-device-offline':
+    'The device bound to this topic is offline.',
+  'workspaceRuntime.picker.unrouted.no-bound-device': 'Choose a target device first.',
+  'workspaceRuntime.picker.unrouted.no-online-device': 'No online device is available.',
+  'workspaceRuntime.picker.unroutedLabel': 'Choose target device',
+  'workspaceRuntime.picker.workspaces': 'Projects',
+  'workspaceRuntime.settings.defaultCwdRecommendation':
+    'Recommended for project selection only. It does not automatically bind new topics.',
+  'workspaceRuntime.settings.workspaces': 'Projects',
+  'workspaceRuntime.settings.workspacesEmpty': 'No project has been used on this device.',
+  'workspaceRuntime.settings.workspacesError': 'Could not load projects for this device.',
+  'workspaceRuntime.settings.workspacesLoading': 'Loading projects…',
+  'workspaceRuntime.settings.workspacesRetry': 'Retry',
+  'workspaceRuntime.settings.workspacesUnavailable':
+    'Project details will appear after the project service is connected.',
+  'workspaceRuntime.sidebar.addProject': 'Add project',
+  'workspaceRuntime.sidebar.addProjectFailed': "Couldn't add this project. Try again.",
+  'workspaceRuntime.sidebar.addRecentTopic': 'New topic',
+  'workspaceRuntime.sidebar.addTopicInWorkspace': 'New topic in {{name}}',
+  'workspaceRuntime.sidebar.cleanupScratch': 'Clean up temporary topic',
+  'workspaceRuntime.sidebar.cleanupScratchConfirm':
+    'Delete this topic and its temporary directory? This cannot be undone.',
+  'workspaceRuntime.sidebar.chooseProjectFolder': 'Choose a folder for the new project',
+  'workspaceRuntime.sidebar.loadError': "Couldn't load projects",
+  'workspaceRuntime.sidebar.openScratch': 'Open temporary directory',
+  'workspaceRuntime.sidebar.recent': 'Recent',
+  'workspaceRuntime.sidebar.recentEmpty': 'No recent topics',
+  'workspaceRuntime.sidebar.retry': 'Retry loading projects',
+  'workspaceRuntime.sidebar.scratchTag': 'Temporary',
+  'workspaceRuntime.sidebar.scratchTooltip': 'Temporary directory: {{path}}',
+  'workspaceRuntime.sidebar.workspaces': 'Projects',
+  'workspaceRuntime.target.captureFailed': "Couldn't change the topic target.",
+  'workspaceRuntime.target.locked': 'The execution target is locked for this topic.',
+  'workspaceRuntime.target.seamUnavailable': "Target changes aren't connected yet.",
 };

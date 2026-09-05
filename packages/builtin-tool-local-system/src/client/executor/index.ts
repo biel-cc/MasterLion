@@ -13,13 +13,14 @@ import type {
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
 import { LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
-import type { BuiltinToolResult } from '@lobechat/types';
+import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 
+import { gatewayConnectionService } from '@/services/electron/gatewayConnection';
 import { localFileService } from '@/services/electron/localFileService';
 
 import { LocalSystemIdentifier } from '../../types';
-import { resolveArgsWithScope } from '../../utils/path';
+import { isEscapingPathPattern, resolveArgsWithScope } from '../../utils/path';
 
 const LocalSystemApiEnum = {
   editFile: 'editFile' as const,
@@ -47,6 +48,67 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   protected readonly apiEnum = LocalSystemApiEnum;
 
   private runtime = new LocalSystemExecutionRuntime(localFileService);
+
+  private async executeOnDesktopBoundary(
+    apiName: string,
+    args: Record<string, unknown>,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult | undefined> {
+    const executionContext = ctx?.executionContext;
+    if (!executionContext) return;
+    if (executionContext.plan.kind !== 'device' || executionContext.plan.target !== 'local') {
+      return {
+        content: 'DEVICE_UNROUTED',
+        error: {
+          message: 'Remote-device execution cannot fall back to the local desktop runtime.',
+          type: 'PluginServerError',
+        },
+        success: false,
+      };
+    }
+
+    const operationId = executionContext.operationId ?? ctx.operationId;
+    const topicId = ctx.topicId ?? undefined;
+    if (!operationId || !topicId || !ctx.agentId || !ctx.toolCallId)
+      return this.workspaceRequired({
+        messageId: ctx.messageId,
+        operationId: ctx.operationId,
+      });
+
+    const output = await gatewayConnectionService.executeLocalToolCall({
+      apiName,
+      args,
+      executionContext: {
+        accessRoots: executionContext.accessRoots,
+        cwd: executionContext.cwd,
+        envFiles: executionContext.envFiles,
+        envRef: {
+          agentId: ctx.agentId,
+          topicId,
+          workspaceId: executionContext.workspace?.id,
+        },
+        workspaceKind: executionContext.workspace?.kind,
+        workspaceRootPath: executionContext.workspace?.rootPath,
+      },
+      trace: {
+        deviceId: executionContext.plan.deviceId,
+        operationId,
+        toolCallId: ctx.toolCallId,
+        topicId,
+      },
+    });
+
+    return this.toResult(output);
+  }
+
+  private workspaceRequired(ctx?: BuiltinToolContext): BuiltinToolResult | undefined {
+    if (!ctx || ctx.workingDirectory || ctx.executionContext) return;
+    return {
+      content: 'WORKSPACE_REQUIRED',
+      error: { message: 'WORKSPACE_REQUIRED', type: 'PluginServerError' },
+      success: false,
+    };
+  }
 
   /**
    * Convert BuiltinServerRuntimeOutput to BuiltinToolResult.
@@ -84,13 +146,21 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== File Operations ====================
 
-  listFiles = async (params: ListLocalFileParams): Promise<BuiltinToolResult> => {
+  listFiles = async (
+    params: ListLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('listFiles', params as any, ctx);
+      if (boundary) return boundary;
+      const resolved = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       const result = await this.runtime.listFiles({
-        directoryPath: params.path,
-        limit: params.limit,
-        sortBy: params.sortBy,
-        sortOrder: params.sortOrder,
+        directoryPath: resolved.path,
+        limit: resolved.limit,
+        sortBy: resolved.sortBy,
+        sortOrder: resolved.sortOrder,
       } as any);
       return this.toResult(result);
     } catch (error) {
@@ -98,12 +168,20 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFile = async (params: LocalReadFileParams): Promise<BuiltinToolResult> => {
+  readFile = async (
+    params: LocalReadFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('readFile', params as any, ctx);
+      if (boundary) return boundary;
+      const resolved = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       const result = await this.runtime.readFile({
-        endLine: params.loc?.[1],
-        path: params.path,
-        startLine: params.loc?.[0],
+        endLine: resolved.loc?.[1],
+        path: resolved.path,
+        startLine: resolved.loc?.[0],
       });
       return this.toResult(result);
     } catch (error) {
@@ -111,18 +189,35 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  readFiles = async (params: LocalReadFilesParams): Promise<BuiltinToolResult> => {
+  readFiles = async (
+    params: LocalReadFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
-      const result = await this.runtime.readFiles(params);
+      const boundary = await this.executeOnDesktopBoundary('readFiles', params as any, ctx);
+      if (boundary) return boundary;
+      const paths = params.paths.map(
+        (filePath) => resolveArgsWithScope({ path: filePath }, 'path', ctx?.workingDirectory).path,
+      );
+      const result = await this.runtime.readFiles({ paths });
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  searchFiles = async (params: LocalSearchFilesParams): Promise<BuiltinToolResult> => {
+  searchFiles = async (
+    params: LocalSearchFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
-      const resolvedParams = resolveArgsWithScope(params, 'directory');
+      const boundary = await this.executeOnDesktopBoundary('searchFiles', params as any, ctx);
+      if (boundary) return boundary;
+      const resolvedParams = resolveArgsWithScope(params, 'directory', ctx?.workingDirectory);
       const result = await this.runtime.searchFiles({
         ...resolvedParams,
         directory: resolvedParams.directory || '',
@@ -133,12 +228,20 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  moveFiles = async (params: MoveLocalFilesParams): Promise<BuiltinToolResult> => {
+  moveFiles = async (
+    params: MoveLocalFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('moveFiles', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.moveFiles({
         operations: params.items.map((item) => ({
-          destination: item.newPath,
-          source: item.oldPath,
+          destination: resolveArgsWithScope({ path: item.newPath }, 'path', ctx?.workingDirectory)
+            .path,
+          source: resolveArgsWithScope({ path: item.oldPath }, 'path', ctx?.workingDirectory).path,
         })),
       });
       return this.toResult(result);
@@ -147,22 +250,39 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  writeFile = async (params: WriteLocalFileParams): Promise<BuiltinToolResult> => {
+  writeFile = async (
+    params: WriteLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
-      const result = await this.runtime.writeFile(params);
+      const boundary = await this.executeOnDesktopBoundary('writeFile', params as any, ctx);
+      if (boundary) return boundary;
+      const result = await this.runtime.writeFile(
+        resolveArgsWithScope(params, 'path', ctx?.workingDirectory),
+      );
       return this.toResult(result);
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  editFile = async (params: EditLocalFileParams): Promise<BuiltinToolResult> => {
+  editFile = async (
+    params: EditLocalFileParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('editFile', params as any, ctx);
+      if (boundary) return boundary;
+      const resolved = resolveArgsWithScope(params, 'file_path', ctx?.workingDirectory);
       const result = await this.runtime.editFile({
-        all: params.replace_all,
-        path: params.file_path,
-        replace: params.new_string,
-        search: params.old_string,
+        all: resolved.replace_all,
+        path: resolved.file_path,
+        replace: resolved.new_string,
+        search: resolved.old_string,
       });
       return this.toResult(result);
     } catch (error) {
@@ -172,8 +292,15 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Shell Commands ====================
 
-  runCommand = async (params: RunCommandParams): Promise<BuiltinToolResult> => {
+  runCommand = async (
+    params: RunCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
+      const boundary = await this.executeOnDesktopBoundary('runCommand', params as any, ctx);
+      if (boundary) return boundary;
       // The manifest exposes `run_in_background`, but ComputerRuntime's RunCommandState
       // reads `args.background` for the `isBackground` field — without this normalize
       // the UI/state would always say foreground even for background commands.
@@ -181,15 +308,33 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
       const result = await this.runtime.runCommand({
         ...params,
         background: params.run_in_background,
+        cwd: ctx?.workingDirectory ?? params.cwd,
+        env: ctx ? undefined : params.env,
       } as any);
-      return this.toResult(result);
+      const output = this.toResult(result);
+      if (!ctx?.workingDirectory || !params.cwd || params.cwd === ctx.workingDirectory)
+        return output;
+      return {
+        ...output,
+        state: {
+          ...(typeof output.state === 'object' && output.state
+            ? output.state
+            : { result: output.state }),
+          workspaceWarnings: [{ code: 'MODEL_CWD_OVERRIDDEN', overridden: true }],
+        },
+      };
     } catch (error) {
       return this.errorResult(error);
     }
   };
 
-  getCommandOutput = async (params: GetCommandOutputParams): Promise<BuiltinToolResult> => {
+  getCommandOutput = async (
+    params: GetCommandOutputParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
+      const boundary = await this.executeOnDesktopBoundary('getCommandOutput', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.getCommandOutput({
         commandId: params.shell_id,
         filter: params.filter,
@@ -200,8 +345,13 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  killCommand = async (params: KillCommandParams): Promise<BuiltinToolResult> => {
+  killCommand = async (
+    params: KillCommandParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
     try {
+      const boundary = await this.executeOnDesktopBoundary('killCommand', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.killCommand({
         commandId: params.shell_id,
       });
@@ -213,9 +363,16 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
 
   // ==================== Search & Find ====================
 
-  grepContent = async (params: GrepContentParams): Promise<BuiltinToolResult> => {
+  grepContent = async (
+    params: GrepContentParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
     try {
-      const resolvedParams = resolveArgsWithScope(params, 'path');
+      const boundary = await this.executeOnDesktopBoundary('grepContent', params as any, ctx);
+      if (boundary) return boundary;
+      const resolvedParams = resolveArgsWithScope(params, 'path', ctx?.workingDirectory);
       // Forward the full IPC params (glob / output_mode / -i / -A / -B / -C / -n /
       // multiline / head_limit / type / tool) instead of stripping to {directory, pattern}.
       // ComputerRuntime.callService passes args through unchanged, so the runtime type
@@ -228,10 +385,24 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
     }
   };
 
-  globFiles = async (params: GlobFilesParams): Promise<BuiltinToolResult> => {
+  globFiles = async (
+    params: GlobFilesParams,
+    ctx?: BuiltinToolContext,
+  ): Promise<BuiltinToolResult> => {
+    const blocked = this.workspaceRequired(ctx);
+    if (blocked) return blocked;
+    if (ctx && isEscapingPathPattern(params.pattern)) {
+      return {
+        content: 'SCOPE_DENIED',
+        error: { message: 'SCOPE_DENIED', type: 'PluginServerError' },
+        success: false,
+      };
+    }
     try {
+      const boundary = await this.executeOnDesktopBoundary('globFiles', params as any, ctx);
+      if (boundary) return boundary;
       const result = await this.runtime.globFiles({
-        directory: params.scope,
+        directory: params.scope ?? ctx?.workingDirectory,
         pattern: params.pattern,
       });
       return this.toResult(result);

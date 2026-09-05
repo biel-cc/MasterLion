@@ -216,7 +216,7 @@ describe('MessageModel Update Tests', () => {
         expect(messageFiles[1].fileId).toBe('img2');
       });
 
-      it('should handle empty imageList', async () => {
+      it('treats an explicit empty imageList as detach-all', async () => {
         // Create test data
         await serverDB.insert(messages).values({
           id: 'msg-no-images',
@@ -224,10 +224,16 @@ describe('MessageModel Update Tests', () => {
           role: 'user',
           content: 'original content',
         });
+        await serverDB.insert(messagesFiles).values({
+          fileId: 'f1',
+          messageId: 'msg-no-images',
+          userId,
+        });
 
-        // Call update method without providing imageList
+        // An explicit empty list is different from omitting imageList.
         await messageModel.update('msg-no-images', {
           content: 'updated content',
+          imageList: [],
         });
 
         // Verify message updated successfully
@@ -245,6 +251,28 @@ describe('MessageModel Update Tests', () => {
           .where(eq(messagesFiles.messageId, 'msg-no-images'));
 
         expect(messageFiles).toHaveLength(0);
+      });
+
+      it('preserves file associations when imageList is omitted', async () => {
+        await serverDB.insert(messages).values({
+          id: 'msg-preserve-images',
+          userId,
+          role: 'user',
+          content: 'original content',
+        });
+        await serverDB.insert(messagesFiles).values({
+          fileId: 'f1',
+          messageId: 'msg-preserve-images',
+          userId,
+        });
+
+        await messageModel.update('msg-preserve-images', { content: 'updated content' });
+
+        const messageFiles = await serverDB
+          .select()
+          .from(messagesFiles)
+          .where(eq(messagesFiles.messageId, 'msg-preserve-images'));
+        expect(messageFiles).toHaveLength(1);
       });
 
       it('should update multiple fields at once', async () => {

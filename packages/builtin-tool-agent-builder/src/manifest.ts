@@ -126,6 +126,7 @@ export const AgentBuilderManifest: BuiltinToolManifest = {
             type: 'object',
           },
           meta: {
+            additionalProperties: false,
             description: 'Partial metadata object. Only include fields you want to update.',
             properties: {
               avatar: {

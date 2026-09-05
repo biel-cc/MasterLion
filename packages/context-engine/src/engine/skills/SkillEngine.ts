@@ -15,9 +15,11 @@ const log = debug('context-engine:skills-engine');
 export class SkillEngine {
   private skills: Map<string, SkillMeta>;
   private enableChecker?: SkillEnableChecker;
+  private registry?: SkillEngineOptions['registry'];
 
   constructor(options: SkillEngineOptions) {
     this.enableChecker = options.enableChecker;
+    this.registry = options.registry;
     this.skills = new Map(options.skills.map((s) => [s.identifier, s]));
     log('Initialized with %d skills: %o', this.skills.size, Array.from(this.skills.keys()));
   }
@@ -52,6 +54,7 @@ export class SkillEngine {
 
     return {
       enabledPluginIds: pluginIds,
+      ...(this.registry && { registry: this.registry }),
       skills: filteredSkills,
     };
   }

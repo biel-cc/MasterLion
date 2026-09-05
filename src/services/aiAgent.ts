@@ -1,8 +1,9 @@
-import type { ExecAgentAppContext, ExecAgentResult } from '@lobechat/types';
+import type { ExecAgentAppContext, ExecAgentResult, UserInterventionConfig } from '@lobechat/types';
+import type { OperationPathConsentApproval } from '@lobechat/types/src/executionContext';
 
 import { lambdaClient } from '@/libs/trpc/client';
 
-export type { ExecAgentResult };
+export type { ExecAgentResult, UserInterventionConfig };
 
 /**
  * Resume instruction for an operation that hit `human_approve_required`. When
@@ -18,10 +19,22 @@ export interface ResumeApprovalParam {
   decision: 'approved' | 'rejected' | 'rejected_continue';
   /** ID of the pending `role='tool'` message this decision targets. */
   parentMessageId: string;
+  /** Canonical operation-only read root produced by the trusted path-consent flow. */
+  pathConsent?: OperationPathConsentApproval;
   /** Optional user-supplied rejection reason (only meaningful for rejected variants). */
   rejectionReason?: string;
   /** tool_call_id of the pending tool call being approved/rejected. */
   toolCallId: string;
+}
+
+/**
+ * Resume an interaction card from an already-persisted user/tool message.
+ * The server validates the anchor role and owns creation of the new operation,
+ * including its frozen workspace execution context.
+ */
+export interface ResumeInteractionParam {
+  parentMessageId: string;
+  phase: 'tool_result' | 'user_input';
 }
 
 export interface ExecAgentTaskParams {
@@ -37,6 +50,8 @@ export interface ExecAgentTaskParams {
   prompt: string;
   /** Resume a previous op paused on `human_approve_required` instead of starting from a fresh user prompt. */
   resumeApproval?: ResumeApprovalParam;
+  /** Resume a persisted interaction result through the server coordinator. */
+  resumeInteraction?: ResumeInteractionParam;
   slug?: string;
   /**
    * Override what initiated this operation. Server defaults to `'chat'` when
@@ -44,6 +59,8 @@ export interface ExecAgentTaskParams {
    * `agent_operations.trigger` column reflects the real source.
    */
   trigger?: string;
+  /** Interactive callers preserve the UI approval policy; background callers choose headless explicitly. */
+  userInterventionConfig?: UserInterventionConfig;
 }
 
 /**

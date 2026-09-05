@@ -1,0 +1,187 @@
+{
+  "authoring": "explicit-python-list",
+  "style": "Flat Icon",
+  "quality_profile": "showcase",
+  "routes": [
+    {
+      "id": "ui0--ui1",
+      "source": "ui0",
+      "target": "ui1",
+      "route": [
+        [
+          318,
+          197.0
+        ],
+        [
+          388,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "ui1--ui2",
+      "source": "ui1",
+      "target": "ui2",
+      "route": [
+        [
+          636,
+          197.0
+        ],
+        [
+          706,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "ui2--ui3",
+      "source": "ui2",
+      "target": "ui3",
+      "route": [
+        [
+          954,
+          197.0
+        ],
+        [
+          1024,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "ui3--ui4",
+      "source": "ui3",
+      "target": "ui4",
+      "route": [
+        [
+          1272,
+          197.0
+        ],
+        [
+          1342,
+          197.0
+        ]
+      ]
+    },
+    {
+      "id": "server0--server1",
+      "source": "server0",
+      "target": "server1",
+      "route": [
+        [
+          397,
+          362.0
+        ],
+        [
+          467,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "server1--server2",
+      "source": "server1",
+      "target": "server2",
+      "route": [
+        [
+          794,
+          362.0
+        ],
+        [
+          864,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "server2--server3",
+      "source": "server2",
+      "target": "server3",
+      "route": [
+        [
+          1191,
+          362.0
+        ],
+        [
+          1261,
+          362.0
+        ]
+      ]
+    },
+    {
+      "id": "localcli0--localcli1",
+      "source": "localcli0",
+      "target": "localcli1",
+      "route": [
+        [
+          397,
+          527.0
+        ],
+        [
+          467,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "localcli1--localcli2",
+      "source": "localcli1",
+      "target": "localcli2",
+      "route": [
+        [
+          794,
+          527.0
+        ],
+        [
+          864,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "localcli2--localcli3",
+      "source": "localcli2",
+      "target": "localcli3",
+      "route": [
+        [
+          1191,
+          527.0
+        ],
+        [
+          1261,
+          527.0
+        ]
+      ]
+    },
+    {
+      "id": "spawn0--spawn1",
+      "source": "spawn0",
+      "target": "spawn1",
+      "route": [
+        [
+          510,
+          692.0
+        ],
+        [
+          610,
+          692.0
+        ]
+      ]
+    },
+    {
+      "id": "spawn1--spawn2",
+      "source": "spawn1",
+      "target": "spawn2",
+      "route": [
+        [
+          1050,
+          692.0
+        ],
+        [
+          1150,
+          692.0
+        ]
+      ]
+    }
+  ]
+}

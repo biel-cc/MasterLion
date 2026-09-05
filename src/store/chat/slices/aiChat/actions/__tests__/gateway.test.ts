@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ConstVersion from '@/const/version';
 import { aiAgentService } from '@/services/aiAgent';
+import { buildDraftConversationKey } from '@/store/projectWorkspace/draftKey';
+import { getProjectWorkspaceStoreState } from '@/store/projectWorkspace/store';
 
 import type { GatewayConnection } from '../gateway';
 import { GatewayActionImpl } from '../gateway';
@@ -39,6 +41,10 @@ vi.mock('@/store/user', () => ({
 }));
 
 vi.mock('@/store/user/selectors', () => ({
+  toolInterventionSelectors: {
+    approvalMode: () => 'manual',
+    allowList: () => ['lobe-skills/readReference'],
+  },
   settingsSelectors: {
     defaultAgentConfig: () => ({
       chatConfig: { disableGatewayMode: mockUserDefaultConfig.disableGatewayMode },
@@ -75,7 +81,19 @@ vi.mock('@/services/electron/gatewayConnection', () => ({
 vi.mock('@/store/agent', () => ({ getAgentStoreState: () => mockAgentStore.state }));
 
 vi.mock('@/store/agent/selectors', () => ({
-  agentSelectors: { currentAgentWorkingDirectory: () => () => undefined },
+  agentSelectors: {
+    currentAgentWorkingDirectory: () => () => undefined,
+    getAgentConfigById: (agentId: string) => (state: any) =>
+      state.agentMap?.[agentId] ?? {
+        agencyConfig: {
+          executionTargetByPlatform: {
+            desktop: mockRuntime.isLocal ? 'local' : 'none',
+            web: mockRuntime.isLocal ? 'local' : 'none',
+          },
+        },
+        chatConfig: { enableAgentMode: !mockRuntime.isChatMode },
+      },
+  },
   chatConfigByIdSelectors: {
     getChatConfigById: (agentId: string) => (state: any) =>
       state.agentMap?.[agentId]?.chatConfig ?? {},
@@ -513,6 +531,7 @@ describe('GatewayActionImpl', () => {
         internal_dispatchTopic: vi.fn(),
         internal_updateTopicLoading: vi.fn(),
         onOperationCancel: vi.fn(),
+        refreshTopic: vi.fn().mockResolvedValue(undefined),
         replaceMessages: vi.fn(),
         startOperation: vi.fn(() => ({ operationId: 'gw-op-1' })),
         switchTopic: vi.fn(),
@@ -565,6 +584,44 @@ describe('GatewayActionImpl', () => {
         expect.objectContaining({
           parentMessageId: 'user-msg-123',
           prompt: 'Original question',
+          userInterventionConfig: {
+            approvalMode: 'manual',
+            allowList: ['lobe-skills/readReference'],
+          },
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('forwards the explicit interaction resume phase to execAgentTask', async () => {
+      const { action } = createExecuteTestAction();
+
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-1',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: 'test-token',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+
+      await action.executeGatewayAgent({
+        context: { agentId: 'agent-1', topicId: 'topic-1', threadId: null, scope: 'main' },
+        message: '',
+        parentMessageId: 'tool-msg-123',
+        resumeInteraction: { parentMessageId: 'tool-msg-123', phase: 'tool_result' },
+      });
+
+      expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentMessageId: 'tool-msg-123',
+          resumeInteraction: { parentMessageId: 'tool-msg-123', phase: 'tool_result' },
         }),
         expect.anything(),
       );
@@ -707,6 +764,60 @@ describe('GatewayActionImpl', () => {
         }),
         expect.anything(),
       );
+    });
+
+    it('sends the draft target intent on first send and consumes it only after success', async () => {
+      const { action } = createExecuteTestAction();
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      getProjectWorkspaceStoreState().setDraftTargetIntent(draftKey, { target: 'sandbox' });
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-1',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: 'test-token',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+
+      await action.executeGatewayAgent({
+        context: { agentId: 'agent-1', scope: 'main', threadId: null },
+        message: 'start',
+      });
+
+      expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appContext: expect.objectContaining({
+            topicExecutionIntent: { platform: 'web', target: 'sandbox' },
+          }),
+        }),
+        expect.anything(),
+      );
+      expect(getProjectWorkspaceStoreState().draftByConversationKey[draftKey]).toBeUndefined();
+    });
+
+    it('preserves the draft target intent when first send fails', async () => {
+      const { action } = createExecuteTestAction();
+      const draftKey = buildDraftConversationKey({ agentId: 'agent-1' });
+      getProjectWorkspaceStoreState().setDraftTargetIntent(draftKey, { target: 'sandbox' });
+      vi.mocked(aiAgentService.execAgentTask).mockRejectedValue(new Error('network failed'));
+
+      await expect(
+        action.executeGatewayAgent({
+          context: { agentId: 'agent-1', scope: 'main', threadId: null },
+          message: 'start',
+        }),
+      ).rejects.toThrow('network failed');
+
+      expect(getProjectWorkspaceStoreState().draftByConversationKey[draftKey]).toMatchObject({
+        target: 'sandbox',
+      });
+      getProjectWorkspaceStoreState().clearDraftIntent(draftKey);
     });
 
     it('forwards the parent abort signal to execAgentTask and bails out (with server interrupt) when cancel arrives after the request resolved', async () => {
@@ -888,6 +999,7 @@ describe('GatewayActionImpl', () => {
         mockRuntime.isLocal = false;
         mockRuntime.isChatMode = false;
         mockGateway.getDeviceInfo.mockReset();
+        getProjectWorkspaceStoreState().setTopicState('topic-1', undefined);
       });
 
       const send = async () => {
@@ -927,19 +1039,59 @@ describe('GatewayActionImpl', () => {
         );
       });
 
-      // Regression guard (chat mode → no execution environment): chat mode must
-      // not resolve this machine's deviceId even on a local target, otherwise
-      // the server presets activeDeviceId and re-injects lobe-local-system.
-      it('does not resolve a deviceId in chat mode, even when local mode is set', async () => {
+      // Chat/tool mode controls capabilities for this operation, not the topic's
+      // immutable execution identity. The first turn must still capture local +
+      // this device so enabling tools later cannot drift to another target/cwd.
+      it('preserves local topic intent in desktop chat mode', async () => {
         mockEnv.isDesktop = true;
         mockRuntime.isLocal = true;
         mockRuntime.isChatMode = true;
+        mockGateway.getDeviceInfo.mockResolvedValue({ deviceId: 'device-local-1' });
+
+        await send();
+
+        expect(mockGateway.getDeviceInfo).toHaveBeenCalledTimes(1);
+        expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            appContext: expect.objectContaining({
+              topicExecutionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-local-1',
+              },
+            }),
+            deviceId: 'device-local-1',
+          }),
+          expect.anything(),
+        );
+      });
+
+      it('forwards an existing topic local snapshot and bound device without consulting defaults', async () => {
+        mockEnv.isDesktop = true;
+        mockRuntime.isLocal = false;
+        getProjectWorkspaceStoreState().setTopicState('topic-1', {
+          snapshot: {
+            boundDeviceId: 'device-snapshot-1',
+            target: 'local',
+            targetCapturedAt: '2026-09-03T00:00:00.000Z',
+            version: 1,
+          },
+        });
 
         await send();
 
         expect(mockGateway.getDeviceInfo).not.toHaveBeenCalled();
         expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
-          expect.objectContaining({ deviceId: undefined }),
+          expect.objectContaining({
+            appContext: expect.objectContaining({
+              topicExecutionIntent: {
+                platform: 'desktop',
+                target: 'local',
+                targetDeviceId: 'device-snapshot-1',
+              },
+            }),
+            deviceId: 'device-snapshot-1',
+          }),
           expect.anything(),
         );
       });

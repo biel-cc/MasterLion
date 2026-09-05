@@ -46,6 +46,92 @@ func TestJWTConnectionDoesNotRequireUserIDQuery(t *testing.T) {
 	}
 }
 
+func TestAuthenticationPublishesExecutionContextCapability(t *testing.T) {
+	srv, privateKey := newTestServer(t)
+	httpServer := httptest.NewServer(srv.Routes())
+	defer httpServer.Close()
+
+	conn, reader := dialTestWebSocket(t, httpServer.URL, url.Values{
+		"connectionId": {"capable-connection"},
+		"deviceId":     {"capable-device"},
+	})
+	defer conn.Close()
+	writeTestJSON(t, conn, authMessage{
+		Capabilities:    DeviceCapabilities{ExecutionContextValidation: true},
+		ProtocolVersion: 2,
+		Token:           signTestJWT(t, privateKey, "capability-user"),
+		Type:            "auth",
+	})
+
+	var success authSuccessMessage
+	readTestJSON(t, reader, &success)
+	devices := srv.hub("capability-user").devices()
+	if len(devices) != 1 || len(devices[0].Channels) != 1 {
+		t.Fatalf("unexpected device capability inventory: %#v", devices)
+	}
+	channel := devices[0].Channels[0]
+	if channel.ProtocolVersion != 2 || !channel.Capabilities.ExecutionContextValidation {
+		t.Fatalf("capability envelope was lost: %#v", channel)
+	}
+}
+
+func TestExecutionContextValidationNegotiatesLegacyAndHard(t *testing.T) {
+	context := json.RawMessage(`{"cwd":"/workspace"}`)
+	localTool := json.RawMessage(`{"apiName":"readFile","identifier":"lobe-local-system","type":"tool"}`)
+	missingTypeTool := json.RawMessage(`{"apiName":"readFile","identifier":"lobe-local-system"}`)
+	mcpTool := json.RawMessage(`{"apiName":"readFile","identifier":"filesystem-mcp","type":"mcp"}`)
+	legacy := &connection{att: DeviceAttachment{}}
+	capable := &connection{att: DeviceAttachment{
+		Capabilities:    DeviceCapabilities{ExecutionContextValidation: true},
+		ProtocolVersion: 2,
+	}}
+	unknownProtocol := &connection{att: DeviceAttachment{
+		Capabilities:    DeviceCapabilities{ExecutionContextValidation: true},
+		ProtocolVersion: 99,
+	}}
+
+	if got := executionContextValidation(legacy, deviceHTTPBody{ExecutionContext: context, ToolCall: localTool}); got != "legacy" {
+		t.Fatalf("legacy device reported %q", got)
+	}
+	if got := executionContextValidation(capable, deviceHTTPBody{ExecutionContext: context, ToolCall: localTool}); got != "hard" {
+		t.Fatalf("capable device reported %q", got)
+	}
+	if got := executionContextValidation(unknownProtocol, deviceHTTPBody{ExecutionContext: context, ToolCall: localTool}); got != "legacy" {
+		t.Fatalf("unknown protocol reported %q", got)
+	}
+	if got := executionContextValidation(capable, deviceHTTPBody{ExecutionContext: context, ToolCall: mcpTool}); got != "legacy" {
+		t.Fatalf("MCP call reported %q", got)
+	}
+	if got := executionContextValidation(capable, deviceHTTPBody{ExecutionContext: context, ToolCall: missingTypeTool}); got != "legacy" {
+		t.Fatalf("missing tool type reported %q", got)
+	}
+	if got := executionContextValidation(capable, deviceHTTPBody{ExecutionContext: context, ToolCall: json.RawMessage(`{`)}); got != "legacy" {
+		t.Fatalf("malformed tool call reported %q", got)
+	}
+	if got := executionContextValidation(capable, deviceHTTPBody{ToolCall: localTool}); got != "" {
+		t.Fatalf("context-free call reported %q", got)
+	}
+}
+
+func TestGatewayValidationMetadataOverridesDeviceClaim(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeMergedResultWithMetadata(
+		recorder,
+		http.StatusOK,
+		true,
+		json.RawMessage(`{"content":"ok","executionContextValidation":"hard"}`),
+		map[string]any{"executionContextValidation": "legacy"},
+	)
+
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["executionContextValidation"] != "legacy" {
+		t.Fatalf("device overrode gateway validation metadata: %#v", response)
+	}
+}
+
 func TestClaimedUserIDMustMatchVerifiedJWT(t *testing.T) {
 	srv, privateKey := newTestServer(t)
 	httpServer := httptest.NewServer(srv.Routes())
@@ -148,6 +234,72 @@ func TestServiceTokenStillRequiresUserID(t *testing.T) {
 	readTestJSON(t, reader, &success)
 	if success.UserID != "service-user" {
 		t.Fatalf("service token authenticated as %q", success.UserID)
+	}
+}
+
+func TestBuildAgentRunRequestForwardsFrozenAuthority(t *testing.T) {
+	body := deviceHTTPBody{
+		AgentType:        "codex",
+		CWD:              "/workspace",
+		Env:              map[string]string{"TOKEN": "secret"},
+		ExecutionContext: json.RawMessage(`{"cwd":"/workspace","operationId":"op-1"}`),
+		ImageList:        json.RawMessage(`[{"url":"https://example.test/image.png"}]`),
+		JWT:              "jwt",
+		ModelRef:         json.RawMessage(`{"modelId":"gpt","operationId":"op-1"}`),
+		OperationID:      "op-1",
+		Prompt:           "run",
+		SkillPolicy:      "user",
+		Skills:           json.RawMessage(`[{"key":"user:test","content":"body"}]`),
+		TopicID:          "topic-1",
+	}
+
+	payload, err := json.Marshal(buildAgentRunRequest(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(payload, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"cwd", "env", "executionContext", "imageList", "modelRef", "skills", "skillPolicy"} {
+		if _, ok := forwarded[key]; !ok {
+			t.Fatalf("frozen authority field %q was dropped: %#v", key, forwarded)
+		}
+	}
+	executionContext := forwarded["executionContext"].(map[string]any)
+	if executionContext["operationId"] != "op-1" {
+		t.Fatalf("wrong execution context: %#v", executionContext)
+	}
+}
+
+func TestBuildToolCallRequestForwardsFrozenAuthority(t *testing.T) {
+	body := deviceHTTPBody{
+		DeviceID:         "device-1",
+		ExecutionContext: json.RawMessage(`{"cwd":"/workspace","operationId":"op-1"}`),
+		OperationID:      "op-1",
+		ToolCall:         json.RawMessage(`{"apiName":"readFile","arguments":"{}"}`),
+		ToolCallID:       "tool-call-1",
+		TopicID:          "topic-1",
+	}
+
+	payload, err := json.Marshal(buildToolCallRequest(body, "request-1", 30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwarded map[string]any
+	if err := json.Unmarshal(payload, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"deviceId", "executionContext", "operationId", "toolCallId", "topicId"} {
+		if _, ok := forwarded[key]; !ok {
+			t.Fatalf("tool-call authority field %q was dropped: %#v", key, forwarded)
+		}
+	}
+	executionContext := forwarded["executionContext"].(map[string]any)
+	if executionContext["operationId"] != "op-1" {
+		t.Fatalf("wrong execution context: %#v", executionContext)
 	}
 }
 

@@ -69,6 +69,8 @@ export class StreamingHandler {
   // ========== Other state ==========
   private msgTraceId?: string;
   private finishType?: string;
+  /** Invalidates async work retained by a discarded provider attempt. */
+  private attemptEpoch = 0;
 
   // ========== Throttled updates ==========
   private throttledUpdateToolCalls: ReturnType<typeof throttle>;
@@ -134,6 +136,8 @@ export class StreamingHandler {
    * Handle streaming finish
    */
   async handleFinish(finishData: FinishData): Promise<StreamingResult> {
+    // Providers may finish without a separate stop chunk or a text chunk after reasoning.
+    this.endReasoningIfNeeded();
     // Update traceId
     if (finishData.traceId) {
       this.msgTraceId = finishData.traceId;
@@ -192,6 +196,38 @@ export class StreamingHandler {
    */
   getFinishType(): string | undefined {
     return this.finishType;
+  }
+
+  /**
+   * Discard every partial artifact produced by the current provider attempt.
+   * Context-window recovery calls this before the compressed retry starts, so
+   * neither stale tool calls nor late image uploads can enter the next attempt.
+   */
+  discardAttempt(): void {
+    this.attemptEpoch += 1;
+    this.throttledUpdateToolCalls.cancel();
+    this.callbacks.toggleToolCallingStreaming(this.context.messageId, undefined);
+
+    if (this.reasoningOperationId) {
+      this.callbacks.onReasoningComplete(this.reasoningOperationId);
+    }
+
+    this.output = '';
+    this.thinkingContent = '';
+    this.thinkingStartAt = undefined;
+    this.thinkingDuration = undefined;
+    this.reasoningOperationId = undefined;
+    this.reasoningParts = [];
+    this.contentParts = [];
+    this.isFunctionCall = false;
+    this.tools = undefined;
+    this.uploadTasks.clear();
+    this.contentImageUploads.clear();
+    this.reasoningImageUploads.clear();
+    this.msgTraceId = undefined;
+    this.finishType = undefined;
+
+    this.callbacks.onAttemptReset?.();
   }
 
   // ==================== Chunk handling methods ====================
@@ -320,13 +356,12 @@ export class StreamingHandler {
   }
 
   private endReasoningIfNeeded(): void {
-    if (this.thinkingStartAt && !this.thinkingDuration) {
+    if (this.thinkingStartAt !== undefined && this.thinkingDuration === undefined) {
       this.thinkingDuration = Date.now() - this.thinkingStartAt;
-
-      if (this.reasoningOperationId) {
-        this.callbacks.onReasoningComplete(this.reasoningOperationId);
-        this.reasoningOperationId = undefined;
-      }
+    }
+    if (this.reasoningOperationId) {
+      this.callbacks.onReasoningComplete(this.reasoningOperationId);
+      this.reasoningOperationId = undefined;
     }
   }
 
@@ -343,6 +378,7 @@ export class StreamingHandler {
   }
 
   private appendImageToReasoningParts(base64Content: string, mimeType: string): void {
+    const attemptEpoch = this.attemptEpoch;
     const tempImage = `data:${mimeType};base64,${base64Content}`;
     const partIndex = this.reasoningParts.length;
     this.reasoningParts = [...this.reasoningParts, { image: tempImage, type: 'image' }];
@@ -352,6 +388,7 @@ export class StreamingHandler {
       .uploadBase64Image(tempImage)
       .then((file) => {
         const url = file?.url || tempImage;
+        if (attemptEpoch !== this.attemptEpoch) return url;
         const updatedParts = [...this.reasoningParts];
         updatedParts[partIndex] = { image: url, type: 'image' };
         this.reasoningParts = updatedParts;
@@ -378,6 +415,7 @@ export class StreamingHandler {
   }
 
   private appendImageToContentParts(base64Content: string, mimeType: string): void {
+    const attemptEpoch = this.attemptEpoch;
     const tempImage = `data:${mimeType};base64,${base64Content}`;
     const partIndex = this.contentParts.length;
     this.contentParts = [...this.contentParts, { image: tempImage, type: 'image' }];
@@ -387,6 +425,7 @@ export class StreamingHandler {
       .uploadBase64Image(tempImage)
       .then((file) => {
         const url = file?.url || tempImage;
+        if (attemptEpoch !== this.attemptEpoch) return url;
         const updatedParts = [...this.contentParts];
         updatedParts[partIndex] = { image: url, type: 'image' };
         this.contentParts = updatedParts;

@@ -10,6 +10,9 @@ import useSWR from 'swr';
 
 import { message } from '@/components/AntdStaticMethods';
 import { LOADING_FLAT } from '@/const/message';
+import { isDesktop } from '@/const/version';
+import { isAbsoluteFilesystemPath } from '@/helpers/executionContext';
+import { normalizeNewTopicIntent } from '@/helpers/workspacePlatform';
 import { mutate, useClientDataSWRWithSync } from '@/libs/swr';
 import { cronKeys, topicKeys } from '@/libs/swr/keys';
 import { chatService } from '@/services/chat';
@@ -19,6 +22,12 @@ import { useAgentStore } from '@/store/agent';
 import { type ChatStore } from '@/store/chat';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useGlobalStore } from '@/store/global';
+import {
+  buildDraftConversationKey,
+  getProjectWorkspaceStoreState,
+  resolvePendingTopicExecutionIntent,
+  type WorkspaceDraftIntent,
+} from '@/store/projectWorkspace';
 import { type StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
 import { systemAgentSelectors, userGeneralSettingsSelectors } from '@/store/user/selectors';
@@ -43,6 +52,52 @@ type CronTopicsGroupWithJobInfo = {
   cronJob: unknown;
   cronJobId: string;
   topics: ChatTopic[];
+};
+
+export type NewTopicExecutionIntent = Omit<WorkspaceDraftIntent, 'updatedAt'>;
+
+const localNewTopicIntent = (): NewTopicExecutionIntent => (isDesktop ? { target: 'local' } : {});
+
+const resolveInheritedProjectIntent = (
+  topicId: string | undefined,
+  chatState: ChatStore,
+): NewTopicExecutionIntent => {
+  if (!isDesktop || !topicId) return localNewTopicIntent();
+
+  const workspaceState = getProjectWorkspaceStoreState();
+  const topicState = workspaceState.topicStatesById[topicId];
+  const topic = topicSelectors.getTopicById(topicId)(chatState);
+  const metadata = topic?.metadata as ChatTopicMetadata | undefined;
+  const snapshot = topicState?.snapshot ?? metadata?.executionSnapshot;
+  const workspaceId = snapshot?.workspaceId ?? metadata?.workspaceId;
+  const workspace =
+    topicState?.workspace ?? (workspaceId ? workspaceState.workspacesById[workspaceId] : undefined);
+  const workspaceKind = workspace?.kind ?? snapshot?.workspaceKind ?? metadata?.workspaceKind;
+
+  // A project is durable, user-selected context. Sandboxes and scratch roots
+  // are execution details and always start fresh from the neutral local page.
+  if (workspaceKind === 'sandbox' || workspaceKind === 'scratch') return localNewTopicIntent();
+
+  if (workspaceKind === 'device' && workspaceId) {
+    const target = snapshot?.target === 'device' ? 'device' : 'local';
+    return {
+      target,
+      targetDeviceId: workspace?.deviceId ?? snapshot?.boundDeviceId ?? metadata?.boundDeviceId,
+      workspaceId,
+    };
+  }
+
+  // Old servers persisted only a device/path pair. Preserve that historical
+  // project without inventing a formal workspace identity on the client.
+  if (metadata?.workingDirectory && isAbsoluteFilesystemPath(metadata.workingDirectory)) {
+    return {
+      legacyWorkingDirectory: metadata.workingDirectory,
+      target: snapshot?.target === 'device' ? 'device' : 'local',
+      targetDeviceId: metadata.boundDeviceId,
+    };
+  }
+
+  return localNewTopicIntent();
 };
 
 /**
@@ -87,6 +142,12 @@ export class ChatTopicActionImpl {
   // clobber the newer topic (see ).
   #switchTopicEpoch = 0;
 
+  // Status callers intentionally don't block the runtime lifecycle, so start
+  // and terminal writes can overlap. Serialize per topic to guarantee that a
+  // slower `running` request can never land after the later `active` request
+  // and leave a completed conversation spinning forever after reload.
+  #topicStatusWriteQueues = new Map<string, Promise<void>>();
+
   constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
     void _api;
     this.#set = set;
@@ -101,8 +162,33 @@ export class ChatTopicActionImpl {
     this.#set({ allTopicsDrawerOpen: true }, false, n('openAllTopicsDrawer'));
   };
 
+  openNewTopicFromHeader = async (): Promise<void> => {
+    const intent = resolveInheritedProjectIntent(this.#get().activeTopicId, this.#get());
+    await this.startNewTopic({ ...intent, runtimeEditable: true });
+  };
+
   openNewTopicOrSaveTopic = async (): Promise<void> => {
-    const { switchTopic, saveToTopic, refreshMessages, activeTopicId } = this.#get();
+    const { activeTopicId } = this.#get();
+    const intent = resolveInheritedProjectIntent(activeTopicId, this.#get());
+    await this.startNewTopic(intent);
+  };
+
+  /**
+   * Open the local new-topic page with an explicit, conversation-scoped runtime
+   * choice. Sidebar entry points use this method so a previous unstarted page
+   * can never leak its project or sandbox choice into the next one.
+   */
+  startNewTopic = async (
+    intent: NewTopicExecutionIntent = localNewTopicIntent(),
+  ): Promise<void> => {
+    const {
+      switchTopic,
+      saveToTopic,
+      refreshMessages,
+      activeAgentId,
+      activeGroupId,
+      activeTopicId,
+    } = this.#get();
     const hasTopic = !!activeTopicId;
 
     if (hasTopic) await switchTopic(null, { resetFileSelection: true });
@@ -110,6 +196,13 @@ export class ChatTopicActionImpl {
       await saveToTopic();
       await useAgentStore.getState().disableAllFiles();
       await refreshMessages();
+    }
+
+    if (activeAgentId) {
+      const workspaceStore = getProjectWorkspaceStoreState();
+      const key = buildDraftConversationKey({ agentId: activeAgentId, groupId: activeGroupId });
+      workspaceStore.clearDraftIntent(key);
+      workspaceStore.setDraftWorkspaceIntent(key, normalizeNewTopicIntent(intent, isDesktop));
     }
   };
 
@@ -362,9 +455,20 @@ export class ChatTopicActionImpl {
       groupId,
     });
 
-    await topicService.updateTopic(topicId, { status }).catch((err) => {
-      console.error('[updateTopicStatus] persist failed:', err);
-    });
+    const previousWrite = this.#topicStatusWriteQueues.get(topicId) ?? Promise.resolve();
+    const currentWrite = previousWrite
+      .then(() => topicService.updateTopic(topicId, { status }))
+      .catch((err) => {
+        console.error('[updateTopicStatus] persist failed:', err);
+      })
+      .then(() => undefined);
+
+    this.#topicStatusWriteQueues.set(topicId, currentWrite);
+    await currentWrite;
+
+    if (this.#topicStatusWriteQueues.get(topicId) === currentWrite) {
+      this.#topicStatusWriteQueues.delete(topicId);
+    }
   };
 
   autoRenameTopicTitle = async (id: string): Promise<void> => {
@@ -836,7 +940,7 @@ export class ChatTopicActionImpl {
     }
 
     this.#set(
-      { activeTopicId: !id ? (null as any) : id, activeThreadId: undefined },
+      { activeTopicId: id || (null as any), activeThreadId: undefined },
       false,
       n('toggleTopic'),
     );
@@ -1004,7 +1108,20 @@ export class ChatTopicActionImpl {
     );
 
     this.#get().internal_updateTopicLoading(tmpId, true);
-    const topicId = await topicService.createTopic(params);
+    const pendingExecution = params.executionIntent
+      ? undefined
+      : await resolvePendingTopicExecutionIntent({
+          agentId: this.#get().activeAgentId,
+          groupId: params.groupId ?? this.#get().activeGroupId,
+          isNewTopic: true,
+        });
+    const topicId = await topicService.createTopic({
+      ...params,
+      executionIntent: params.executionIntent ?? pendingExecution?.intent,
+    });
+    if (pendingExecution?.draftKey) {
+      getProjectWorkspaceStoreState().clearDraftIntent(pendingExecution.draftKey);
+    }
     this.#get().internal_updateTopicLoading(tmpId, false);
 
     this.#get().internal_updateTopicLoading(topicId, true);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { zipSync } from 'fflate';
+import * as deviceControl from '@lobechat/device-control';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type App } from '@/core/App';
@@ -484,71 +484,41 @@ describe('LocalFileCtr', () => {
   });
 
   describe('handlePrepareSkillDirectory', () => {
-    it('should download and extract a skill zip into a local cache directory', async () => {
-      const zipped = zipSync({
-        'SKILL.md': new TextEncoder().encode('---\nname: Demo\n---\ncontent'),
-        'docs/reference.txt': new TextEncoder().encode('hello'),
-      });
-
-      fetchMock.mockResolvedValue({
-        arrayBuffer: vi
-          .fn()
-          .mockResolvedValue(
-            zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength),
-          ),
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-      });
-
-      vi.mocked(mockFsPromises.access).mockRejectedValue(new Error('missing cache'));
-      vi.mocked(mockFsPromises.mkdir).mockResolvedValue(undefined);
-      vi.mocked(mockFsPromises.writeFile).mockResolvedValue(undefined);
-
-      const result = await (localFileCtr as any).handlePrepareSkillDirectory({
+    it('uses the shared verified package cache and Electron network transport', async () => {
+      const prepared = {
+        extractedDir: '/cache/skill',
+        success: true as const,
+        zipPath: '/cache/skill.zip',
+      };
+      const prepare = vi
+        .spyOn(deviceControl, 'prepareSkillPackage')
+        .mockResolvedValueOnce(prepared);
+      const input = {
         url: 'https://example.com/demo-skill.zip',
-        zipHash: 'zip-hash-123',
-      });
-
-      expect(result).toEqual({
-        extractedDir: '/mock/app/storage/file-storage/skills/extracted/zip-hash-123',
-        success: true,
-        zipPath: '/mock/app/storage/file-storage/skills/archives/zip-hash-123.zip',
-      });
-      expect(fetchMock).toHaveBeenCalledWith('https://example.com/demo-skill.zip');
-      expect(mockFsPromises.writeFile).toHaveBeenCalledWith(
-        '/mock/app/storage/file-storage/skills/archives/zip-hash-123.zip',
-        expect.any(Buffer),
-      );
-      expect(mockFsPromises.writeFile).toHaveBeenCalledWith(
-        '/mock/app/storage/file-storage/skills/extracted/zip-hash-123/SKILL.md',
-        expect.any(Buffer),
-      );
-      expect(mockFsPromises.writeFile).toHaveBeenCalledWith(
-        '/mock/app/storage/file-storage/skills/extracted/zip-hash-123/docs/reference.txt',
-        expect.any(Buffer),
-      );
-    });
-
-    it('should reuse the cached extracted directory when it is already prepared', async () => {
-      vi.mocked(mockFsPromises.access).mockResolvedValue(undefined);
-
-      const result = await (localFileCtr as any).handlePrepareSkillDirectory({
-        url: 'https://example.com/demo-skill.zip',
-        zipHash: 'zip-hash-123',
-      });
-
-      expect(result).toEqual({
-        extractedDir: '/mock/app/storage/file-storage/skills/extracted/zip-hash-123',
-        success: true,
-        zipPath: '/mock/app/storage/file-storage/skills/archives/zip-hash-123.zip',
-      });
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(mockFsPromises.writeFile).not.toHaveBeenCalled();
+        zipHash: 'a'.repeat(64),
+        forceRefresh: true,
+      };
+      try {
+        expect(await localFileCtr.handlePrepareSkillDirectory(input)).toEqual(prepared);
+        expect(prepare).toHaveBeenCalledWith(
+          input,
+          '/mock/app/storage/file-storage/skills',
+          fetchMock,
+        );
+      } finally {
+        prepare.mockRestore();
+      }
     });
   });
 
   describe('handleResolveSkillResourcePath', () => {
+    beforeEach(() => {
+      vi.spyOn(localFileCtr, 'handlePrepareSkillDirectory').mockResolvedValue({
+        extractedDir: '/mock/app/storage/file-storage/skills/extracted/zip-hash-123',
+        success: true,
+        zipPath: '/cache/skill.zip',
+      });
+    });
     it('should resolve a skill resource path from the extracted directory', async () => {
       vi.mocked(mockFsPromises.access).mockResolvedValue(undefined);
 

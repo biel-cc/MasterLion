@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { type LobeChatDatabase } from '@lobechat/database';
-import { sessions, topics } from '@lobechat/database/schemas';
+import { projectWorkspaces, sessions, topics } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,13 @@ vi.mock('next/server', () => ({
   after: vi.fn((callback: () => void) => callback()),
 }));
 
+const cleanupScratchWorkspaceMock = vi.hoisted(() => vi.fn());
+vi.mock('@/server/services/deviceGateway', () => ({
+  DeviceGateway: vi.fn().mockImplementation(() => ({
+    cleanupScratchWorkspace: cleanupScratchWorkspaceMock,
+  })),
+}));
+
 /**
  * Topic Router Integration Tests
  *
@@ -33,7 +40,47 @@ describe('Topic Router Integration Tests', () => {
   let testSessionId: string;
   let testAgentId: string;
 
+  const createScratchTopic = async (options: {
+    agentId?: string;
+    rootSuffix: string;
+    sessionId?: string;
+  }) => {
+    const rootPath = `/tmp/masterino-scratch/${options.rootSuffix}`;
+    const [workspace] = await serverDB
+      .insert(projectWorkspaces)
+      .values({
+        deviceId: 'device-1',
+        kind: 'scratch',
+        rootPath,
+        scopeKey: `scratch:device-1:${rootPath}`,
+        userId,
+      })
+      .returning();
+    const [topic] = await serverDB
+      .insert(topics)
+      .values({
+        agentId: options.agentId,
+        metadata: {
+          executionSnapshot: {
+            boundDeviceId: 'device-1',
+            target: 'device',
+            targetCapturedAt: '2026-09-04T00:00:00.000Z',
+            version: 1,
+            workspaceId: workspace.id,
+            workspaceKind: 'scratch',
+          },
+        },
+        sessionId: options.sessionId,
+        title: `Scratch ${options.rootSuffix}`,
+        userId,
+      })
+      .returning();
+
+    return { rootPath, topic, workspace };
+  };
+
   beforeEach(async () => {
+    cleanupScratchWorkspaceMock.mockReset();
     serverDB = await getTestDB();
     testDB = serverDB;
     userId = await createTestUser(serverDB);
@@ -329,6 +376,127 @@ describe('Topic Router Integration Tests', () => {
       const remainingTopics = await serverDB.select().from(topics).where(eq(topics.userId, userId));
 
       expect(remainingTopics).toHaveLength(0);
+    });
+  });
+
+  describe('scratch cleanup across topic deletion mutations', () => {
+    it('cleans scratch ownership before batchDelete removes topic and workspace records', async () => {
+      const scratch = await createScratchTopic({
+        rootSuffix: 'batch-ids',
+        sessionId: testSessionId,
+      });
+      cleanupScratchWorkspaceMock.mockResolvedValue({ removed: true, root: scratch.rootPath });
+
+      const result = await topicRouter
+        .createCaller(createTestContext(userId))
+        .batchDelete({ ids: [scratch.topic.id] });
+
+      expect(result).toEqual({ deleted: 1 });
+      expect(cleanupScratchWorkspaceMock).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        topicId: scratch.topic.id,
+        userId,
+      });
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratch.topic.id)),
+      ).resolves.toHaveLength(0);
+      await expect(
+        serverDB
+          .select()
+          .from(projectWorkspaces)
+          .where(eq(projectWorkspaces.id, scratch.workspace.id)),
+      ).resolves.toHaveLength(0);
+    });
+
+    it('cleans scratch topics selected by agent, session, and remove-all routes', async () => {
+      const caller = topicRouter.createCaller(createTestContext(userId));
+      const byAgent = await createScratchTopic({
+        agentId: testAgentId,
+        rootSuffix: 'batch-agent',
+      });
+      cleanupScratchWorkspaceMock.mockResolvedValueOnce({
+        removed: true,
+        root: byAgent.rootPath,
+      });
+      await expect(caller.batchDeleteByAgentId({ agentId: testAgentId })).resolves.toEqual({
+        deleted: 1,
+      });
+
+      const bySession = await createScratchTopic({
+        rootSuffix: 'batch-session',
+        sessionId: testSessionId,
+      });
+      cleanupScratchWorkspaceMock.mockResolvedValueOnce({
+        removed: true,
+        root: bySession.rootPath,
+      });
+      await expect(caller.batchDeleteBySessionId({ id: testSessionId })).resolves.toEqual({
+        deleted: 1,
+      });
+
+      const byAll = await createScratchTopic({ rootSuffix: 'batch-all' });
+      cleanupScratchWorkspaceMock.mockResolvedValueOnce({
+        removed: true,
+        root: byAll.rootPath,
+      });
+      await expect(caller.removeAllTopics()).resolves.toEqual({ deleted: 1 });
+
+      expect(cleanupScratchWorkspaceMock.mock.calls.map(([input]) => input.topicId)).toEqual([
+        byAgent.topic.id,
+        bySession.topic.id,
+        byAll.topic.id,
+      ]);
+    });
+
+    it('fails a bulk deletion closed when the device returns a different scratch root', async () => {
+      const scratch = await createScratchTopic({
+        rootSuffix: 'batch-root-mismatch',
+        sessionId: testSessionId,
+      });
+      cleanupScratchWorkspaceMock.mockResolvedValue({
+        removed: true,
+        root: '/tmp/masterino-scratch/different-topic',
+      });
+
+      await expect(
+        topicRouter
+          .createCaller(createTestContext(userId))
+          .batchDelete({ ids: [scratch.topic.id] }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratch.topic.id)),
+      ).resolves.toHaveLength(1);
+      await expect(
+        serverDB
+          .select()
+          .from(projectWorkspaces)
+          .where(eq(projectWorkspaces.id, scratch.workspace.id)),
+      ).resolves.toHaveLength(1);
+    });
+
+    it('fails a bulk deletion closed while the owning scratch device is offline', async () => {
+      const scratch = await createScratchTopic({
+        rootSuffix: 'batch-device-offline',
+        sessionId: testSessionId,
+      });
+      cleanupScratchWorkspaceMock.mockResolvedValue(undefined);
+
+      await expect(
+        topicRouter
+          .createCaller(createTestContext(userId))
+          .batchDelete({ ids: [scratch.topic.id] }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratch.topic.id)),
+      ).resolves.toHaveLength(1);
+      await expect(
+        serverDB
+          .select()
+          .from(projectWorkspaces)
+          .where(eq(projectWorkspaces.id, scratch.workspace.id)),
+      ).resolves.toHaveLength(1);
     });
   });
 
@@ -734,6 +902,98 @@ describe('Topic Router Integration Tests', () => {
       const deletedTopic = await serverDB.select().from(topics).where(eq(topics.id, topicId));
 
       expect(deletedTopic).toHaveLength(0);
+    });
+
+    it('removes a scratch topic only after its owning device confirms directory cleanup', async () => {
+      const rootPath = '/tmp/masterino-scratch/topic-cleanup';
+      const [workspace] = await serverDB
+        .insert(projectWorkspaces)
+        .values({
+          deviceId: 'device-1',
+          kind: 'scratch',
+          rootPath,
+          scopeKey: `scratch:device-1:${rootPath}`,
+          userId,
+        })
+        .returning();
+      const [scratchTopic] = await serverDB
+        .insert(topics)
+        .values({
+          metadata: {
+            executionSnapshot: {
+              boundDeviceId: 'device-1',
+              target: 'device',
+              targetCapturedAt: '2026-09-04T00:00:00.000Z',
+              version: 1,
+              workspaceId: workspace.id,
+            },
+          },
+          sessionId: testSessionId,
+          title: 'Temporary topic',
+          userId,
+        })
+        .returning();
+      cleanupScratchWorkspaceMock.mockResolvedValue({ removed: true, root: rootPath });
+
+      await topicRouter
+        .createCaller(createTestContext(userId))
+        .removeTopic({ id: scratchTopic.id });
+
+      expect(cleanupScratchWorkspaceMock).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        topicId: scratchTopic.id,
+        userId,
+      });
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratchTopic.id)),
+      ).resolves.toHaveLength(0);
+      await expect(
+        serverDB.select().from(projectWorkspaces).where(eq(projectWorkspaces.id, workspace.id)),
+      ).resolves.toHaveLength(0);
+    });
+
+    it('keeps scratch records when its owning device cannot confirm cleanup', async () => {
+      const rootPath = '/tmp/masterino-scratch/topic-offline';
+      const [workspace] = await serverDB
+        .insert(projectWorkspaces)
+        .values({
+          deviceId: 'device-1',
+          kind: 'scratch',
+          rootPath,
+          scopeKey: `scratch:device-1:${rootPath}`,
+          userId,
+        })
+        .returning();
+      const [scratchTopic] = await serverDB
+        .insert(topics)
+        .values({
+          metadata: {
+            executionSnapshot: {
+              boundDeviceId: 'device-1',
+              target: 'device',
+              targetCapturedAt: '2026-09-04T00:00:00.000Z',
+              version: 1,
+              workspaceId: workspace.id,
+              workspaceKind: 'scratch',
+            },
+          },
+          sessionId: testSessionId,
+          title: 'Offline temporary topic',
+          userId,
+        })
+        .returning();
+      cleanupScratchWorkspaceMock.mockResolvedValue(undefined);
+
+      await expect(
+        topicRouter.createCaller(createTestContext(userId)).removeTopic({ id: scratchTopic.id }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+      await expect(
+        serverDB.select().from(topics).where(eq(topics.id, scratchTopic.id)),
+      ).resolves.toHaveLength(1);
+      await expect(
+        serverDB.select().from(projectWorkspaces).where(eq(projectWorkspaces.id, workspace.id)),
+      ).resolves.toHaveLength(1);
     });
 
     it('should count topics', async () => {

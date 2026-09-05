@@ -1,13 +1,26 @@
 import { spawn } from 'node:child_process';
 
 import {
+  type HeterogeneousSkillMaterializationMode,
+  type MaterializableSkill,
+  materializeSkillsForCli,
+} from '@lobechat/device-control';
+import {
   buildHeteroExecStdinPayload,
   type HeteroExecImageRef,
 } from '@lobechat/heterogeneous-agents/protocol';
+import {
+  composeChildProcessEnv,
+  loadWorkspaceEnvFiles,
+  resolveLoginShellPath,
+} from '@lobechat/local-file-shell';
 
 export interface SpawnHeteroAgentRunParams {
   agentType: string;
   cwd?: string;
+  /** Server-resolved environment layered into the child process. */
+  env?: Record<string, string>;
+  envFiles?: string[];
   /** Image attachments (signed URLs) appended as image content blocks. */
   imageList?: HeteroExecImageRef[];
   jwt: string;
@@ -15,6 +28,8 @@ export interface SpawnHeteroAgentRunParams {
   prompt: string;
   resumeSessionId?: string;
   serverUrl: string;
+  skillPolicy?: HeterogeneousSkillMaterializationMode;
+  skills?: MaterializableSkill[];
   systemContext?: string;
   topicId: string;
 }
@@ -46,23 +61,47 @@ interface SpawnHeteroAgentRunLogger {
  * `heteroFinish` — surfacing as a stuck assistant message. A rejected ack
  * instead flows back as a dispatch failure the user can see.
  */
-export function spawnHeteroAgentRun(
+export async function spawnHeteroAgentRun(
   params: SpawnHeteroAgentRunParams,
   logger?: SpawnHeteroAgentRunLogger,
 ): Promise<AgentRunAckResult> {
   const {
     agentType,
     cwd,
+    env,
+    envFiles,
     imageList,
     jwt,
     operationId,
     prompt,
     resumeSessionId,
+    skills,
+    skillPolicy,
     serverUrl,
     systemContext,
     topicId,
   } = params;
-  const workDir = cwd ?? process.cwd();
+  const workDir = cwd?.trim();
+  if (!workDir) {
+    return { reason: 'WORKSPACE_REQUIRED', status: 'rejected' };
+  }
+
+  if ((skillPolicy ?? 'off') !== 'off') {
+    const materialization = await materializeSkillsForCli({
+      agentType,
+      cwd: workDir,
+      policy: skillPolicy,
+      skills,
+    });
+    if (materialization.errors.length > 0) {
+      return {
+        reason: `SKILL_MATERIALIZATION_FAILED: ${materialization.errors
+          .map(({ message }) => message)
+          .join('; ')}`,
+        status: 'rejected',
+      };
+    }
+  }
 
   // Server-ingest mode (--topic + --operation-id): events are batch-POSTed to
   // the server, not rendered. `--input-json -` reads the prompt from stdin.
@@ -90,6 +129,13 @@ export function spawnHeteroAgentRun(
   // the desktop path. `lh hetero exec` coerces both shapes via
   // coerceJsonPrompt.
   const stdinPayload = buildHeteroExecStdinPayload({ imageList, prompt, systemContext });
+  const fileEnv = await loadWorkspaceEnvFiles({ envFiles, workspaceRootPath: workDir });
+  const childEnv = composeChildProcessEnv({
+    hostEnv: process.env,
+    loginShellPath: await resolveLoginShellPath(),
+    resolvedEnv: { ...fileEnv, ...env },
+    runtimeEnv: { LOBEHUB_JWT: jwt, LOBEHUB_SERVER: serverUrl },
+  });
 
   return new Promise<AgentRunAckResult>((resolve) => {
     let settled = false;
@@ -101,11 +147,7 @@ export function spawnHeteroAgentRun(
 
     const child = spawn(process.execPath, [...process.execArgv, ...cliArgs], {
       cwd: workDir,
-      env: {
-        ...process.env,
-        LOBEHUB_JWT: jwt,
-        LOBEHUB_SERVER: serverUrl,
-      },
+      env: childEnv,
       stdio: ['pipe', 'inherit', 'inherit'],
     });
 
