@@ -1,3 +1,4 @@
+import type * as LobeChatConst from '@lobechat/const';
 import { renderHook } from '@testing-library/react';
 import { type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,14 @@ import { initServerConfigStore, Provider } from '@/store/serverConfig/store';
 import { useUserStore } from '@/store/user';
 
 import { useCategory } from './useCategory';
+
+const platform = vi.hoisted(() => ({ isDesktop: false }));
+vi.mock('@lobechat/const', async (importOriginal) => ({
+  ...(await importOriginal<typeof LobeChatConst>()),
+  get isDesktop() {
+    return platform.isDesktop;
+  },
+}));
 
 vi.hoisted(() => {
   Object.defineProperty(globalThis, 'localStorage', {
@@ -59,10 +68,17 @@ const getItemKeys = () => {
 const initialUserStoreState = useUserStore.getState();
 
 afterEach(() => {
+  platform.isDesktop = false;
   useUserStore.setState(initialUserStoreState, true);
 });
 
 describe('settings useCategory', () => {
+  it('exposes device workspace settings only in Electron', () => {
+    platform.isDesktop = true;
+    expect(getItemKeys()).toContain(SettingsTabs.Devices);
+    platform.isDesktop = false;
+    expect(getItemKeys()).not.toContain(SettingsTabs.Devices);
+  });
   it('keeps Provider visible when provider settings are enabled', () => {
     expect(getItemKeys()).toContain(SettingsTabs.Provider);
   });

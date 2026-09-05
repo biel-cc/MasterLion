@@ -18,6 +18,7 @@ import {
   KeyRound,
   Map,
   MessageCircleIcon,
+  Monitor,
   PaletteIcon,
   Sparkles,
   TerminalSquare,
@@ -200,6 +201,11 @@ export const useCategory = () => {
     // System group
     const systemItems: CategoryItem[] = [
       isDesktop && {
+        icon: Monitor,
+        key: SettingsTabs.Devices,
+        label: t('tab.devices'),
+      },
+      isDesktop && {
         icon: EthernetPort,
         key: SettingsTabs.Proxy,
         label: t('tab.proxy'),
@@ -240,7 +246,11 @@ export const useCategory = () => {
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => CONVERGED_SETTINGS_TABS.has(item.key)),
+        items: group.items.filter(
+          (item) =>
+            CONVERGED_SETTINGS_TABS.has(item.key) ||
+            (isDesktop && item.key === SettingsTabs.Devices),
+        ),
       }))
       .filter((group) => group.items.length > 0);
   }, [

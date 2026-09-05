@@ -29,11 +29,17 @@ vi.mock('@/store/serverConfig', () => ({
 
 vi.mock('./componentMap', () => ({
   componentMap: {
+    skill: () => <div>skill-settings-content</div>,
     memory: () => <div>memory-settings-content</div>,
   },
 }));
 
 describe('SettingsContent', () => {
+  it('renders skill management reached from the composer', () => {
+    render(<SettingsContent activeTab={SettingsTabs.Skill} mobile={false} />);
+    expect(screen.getByText('skill-settings-content')).toBeInTheDocument();
+    expect(screen.queryByText('feature-disabled')).not.toBeInTheDocument();
+  });
   it('renders the converged memory settings page', () => {
     render(<SettingsContent activeTab={SettingsTabs.Memory} mobile={false} />);
 
