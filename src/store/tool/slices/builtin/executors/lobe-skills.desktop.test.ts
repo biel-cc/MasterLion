@@ -1,3 +1,4 @@
+import { selectActivatedSkillsFromMessages } from '@lobechat/builtin-tool-skills';
 import type { BuiltinToolContext } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -85,7 +86,39 @@ describe('desktop skills execution', () => {
         ? { content: 'Found 1 file', state: { files: ['references/readme.md'] }, success: true }
         : { content: 'Reference content', success: true },
     );
-    expect((await skillsExecutor.activateSkill({ name: 'demo' }, ctx)).success).toBe(true);
+    const activation = await skillsExecutor.activateSkill({ name: 'demo' }, ctx);
+    expect(activation.success).toBe(true);
+    const activatedSkills = selectActivatedSkillsFromMessages([
+      {
+        plugin: { apiName: 'activateSkill', identifier: 'lobe-skills' },
+        pluginState: activation.state,
+        role: 'tool',
+      },
+    ]);
+    expect(activatedSkills).toEqual([
+      expect.objectContaining({ id: 'project:demo', name: 'demo' }),
+    ]);
+    expect(
+      (
+        await skillsExecutor.execScript(
+          { command: 'sh scripts/probe.sh' },
+          {
+            ...ctx,
+            stepContext: { activatedSkills },
+          },
+        )
+      ).success,
+    ).toBe(true);
+    expect(executeLocalToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiName: 'runCommand',
+        executionContext: expect.objectContaining({
+          cwd: '/workspace/project/.agents/skills/demo',
+          workspaceRootPath: '/workspace/project',
+          envFiles: ['.env'],
+        }),
+      }),
+    );
     expect(
       (await skillsExecutor.readReference({ id: 'demo', path: 'references/readme.md' }, ctx))
         .success,

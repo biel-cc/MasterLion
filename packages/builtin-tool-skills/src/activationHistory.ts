@@ -14,11 +14,22 @@ export function selectActivatedSkillsFromMessages(
 ): ExecScriptActivatedSkill[] | undefined {
   const skills = new Map<string, ExecScriptActivatedSkill>();
   const add = (value: unknown) => {
-    if (!value || typeof value !== 'object' || !('id' in value) || !('name' in value)) return;
-    if (typeof value.id !== 'string' || typeof value.name !== 'string') return;
-    skills.delete(value.id);
-    skills.set(value.id, {
-      id: value.id,
+    if (!value || typeof value !== 'object' || !('name' in value) || typeof value.name !== 'string')
+      return;
+    // Older project activation results had no database ID. Reconstruct only the
+    // identity; execution still resolves paths against the frozen skill registry.
+    const project =
+      'source' in value && (value.source === 'project' || value.source === 'workspace');
+    const id =
+      'id' in value && typeof value.id === 'string'
+        ? value.id
+        : project
+          ? `project:${value.name}`
+          : undefined;
+    if (!id) return;
+    skills.delete(id);
+    skills.set(id, {
+      id,
       name: value.name,
       description:
         'description' in value && typeof value.description === 'string'

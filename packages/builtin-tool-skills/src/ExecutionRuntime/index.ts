@@ -591,6 +591,7 @@ export class SkillsExecutionRuntime {
           content,
           state: {
             hasResources: false,
+            id: registryRef?.key ?? `project:${name}`,
             location: projectSkill.location,
             name,
             source: 'project',
