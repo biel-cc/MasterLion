@@ -18,6 +18,7 @@ import type {
   SubAgentsBatchResultPayload,
 } from '@lobechat/agent-runtime';
 import { UsageCounter } from '@lobechat/agent-runtime';
+import { LocalSystemIdentifier } from '@lobechat/builtin-tool-local-system';
 import {
   countContextTokens,
   type OperationSkillSet,
@@ -41,6 +42,7 @@ import { t } from 'i18next';
 import pMap from 'p-map';
 
 import { LOADING_FLAT } from '@/const/message';
+import { getRuntimePathConsentRequest } from '@/helpers/executionContext/pathConsent';
 import { aiAgentService } from '@/services/aiAgent';
 import { chatService, collectClientProviderMediaTokenEstimates } from '@/services/chat';
 import { type ResolvedAgentConfig } from '@/services/chat/mecha';
@@ -531,9 +533,7 @@ export const createAgentExecutors = (context: {
         evaluation: ContextBudgetEvaluation,
       ) => {
         const compressionTrigger =
-          evaluation.decision.kind === 'compress'
-            ? evaluation.decision.trigger
-            : 'final-preflight';
+          evaluation.decision.kind === 'compress' ? evaluation.decision.trigger : 'final-preflight';
         const failedOutcome = {
           afterTokens: evaluation.estimatedPromptTokens,
           attempt: 1 as const,
@@ -553,7 +553,11 @@ export const createAgentExecutors = (context: {
           trigger: compressionTrigger,
         };
 
-        if (agentConfigData.chatConfig?.enableContextCompression === false || !topicId || !agentId) {
+        if (
+          agentConfigData.chatConfig?.enableContextCompression === false ||
+          !topicId ||
+          !agentId
+        ) {
           return { outcome: failedOutcome, payload: budgetPayload };
         }
 
@@ -1011,6 +1015,55 @@ export const createAgentExecutors = (context: {
           })
           .finally(lifecycleSignal.cleanup);
         const { executionTimeMs: executionTime, result } = receipt;
+
+        const executionContext =
+          context.get().operations[context.operationId]?.metadata.executionContext;
+        const pathRequest = getRuntimePathConsentRequest({ state: result.state });
+        if (
+          !result.success &&
+          result.content === 'INTERVENTION_REQUIRED' &&
+          chatToolPayload.identifier === LocalSystemIdentifier &&
+          pathRequest &&
+          executionContext?.plan.kind === 'device' &&
+          executionContext.plan.target === 'local' &&
+          pathRequest.deviceId === executionContext.plan.deviceId &&
+          pathRequest.operationId === (executionContext.operationId ?? context.operationId) &&
+          pathRequest.topicId === opContext.topicId &&
+          state.userInterventionConfig?.approvalMode !== 'headless'
+        ) {
+          const updateContext = { operationId: context.operationId };
+          await context.get().optimisticUpdateToolMessage(
+            toolMessageId,
+            {
+              content: '',
+              pluginError: null,
+              pluginState: result.state,
+            },
+            updateContext,
+          );
+          await context.get().optimisticUpdateMessagePlugin(
+            toolMessageId,
+            {
+              intervention: { status: 'pending' },
+            },
+            updateContext,
+          );
+          return {
+            events: [
+              {
+                type: 'human_approve_required',
+                operationId: state.operationId,
+                pendingToolsCalling: [chatToolPayload],
+              },
+            ],
+            newState: {
+              ...state,
+              messages: context.get().dbMessagesMap[context.messageKey] || [],
+              status: 'waiting_for_human',
+              pendingToolsCalling: [chatToolPayload],
+            },
+          };
+        }
 
         const isSuccess = result.success;
 

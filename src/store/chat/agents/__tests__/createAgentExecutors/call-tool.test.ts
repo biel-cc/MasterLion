@@ -47,6 +47,63 @@ describe('call_tool executor', () => {
     }));
   });
 
+  it('pauses for a device-authored path approval instead of feeding the error to the model', async () => {
+    const context = createTestContext({ topicId: 'test-topic' });
+    const request = {
+      actualCwd: '',
+      deviceId: 'device-1',
+      modes: ['read'],
+      operationId: context.operationId,
+      primaryCwd: '',
+      requestedPath: '/tmp/probe.txt',
+      topicId: 'test-topic',
+      version: 1,
+    };
+    const mockStore = createMockStore({
+      internal_executeDifferentTypePlugin: vi.fn().mockResolvedValue({
+        content: 'INTERVENTION_REQUIRED',
+        success: false,
+        state: { code: 'INTERVENTION_REQUIRED', workspacePathConsent: request },
+      }),
+      optimisticUpdateToolMessage: vi.fn().mockResolvedValue(undefined),
+    });
+    mockStore.operations[context.operationId] = {
+      abortController: new AbortController(),
+      childOperationIds: [],
+      context: { agentId: 'test-session', topicId: 'test-topic' },
+      id: context.operationId,
+      metadata: {
+        executionContext: { plan: { kind: 'device', target: 'local', deviceId: 'device-1' } },
+      },
+      status: 'running',
+      type: 'execAgentRuntime',
+    } as any;
+    mockStore.dbMessagesMap[context.messageKey] = [createAssistantMessage()];
+    const instruction = createCallToolInstruction({ id: 'read-1', identifier: 'lobe-local-system', apiName: 'readFile', arguments: '{"path":"/tmp/probe.txt"}', type: 'builtin' });
+    const result = await executeWithMockContext({
+      executor: 'call_tool',
+      instruction,
+      state: createInitialState(),
+      mockStore,
+      context,
+    });
+    expect(result.newState.status).toBe('waiting_for_human');
+    expect(result.events).toContainEqual(
+      expect.objectContaining({ type: 'human_approve_required' }),
+    );
+    expect(result.events.some((event) => event.type === 'tool_result')).toBe(false);
+    expect(mockStore.optimisticUpdateMessagePlugin).toHaveBeenCalledWith(
+      expect.any(String),
+      { intervention: { status: 'pending' } },
+      expect.anything(),
+    );
+    expect(mockStore.optimisticUpdateToolMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ content: '', pluginError: null }),
+      expect.anything(),
+    );
+  });
+
   describe('Basic Behavior', () => {
     it('should create tool message and execute tool successfully', async () => {
       // Given

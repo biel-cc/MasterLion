@@ -12,6 +12,7 @@ import * as agentConfigResolver from '@/services/chat/mecha/agentConfigResolver'
 import { messageService } from '@/services/message';
 import { useAgentStore } from '@/store/agent';
 import { useAiInfraStore } from '@/store/aiInfra';
+import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 
 import { useChatStore } from '../../../../store';
@@ -136,6 +137,7 @@ const mockInternalCreateAgentState = (value: ReturnType<typeof realCreateAgentSt
 
 beforeEach(() => {
   resetTestEnvironment();
+  useProjectWorkspaceStore.setState({ operationConsentByMessage: {} });
   setupMockSelectors();
   spyOnMessageService();
   serverConfigMock.enableVisualUnderstanding = false;
@@ -157,6 +159,66 @@ afterEach(() => {
 
 describe('StreamingExecutor actions', () => {
   describe('executeClientAgent', () => {
+    it('carries one approved path from the pending tool into the new local operation', async () => {
+      act(() => useChatStore.setState({ executeClientAgent: realExecAgentRuntime }));
+      const request = {
+        actualCwd: '',
+        deviceId: 'device-local',
+        modes: ['read'] as const,
+        operationId: 'paused-operation',
+        primaryCwd: '',
+        requestedPath: '/tmp/probe.txt',
+        topicId: TEST_IDS.TOPIC_ID,
+        version: 1 as const,
+      };
+      const message = createMockMessage({
+        id: 'pending-path-tool',
+        role: 'tool',
+        pluginState: { workspacePathConsent: request },
+      });
+      useProjectWorkspaceStore
+        .getState()
+        .setOperationPathConsent(message.id, {
+          ...request,
+          modes: ['read'],
+          rootPath: '/private/tmp/probe.txt',
+          scope: 'operation',
+        });
+      vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
+        async ({ onFinish }) => {
+          await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
+        },
+      );
+      await act(async () => {
+        await useChatStore.getState().executeClientAgent({
+          context: { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID },
+          executionContext: {
+            version: 1,
+            accessRoots: [],
+            plan: { kind: 'device', target: 'local', deviceId: 'device-local' },
+          },
+          messages: [message],
+          parentMessageId: message.id,
+          parentMessageType: 'tool',
+          skipCreateFirstMessage: true,
+        });
+      });
+      const operation = Object.values(useChatStore.getState().operations).find(
+        (op) => op.type === 'execAgentRuntime',
+      );
+      expect(operation?.metadata.executionContext?.accessRoots).toContainEqual(
+        expect.objectContaining({
+          rootPath: '/private/tmp/probe.txt',
+          source: 'user-approval',
+          scope: 'operation',
+          modes: ['read'],
+          operationId: operation!.id,
+          topicId: TEST_IDS.TOPIC_ID,
+          deviceId: 'device-local',
+        }),
+      );
+    });
+
     it.each([true, false])(
       'grants absolute reads only to the explicit current UI submission (%s)',
       async (explicitSubmission) => {

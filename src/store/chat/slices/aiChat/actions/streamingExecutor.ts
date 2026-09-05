@@ -36,6 +36,10 @@ import debug from 'debug';
 
 import { resolveFrozenClientExecutionContext } from '@/helpers/executionContext';
 import { buildDirectUserMessageAccessRoots } from '@/helpers/executionContext/directUserPathConsent';
+import {
+  getRuntimePathConsentRequest,
+  validateOperationPathConsent,
+} from '@/helpers/executionContext/pathConsent';
 import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { aiAgentService } from '@/services/aiAgent';
 import { isCanUseVideo, isCanUseVision } from '@/services/chat/helper';
@@ -696,6 +700,41 @@ export class StreamingExecutorActionImpl {
           topicId: topicId ?? undefined,
           workspaces,
         });
+        this.#get().updateOperationMetadata(operationId, {
+          executionContext: frozenExecutionContext,
+        });
+      }
+
+      // A path approval resumes under a new operation. Rebind only the exact
+      // device-authored request selected by the user, never a model-provided path.
+      const pathDecision =
+        parentMessageType === 'tool' && parentMessageId
+          ? projectWorkspaceState.operationConsentByMessage[parentMessageId]
+          : undefined;
+      if (
+        pathDecision?.scope === 'operation' &&
+        topicId &&
+        frozenExecutionContext?.plan.kind === 'device' &&
+        frozenExecutionContext.plan.target === 'local'
+      ) {
+        const pendingMessage = originalMessages.find((message) => message.id === parentMessageId);
+        const accessRoot = validateOperationPathConsent({
+          approval: {
+            ...pathDecision,
+            version: 1,
+            scope: 'operation',
+            sourceOperationId: pathDecision.operationId,
+          },
+          currentDeviceId: frozenExecutionContext.plan.deviceId,
+          currentOperationId: operationId,
+          currentTopicId: topicId,
+          request: getRuntimePathConsentRequest({ state: pendingMessage?.pluginState }),
+        });
+        frozenExecutionContext = {
+          ...frozenExecutionContext,
+          operationId,
+          accessRoots: [...(frozenExecutionContext.accessRoots ?? []), accessRoot],
+        };
         this.#get().updateOperationMetadata(operationId, {
           executionContext: frozenExecutionContext,
         });
