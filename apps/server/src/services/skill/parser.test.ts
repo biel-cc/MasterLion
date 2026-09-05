@@ -322,18 +322,36 @@ Content`;
       await expect(parser.parseZipPackage(Buffer.from(zipped))).rejects.toThrow('Unsafe path');
     });
 
-    it('should reject executable scripts before extracting ZIP contents', async () => {
-      const zipped = await createZip({
-        'SKILL.md': new TextEncoder().encode(
-          `---\nname: unsafe\ndescription: unsafe\n---\nContent`,
-        ),
-        'install.ps1': new TextEncoder().encode('Write-Host unsafe'),
-      });
+    it.each(['sh', 'ps1', 'bat', 'cmd', 'py', 'js'])(
+      'imports skill script source without executing it (%s)',
+      async (extension) => {
+        const source = 'echo SKILL_IMPORT_MUST_NOT_EXECUTE';
+        const zipped = await createZip({
+          'SKILL.md': new TextEncoder().encode(
+            '---\nname: script-skill\ndescription: Script fixture\n---\nRun only after approval.',
+          ),
+          [`scripts/probe.${extension}`]: new TextEncoder().encode(source),
+        });
+        const result = await parser.parseZipPackage(Buffer.from(zipped));
+        expect(result.resources.get(`scripts/probe.${extension}`)?.toString()).toBe(source);
+      },
+    );
 
-      await expect(parser.parseZipPackage(Buffer.from(zipped))).rejects.toThrow(
-        'Executable or macro-enabled',
-      );
-    });
+    it.each(['exe', 'dll', 'docm', 'xlsm'])(
+      'rejects executable binaries and macro files (%s)',
+      async (extension) => {
+        const zipped = await createZip({
+          'SKILL.md': new TextEncoder().encode(
+            `---\nname: unsafe\ndescription: unsafe\n---\nContent`,
+          ),
+          [`install.${extension}`]: new TextEncoder().encode('unsafe'),
+        });
+
+        await expect(parser.parseZipPackage(Buffer.from(zipped))).rejects.toThrow(
+          'Executable or macro-enabled',
+        );
+      },
+    );
 
     it('should throw SkillManifestError for invalid manifest in ZIP', async () => {
       const skillMd = `---

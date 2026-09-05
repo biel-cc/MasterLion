@@ -73,11 +73,9 @@ describe('executeDeviceRpc', () => {
       await writeFile(secret, 'outside workspace secret');
       await symlink(secret, path.join(scanRoot, 'AGENTS.md'));
 
-      const result = (await executeDeviceRpc(
-        'initWorkspace',
-        { scope: scanRoot },
-        makeDeps(),
-      )) as { instructions: { content: string; source: string }[] };
+      const result = (await executeDeviceRpc('initWorkspace', { scope: scanRoot }, makeDeps())) as {
+        instructions: { content: string; source: string }[];
+      };
 
       expect(result.instructions).toEqual([]);
     } finally {
@@ -101,11 +99,9 @@ describe('executeDeviceRpc', () => {
       await symlink(outside, path.join(skillSource, 'linked-directory'));
       await symlink(path.join(outside, 'SKILL.md'), path.join(insideSkill, 'SKILL.md'));
 
-      const result = (await executeDeviceRpc(
-        'initWorkspace',
-        { scope: scanRoot },
-        makeDeps(),
-      )) as { skills: { name: string }[] };
+      const result = (await executeDeviceRpc('initWorkspace', { scope: scanRoot }, makeDeps())) as {
+        skills: { name: string }[];
+      };
       const listed = (await executeDeviceRpc(
         'listProjectSkills',
         { scope: scanRoot },
@@ -264,6 +260,35 @@ describe('executeDeviceRpc', () => {
       skillDir: await realpath(skillDir),
       workspaceRoot: await realpath(root),
     });
+  });
+
+  it('verifies only prepared app-owned bundle roots outside the workspace', async () => {
+    const cache = await mkdtemp(path.join(tmpdir(), 'device-skill-cache-'));
+    const hash = 'a'.repeat(64);
+    const bundle = path.join(cache, 'extracted', hash);
+    const wrapped = path.join(bundle, 'wrapped');
+    const deps = { ...makeDeps(), skillCacheRoot: cache };
+    try {
+      await mkdir(wrapped, { recursive: true });
+      await writeFile(path.join(wrapped, 'SKILL.md'), '# skill');
+      const input = { skillDir: wrapped, workspaceRoot: root };
+      await expect(executeDeviceRpc('verifySkillPaths', input, deps)).rejects.toThrow();
+      await writeFile(path.join(bundle, '.prepared'), hash);
+      await expect(executeDeviceRpc('verifySkillPaths', input, deps)).resolves.toEqual({
+        skillDir: await realpath(wrapped),
+        workspaceRoot: await realpath(root),
+      });
+      await expect(executeDeviceRpc('verifySkillPaths', input, makeDeps())).rejects.toThrow();
+      const escape = path.join(bundle, 'escape');
+      await symlink(tmpdir(), escape);
+      await expect(
+        executeDeviceRpc('verifySkillPaths', { ...input, skillDir: escape }, deps),
+      ).rejects.toThrow();
+      await writeFile(path.join(bundle, '.prepared'), 'wrong-hash');
+      await expect(executeDeviceRpc('verifySkillPaths', input, deps)).rejects.toThrow();
+    } finally {
+      await rm(cache, { recursive: true, force: true });
+    }
   });
 
   it('rejects a skill directory whose symlink resolves outside the workspace', async () => {

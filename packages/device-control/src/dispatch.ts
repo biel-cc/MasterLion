@@ -160,7 +160,7 @@ export const executeDeviceRpc = async (
     }
 
     case 'verifySkillPaths': {
-      return verifySkillPaths(params as VerifySkillPathsParams);
+      return verifySkillPaths(params as VerifySkillPathsParams, deps.skillCacheRoot);
     }
 
     case 'createProjectSkill': {

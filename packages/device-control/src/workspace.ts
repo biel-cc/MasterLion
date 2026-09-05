@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -387,6 +387,7 @@ export const resolveRealPath = async (
  */
 export const verifySkillPaths = async (
   params: VerifySkillPathsParams,
+  skillCacheRoot?: string,
 ): Promise<VerifySkillPathsResult> => {
   if (!path.isAbsolute(params.workspaceRoot) || !path.isAbsolute(params.skillDir)) {
     throw new Error('WORKSPACE_REQUIRED');
@@ -398,7 +399,25 @@ export const verifySkillPaths = async (
   ]);
   const relative = path.relative(workspaceRoot, skillDir);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error('SCOPE_DENIED');
+    // Only device-owned, completely prepared bundles may live outside the
+    // project. The cache root is injected by the host, never taken from RPC.
+    let prepared = false;
+    if (skillCacheRoot) {
+      try {
+        const cache = await realpath(path.join(skillCacheRoot, 'extracted'));
+        const cacheRelative = path.relative(cache, skillDir);
+        const [hash] = cacheRelative.split(path.sep);
+        if (/^[a-f0-9]{64}$/i.test(hash) && !path.isAbsolute(cacheRelative)) {
+          const bundleRoot = path.join(cache, hash);
+          prepared =
+            !(await lstat(bundleRoot)).isSymbolicLink() &&
+            (await readFile(path.join(bundleRoot, '.prepared'), 'utf8')) === hash;
+        }
+      } catch {
+        // Incomplete or escaped caches do not authorize execution.
+      }
+    }
+    if (!prepared) throw new Error('SCOPE_DENIED');
   }
 
   const skillStat = await stat(skillDir);
