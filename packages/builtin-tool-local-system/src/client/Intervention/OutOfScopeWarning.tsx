@@ -2,11 +2,8 @@ import { Alert, Flexbox } from '@lobehub/ui';
 import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useAgentStore } from '@/store/agent';
-import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
 import { topicSelectors } from '@/store/chat/selectors';
-import { useElectronStore } from '@/store/electron';
 
 import { isPathWithinScope } from '../../utils/path';
 
@@ -23,12 +20,10 @@ interface OutOfScopeWarningProps {
 const OutOfScopeWarning = memo<OutOfScopeWarningProps>(({ paths }) => {
   const { t } = useTranslation('tool');
 
-  const topicWorkingDir = useChatStore(topicSelectors.currentTopicWorkingDirectory);
-  const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
-  const agentWorkingDir = useAgentStore(
-    agentSelectors.currentAgentWorkingDirectory(currentDeviceId),
+  // Agent directory recommendations are not an execution boundary for this topic.
+  const workingDirectory = useChatStore(
+    (s) => topicSelectors.currentTopicMetadata(s)?.workingDirectory,
   );
-  const workingDirectory = topicWorkingDir || agentWorkingDir;
 
   // Find paths that are outside the working directory
   const outsidePaths = useMemo(() => {
