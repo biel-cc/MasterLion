@@ -3099,6 +3099,51 @@ describe('RuntimeExecutors', () => {
       });
     });
 
+    it.each(['call_tool', 'call_tools_batch'] as const)(
+      'does not bind a late successful scratch result after cancellation in %s',
+      async (mode) => {
+        const bindScratchAfterToolSuccess = vi.fn();
+        const executors = createRuntimeExecutors({
+          ...ctx,
+          bindScratchAfterToolSuccess,
+          ensureScratchWorkspace: vi.fn().mockResolvedValue({ root: '/scratch/topic-123' }),
+          loadAgentState: vi.fn().mockResolvedValue({ status: 'interrupted' }),
+          topicId: 'topic-123',
+        });
+        const state = createMockState({
+          metadata: {
+            agentId: 'agent-123',
+            topicId: 'topic-123',
+            activeDeviceId: 'device-a',
+            executionContext: {
+              accessRoots: [],
+              version: 1,
+              unresolvedReason: 'no-workspace',
+              plan: { deviceId: 'device-a', kind: 'device', target: 'local' },
+            },
+          },
+        });
+        const tool = {
+          apiName: 'listFiles',
+          arguments: '{}',
+          id: 'cancelled-tool',
+          identifier: 'lobe-local-system',
+          type: 'builtin' as const,
+        };
+        const instruction =
+          mode === 'call_tool'
+            ? { type: mode, payload: { parentMessageId: 'assistant-msg-123', toolCalling: tool } }
+            : {
+                type: mode,
+                payload: { parentMessageId: 'assistant-msg-123', toolsCalling: [tool] },
+              };
+        const result = await executors[mode]!(instruction as any, state);
+        expect(mockToolExecutionService.executeTool).toHaveBeenCalledOnce();
+        expect(bindScratchAfterToolSuccess).not.toHaveBeenCalled();
+        expect(result.newState.metadata?.executionContext?.workspace).toBeUndefined();
+      },
+    );
+
     it('keeps a successful scratch tool result when a concurrent formal bind wins the CAS', async () => {
       const ensureScratchWorkspace = vi
         .fn()

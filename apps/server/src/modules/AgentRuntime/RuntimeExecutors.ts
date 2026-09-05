@@ -1233,6 +1233,11 @@ const settleScratchBindAfterToolSuccess = async (params: {
 }): Promise<ScratchBindSettlement> => {
   const { ctx, operationLogId, prepared, state, toolName } = params;
   if (!prepared.scratchRoot) return { executionContext: prepared.executionContext };
+  // Device RPC can return success after the user stopped the server operation.
+  // Its late completion must not change the topic's workspace binding.
+  if (await isOperationInterrupted(ctx)) {
+    return { executionContext: getFrozenExecutionContext(state) };
+  }
 
   try {
     return {
