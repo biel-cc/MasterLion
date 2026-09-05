@@ -61,3 +61,62 @@ it('forwards package JSON module imports to Vite and leaves business requests on
     vi.unstubAllEnvs();
   }
 });
+
+it('closes the upstream event stream when the browser disconnects', async () => {
+  vi.stubEnv('NODE_ENV', 'development');
+  vi.stubEnv('MASTERINO_DEV_ENV', 'local');
+  let upstreamClosed = false;
+  const next = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(': connected\n\n');
+    res.on('close', () => {
+      upstreamClosed = true;
+    });
+  });
+  next.listen(0, 'localhost');
+  await once(next, 'listening');
+  const config = {
+    c: {
+      ...validateConfig({}),
+      WEB_PORT: '0',
+      NEXT_PORT: String((next.address() as AddressInfo).port),
+    },
+    origin: 'http://localhost:0',
+    project: 'test',
+    instance: {
+      id: 'test',
+      password: '',
+      authSecret: '',
+      vaultSecret: '',
+      gatewayToken: '',
+      jwks: '',
+      publicJwks: '',
+    },
+  };
+  const proxy = await startProxy(config);
+  config.origin = `http://localhost:${(proxy.address() as AddressInfo).port}`;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = http.get(config.origin + '/api/agent/events', (response) => {
+        response.once('data', () => {
+          response.destroy();
+          resolve();
+        });
+      });
+      request.on('error', reject);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(upstreamClosed).toBe(true);
+  } finally {
+    await Promise.all(
+      [next, proxy].map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+    vi.unstubAllEnvs();
+  }
+});

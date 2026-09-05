@@ -71,6 +71,9 @@ function proxyHttp(req: http.IncomingMessage, res: http.ServerResponse, port: nu
     res.end('Local backend is not ready. See pnpm dev:local:doctor.');
   });
   req.on('aborted', () => upstream.destroy());
+  // A GET request body is already complete when its SSE response is cancelled.
+  // Listen to the downstream response too, or the upstream subscription leaks.
+  res.on('close', () => upstream.destroy());
   req.pipe(upstream);
 }
 function proxyUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer, port: number) {
