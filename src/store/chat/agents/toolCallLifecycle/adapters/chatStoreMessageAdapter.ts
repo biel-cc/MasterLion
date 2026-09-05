@@ -4,6 +4,7 @@ import type {
   CreateMessageParams,
 } from '@lobechat/types';
 
+import { getRuntimePathConsentRequest } from '@/helpers/executionContext/pathConsent';
 import { truncateToolResult } from '@/server/utils/truncateToolResult';
 import { messageService } from '@/services/message';
 import { archiveToolResultViaServer } from '@/services/toolResultArchive';
@@ -143,6 +144,17 @@ export const createChatStoreToolCallMessageAdapter = ({
       toolCall,
     }) => {
       throwIfAborted(signal);
+      const pendingPath = getRuntimePathConsentRequest({ state: result.state });
+      if (toolCall.identifier === 'lobe-local-system' && result.success === false &&
+        result.content === 'INTERVENTION_REQUIRED' && pendingPath?.topicId === context.topicId) {
+        // The boundary refused before execution. Keep its request resumable;
+        // committing a terminal result here would forbid the later approved read.
+        await get().optimisticUpdateToolMessage(messageId, {
+          content: '', pluginError: null, pluginState: result.state,
+        }, { operationId });
+        throwIfAborted(signal);
+        return;
+      }
       let committedResult = committedResults.get(executionAttemptId);
       if (!committedResult) {
         const rawContent = result.content || result.error?.message || '';

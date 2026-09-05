@@ -2163,11 +2163,26 @@ export class MessageModel {
         const fingerprintMatches = existingLifecycle?.intentFingerprint
           ? existingLifecycle.intentFingerprint === intentFingerprint
           : canAdoptLegacyApproval;
+        const pendingState = asRecord(existing?.state);
+        const pendingPath = asRecord(pendingState.workspacePathConsent);
+        // Only a prepared, never-committed local tool can resume a path request.
+        // Existing terminal execution markers remain an unconditional barrier.
+        const hasPendingPathRequest =
+          !!existingLifecycle?.intentFingerprint &&
+          existing?.identifier === 'lobe-local-system' &&
+          pendingState.code === 'INTERVENTION_REQUIRED' &&
+          pendingPath.version === 1 &&
+          pendingPath.topicId === existing?.topicId &&
+          typeof pendingPath.operationId === 'string' && !!pendingPath.operationId &&
+          typeof pendingPath.deviceId === 'string' && !!pendingPath.deviceId &&
+          typeof pendingPath.requestedPath === 'string' && !!pendingPath.requestedPath &&
+          Array.isArray(pendingPath.modes) && pendingPath.modes.length > 0 &&
+          pendingPath.modes.every((mode) => ['read', 'write', 'exec'].includes(mode));
         const existingConfirmationMatches =
           mode !== 'confirm-existing' ||
           (existing?.content === '' &&
             existing.error == null &&
-            existing.state == null &&
+            (existing.state == null || hasPendingPathRequest) &&
             existing.intervention?.status === 'approved' &&
             !hasPartialLifecycleResult);
 

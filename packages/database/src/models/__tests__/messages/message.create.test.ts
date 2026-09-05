@@ -168,7 +168,7 @@ describe('MessageModel Create Tests', () => {
       expect(replay).toEqual({ disposition: 'existing', id: 'msg_ensure_replay_tool' });
     });
 
-    it('treats intervention status as mutable while preserving the immutable intent', async () => {
+    it.each([false, true])('treats intervention status as mutable while preserving the immutable intent (path pending: %s)', async (pathPending) => {
       await serverDB.insert(agents).values({ id: 'agent-ensure-intervention', userId });
       await messageModel.create(
         {
@@ -178,7 +178,9 @@ describe('MessageModel Create Tests', () => {
         },
         'msg_ensure_intervention_parent',
       );
+      if (pathPending) await serverDB.insert(topics).values({ id: 'topic-path', userId });
       const intent: EnsureToolMessageInput = {
+        ...(pathPending ? { topicId: 'topic-path' } : {}),
         agentId: 'agent-ensure-intervention',
         id: 'msg_ensure_intervention_tool',
         parentMessageId: 'msg_ensure_intervention_parent',
@@ -195,7 +197,12 @@ describe('MessageModel Create Tests', () => {
       await messageModel.ensureToolMessage(intent);
       await serverDB
         .update(messagePlugins)
-        .set({ intervention: { status: 'approved' } })
+        .set({ intervention: { status: 'approved' }, ...(pathPending ? { state: {
+          code: 'INTERVENTION_REQUIRED', workspacePathConsent: {
+            version: 1, operationId: 'paused-op', deviceId: 'device-1', topicId: 'topic-path',
+            actualCwd: '', primaryCwd: '', requestedPath: '/tmp/probe.txt', modes: ['read'],
+          },
+        } } : {}) })
         .where(eq(messagePlugins.id, intent.id));
 
       await expect(
