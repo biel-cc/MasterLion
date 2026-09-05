@@ -1,7 +1,9 @@
-import http from 'node:http';
 import { once } from 'node:events';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+
 import { expect, it, vi } from 'vitest';
+
 import { validateConfig } from './config.mjs';
 import { startProxy } from './proxy.mjs';
 
