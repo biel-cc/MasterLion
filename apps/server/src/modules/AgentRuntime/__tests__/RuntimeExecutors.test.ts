@@ -3909,6 +3909,12 @@ describe('RuntimeExecutors', () => {
       it('should update existing tool message instead of creating a new one', async () => {
         const executors = createRuntimeExecutors(ctx);
         const state = createMockState();
+        state.messages.push({
+          id: 'pending-tool-msg-1',
+          role: 'tool',
+          content: '',
+          tool_call_id: 'tool-call-1',
+        });
 
         const instruction = {
           payload: {
@@ -3925,7 +3931,12 @@ describe('RuntimeExecutors', () => {
           type: 'call_tool' as const,
         };
 
-        await executors.call_tool!(instruction, state);
+        const result = await executors.call_tool!(instruction, state);
+        const modelResults = result.newState.messages.filter(
+          (message) => message.role === 'tool' && message.tool_call_id === 'tool-call-1',
+        );
+        expect(modelResults).toHaveLength(1);
+        expect(modelResults[0].content).toBe('Tool result');
 
         expect(mockMessageModel.create).not.toHaveBeenCalled();
         expect(mockMessageModel.updateToolMessage).toHaveBeenCalledWith(

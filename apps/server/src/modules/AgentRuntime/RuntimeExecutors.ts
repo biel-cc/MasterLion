@@ -4208,12 +4208,23 @@ export const createRuntimeExecutors = (
 
         applyScratchBindSettlement(newState, scratchSettlement);
 
-        newState.messages.push({
+        const resultMessage = {
           content: executionResult.content,
           id: toolMessageId,
-          role: 'tool',
+          role: 'tool' as const,
           tool_call_id: chatToolPayload.id,
-        });
+        };
+        // Approval resumes already contain the pending tool message. Replace it
+        // so context reordering cannot retain its empty content over the result.
+        const pendingToolIndex = payload.skipCreateToolMessage
+          ? newState.messages.findIndex(
+              (message) =>
+                message.role === 'tool' &&
+                (message.id === toolMessageId || message.tool_call_id === chatToolPayload.id),
+            )
+          : -1;
+        if (pendingToolIndex >= 0) newState.messages[pendingToolIndex] = resultMessage;
+        else newState.messages.push(resultMessage);
 
         events.push({ id: chatToolPayload.id, result: executionResult, type: 'tool_result' });
 
