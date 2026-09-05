@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "選択済み（{{count}}）",
   "memberSelection.setInitialMembers": "グループメンバーを選択",
   "members": "メンバー",
+  "memory.consentRequired": "最初に個人設定でメモリを有効にしてください",
   "memory.effort.desc": "AIが記憶を取得および更新する際の積極性を制御します。",
   "memory.effort.high.title": "高",
   "memory.effort.low.title": "低",

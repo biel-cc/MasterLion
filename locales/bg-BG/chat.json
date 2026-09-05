@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Избрани ({{count}})",
   "memberSelection.setInitialMembers": "Избери членове на групата",
   "members": "Членове",
+  "memory.consentRequired": "Първо активирайте Памет в личните настройки.",
   "memory.effort.desc": "Контролирайте колко агресивно AI извлича и актуализира паметта.",
   "memory.effort.high.title": "Високо",
   "memory.effort.low.title": "Ниско",

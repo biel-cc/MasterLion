@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Ausgewählt ({{count}})",
   "memberSelection.setInitialMembers": "Gruppenmitglieder auswählen",
   "members": "Mitglieder",
+  "memory.consentRequired": "Aktivieren Sie zuerst den Speicher in den persönlichen Einstellungen.",
   "memory.effort.desc": "Steuern Sie, wie aggressiv die KI Speicher abruft und aktualisiert.",
   "memory.effort.high.title": "Hoch",
   "memory.effort.low.title": "Niedrig",

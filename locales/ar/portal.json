@@ -14,11 +14,13 @@
   "document.todos.title": "المهام",
   "emptyArtifactList": "لا توجد قطع أثرية بعد. استخدم المهارات في المحادثة، ثم عد إلى هنا.",
   "emptyKnowledgeList": "هذه القائمة فارغة.",
+  "error": "No source JSON content provided. Please supply the en-US i18n JSON to translate into Arabic.",
   "files": "الملفات",
   "messageDetail": "تفاصيل الرسالة",
   "notebook.confirmDelete": "هل تريد حذف هذه الصفحة؟",
   "notebook.delete": "حذف",
   "notebook.empty": "لا توجد صفحات بعد. ستظهر الصفحات المرتبطة بهذا الموضوع هنا.",
+  "notebook.loadError": "تعذر تحميل الصفحات. يرجى المحاولة مرة أخرى.",
   "notebook.title": "دفتر الملاحظات",
   "openInPageEditor": "تحرير في الصفحة",
   "title": "مساحة العمل"

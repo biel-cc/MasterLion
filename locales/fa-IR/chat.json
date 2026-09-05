@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "انتخاب‌شده ({{count}})",
   "memberSelection.setInitialMembers": "انتخاب اعضای گروه",
   "members": "اعضا",
+  "memory.consentRequired": "لطفاً ابتدا حافظه را در تنظیمات شخصی فعال کنید",
   "memory.effort.desc": "کنترل کنید که هوش مصنوعی با چه شدتی حافظه را بازیابی و به‌روزرسانی کند.",
   "memory.effort.high.title": "زیاد",
   "memory.effort.low.title": "کم",

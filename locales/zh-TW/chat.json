@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "已選擇 ({{count}})",
   "memberSelection.setInitialMembers": "選擇團隊成員",
   "members": "成員",
+  "memory.consentRequired": "請先在個人設定中啟用記憶功能",
   "memory.effort.desc": "控制 AI 檢索和更新記憶的積極程度。",
   "memory.effort.high.title": "高",
   "memory.effort.low.title": "低",

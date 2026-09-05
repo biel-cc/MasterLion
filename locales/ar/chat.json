@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "المحددون ({{count}})",
   "memberSelection.setInitialMembers": "تحديد أعضاء المجموعة",
   "members": "الأعضاء",
+  "memory.consentRequired": "فعّل الذاكرة في الإعدادات الشخصية أولاً",
   "memory.effort.desc": "تحكم في مدى شدة استرجاع وتحديث الذكاء الاصطناعي للذاكرة.",
   "memory.effort.high.title": "عالي",
   "memory.effort.low.title": "منخفض",

@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Seçilen ({{count}})",
   "memberSelection.setInitialMembers": "Grup üyelerini seçin",
   "members": "Üyeler",
+  "memory.consentRequired": "Önce kişisel ayarlardan Belleği etkinleştirin.",
   "memory.effort.desc": "Yapay zekanın hafızayı ne kadar agresif bir şekilde alıp güncellediğini kontrol edin.",
   "memory.effort.high.title": "Yüksek",
   "memory.effort.low.title": "Düşük",

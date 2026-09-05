@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Geselecteerd ({{count}})",
   "memberSelection.setInitialMembers": "Selecteer groepsleden",
   "members": "Leden",
+  "memory.consentRequired": "Schakel eerst geheugen in in de persoonlijke instellingen.",
   "memory.effort.desc": "Bepaal hoe intensief de AI geheugen ophaalt en bijwerkt.",
   "memory.effort.high.title": "Hoog",
   "memory.effort.low.title": "Laag",

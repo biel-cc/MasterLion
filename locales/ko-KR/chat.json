@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "선택됨({{count}})",
   "memberSelection.setInitialMembers": "그룹 구성원 선택",
   "members": "구성원",
+  "memory.consentRequired": "개인 설정에서 먼저 메모리를 사용 설정하세요.",
   "memory.effort.desc": "AI가 메모리를 검색하고 업데이트하는 강도를 제어합니다.",
   "memory.effort.high.title": "높음",
   "memory.effort.low.title": "낮음",

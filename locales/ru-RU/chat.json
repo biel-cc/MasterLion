@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Выбрано ({{count}})",
   "memberSelection.setInitialMembers": "Выберите участников группы",
   "members": "Участники",
+  "memory.consentRequired": "Сначала включите память в личных настройках",
   "memory.effort.desc": "Контролируйте, насколько активно ИИ извлекает и обновляет память.",
   "memory.effort.high.title": "Высокий",
   "memory.effort.low.title": "Низкий",

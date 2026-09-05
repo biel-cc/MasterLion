@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Selezionati ({{count}})",
   "memberSelection.setInitialMembers": "Seleziona i membri del gruppo",
   "members": "Membri",
+  "memory.consentRequired": "Abilita prima la memoria nelle impostazioni personali",
   "memory.effort.desc": "Controlla quanto aggressivamente l'IA recupera e aggiorna la memoria.",
   "memory.effort.high.title": "Alto",
   "memory.effort.low.title": "Basso",

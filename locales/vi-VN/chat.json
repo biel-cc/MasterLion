@@ -303,6 +303,7 @@
   "memberSelection.selectedAgents": "Đã chọn ({{count}})",
   "memberSelection.setInitialMembers": "Chọn thành viên nhóm",
   "members": "Thành viên",
+  "memory.consentRequired": "Trước tiên, hãy bật Memory trong cài đặt cá nhân",
   "memory.effort.desc": "Kiểm soát mức độ tích cực của AI trong việc truy xuất và cập nhật bộ nhớ.",
   "memory.effort.high.title": "Cao",
   "memory.effort.low.title": "Thấp",
