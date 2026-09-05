@@ -1955,6 +1955,17 @@ export class AiAgentService {
         },
       });
 
+      // Every heterogeneous route publishes an owned stream before dispatch.
+      // Codex/Claude Code also use this channel in installations without Agent Gateway WS.
+      const { createStreamEventManager } = await import('@/server/modules/AgentRuntime/factory');
+      await createStreamEventManager().publishAgentRuntimeInit(operationId, {
+        agentId: resolvedAgentId,
+        assistantMessageId: assistantMessageRecord.id,
+        heteroType,
+        topicId,
+        userId: this.userId,
+      });
+
       // Remote hetero agents (openclaw / hermes) dispatch to the device identified
       // by agencyConfig.boundDeviceId and communicate back via agentNotify.notify.
       // They always go through the gateway WS channel — open the stream now so the
@@ -2017,20 +2028,6 @@ export class AiAgentService {
             userMessageId: userMessageRecord?.id ?? parentMessageId ?? '',
           };
         }
-
-        // Open the stream channel so the gateway WS subscription can receive
-        // notify_update events published by agentNotify.notify.
-        const { createStreamEventManager } = await import('@/server/modules/AgentRuntime/factory');
-        const streamManager = createStreamEventManager();
-        await streamManager
-          .publishAgentRuntimeInit(operationId, {
-            agentId: resolvedAgentId,
-            assistantMessageId: assistantMessageRecord.id,
-            heteroType,
-            topicId,
-            userId: this.userId,
-          })
-          .catch((err) => log('execAgent: failed to init stream for remote hetero: %O', err));
 
         // lh connect only handles tool_call_request (not agent_run_request),
         // so we use executeToolCall with the runHeteroTask tool instead of dispatchAgentRun.

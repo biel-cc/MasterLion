@@ -32,6 +32,13 @@ const {
   mockSpawnHeteroSandbox: vi.fn().mockResolvedValue(undefined),
 }));
 
+const { mockStreamInit } = vi.hoisted(() => ({
+  mockStreamInit: vi.fn().mockResolvedValue('init'),
+}));
+vi.mock('@/server/modules/AgentRuntime/factory', () => ({
+  createStreamEventManager: vi.fn(() => ({ publishAgentRuntimeInit: mockStreamInit })),
+}));
+
 const emptyResolvedAttachments = {
   fileList: [],
   imageList: [],
@@ -295,6 +302,18 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
       deviceId: 'device-workspace-1',
       prompt: 'Use the managed project environment',
     });
+
+    expect(mockStreamInit).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        userId,
+        topicId: 'topic-existing',
+        heteroType: 'claude-code',
+      }),
+    );
+    expect(mockStreamInit.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDispatchAgentRun.mock.invocationCallOrder[0],
+    );
 
     // Losing user/workspace SHARED values are never decrypted; only the three
     // winning persisted values cross the decryption boundary.
