@@ -7,10 +7,10 @@ import { type LocalConfig, root, systemEnvironment } from './config.mjs';
 export function run(
   command: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; capture?: boolean } = {},
+  options: { env?: NodeJS.ProcessEnv; capture?: boolean; cwd?: string } = {},
 ) {
   const r = spawnSync(command, args, {
-    cwd: root,
+    cwd: options.cwd ?? root,
     env: options.env || systemEnvironment(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',

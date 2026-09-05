@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { closeSync, openSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -11,6 +11,7 @@ import {
   stateDir,
   systemEnvironment,
 } from './config.mjs';
+import { migrateLocal, seedLocal } from './database.mjs';
 import {
   assertPortsFree,
   compose,
@@ -19,7 +20,6 @@ import {
   waitFor,
   workflowEnvironment,
 } from './infrastructure.mjs';
-import { migrateLocal, seedLocal } from './database.mjs';
 import { authRequest, startProxy } from './proxy.mjs';
 
 const command = process.argv[2] || 'help';
@@ -248,18 +248,18 @@ async function main() {
       instance: config.project,
       origin: config.origin,
       modelConfigured: !!config.c.AIHUB_API_KEY,
-    };
-    report.postgres = compose(
-      config,
-      ['exec', '-T', 'postgres', 'pg_isready', '-U', 'postgres', '-d', 'masterino_local'],
-      true,
-    ).includes('accepting connections')
-      ? 'ready'
-      : 'unavailable';
-    report.redis =
-      compose(config, ['exec', '-T', 'redis', 'redis-cli', 'ping'], true) === 'PONG'
+      postgres: compose(
+        config,
+        ['exec', '-T', 'postgres', 'pg_isready', '-U', 'postgres', '-d', 'masterino_local'],
+        true,
+      ).includes('accepting connections')
         ? 'ready'
-        : 'unavailable';
+        : 'unavailable',
+      redis:
+        compose(config, ['exec', '-T', 'redis', 'redis-cli', 'ping'], true) === 'PONG'
+          ? 'ready'
+          : 'unavailable',
+    };
     for (const [key, url] of Object.entries({
       proxy: `${config.origin}/__local-dev/status`,
       backend: `${config.origin}/api/auth/get-session`,
@@ -296,6 +296,13 @@ async function main() {
 }
 async function desktop(env: NodeJS.ProcessEnv) {
   await assertPortsFree(['5173']);
+  // Gateway-dispatched Codex/Claude Code runs use the desktop's lh launcher.
+  // Rebuild the current branch CLI so a fresh checkout never starts a dangling launcher.
+  console.log('Building the local CLI used by desktop agent execution...');
+  run(node, [path.join(root, 'apps/cli/node_modules/tsdown/dist/run.mjs')], {
+    cwd: path.join(root, 'apps/cli'),
+    env,
+  });
   console.log(
     `Electron environment: ${env.MASTERINO_DEV_ENV}\nBackend: ${env.OFFICIAL_CLOUD_SERVER}\nGateway: ${env.DEVICE_GATEWAY_URL}\nProfile: ${env.MASTERINO_DESKTOP_PROFILE}`,
   );
@@ -313,7 +320,9 @@ async function desktop(env: NodeJS.ProcessEnv) {
     try {
       if (process.platform !== 'win32') process.kill(-child.pid!, 'SIGTERM');
       else child.kill('SIGTERM');
-    } catch {}
+    } catch {
+      // The child process group may already have exited.
+    }
   };
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, stopDesktop);
   process.once('exit', stopDesktop);
