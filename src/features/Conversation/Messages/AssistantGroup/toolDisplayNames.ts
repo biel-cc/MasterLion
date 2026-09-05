@@ -391,7 +391,9 @@ export const formatReasoningDuration = (ms: number): string => {
 const WORKFLOW_SUMMARY_TOP_N = 3;
 
 export const getWorkflowSummaryText = (blocks: AssistantContentBlock[]): string => {
-  const tools = blocks.flatMap((b) => b.tools ?? []);
+  const allTools = blocks.flatMap((b) => b.tools ?? []);
+  const rejectedCount = allTools.filter((tool) => tool.intervention?.status === 'rejected').length;
+  const tools = allTools.filter((tool) => tool.intervention?.status !== 'rejected');
 
   const groups = new Map<string, { count: number; errorCount: number }>();
   for (const tool of tools) {
@@ -418,7 +420,16 @@ export const getWorkflowSummaryText = (blocks: AssistantContentBlock[]): string 
       ? entries
       : [...entries].sort(([, a], [, b]) => b.count - a.count).slice(0, WORKFLOW_SUMMARY_TOP_N);
 
-  const segments: string[] = [displayedEntries.map(formatToolPart).join(', ')];
+  const segments: string[] = [displayedEntries.map(formatToolPart).join(', ')].filter(Boolean);
+  if (rejectedCount > 0) {
+    segments.push(
+      t('workflow.summaryRejected', {
+        count: rejectedCount,
+        defaultValue: 'Rejected tool calls: {{count}}',
+        ns: 'chat',
+      }),
+    );
+  }
 
   // Only show "N tool kinds" when the list is truncated — otherwise it duplicates the visible list.
   if (displayedEntries.length < totalKinds) {

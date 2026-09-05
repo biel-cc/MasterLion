@@ -1048,6 +1048,7 @@ export default {
   'viewSwitcher.page': 'Page',
   'viewSwitcher.task': 'Task',
   'workflow.failedSuffix': '(failed)',
+  'workflow.summaryRejected': 'Rejected tool calls: {{count}}',
   'workflow.summaryFailed': '{{count}} failed',
   'workflow.summaryMoreTools': '{{count}} tool kinds',
   'workflow.summaryTotalCalls': '{{count}} calls total',
