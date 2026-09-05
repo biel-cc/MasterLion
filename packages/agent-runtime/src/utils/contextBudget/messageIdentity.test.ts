@@ -42,6 +42,7 @@ describe('context-engine to persisted compression candidates', () => {
       modelId: 'unknown-model',
       operationId: 'operation',
       providerId: 'newapi',
+      trigger: 'final-preflight',
     });
     const persistedIds = new Set(messages.map((message) => message.id));
     // This is the client executor's persisted-history intersection, after the real CE pipeline.
@@ -86,6 +87,7 @@ describe('context-engine to persisted compression candidates', () => {
       modelId: 'test',
       operationId: 'operation',
       providerId: 'openai',
+      trigger: 'final-preflight',
     });
     expect(budget.partition.candidateIds).toEqual(['old']);
     expect(budget.partition.preservedIds).toEqual(['pinned', 'latest']);
