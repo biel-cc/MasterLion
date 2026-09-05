@@ -2173,10 +2173,14 @@ export class MessageModel {
           pendingState.code === 'INTERVENTION_REQUIRED' &&
           pendingPath.version === 1 &&
           pendingPath.topicId === existing?.topicId &&
-          typeof pendingPath.operationId === 'string' && !!pendingPath.operationId &&
-          typeof pendingPath.deviceId === 'string' && !!pendingPath.deviceId &&
-          typeof pendingPath.requestedPath === 'string' && !!pendingPath.requestedPath &&
-          Array.isArray(pendingPath.modes) && pendingPath.modes.length > 0 &&
+          typeof pendingPath.operationId === 'string' &&
+          !!pendingPath.operationId &&
+          typeof pendingPath.deviceId === 'string' &&
+          !!pendingPath.deviceId &&
+          typeof pendingPath.requestedPath === 'string' &&
+          !!pendingPath.requestedPath &&
+          Array.isArray(pendingPath.modes) &&
+          pendingPath.modes.length > 0 &&
           pendingPath.modes.every((mode) => ['read', 'write', 'exec'].includes(mode));
         const existingConfirmationMatches =
           mode !== 'confirm-existing' ||

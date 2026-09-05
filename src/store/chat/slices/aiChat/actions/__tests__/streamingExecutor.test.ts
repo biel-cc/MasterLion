@@ -176,14 +176,21 @@ describe('StreamingExecutor actions', () => {
         role: 'tool',
         pluginState: { workspacePathConsent: request },
       });
-      useProjectWorkspaceStore
-        .getState()
-        .setOperationPathConsent(message.id, {
-          ...request,
-          modes: ['read'],
-          rootPath: '/private/tmp/probe.txt',
-          scope: 'operation',
-        });
+      act(() =>
+        useChatStore.setState({
+          dbMessagesMap: {
+            [messageMapKey({ agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID })]: [
+              message,
+            ],
+          },
+        }),
+      );
+      useProjectWorkspaceStore.getState().setOperationPathConsent(message.id, {
+        ...request,
+        modes: ['read'],
+        rootPath: '/private/tmp/probe.txt',
+        scope: 'operation',
+      });
       vi.spyOn(chatService, 'createAssistantMessageStream').mockImplementation(
         async ({ onFinish }) => {
           await onFinish?.(TEST_CONTENT.AI_RESPONSE, {} as any);
@@ -197,7 +204,13 @@ describe('StreamingExecutor actions', () => {
             accessRoots: [],
             plan: { kind: 'device', target: 'local', deviceId: 'device-local' },
           },
-          messages: [message],
+          messages: [
+            createMockMessage({
+              id: 'assistant-group',
+              role: 'assistantGroup',
+              children: [message],
+            }),
+          ],
           parentMessageId: message.id,
           parentMessageType: 'tool',
           skipCreateFirstMessage: true,

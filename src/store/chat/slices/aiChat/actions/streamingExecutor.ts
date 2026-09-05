@@ -717,7 +717,9 @@ export class StreamingExecutorActionImpl {
         frozenExecutionContext?.plan.kind === 'device' &&
         frozenExecutionContext.plan.target === 'local'
       ) {
-        const pendingMessage = originalMessages.find((message) => message.id === parentMessageId);
+        const pendingMessage = this.#get().dbMessagesMap[messageKey]?.find(
+          (message) => message.id === parentMessageId,
+        );
         const accessRoot = validateOperationPathConsent({
           approval: {
             ...pathDecision,

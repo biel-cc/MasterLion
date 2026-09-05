@@ -117,7 +117,10 @@ export const createChatStoreToolCallMessageAdapter = ({
             executor: toolCall.executor,
             identifier: toolCall.identifier,
             intervention: toolCall.intervention,
-            result_msg_id: toolCall.result_msg_id,
+            // Reconciliation backfills the tool row itself for display. That
+            // derived pointer was absent from the original execution intent.
+            result_msg_id:
+              toolCall.result_msg_id === messageId ? undefined : toolCall.result_msg_id,
             source: toolCall.source,
             thoughtSignature: toolCall.thoughtSignature,
             toolCallId: toolCall.id,
@@ -145,13 +148,23 @@ export const createChatStoreToolCallMessageAdapter = ({
     }) => {
       throwIfAborted(signal);
       const pendingPath = getRuntimePathConsentRequest({ state: result.state });
-      if (toolCall.identifier === 'lobe-local-system' && result.success === false &&
-        result.content === 'INTERVENTION_REQUIRED' && pendingPath?.topicId === context.topicId) {
+      if (
+        toolCall.identifier === 'lobe-local-system' &&
+        result.success === false &&
+        result.content === 'INTERVENTION_REQUIRED' &&
+        pendingPath?.topicId === context.topicId
+      ) {
         // The boundary refused before execution. Keep its request resumable;
         // committing a terminal result here would forbid the later approved read.
-        await get().optimisticUpdateToolMessage(messageId, {
-          content: '', pluginError: null, pluginState: result.state,
-        }, { operationId });
+        await get().optimisticUpdateToolMessage(
+          messageId,
+          {
+            content: '',
+            pluginError: null,
+            pluginState: result.state,
+          },
+          { operationId },
+        );
         throwIfAborted(signal);
         return;
       }

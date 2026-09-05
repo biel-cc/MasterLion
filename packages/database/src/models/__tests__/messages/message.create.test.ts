@@ -168,51 +168,68 @@ describe('MessageModel Create Tests', () => {
       expect(replay).toEqual({ disposition: 'existing', id: 'msg_ensure_replay_tool' });
     });
 
-    it.each([false, true])('treats intervention status as mutable while preserving the immutable intent (path pending: %s)', async (pathPending) => {
-      await serverDB.insert(agents).values({ id: 'agent-ensure-intervention', userId });
-      await messageModel.create(
-        {
-          agentId: 'agent-ensure-intervention',
-          content: 'assistant tool call',
-          role: 'assistant',
-        },
-        'msg_ensure_intervention_parent',
-      );
-      if (pathPending) await serverDB.insert(topics).values({ id: 'topic-path', userId });
-      const intent: EnsureToolMessageInput = {
-        ...(pathPending ? { topicId: 'topic-path' } : {}),
-        agentId: 'agent-ensure-intervention',
-        id: 'msg_ensure_intervention_tool',
-        parentMessageId: 'msg_ensure_intervention_parent',
-        toolCall: {
-          apiName: 'runCommand',
-          arguments: '{"command":"pwd"}',
-          identifier: 'lobe-local-system',
-          intervention: { status: 'pending' },
-          toolCallId: 'call_ensure_intervention',
-          type: 'builtin',
-        },
-      };
-
-      await messageModel.ensureToolMessage(intent);
-      await serverDB
-        .update(messagePlugins)
-        .set({ intervention: { status: 'approved' }, ...(pathPending ? { state: {
-          code: 'INTERVENTION_REQUIRED', workspacePathConsent: {
-            version: 1, operationId: 'paused-op', deviceId: 'device-1', topicId: 'topic-path',
-            actualCwd: '', primaryCwd: '', requestedPath: '/tmp/probe.txt', modes: ['read'],
+    it.each([false, true])(
+      'treats intervention status as mutable while preserving the immutable intent (path pending: %s)',
+      async (pathPending) => {
+        await serverDB.insert(agents).values({ id: 'agent-ensure-intervention', userId });
+        await messageModel.create(
+          {
+            agentId: 'agent-ensure-intervention',
+            content: 'assistant tool call',
+            role: 'assistant',
           },
-        } } : {}) })
-        .where(eq(messagePlugins.id, intent.id));
+          'msg_ensure_intervention_parent',
+        );
+        if (pathPending) await serverDB.insert(topics).values({ id: 'topic-path', userId });
+        const intent: EnsureToolMessageInput = {
+          ...(pathPending ? { topicId: 'topic-path' } : {}),
+          agentId: 'agent-ensure-intervention',
+          id: 'msg_ensure_intervention_tool',
+          parentMessageId: 'msg_ensure_intervention_parent',
+          toolCall: {
+            apiName: 'runCommand',
+            arguments: '{"command":"pwd"}',
+            identifier: 'lobe-local-system',
+            intervention: { status: 'pending' },
+            toolCallId: 'call_ensure_intervention',
+            type: 'builtin',
+          },
+        };
 
-      await expect(
-        messageModel.ensureToolMessage({
-          ...intent,
-          mode: 'confirm-existing',
-          toolCall: { ...intent.toolCall, intervention: { status: 'approved' } },
-        }),
-      ).resolves.toEqual({ disposition: 'existing', id: intent.id });
-    });
+        await messageModel.ensureToolMessage(intent);
+        await serverDB
+          .update(messagePlugins)
+          .set({
+            intervention: { status: 'approved' },
+            ...(pathPending
+              ? {
+                  state: {
+                    code: 'INTERVENTION_REQUIRED',
+                    workspacePathConsent: {
+                      version: 1,
+                      operationId: 'paused-op',
+                      deviceId: 'device-1',
+                      topicId: 'topic-path',
+                      actualCwd: '',
+                      primaryCwd: '',
+                      requestedPath: '/tmp/probe.txt',
+                      modes: ['read'],
+                    },
+                  },
+                }
+              : {}),
+          })
+          .where(eq(messagePlugins.id, intent.id));
+
+        await expect(
+          messageModel.ensureToolMessage({
+            ...intent,
+            mode: 'confirm-existing',
+            toolCall: { ...intent.toolCall, intervention: { status: 'approved' } },
+          }),
+        ).resolves.toEqual({ disposition: 'existing', id: intent.id });
+      },
+    );
 
     it('atomically adopts an approved unexecuted legacy tool message before result commit', async () => {
       await serverDB.insert(agents).values({ id: 'agent-ensure-legacy-approval', userId });
