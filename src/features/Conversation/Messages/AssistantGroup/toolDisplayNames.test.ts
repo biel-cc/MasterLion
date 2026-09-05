@@ -20,6 +20,7 @@ describe('rejected tool summary', () => {
   it('does not claim a rejected command ran', () => {
     const summary = getWorkflowSummaryText([
       blk({
+        id: 'rejected-assistant',
         tools: [
           {
             apiName: 'runCommand',

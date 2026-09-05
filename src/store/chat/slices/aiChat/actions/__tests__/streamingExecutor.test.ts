@@ -250,7 +250,7 @@ describe('StreamingExecutor actions', () => {
             createMockMessage({
               id: 'assistant-group',
               role: 'assistantGroup',
-              children: [message],
+              children: [{ id: message.id, content: message.content ?? '' }],
             }),
           ],
           parentMessageId: message.id,

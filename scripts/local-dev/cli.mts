@@ -71,7 +71,7 @@ async function main() {
   }
   if (command === 'desktop-test') {
     initialize();
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...systemEnvironment(),
       NODE_ENV: 'development',
       MASTERINO_DEV_ENV: 'test',

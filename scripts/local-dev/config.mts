@@ -119,7 +119,9 @@ export function loadConfig() {
   };
 }
 export type LocalConfig = ReturnType<typeof loadConfig>;
-export function systemEnvironment(input = process.env): NodeJS.ProcessEnv {
+export function systemEnvironment(
+  input: Record<string, string | undefined> = process.env,
+): NodeJS.ProcessEnv {
   const keys = [
     'PATH',
     'HOME',
@@ -141,7 +143,11 @@ export function systemEnvironment(input = process.env): NodeJS.ProcessEnv {
     'DOCKER_CONTEXT',
     'DOCKER_CONFIG',
   ];
-  return Object.fromEntries(keys.filter((k) => input[k] !== undefined).map((k) => [k, input[k]]));
+  // Next augments ProcessEnv with required browser build flags. A child-process
+  // environment is intentionally filtered and need not contain those application flags.
+  return Object.fromEntries(
+    keys.filter((k) => input[k] !== undefined).map((k) => [k, input[k]]),
+  ) as NodeJS.ProcessEnv;
 }
 export function localEnvironment(config: LocalConfig): NodeJS.ProcessEnv {
   const { c, instance: i, origin } = config;

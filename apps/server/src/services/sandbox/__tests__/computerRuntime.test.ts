@@ -13,7 +13,7 @@ class TestComputerRuntime extends ComputerRuntime {
 }
 
 describe('ComputerRuntime command status mapping', () => {
-  it('uses command result success when command transport succeeds with non-zero exit code', async () => {
+  it('reports command failure and preserves output when transport succeeds with a non-zero exit code', async () => {
     const runtime = new TestComputerRuntime({
       result: {
         exitCode: 2,
@@ -33,7 +33,7 @@ describe('ComputerRuntime command status mapping', () => {
         stdout: 'partial',
         success: false,
       },
-      success: true,
+      success: false,
     });
   });
 

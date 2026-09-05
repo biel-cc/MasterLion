@@ -101,7 +101,7 @@ describe('desktop skills execution', () => {
     expect(
       (
         await skillsExecutor.execScript(
-          { command: 'sh scripts/probe.sh' },
+          { command: 'sh scripts/probe.sh', description: 'Run the project probe' },
           {
             ...ctx,
             stepContext: { activatedSkills },

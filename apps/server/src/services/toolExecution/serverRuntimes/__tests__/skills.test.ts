@@ -297,6 +297,7 @@ describe('skillsRuntime', () => {
     mocks.deviceExecuteToolCall.mockResolvedValue({ content: 'ok', success: true });
     const runtime = await skillsRuntime.factory({
       activeDeviceId: 'device-1',
+      toolManifestMap: {},
       userId: 'user-1',
       serverDB: {} as any,
       operationId: 'operation-1',

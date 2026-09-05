@@ -1958,7 +1958,8 @@ export class AiAgentService {
       // Every heterogeneous route publishes an owned stream before dispatch.
       // Codex/Claude Code also use this channel in installations without Agent Gateway WS.
       const { createStreamEventManager } = await import('@/server/modules/AgentRuntime/factory');
-      await createStreamEventManager().publishAgentRuntimeInit(operationId, {
+      const streamManager = createStreamEventManager();
+      await streamManager.publishAgentRuntimeInit(operationId, {
         agentId: resolvedAgentId,
         assistantMessageId: assistantMessageRecord.id,
         heteroType,

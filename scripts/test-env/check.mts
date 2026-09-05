@@ -1,12 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { parseAllDocuments } from 'yaml';
 
 import { root, systemEnvironment } from '../local-dev/config.mjs';
 import { validateContainerAddresses } from './manifest-environment.mjs';
 
-export function kubectlEnvironment(input = process.env): NodeJS.ProcessEnv {
+export function kubectlEnvironment(
+  input: Record<string, string | undefined> = process.env,
+): NodeJS.ProcessEnv {
   return {
     ...systemEnvironment(input),
     ...(input.KUBECONFIG !== undefined ? { KUBECONFIG: input.KUBECONFIG } : {}),

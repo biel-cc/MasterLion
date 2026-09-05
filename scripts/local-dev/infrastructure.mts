@@ -90,9 +90,9 @@ export function verifyDatabaseOwner(config: LocalConfig) {
       'Database ownership or published port does not match this local instance. Refusing migration.',
     );
 }
-export function workflowEnvironment(config: LocalConfig): NodeJS.ProcessEnv {
+export function workflowEnvironment(config: LocalConfig): Record<string, string> {
   const logs = compose(config, ['logs', '--no-log-prefix', 'qstash'], true);
-  const env: NodeJS.ProcessEnv = {};
+  const env: Record<string, string> = {};
   for (const name of ['QSTASH_TOKEN', 'QSTASH_CURRENT_SIGNING_KEY', 'QSTASH_NEXT_SIGNING_KEY']) {
     const value = [...logs.matchAll(new RegExp(`^${name}=(.+)$`, 'gm'))].at(-1)?.[1]?.trim();
     if (!value) throw new Error('Local QStash is not initialized; inspect its container logs.');
