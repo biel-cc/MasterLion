@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,11 +8,17 @@ const mocks = vi.hoisted(() => ({
   agencyConfig: { executionTarget: 'none' } as any,
   devices: [] as any[],
   enableCloudSandbox: false,
-  gatewayDeviceInfo: undefined as { deviceId: string } | undefined,
+  gatewayDeviceInfo: undefined as { deviceId: string; name?: string } | undefined,
+  gatewayConnectionState: { enabled: true, status: 'disconnected' },
+  isDesktop: true,
   updateAgentConfigById: vi.fn(async () => undefined),
 }));
 
-vi.mock('@lobechat/const', () => ({ isDesktop: true }));
+vi.mock('@lobechat/const', () => ({
+  get isDesktop() {
+    return mocks.isDesktop;
+  },
+}));
 vi.mock('@lobechat/heterogeneous-agents', () => ({
   isRemoteHeterogeneousType: vi.fn(() => false),
 }));
@@ -79,6 +85,7 @@ vi.mock('@/store/electron', () => ({
   useElectronStore: (selector: (state: any) => unknown) =>
     selector({
       gatewayDeviceInfo: mocks.gatewayDeviceInfo,
+      gatewayConnectionState: mocks.gatewayConnectionState,
       useFetchGatewayDeviceInfo: vi.fn(),
     }),
 }));
@@ -101,12 +108,15 @@ describe('HeteroDeviceSwitcher', () => {
     mocks.devices = [];
     mocks.enableCloudSandbox = false;
     mocks.gatewayDeviceInfo = undefined;
+    mocks.gatewayConnectionState = { enabled: true, status: 'disconnected' };
+    mocks.isDesktop = true;
     mocks.updateAgentConfigById.mockClear();
   });
 
   it('represents this desktop only once as the local target', () => {
     const onSelectTarget = vi.fn();
     mocks.gatewayDeviceInfo = { deviceId: 'device-current' };
+    mocks.gatewayConnectionState = { enabled: true, status: 'connected' };
     mocks.devices = [
       {
         deviceId: 'device-current',
@@ -138,11 +148,67 @@ describe('HeteroDeviceSwitcher', () => {
         name: /heteroAgent\.executionTarget\.title: heteroAgent\.executionTarget\.local/,
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Current Mac')).not.toBeInTheDocument();
+    const localOption = screen.getByRole('button', { name: /local Current Mac/ });
+    expect(within(localOption).getByText('Current Mac')).toBeInTheDocument();
+    expect(
+      within(localOption).getByText('heteroAgent.executionTarget.localGatewayConnected'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Current Mac')).toHaveLength(1);
     expect(screen.getByText('Remote Mac')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByText('heteroAgent.executionTarget.local').at(-1)!);
     expect(onSelectTarget).not.toHaveBeenCalled();
+  });
+
+  it('updates gateway status without disabling local execution or adding the name to the chip', () => {
+    const onSelectTarget = vi.fn();
+    mocks.gatewayDeviceInfo = { deviceId: 'device-current', name: 'My desktop' };
+    mocks.gatewayConnectionState = { enabled: true, status: 'connecting' };
+    const view = render(
+      <HeteroDeviceSwitcher
+        agentId="agent-1"
+        executionTarget="sandbox"
+        onSelectTarget={onSelectTarget}
+      />,
+    );
+    expect(
+      screen.getByText('heteroAgent.executionTarget.localGatewayConnecting'),
+    ).toBeInTheDocument();
+
+    mocks.gatewayConnectionState = { enabled: false, status: 'disconnected' };
+    view.rerender(
+      <HeteroDeviceSwitcher
+        agentId="agent-1"
+        executionTarget="none"
+        onSelectTarget={onSelectTarget}
+      />,
+    );
+    const localOption = screen.getByRole('button', { name: /local My desktop/ });
+    expect(localOption).toBeEnabled();
+    expect(
+      within(localOption).getByText('heteroAgent.executionTarget.localGatewayDisconnected'),
+    ).toBeInTheDocument();
+    fireEvent.click(localOption);
+    expect(onSelectTarget).toHaveBeenCalledWith('local', 'device-current');
+  });
+
+  it('keeps web device rows without adding desktop-only connection details', () => {
+    mocks.isDesktop = false;
+    mocks.gatewayDeviceInfo = { deviceId: 'device-current', name: 'My desktop' };
+    mocks.devices = [{ deviceId: 'device-current', friendlyName: 'My desktop', online: true }];
+    render(
+      <HeteroDeviceSwitcher
+        agentId="agent-1"
+        boundDeviceId="device-current"
+        executionTarget="device"
+        onSelectTarget={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('heteroAgent.executionTarget.local')).not.toBeInTheDocument();
+    expect(screen.queryByText(/localGateway/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'My desktop heteroAgent.executionTarget.online' }),
+    ).toBeEnabled();
   });
 
   it('does not expose the internal no-device target in the desktop app', () => {
@@ -152,7 +218,7 @@ describe('HeteroDeviceSwitcher', () => {
   });
 
   it('renders a locked target as display-only after the topic starts', () => {
-    render(<HeteroDeviceSwitcher agentId="agent-1" executionTarget="local" readOnly />);
+    render(<HeteroDeviceSwitcher readOnly agentId="agent-1" executionTarget="local" />);
 
     expect(screen.getByTestId('execution-target-readonly')).toBeInTheDocument();
     expect(

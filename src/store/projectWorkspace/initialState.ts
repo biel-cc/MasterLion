@@ -13,6 +13,8 @@ export interface WorkspaceDraftIntent {
   legacyWorkingDirectory?: string;
   /** Topic referenced by "start a new topic in this directory". */
   referenceTopicId?: string;
+  /** Header new-topic flow permits changing target and directory until first send. */
+  runtimeEditable?: boolean;
   target?: DeviceExecutionTarget;
   targetDeviceId?: string;
   updatedAt: number;

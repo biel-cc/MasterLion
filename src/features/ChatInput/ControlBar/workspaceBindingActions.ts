@@ -67,7 +67,9 @@ export const selectWorkspaceOnce = async (params: {
   const { effective, ports, selection } = params;
   const deviceId = effective.targetDeviceId ?? effective.recommendation.deviceId;
   const isDeviceTarget = effective.target === 'local' || effective.target === 'device';
-  const canSelect = effective.state === 'unbound' && isDeviceTarget && !!deviceId;
+  const editableDraft = effective.isDraft && !effective.topicId && effective.draftRuntimeEditable;
+  const canSelect =
+    (effective.state === 'unbound' || editableDraft) && isDeviceTarget && !!deviceId;
   if (!deviceId || !canSelect) return { ok: false };
 
   const created = await ports.getOrCreateDeviceWorkspace({

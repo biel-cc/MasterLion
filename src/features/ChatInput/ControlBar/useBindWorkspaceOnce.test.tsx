@@ -62,6 +62,49 @@ describe('useBindWorkspaceOnce', () => {
     mocks.updateDeviceCwd.mockResolvedValue(undefined);
   });
 
+  it('replaces an inherited project on the header draft without binding the topic', async () => {
+    const { result } = renderHook(() =>
+      useBindWorkspaceOnce(
+        effective({ draftRuntimeEditable: true, state: 'bound', cwd: '/inherited' }),
+        'agent-1',
+      ),
+    );
+    await act(async () => {
+      expect(await result.current.select({ path: '/projects/app' })).toBe(true);
+    });
+    expect(mocks.setDraftWorkspaceIntent).toHaveBeenCalledWith('agent-1::group-1', {
+      target: 'local',
+      targetDeviceId: 'device-1',
+      workspaceId: 'workspace-1',
+    });
+    expect(mocks.bindTopicWorkspace).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    'keeps editable header selections draft-only on an old server (known: %s)',
+    async (known) => {
+      mocks.seamAvailable = !known;
+      mocks.getOrCreateDeviceWorkspace.mockResolvedValue({ ok: false, code: 'SEAM_UNAVAILABLE' });
+      const { result } = renderHook(() =>
+        useBindWorkspaceOnce(
+          effective({ draftRuntimeEditable: true, state: 'bound', cwd: '/inherited' }),
+          'agent-1',
+        ),
+      );
+      await act(async () => {
+        expect(await result.current.select({ path: '/replacement' })).toBe(true);
+      });
+      expect(mocks.legacyCommit).not.toHaveBeenCalled();
+      expect(mocks.bindTopicWorkspace).not.toHaveBeenCalled();
+      expect(mocks.setDraftWorkspaceIntent).toHaveBeenCalledWith('agent-1::group-1', {
+        legacyWorkingDirectory: '/replacement',
+        target: 'local',
+        targetDeviceId: 'device-1',
+        workspaceId: undefined,
+      });
+    },
+  );
+
   it('uses legacy cwd fields without calling workspace procedures on an old server', async () => {
     mocks.seamAvailable = false;
     const { result } = renderHook(() => useBindWorkspaceOnce(effective(), 'agent-1'));

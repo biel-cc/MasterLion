@@ -148,6 +148,42 @@ describe('projectWorkspace store actions', () => {
       });
     });
 
+    it('clears the previous device directory when an editable draft switches targets', () => {
+      const key = buildDraftConversationKey({ agentId: 'agent-a' });
+      store
+        .getState()
+        .setDraftWorkspaceIntent(key, {
+          runtimeEditable: true,
+          target: 'local',
+          targetDeviceId: 'device-1',
+          workspaceId: 'ws-project',
+          legacyWorkingDirectory: '/old/path',
+        });
+      store.getState().setDraftTargetIntent(key, { target: 'sandbox', targetDeviceId: undefined });
+      expect(store.getState().draftByConversationKey[key]).toMatchObject({
+        runtimeEditable: true,
+        target: 'sandbox',
+        workspaceId: undefined,
+        legacyWorkingDirectory: undefined,
+      });
+      store.getState().setDraftTargetIntent(key, { target: 'local', targetDeviceId: 'device-1' });
+      expect(store.getState().draftByConversationKey[key]?.workspaceId).toBeUndefined();
+    });
+
+    it('keeps a selected directory when choosing the same target again', () => {
+      const key = buildDraftConversationKey({ agentId: 'agent-a' });
+      store
+        .getState()
+        .setDraftWorkspaceIntent(key, {
+          runtimeEditable: true,
+          target: 'local',
+          targetDeviceId: 'device-1',
+          workspaceId: 'ws-project',
+        });
+      store.getState().setDraftTargetIntent(key, { target: 'local', targetDeviceId: 'device-1' });
+      expect(store.getState().draftByConversationKey[key]?.workspaceId).toBe('ws-project');
+    });
+
     it('consumeDraftIntent returns and clears the draft', () => {
       const key = buildDraftConversationKey({ agentId: 'agent-a' });
       store.getState().setDraftWorkspaceIntent(key, { workspaceId: 'ws-project' });

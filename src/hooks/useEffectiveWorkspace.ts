@@ -52,6 +52,8 @@ export interface EffectiveWorkspace {
   cwd?: string;
   /** Key of the draft intent record for this conversation container. */
   draftKey: string;
+  /** Only header-created drafts allow replacing an inherited project. */
+  draftRuntimeEditable?: boolean;
   isDraft: boolean;
   loadError?: unknown;
   /** Initial evidence is still loading; consumers must not present this as an empty/unavailable state. */
@@ -269,6 +271,7 @@ export const useEffectiveWorkspace = (
       context,
       cwd: context.cwd,
       draftKey,
+      draftRuntimeEditable: isDraft && draft?.runtimeEditable === true,
       isDraft,
       loadError,
       loading,

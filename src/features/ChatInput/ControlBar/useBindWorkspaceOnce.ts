@@ -47,7 +47,9 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
 
   /** Picker is offered only while the topic (or draft) is still unbound on a device target. */
   const canSelect =
-    (effective.state === 'unbound' || (!seamAvailable && effective.state === 'bound')) &&
+    (effective.state === 'unbound' ||
+      (effective.isDraft && !effective.topicId && effective.draftRuntimeEditable) ||
+      (!seamAvailable && effective.state === 'bound')) &&
     isDeviceTarget &&
     !!deviceId;
   /** Bound and scratch topics only expose the "new referenced topic" path. */
@@ -76,6 +78,17 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
   const commitLegacySelection = useCallback(
     async (selection: WorkspaceSelection) => {
       if (!deviceId) return false;
+      // Header selections belong only to this draft, including on old servers.
+      if (effective.isDraft && !effective.topicId && effective.draftRuntimeEditable) {
+        setDraftWorkspaceIntent(effective.draftKey, {
+          legacyWorkingDirectory: selection.path,
+          target: bindTarget,
+          targetDeviceId: deviceId,
+          workspaceId: undefined,
+        });
+        rememberRecent(selection);
+        return true;
+      }
       await commitLegacyWorkingDirectory(selection);
       if (effective.isDraft || !effective.topicId) {
         setDraftWorkspaceIntent(effective.draftKey, {
@@ -91,8 +104,10 @@ export const useBindWorkspaceOnce = (effective: EffectiveWorkspace, agentId: str
       commitLegacyWorkingDirectory,
       deviceId,
       effective.draftKey,
+      effective.draftRuntimeEditable,
       effective.isDraft,
       effective.topicId,
+      rememberRecent,
       setDraftWorkspaceIntent,
     ],
   );

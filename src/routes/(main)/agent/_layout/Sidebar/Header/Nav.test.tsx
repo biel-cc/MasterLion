@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Nav from './Nav';
 
-const openNewTopicOrSaveTopicMock = vi.hoisted(() => vi.fn());
+const openNewTopicFromHeaderMock = vi.hoisted(() => vi.fn());
 const pushMock = vi.hoisted(() => vi.fn());
 const switchTopicMock = vi.hoisted(() => vi.fn());
 const toggleCommandMenuMock = vi.hoisted(() => vi.fn());
@@ -102,12 +102,12 @@ vi.mock('@/store/agent/selectors', () => ({
 vi.mock('@/store/chat', () => ({
   useChatStore: (
     selector: (state: {
-      openNewTopicOrSaveTopic: () => void;
+      openNewTopicFromHeader: () => void;
       switchTopic: (topicId: string | null, options?: unknown) => void;
     }) => unknown,
   ) =>
     selector({
-      openNewTopicOrSaveTopic: openNewTopicOrSaveTopicMock,
+      openNewTopicFromHeader: openNewTopicFromHeaderMock,
       switchTopic: switchTopicMock,
     }),
 }));
@@ -127,7 +127,7 @@ vi.mock('@/store/serverConfig', () => ({
 
 describe('Agent sidebar header nav', () => {
   beforeEach(() => {
-    openNewTopicOrSaveTopicMock.mockReset();
+    openNewTopicFromHeaderMock.mockReset();
     pushMock.mockReset();
     switchTopicMock.mockReset();
     toggleCommandMenuMock.mockReset();
@@ -148,8 +148,8 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(screen.getByRole('button', { name: 'actions.addNewTopic' }));
 
     expect(pushMock).toHaveBeenCalledWith('/agent/agt_eH4zL98zBx5u');
-    expect(openNewTopicOrSaveTopicMock).toHaveBeenCalledTimes(1);
-    expect(openNewTopicOrSaveTopicMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(openNewTopicFromHeaderMock).toHaveBeenCalledTimes(1);
+    expect(openNewTopicFromHeaderMock.mock.invocationCallOrder[0]).toBeLessThan(
       pushMock.mock.invocationCallOrder[0],
     );
   });
@@ -162,7 +162,7 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(screen.getByRole('button', { name: 'actions.addNewTopic' }));
 
     expect(pushMock).toHaveBeenCalledWith('/agent/agt_eH4zL98zBx5u');
-    expect(openNewTopicOrSaveTopicMock).toHaveBeenCalledTimes(1);
+    expect(openNewTopicFromHeaderMock).toHaveBeenCalledTimes(1);
   });
 
   it('disables starting a new topic for workspace viewers', () => {
@@ -177,6 +177,6 @@ describe('Agent sidebar header nav', () => {
     fireEvent.click(startButton);
 
     expect(pushMock).not.toHaveBeenCalled();
-    expect(openNewTopicOrSaveTopicMock).not.toHaveBeenCalled();
+    expect(openNewTopicFromHeaderMock).not.toHaveBeenCalled();
   });
 });

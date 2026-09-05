@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { message } from '@/components/AntdStaticMethods';
 import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import WorkspaceMode from './index';
@@ -12,6 +13,7 @@ import RecentSection from './RecentSection';
 import WorkspaceGroupItem from './WorkspaceGroupItem';
 
 const mocks = vi.hoisted(() => ({
+  activeTopicId: 't-1' as string | undefined,
   accordionProps: [] as Array<Record<string, any>>,
   topicGroupKeys: undefined as string[] | undefined,
   topicSortBy: 'updatedAt' as string,
@@ -137,7 +139,7 @@ vi.mock('@/store/chat', () => ({
         activeAgentId: 'agent-1',
         activeGroupId: undefined,
         activeThreadId: undefined,
-        activeTopicId: 't-1',
+        activeTopicId: mocks.activeTopicId,
         topicLoadingIds: [],
       }),
     {
@@ -187,6 +189,7 @@ const TopicItemStub = (props: Record<string, unknown>) => {
 
 describe('WorkspaceMode sidebar', () => {
   beforeEach(() => {
+    mocks.activeTopicId = 't-1';
     mocks.topicItems.length = 0;
     mocks.accordionProps.length = 0;
     mocks.topicGroupKeys = undefined;
@@ -200,7 +203,8 @@ describe('WorkspaceMode sidebar', () => {
     mocks.startNewTopic.mockReset();
     mocks.updateAgentConfigById.mockClear();
     mocks.updateAgentRuntimeEnvConfigById.mockClear();
-    useProjectWorkspaceStore.setState({ draftByConversationKey: {} });
+    vi.mocked(message.error).mockClear();
+    useProjectWorkspaceStore.setState({ draftByConversationKey: {}, seamAvailable: true });
     mocks.navigation = {
       placementById: {},
       recent: [
@@ -273,6 +277,48 @@ describe('WorkspaceMode sidebar', () => {
       targetDeviceId: 'device-1',
       workspaceId: 'ws-app',
     });
+  });
+
+  it.each([true, false])(
+    'opens the selected folder as a legacy draft when the project API is unavailable (known: %s)',
+    async (knownUnavailable) => {
+      useProjectWorkspaceStore.setState({ seamAvailable: !knownUnavailable });
+      const getOrCreate = vi
+        .spyOn(useProjectWorkspaceStore.getState(), 'getOrCreateDeviceWorkspace')
+        .mockResolvedValue({ ok: false, code: 'SEAM_UNAVAILABLE' });
+      mocks.selectFolder.mockResolvedValue({ path: '/projects/app', repoType: 'git' });
+
+      render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+      fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addProject' }));
+
+      await vi.waitFor(() =>
+        expect(mocks.startNewTopic).toHaveBeenCalledWith({
+          legacyWorkingDirectory: '/projects/app',
+          target: 'local',
+          targetDeviceId: 'device-1',
+        }),
+      );
+      expect(getOrCreate).toHaveBeenCalledTimes(knownUnavailable ? 0 : 1);
+      expect(message.error).not.toHaveBeenCalled();
+      expect(mocks.updateAgentConfigById).not.toHaveBeenCalled();
+      expect(mocks.updateAgentRuntimeEnvConfigById).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not hide an ordinary project creation failure behind the legacy fallback', async () => {
+    vi.spyOn(useProjectWorkspaceStore.getState(), 'getOrCreateDeviceWorkspace').mockResolvedValue({
+      ok: false,
+      code: 'UNKNOWN',
+    });
+    mocks.selectFolder.mockResolvedValue({ path: '/projects/app' });
+
+    render(<WorkspaceMode TopicItemComponent={TopicItemStub as any} />);
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.sidebar.addProject' }));
+
+    await vi.waitFor(() =>
+      expect(message.error).toHaveBeenCalledWith('workspaceRuntime.sidebar.addProjectFailed'),
+    );
+    expect(mocks.startNewTopic).not.toHaveBeenCalled();
   });
 
   it('does nothing when adding a project is cancelled', async () => {
@@ -349,6 +395,54 @@ describe('WorkspaceMode sidebar', () => {
 
       expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
       expect(mocks.accordionProps.at(-1)?.expandedKeys).toEqual(['ws-api']);
+    });
+
+    it.each(['ws-new', 'legacy-directory:%2Fnew-project'])(
+      'expands a new active project after its first topic arrives (%s)',
+      (workspaceId) => {
+        mocks.topicGroupKeys = ['ws-app'];
+        mocks.activeTopicId = undefined;
+        const view = render(modeElement());
+        mocks.activeTopicId = 'new-topic';
+        view.rerender(modeElement(1));
+        expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+        mocks.navigation.workspaceGroups = [
+          ...mocks.navigation.workspaceGroups,
+          {
+            workspaceId,
+            workspace: { ...workspace, id: workspaceId },
+            topics: [topic('new-topic')],
+          },
+        ];
+        view.rerender(modeElement(2));
+        expect(mocks.updateSystemStatus).toHaveBeenCalledWith({
+          expandTopicGroupKeys: ['ws-app', workspaceId],
+        });
+        // A later manual collapse must not be undone by title/streaming updates.
+        mocks.topicGroupKeys = ['ws-app'];
+        mocks.updateSystemStatus.mockClear();
+        view.rerender(modeElement(3));
+        expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+      },
+    );
+
+    it('waits for the new topic to become active if its project row arrives first', () => {
+      mocks.topicGroupKeys = [];
+      mocks.activeTopicId = undefined;
+      const view = render(modeElement());
+      mocks.navigation.workspaceGroups = [
+        ...mocks.navigation.workspaceGroups,
+        {
+          workspaceId: 'ws-new',
+          workspace,
+          topics: [topic('new-topic')],
+        },
+      ];
+      view.rerender(modeElement(1));
+      expect(mocks.updateSystemStatus).not.toHaveBeenCalled();
+      mocks.activeTopicId = 'new-topic';
+      view.rerender(modeElement(2));
+      expect(mocks.updateSystemStatus).toHaveBeenCalledWith({ expandTopicGroupKeys: ['ws-new'] });
     });
 
     it('resets the selection only when the sort key actually changes', () => {

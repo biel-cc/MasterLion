@@ -293,7 +293,15 @@ export class ProjectWorkspaceActionImpl {
     key: string,
     intent: Pick<WorkspaceDraftIntent, 'target' | 'targetDeviceId'>,
   ): void => {
-    this.setDraftWorkspaceIntent(key, intent);
+    const previous = this.#get().draftByConversationKey[key];
+    const changedDevice =
+      previous?.target !== intent.target || previous?.targetDeviceId !== intent.targetDeviceId;
+    this.setDraftWorkspaceIntent(key, {
+      ...intent,
+      ...(previous?.runtimeEditable && changedDevice
+        ? { legacyWorkingDirectory: undefined, workspaceId: undefined }
+        : {}),
+    });
   };
 
   clearDraftIntent = (key: string): void => {

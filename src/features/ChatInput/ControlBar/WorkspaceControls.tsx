@@ -33,8 +33,9 @@ interface WorkspaceControlsProps {
  * Workspace/Project control strip shared by the chat-input control bars:
  * target switcher + read-only workspace chip + git status.
  *
- * All state comes from `useEffectiveWorkspace` (the accepted contract). A
- * Ordinary drafts and Recent topics have no user-selectable workspace. A
+ * All state comes from `useEffectiveWorkspace` (the accepted contract).
+ * Header drafts can edit their inherited choices until first send. Recent
+ * drafts have no user-selectable workspace. A
  * workspace-group draft, a bound topic, or a scratch topic gets a read-only
  * chip. Target switches only touch the draft intent or the current topic
  * snapshot, never the agent's stored defaults.
@@ -44,6 +45,7 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
     const isHeterogeneous = useAgentStore(agentByIdSelectors.isAgentHeterogeneousById(agentId));
     const effective = useEffectiveWorkspace(agentId);
     const bind = useBindWorkspaceOnce(effective, agentId);
+    const editableDraft = effective.isDraft && !effective.topicId && effective.draftRuntimeEditable;
 
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
     const setDraftTargetIntent = useProjectWorkspaceStore((s) => s.setDraftTargetIntent);
@@ -100,6 +102,21 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         return null;
       }
 
+      if (editableDraft) {
+        return (
+          <WorkspacePicker
+            bind={bind}
+            effective={effective}
+            onClear={() => {
+              useProjectWorkspaceStore.getState().setDraftWorkspaceIntent(effective.draftKey, {
+                legacyWorkingDirectory: undefined,
+                workspaceId: undefined,
+              });
+            }}
+          />
+        );
+      }
+
       if (effective.state === 'bound' || effective.state === 'scratch') {
         return (
           <>
@@ -115,18 +132,15 @@ const WorkspaceControls = memo<WorkspaceControlsProps>(
         );
       }
 
-      // A project is optional and can be selected only before the first
-      // message. Once a topic exists, an unbound local topic acquires a fresh
-      // scratch directory only when a tool actually needs one.
-      if (effective.isDraft && effective.state === 'unbound') {
-        return <WorkspacePicker bind={bind} effective={effective} />;
-      }
-
+      // Projects are selected through the sidebar. Recent drafts stay directory-free;
+      // local tools allocate a scratch directory only when they actually need one.
       return null;
     };
 
     const targetReadOnly =
-      !effective.isDraft || (effective.state === 'bound' && effective.workspace?.kind === 'device');
+      !effective.isDraft ||
+      !!effective.topicId ||
+      (!editableDraft && effective.state === 'bound' && effective.workspace?.kind === 'device');
 
     return (
       <>

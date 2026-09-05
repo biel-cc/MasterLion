@@ -4,7 +4,7 @@
 import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useProjectWorkspaceStore } from '@/store/projectWorkspace';
+import { buildDraftConversationKey, useProjectWorkspaceStore } from '@/store/projectWorkspace';
 
 import { useEffectiveWorkingDirectory } from './useEffectiveWorkingDirectory';
 import { useEffectiveWorkspace } from './useEffectiveWorkspace';
@@ -103,6 +103,20 @@ describe('useEffectiveWorkspace', () => {
     mocks.legacyLocalPath = undefined;
     mocks.topic = undefined;
     resetProjectWorkspaceStore();
+  });
+
+  it('keeps editability scoped to the header draft and drops it when a topic exists', () => {
+    useProjectWorkspaceStore
+      .getState()
+      .setDraftWorkspaceIntent(buildDraftConversationKey({ agentId: 'agent-1' }), {
+        runtimeEditable: true,
+        target: 'local',
+      });
+    const { result, rerender } = renderHook(() => useEffectiveWorkspace('agent-1'));
+    expect(result.current.draftRuntimeEditable).toBe(true);
+    mocks.activeTopicId = 'topic-sent';
+    rerender();
+    expect(result.current.draftRuntimeEditable).toBe(false);
   });
 
   it('returns bound with the persisted workspace root as cwd', () => {

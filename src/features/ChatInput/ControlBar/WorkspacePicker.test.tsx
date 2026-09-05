@@ -118,6 +118,37 @@ describe('WorkspacePicker', () => {
     });
   });
 
+  it('shows the selected draft path and lets the user clear it without selecting another project', () => {
+    const onClear = vi.fn();
+    const onOpenChange = vi.fn();
+    const bind = {
+      clearError: vi.fn(),
+      deviceId: 'device-1',
+      pending: false,
+      select: vi.fn(),
+      startReferencedTopic: vi.fn(),
+    } as unknown as BindWorkspaceOnce;
+    render(
+      <WorkspacePicker
+        open
+        bind={bind}
+        effective={{
+          ...effective,
+          cwd: '/selected-project',
+          draftRuntimeEditable: true,
+          state: 'bound',
+        }}
+        onClear={onClear}
+        onOpenChange={onOpenChange}
+      />,
+    );
+    expect(screen.getByTestId('workspace-picker-trigger')).toHaveTextContent('/selected-project');
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceRuntime.picker.clearProject' }));
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(bind.select).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('shows an honest loading state instead of flashing an empty list', () => {
     const bind = {
       clearError: vi.fn(),

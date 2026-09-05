@@ -63,12 +63,30 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
       });
       if (!selected) return;
 
+      // Use the same draft-only compatibility path as historical project rows.
+      // An old server cannot create a formal workspace; never invent its id or
+      // change the agent-wide default to make this one topic use the folder.
+      const startLegacyTopic = () =>
+        useChatStore.getState().startNewTopic({
+          legacyWorkingDirectory: selected.path,
+          target: 'local',
+          targetDeviceId: currentDeviceId,
+        });
+      if (!useProjectWorkspaceStore.getState().seamAvailable) {
+        await startLegacyTopic();
+        return;
+      }
+
       const result = await getOrCreateDeviceWorkspace({
         deviceId: currentDeviceId,
         repoType: selected.repoType,
         rootPath: selected.path,
       });
       if (!result.ok) {
+        if (result.code === 'SEAM_UNAVAILABLE') {
+          await startLegacyTopic();
+          return;
+        }
         message.error(tw('workspaceRuntime.sidebar.addProjectFailed', { ns: 'chat' }));
         return;
       }
@@ -101,6 +119,46 @@ const WorkspaceMode = memo<WorkspaceModeProps>(({ TopicItemComponent }) => {
     lastTopicSortBy.current = topicSortBy;
     updateSystemStatus({ expandTopicGroupKeys: undefined });
   }, [topicSortBy, updateSystemStatus]);
+
+  // A persisted accordion selection predates newly created projects. Reveal a
+  // new group once its first topic becomes active, regardless of which arrives
+  // first. Consume it once so streaming updates cannot undo a manual collapse.
+  const observedGroups = useRef({
+    agentId: activeAgentId,
+    pending: new Set<string>(),
+    seen: new Set(groupIds),
+  });
+  useEffect(() => {
+    const observed = observedGroups.current;
+    if (observed.agentId !== activeAgentId || loading) {
+      observedGroups.current = {
+        agentId: activeAgentId,
+        pending: new Set(),
+        seen: new Set(groupIds),
+      };
+      return;
+    }
+
+    for (const id of groupIds) {
+      if (!observed.seen.has(id)) observed.pending.add(id);
+      observed.seen.add(id);
+    }
+    const activeGroup = navigation.workspaceGroups.find((group) =>
+      group.topics.some((topic) => topic.id === activeTopicId),
+    );
+    if (!activeGroup || !observed.pending.delete(activeGroup.workspaceId)) return;
+    if (topicGroupKeys && !topicGroupKeys.includes(activeGroup.workspaceId)) {
+      updateSystemStatus({ expandTopicGroupKeys: [...topicGroupKeys, activeGroup.workspaceId] });
+    }
+  }, [
+    activeAgentId,
+    activeTopicId,
+    groupIds,
+    loading,
+    navigation,
+    topicGroupKeys,
+    updateSystemStatus,
+  ]);
 
   // No stored selection means "all groups open"; an explicit empty array is a
   // deliberate "all collapsed" and must survive.

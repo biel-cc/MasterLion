@@ -46,13 +46,13 @@ const Nav = memo(() => {
   const hideChannel =
     hideProfile || (!!heterogeneousProviderType && heterogeneousProviderType !== 'claude-code');
   const switchTopic = useChatStore((s) => s.switchTopic);
-  const [openNewTopicOrSaveTopic] = useChatStore((s) => [s.openNewTopicOrSaveTopic]);
+  const [openNewTopicFromHeader] = useChatStore((s) => [s.openNewTopicFromHeader]);
 
   const handleNewTopic = () => {
     if (!canCreateTopic) return;
     // Capture the currently viewed topic before route navigation clears its id;
     // this is what lets the new page inherit that topic's durable project.
-    void openNewTopicOrSaveTopic();
+    void openNewTopicFromHeader();
     // Always navigate to the bare agent chat URL — drops any sub-route
     // (/profile, /channel, /page, /cron/:cronId, …) and any `:topicId`
     // segment so the new topic isn't conflated with the previous URL.

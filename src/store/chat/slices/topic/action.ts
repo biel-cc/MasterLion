@@ -160,6 +160,11 @@ export class ChatTopicActionImpl {
     this.#set({ allTopicsDrawerOpen: true }, false, n('openAllTopicsDrawer'));
   };
 
+  openNewTopicFromHeader = async (): Promise<void> => {
+    const intent = resolveInheritedProjectIntent(this.#get().activeTopicId, this.#get());
+    await this.startNewTopic({ ...intent, runtimeEditable: true });
+  };
+
   openNewTopicOrSaveTopic = async (): Promise<void> => {
     const { activeTopicId } = this.#get();
     const intent = resolveInheritedProjectIntent(activeTopicId, this.#get());

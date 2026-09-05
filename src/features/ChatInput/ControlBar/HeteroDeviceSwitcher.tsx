@@ -233,6 +233,13 @@ const styles = createStaticStyles(({ css }) => ({
 
     background: ${cssVar.colorFillSecondary};
   `,
+  localDeviceName: css`
+    overflow: hidden;
+    display: block;
+    max-width: 140px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
   header: css`
     display: flex;
     gap: 6px;
@@ -383,6 +390,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     // this desktop only once in the picker.
     useElectronStore((s) => s.useFetchGatewayDeviceInfo)();
     const gatewayDeviceInfo = useElectronStore((s) => s.gatewayDeviceInfo);
+    const gatewayState = useElectronStore((s) => s.gatewayConnectionState);
     const currentDeviceId = isDesktop ? gatewayDeviceInfo?.deviceId : undefined;
 
     // Effective target: shared with server dispatch. In particular, a hetero
@@ -460,6 +468,15 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
     const selectableDevices = (devices ?? []).filter(
       (device) => !isDesktop || device.deviceId !== currentDeviceId,
     );
+    const currentDevice = devices?.find((device) => device.deviceId === currentDeviceId);
+    const localDeviceName =
+      currentDevice?.friendlyName || currentDevice?.hostname || gatewayDeviceInfo?.name;
+    // Gateway connectivity describes cross-device access, not whether this
+    // desktop can run locally. Keep the local option selectable in every state.
+    const localGatewayConnected = gatewayState.enabled && gatewayState.status === 'connected';
+    const localGatewayConnecting =
+      gatewayState.enabled &&
+      ['connecting', 'authenticating', 'reconnecting'].includes(gatewayState.status);
     // On web with no device, the prominent download card below replaces the small
     // header link — avoid showing the same CTA twice.
     const showWebDownloadCard = !isDesktop && hasNoDevices && !isLoading;
@@ -544,9 +561,27 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(
         {isDesktop ? (
           <OptionRow
             active={isActive('local')}
-            desc={t('heteroAgent.executionTarget.localDesc')}
             icon={<Icon icon={LaptopIcon} size={14} />}
             label={t('heteroAgent.executionTarget.local')}
+            desc={
+              <>
+                <span className={localGatewayConnected ? styles.dotOnline : styles.dotOffline} />
+                <span>
+                  {localGatewayConnected
+                    ? t('heteroAgent.executionTarget.localGatewayConnected')
+                    : localGatewayConnecting
+                      ? t('heteroAgent.executionTarget.localGatewayConnecting')
+                      : t('heteroAgent.executionTarget.localGatewayDisconnected')}
+                </span>
+              </>
+            }
+            tag={
+              localDeviceName ? (
+                <span className={styles.localDeviceName} title={localDeviceName}>
+                  {localDeviceName}
+                </span>
+              ) : undefined
+            }
             onClick={() => void handleSelect('local')}
           />
         ) : null}

@@ -102,6 +102,53 @@ afterEach(() => {
 });
 
 describe('topic action', () => {
+  it.each([true, false])(
+    'creates an editable header draft with an inherited project only when present (%s)',
+    async (hasProject) => {
+      const key = buildDraftConversationKey({ agentId: 'agent-header' });
+      useProjectWorkspaceStore.setState({
+        topicStatesById: hasProject
+          ? {
+              'topic-header-source': {
+                workspace: {
+                  deviceId: 'device-1',
+                  id: 'ws-header',
+                  kind: 'device',
+                  rootPath: '/header-project',
+                },
+                snapshot: {
+                  boundDeviceId: 'device-1',
+                  target: 'local',
+                  targetCapturedAt: '2026-09-05T00:00:00.000Z',
+                  version: 1,
+                  workspaceId: 'ws-header',
+                  workspaceKind: 'device',
+                },
+              },
+            }
+          : {},
+      });
+      useChatStore.setState({
+        activeAgentId: 'agent-header',
+        activeTopicId: 'topic-header-source',
+      });
+      vi.spyOn(useChatStore.getState(), 'switchTopic').mockResolvedValue(undefined);
+      await act(async () => {
+        await useChatStore.getState().openNewTopicFromHeader();
+      });
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]).toMatchObject({
+        runtimeEditable: true,
+        target: 'local',
+      });
+      expect(useProjectWorkspaceStore.getState().draftByConversationKey[key]?.workspaceId).toBe(
+        hasProject ? 'ws-header' : undefined,
+      );
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[key]?.legacyWorkingDirectory,
+      ).toBeUndefined();
+    },
+  );
+
   describe('openNewTopicOrSaveTopic', () => {
     it('should call switchTopic if activeTopicId exists', async () => {
       const { result } = renderHook(() => useChatStore());
@@ -297,6 +344,7 @@ describe('topic action', () => {
             target: 'sandbox',
             updatedAt: Date.now(),
             workspaceId: 'workspace-stale',
+            runtimeEditable: true,
           },
         },
       });
@@ -315,6 +363,9 @@ describe('topic action', () => {
         targetDeviceId: 'device-1',
         workspaceId: 'workspace-project',
       });
+      expect(
+        useProjectWorkspaceStore.getState().draftByConversationKey[draftKey]?.runtimeEditable,
+      ).toBeUndefined();
     });
   });
   describe('saveToTopic', () => {

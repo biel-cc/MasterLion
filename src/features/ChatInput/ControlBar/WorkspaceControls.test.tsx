@@ -87,8 +87,8 @@ describe('WorkspaceControls topic ownership', () => {
     expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
   });
 
-  it('lets a new local topic choose a project before its first message', () => {
-    mocks.seamAvailable = true;
+  it.each([true, false])('keeps a Recent draft directory-free (workspace API: %s)', (available) => {
+    mocks.seamAvailable = available;
     mocks.effective = {
       ...mocks.effective,
       context: {
@@ -105,9 +105,33 @@ describe('WorkspaceControls topic ownership', () => {
 
     render(<WorkspaceControls agentId="agent-1" />);
 
-    expect(screen.getByTestId('workspace-picker')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
     expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
     expect(mocks.deviceSwitcherProps.readOnly).toBe(false);
+  });
+
+  it.each(['bound', 'unbound'] as const)(
+    'lets header drafts edit target and directory while %s',
+    (state) => {
+      mocks.effective = { ...mocks.effective, draftRuntimeEditable: true, state };
+      render(<WorkspaceControls agentId="agent-1" />);
+      expect(screen.getByTestId('workspace-picker')).toBeInTheDocument();
+      expect(screen.queryByTestId('workspace-chip')).not.toBeInTheDocument();
+      expect(mocks.deviceSwitcherProps.readOnly).toBe(false);
+    },
+  );
+
+  it('locks a header-created project after the first message even if its draft flag remains', () => {
+    mocks.effective = {
+      ...mocks.effective,
+      draftRuntimeEditable: true,
+      isDraft: false,
+      topicId: 'sent-topic',
+    };
+    render(<WorkspaceControls agentId="agent-1" />);
+    expect(screen.queryByTestId('workspace-picker')).not.toBeInTheDocument();
+    expect(screen.getByTestId('workspace-chip')).toBeInTheDocument();
+    expect(mocks.deviceSwitcherProps.readOnly).toBe(true);
   });
 
   it('locks the target and hides project selection after the first message', () => {

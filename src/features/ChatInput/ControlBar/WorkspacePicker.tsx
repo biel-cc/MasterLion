@@ -181,6 +181,7 @@ export interface WorkspacePickerProps {
    * references the current (already bound/scratch) topic.
    */
   mode?: 'reference' | 'select';
+  onClear?: () => void;
   onOpenChange?: (open: boolean) => void;
   open?: boolean;
   /** Custom trigger; defaults to the "select workspace" chip. */
@@ -194,7 +195,7 @@ export interface WorkspacePickerProps {
  * offered here; it must be chosen from the target switcher.
  */
 const WorkspacePicker = memo<WorkspacePickerProps>(
-  ({ bind, effective, mode = 'select', onOpenChange, open: controlledOpen, trigger }) => {
+  ({ bind, effective, mode = 'select', onClear, onOpenChange, open: controlledOpen, trigger }) => {
     const { t } = useTranslation('chat');
     const tw = t as unknown as (key: string, options?: Record<string, unknown>) => string;
 
@@ -341,7 +342,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
     const content = (
       <Flexbox data-testid="workspace-picker" gap={4} style={{ minWidth: 300 }}>
         <div className={styles.sectionTitle}>{pickerTitle}</div>
-        {!seamAvailable && (
+        {!seamAvailable && !effective.draftRuntimeEditable && (
           <div className={styles.note}>{tw('workspaceRuntime.picker.seamUnavailable')}</div>
         )}
         {effective.loading && (
@@ -367,6 +368,20 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
           </div>
         ) : (
           <>
+            {onClear && effective.cwd && (
+              <button
+                className={styles.item}
+                disabled={bind.pending}
+                type="button"
+                onClick={() => {
+                  onClear();
+                  setOpen(false);
+                }}
+              >
+                <Icon icon={FolderIcon} size={14} />
+                <span>{tw('workspaceRuntime.picker.clearProject')}</span>
+              </button>
+            )}
             <div className={styles.scroll}>
               {sections.map(({ key, title }) => {
                 const items = rows.filter((row) => row.kind === key);
@@ -457,7 +472,7 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
         <span className={styles.buttonLabel}>
           {effective.state === 'unrouted'
             ? tw('workspaceRuntime.picker.unroutedLabel')
-            : tw('workspaceRuntime.picker.selectWorkspace')}
+            : effective.cwd || tw('workspaceRuntime.picker.selectWorkspace')}
         </span>
         <Icon icon={ChevronDownIcon} size={12} />
       </button>
@@ -471,7 +486,9 @@ const WorkspacePicker = memo<WorkspacePickerProps>(
           tabIndex={trigger ? -1 : undefined}
         >
           {trigger ?? (
-            <Tooltip title={tw('workspaceRuntime.picker.unboundTooltip')}>{defaultTrigger}</Tooltip>
+            <Tooltip title={effective.cwd || tw('workspaceRuntime.picker.unboundTooltip')}>
+              {defaultTrigger}
+            </Tooltip>
           )}
         </PopoverTriggerElement>
         <PopoverPortal>
