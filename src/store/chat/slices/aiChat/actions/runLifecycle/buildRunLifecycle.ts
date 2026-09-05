@@ -276,6 +276,28 @@ export const buildRunLifecycle = (
         type: error instanceof Error ? error.name || 'runtime_error' : 'runtime_error',
         message: error instanceof Error ? error.message : 'Agent runtime execution failed',
       });
+      // Preparation failures happen before the runtime emits an error event.
+      // Surface them on this run's assistant, including grouped transcripts,
+      // so the normal retry control remains reachable after a failed scan.
+      if (adapter.runtimeType === 'client') {
+        const assistantId = findCompletionAssistantMessageId(
+          get().dbMessagesMap[messageKey] || [],
+          parentMessageId,
+          parentMessageType,
+        );
+        if (assistantId) {
+          void get()
+            .optimisticUpdateMessageError(
+              assistantId,
+              {
+                type: 'AgentRuntimeError',
+                message: error instanceof Error ? error.message : 'Agent runtime execution failed',
+              },
+              { operationId },
+            )
+            .catch(() => {});
+        }
+      }
     },
     onRunParked: NOOP,
     onRunResumed: NOOP,

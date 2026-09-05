@@ -159,6 +159,48 @@ afterEach(() => {
 
 describe('StreamingExecutor actions', () => {
   describe('executeClientAgent', () => {
+    it('projects a preparation failure on the current assistant so the user can retry', async () => {
+      const context = { agentId: TEST_IDS.SESSION_ID, topicId: TEST_IDS.TOPIC_ID };
+      const assistant = createMockMessage({
+        id: 'preparing-assistant',
+        role: 'assistant',
+        parentId: 'source-user',
+      });
+      const updateError = vi.fn().mockResolvedValue(undefined);
+      act(() =>
+        useChatStore.setState({
+          dbMessagesMap: { [messageMapKey(context)]: [assistant] },
+          optimisticUpdateMessageError: updateError,
+        }),
+      );
+      const { operationId } = useChatStore
+        .getState()
+        .startOperation({ type: 'execAgentRuntime', context });
+      const lifecycle = buildRunLifecycle(() => useChatStore.getState(), {
+        context,
+        parentMessageId: 'source-user',
+        parentMessageType: 'user',
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+      });
+      await lifecycle.onRunError({
+        context,
+        operationId,
+        runId: operationId,
+        runScope: 'top_level',
+        runtimeType: 'client',
+        error: new Error('Project skill scan failed; retry after reconnecting'),
+      });
+      expect(updateError).toHaveBeenCalledWith(
+        'preparing-assistant',
+        expect.objectContaining({
+          message: 'Project skill scan failed; retry after reconnecting',
+        }),
+        { operationId },
+      );
+    });
+
     it('carries one approved path from the pending tool into the new local operation', async () => {
       act(() => useChatStore.setState({ executeClientAgent: realExecAgentRuntime }));
       const request = {
