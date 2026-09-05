@@ -1,6 +1,6 @@
 # Workspace PR #116：修复方案与验收记录
 
-日期：2026-09-05。状态：A/B/C 候选修复及真实 UI 发现的接线问题已分批提交，本地 Web / Electron 验收进行中；尚未合并或部署。
+日期：2026-09-06。状态：A/B/C 修复及真实 UI 发现的接线问题已分批提交，本地 Web / Electron 可执行主链路验收完成；缺少真实前置的扩展场景明确记录，尚未合并或部署。
 
 ## 结论与依据
 
@@ -181,3 +181,28 @@ flowchart TD
 - 新发现并修复：ZIP importer 错误阻止 `.sh` 等源码；Web device RPC 未识别已准备的应用技能缓存；Electron path approval 的展示分组查找遗漏工具消息，以及 UI 回填 `result_msg_id` 触发不可变意图冲突。后二者正在新 topic 上复验，未提前记为通过。
 - 本轮新增相关回归：streaming executor 55、message adapter 7、device dispatch/package 25、ZIP parser 45、工作流汇总 14 均通过。完整根项目类型检查尚未完成；现有 PR 远端检查仅覆盖旧 head，不代表本次改动已通过 CI。
 - 严格故障时序（执行已成功而 finalize 前断线）无法用当前真实 UI 可靠制造，验收记录明确 BLOCKED；不注入 store/时钟、数据库状态或伪造 UI 通过证据。
+
+
+### 2026-09-06 01:15 本地完整链路补充
+
+- Web 原 A 项目在设备离线时明确显示离线，重新连接后仍通过原设备执行 A 的项目技能。技能发现、激活、reference、脚本输出和自然结束均通过；项目→根 ZIP→wrapped ZIP→项目重新激活保持各自身份。修复服务端 registry 的可见性主体误用组织 workspaceId，改用冻结文件系统 workspace.id（`d50209b9`）。
+- Web 根 ZIP 和 wrapped ZIP 均经真实人工批准、设备缓存准备及脚本执行通过；Electron native ZIP 上传、重复缓存使用、顶部继承 A 不修改后首发也通过。
+- Electron `/tmp` 绝对路径读取经真实一次授权后成功。最后一个审批冲突来自 DB projection 丢失 builtin source；恢复时保持已登记工具来源（`28e1db1f`），不放宽文件权限或终态重放限制。
+- 首次 `false` 的传输 success=true 与 exit_code=1 分离，非零退出不发布 scratch 成功证据（`f12a5120`）。新话题真实失败无绑定，同话题随后 `pwd` 才绑定。
+- 扫描准备阶段的异常现在写入本轮助手错误，提供已有重试控件（`75a347e5`）。真实 EACCES 显示、修复 fixture 权限后点击重试、技能激活与最终回复均通过。
+- 延迟复查发现取消 `sleep 30` 后仍绑定 scratch。客户端在 IPC 返回后补查显式、工具和根运行取消信号（`8f716753`）；3 项回归修复前失败，修复后工具边界 19 项通过，真实延迟窗口正在复验。物理临时目录存在不等于话题绑定。
+- 本 PR 修改了 Go Gateway 协议，因此内测必须同时构建 App 和 Gateway 镜像。已更新 Masterino 补丁对应源码校验和（`7e1702ed`），现有本地 Go 容器中 checksum 与 `go test ./...` 均通过。不能只更新 App 而继续沿用旧 Gateway。
+- 发布边界：PR 使用不会触发自动正式版本发布的标题；合并后使用独立测试标签和不可变 ACR digest，仅更新 masterino-test 的 Gateway、App、memory worker。保留生产配置和现有构建规则。
+
+- Electron 延迟取消复验通过：新话题在途停止，42 秒后重开仍为取消且无绑定，同话题随后 `pwd` 成功才绑定。服务端设备单工具/批量路线同根风险也已修复（`e29407d2`），2 项新增回归修前失败、修后服务端 runtime 151 项通过；Web 真实复验进行中。
+
+- Web 延迟取消及 Electron 查看同一历史话题无绑定通过。异构实际验收发现 `/api/agent/events` 未进入 Electron 后端代理，补精确路径并沿用 OIDC（`73abbcdc`，18 项代理回归、桌面类型检查通过）。随后请求到达 Next，暴露 Codex/Claude Code 没有初始化 stream owner；统一在异构派发前初始化当前用户归属（`17dfb594`，12 项异构回归通过），真实复验继续。
+
+- 异构后续真实运行暴露本地 `lh` launcher 指向尚未构建的 CLI，补两个 Electron 入口的自动构建前置（`0ec7bce9`）。实际 CLI 构建/版本命令、开发环境 13 项回归通过；Codex 新请求真实 `pwd` 与最终回复均为 A 项目并正常结束。
+
+
+### 2026-09-06 01:35 本地验收交付
+
+独立验收已完成可执行主链路并交付总表。最后的异构 Codex 结果重开仍保留实际 A 路径及锁定项目。当前没有未修复的已复现主链路失败。浏览器上传权限、第二台设备、历史半迁移/异构 scratch fixture、精确故障时序保留 BLOCKED；少数补充分支保留 NOT RUN，不能称所有矩阵行全通过。内测 Web/Electron 两阶段尚未执行。
+
+为完整根项目类型检查暂停本任务的本地 Web、Electron 和 Docker 服务，保留数据卷及 profile。后续内测使用独立 Electron test-server profile。
