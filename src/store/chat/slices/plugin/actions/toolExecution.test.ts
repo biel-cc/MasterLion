@@ -160,6 +160,57 @@ describe('raw tool execution boundary', () => {
     });
   });
 
+  it.each(['explicit', 'tool', 'runtime'] as const)(
+    'does not publish late scratch success after %s cancellation',
+    async (source) => {
+      const controller = new AbortController();
+      let complete!: (result: any) => void;
+      const invokeBuiltinTool = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      vi.mocked(hasExecutor).mockReturnValue(true);
+      vi.mocked(useToolStore.getState).mockReturnValue({ invokeBuiltinTool } as any);
+      const actions = createActions();
+      actions.messageOperationMap['tool-message-1'] = 'tool-operation';
+      actions.operations['tool-operation'] = {
+        abortController: source === 'tool' ? controller : undefined,
+        context: { agentId: 'agent-1', topicId: 'topic-1' },
+        id: 'tool-operation',
+        parentOperationId: 'runtime-operation',
+        type: 'executeToolCall',
+      };
+      actions.operations['runtime-operation'] = {
+        abortController: source === 'runtime' ? controller : undefined,
+        context: { agentId: 'agent-1', topicId: 'topic-1' },
+        id: 'runtime-operation',
+        type: 'execAgentRuntime',
+        metadata: {
+          executionContext: {
+            version: 1,
+            plan: { deviceId: 'device-1', kind: 'device', target: 'local' },
+          },
+        },
+      };
+      const pending = actions.internal_executeBuiltinTool(
+        'tool-message-1',
+        builtinPayload,
+        undefined,
+        source === 'explicit' ? controller.signal : undefined,
+      );
+      controller.abort();
+      complete({
+        content: 'late success',
+        success: true,
+        state: { localScratch: { root: '/scratch/topic-1' } },
+      });
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(lambdaClient.projectWorkspace.finalizeLocalScratch.mutate).not.toHaveBeenCalled();
+    },
+  );
+
   it('passes the root runtime frozen execution context to client tool executors', async () => {
     const invokeBuiltinTool = vi.fn().mockResolvedValue({ content: 'ok', success: true });
     vi.mocked(hasExecutor).mockReturnValue(true);

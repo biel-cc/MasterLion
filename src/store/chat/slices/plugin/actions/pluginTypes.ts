@@ -287,6 +287,12 @@ export class PluginTypesActionImpl {
           workingDirectory: executionContext?.cwd,
         });
 
+      // IPC tools may finish after the renderer has stopped the operation.
+      // Never publish their late workspace binding (or result) into a cancelled run.
+      signal?.throwIfAborted();
+      operation?.abortController?.signal.throwIfAborted();
+      rootRuntimeOperation?.abortController?.signal.throwIfAborted();
+
       if (
         result.success &&
         result.state?.localScratch &&
