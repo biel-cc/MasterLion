@@ -161,8 +161,11 @@ describe('GatewayConnectionCtr execution context boundary', () => {
     expect(handleRunCommand).toHaveBeenCalledTimes(1);
   });
 
-  it('does not publish scratch evidence when the command fails', async () => {
-    handleRunCommand.mockResolvedValueOnce({ success: false, stdout: 'failed' });
+  it.each([
+    { success: false, stdout: 'failed' },
+    { success: true, exit_code: 1, stdout: '', stderr: '' },
+  ])('does not publish scratch evidence when the command fails: %j', async (output) => {
+    handleRunCommand.mockResolvedValueOnce(output);
     const controller = makeController();
     const trace = {
       deviceId: 'device-1',
@@ -176,7 +179,7 @@ describe('GatewayConnectionCtr execution context boundary', () => {
       executionContext: { accessRoots: [] },
       trace,
     });
-    expect(result.state).toMatchObject({ success: false });
+    expect(result.state).toMatchObject('exit_code' in output ? { exitCode: 1 } : output);
     expect(result.state).not.toHaveProperty('localScratch');
     expect(
       await (controller as any).executeDeviceRpc('getLocalScratchExecution', trace),
