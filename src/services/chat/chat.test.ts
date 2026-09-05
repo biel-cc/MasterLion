@@ -306,6 +306,13 @@ describe('ChatService', () => {
           expect.anything(),
         );
         expect(provider.mock.calls[0][0]).not.toHaveProperty('providerMedia');
+        expect(mechaModule.contextEngineering).toHaveBeenCalledWith(
+          expect.objectContaining({ preserveMessageIdentity: true }),
+        );
+        for (const message of provider.mock.calls[0][0].messages ?? []) {
+          expect(message).not.toHaveProperty('id');
+          expect(message).not.toHaveProperty('metadata');
+        }
       });
 
       it('counts provider-visible media after context engineering and fails before sending', async () => {

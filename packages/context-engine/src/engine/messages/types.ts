@@ -238,6 +238,8 @@ export interface MessagesEngineParams {
   enableAgentMode?: boolean;
   /** Whether to enable history message count limit */
   enableHistoryCount?: boolean;
+  /** Keep persisted IDs and pin state for internal budgeting; strip before provider dispatch. */
+  preserveMessageIdentity?: boolean;
   /** Force finish flag: when true, injects summary prompt for max-steps completion */
   forceFinish?: boolean;
   /** Function to format history summary */

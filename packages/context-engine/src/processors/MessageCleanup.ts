@@ -20,9 +20,11 @@ const log = debug('context-engine:processor:MessageCleanupProcessor');
  */
 export class MessageCleanupProcessor extends BaseProcessor {
   readonly name = 'MessageCleanupProcessor';
+  private readonly preserveMessageIdentity: boolean;
 
-  constructor(options: ProcessorOptions = {}) {
+  constructor(options: ProcessorOptions & { preserveMessageIdentity?: boolean } = {}) {
     super(options);
+    this.preserveMessageIdentity = options.preserveMessageIdentity ?? false;
   }
 
   protected async doProcess(context: PipelineContext): Promise<PipelineContext> {
@@ -33,7 +35,17 @@ export class MessageCleanupProcessor extends BaseProcessor {
     // Clean each message, keeping only necessary fields
     for (let i = 0; i < clonedContext.messages.length; i++) {
       const message = clonedContext.messages[i];
-      const cleanedMessage = this.cleanMessage(message);
+      let cleanedMessage = this.cleanMessage(message);
+
+      if (this.preserveMessageIdentity && cleanedMessage !== message) {
+        cleanedMessage = {
+          ...cleanedMessage,
+          ...(message.id && { id: message.id }),
+          ...((message.metadata?.pinned || ('pinned' in message && message.pinned)) && {
+            metadata: { pinned: true },
+          }),
+        };
+      }
 
       if (cleanedMessage !== message) {
         clonedContext.messages[i] = cleanedMessage;

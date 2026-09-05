@@ -2222,7 +2222,9 @@ describe('RuntimeExecutors', () => {
 
         const instruction = {
           payload: {
-            messages: [{ content: 'Hello', role: 'user' }],
+            messages: [
+              { id: 'persisted-user', metadata: { pinned: true }, content: 'Hello', role: 'user' },
+            ],
             model: 'gpt-4',
             provider: 'openai',
           },
@@ -2233,10 +2235,17 @@ describe('RuntimeExecutors', () => {
 
         // Real serverMessagesEngine should have been called
         expect(engineSpy).toHaveBeenCalledTimes(1);
+        expect(engineSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ preserveMessageIdentity: true }),
+        );
 
         // Verify the engine actually processed messages:
         // system role should be injected as the first message
         const chatMessages = mockChat.mock.calls[0][0].messages;
+        for (const message of chatMessages) {
+          expect(message).not.toHaveProperty('id');
+          expect(message).not.toHaveProperty('metadata');
+        }
         expect(chatMessages[0]).toEqual(
           expect.objectContaining({
             content: expect.stringContaining('You are a helpful assistant'),
