@@ -11,7 +11,7 @@ export const LOCAL_FILE_PROTOCOL_HOST = 'file';
  * `fetch`.
  */
 export const BACKEND_PATH_PREFIXES = ['/trpc', '/webapi', '/api/auth', '/market'];
-export const BACKEND_EXACT_PATHS = ['/api/upload/s3-proxy'];
+export const BACKEND_EXACT_PATHS = ['/api/upload/s3-proxy', '/api/agent/events'];
 
 export const isBackendPath = (pathname: string) =>
   BACKEND_EXACT_PATHS.includes(pathname) ||
