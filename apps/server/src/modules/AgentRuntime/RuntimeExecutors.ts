@@ -38,6 +38,7 @@ import {
   type ResolvedToolSet,
   resolveTopicReferences,
   SkillResolver,
+  stripContextMessageIdentity,
   ToolNameResolver,
   ToolResolver,
 } from '@lobechat/context-engine';
@@ -1932,6 +1933,7 @@ export const createRuntimeExecutors = (
           botPlatformContext: ctx.botPlatformContext,
           discordContext: ctx.discordContext,
           enableHistoryCount: agentConfig.chatConfig?.enableHistoryCount ?? undefined,
+          preserveMessageIdentity: true,
           evalContext: ctx.evalContext,
           forceFinish: state.forceFinish,
           historyCount: resolveRuntimeHistoryCount(agentConfig.chatConfig?.historyCount),
@@ -2545,7 +2547,15 @@ export const createRuntimeExecutors = (
               const remainingExecutionTimeMs = getRemainingExecutionTimeMs(state);
               const callProvider = async (budgetPayload: BudgetedChatStreamPayload) => {
                 const currentProviderAttemptEpoch = startProviderAttempt();
-                const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
+                const {
+                  messages,
+                  providerMedia: _providerMedia,
+                  ...providerParams
+                } = budgetPayload;
+                const providerPayload = {
+                  ...providerParams,
+                  messages: stripContextMessageIdentity(messages),
+                };
                 const response = await modelRuntime.chat(
                   providerPayload as unknown as ChatStreamPayload,
                   {

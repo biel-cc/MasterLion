@@ -80,8 +80,10 @@ export const serverMessagesEngine = async ({
   topicReferences,
   additionalVariables,
   userTimezone,
+  preserveMessageIdentity,
 }: ServerMessagesEngineParams): Promise<OpenAIChatMessage[]> => {
   const engine = new MessagesEngine({
+    preserveMessageIdentity,
     // Capability injection
     capabilities: {
       isCanUseFC: capabilities?.isCanUseFC,

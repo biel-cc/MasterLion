@@ -98,6 +98,7 @@ interface ContextEngineeringContext {
   operationSkills?: OperationSkillSet['skills'];
   /** Agent's enabled plugin/tool/skill identifiers (from agentConfig.plugins) */
   plugins?: string[];
+  preserveMessageIdentity?: boolean;
   provider: string;
   sessionId?: string;
   /**
@@ -122,6 +123,7 @@ export const contextEngineering = async ({
   inputTemplate,
   enableUserMemories,
   enableHistoryCount,
+  preserveMessageIdentity,
   historyCount,
   historySummary,
   agentBuilderContext,
@@ -661,6 +663,7 @@ export const contextEngineering = async ({
 
   // Create MessagesEngine with injected dependencies
   const engine = new MessagesEngine({
+    preserveMessageIdentity,
     // Agent configuration
     enableHistoryCount,
     formatHistorySummary: historySummaryPrompt,

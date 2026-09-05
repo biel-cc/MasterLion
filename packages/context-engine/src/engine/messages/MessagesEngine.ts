@@ -480,7 +480,7 @@ export class MessagesEngine {
       // Force finish summary (when maxSteps exceeded)
       new ForceFinishSummaryInjector({ enabled: !!forceFinish }),
       // Message cleanup (final step)
-      new MessageCleanupProcessor(),
+      new MessageCleanupProcessor({ preserveMessageIdentity: this.params.preserveMessageIdentity }),
     ];
   }
 }

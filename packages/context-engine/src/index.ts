@@ -11,6 +11,7 @@ export { BaseVirtualLastUserContentProvider } from './base/BaseVirtualLastUserCo
 
 // Context Engine
 export * from './engine';
+export { stripContextMessageIdentity } from './messageIdentity';
 export type { ContextEngineConfig } from './pipeline';
 export { ContextEngine } from './pipeline';
 

@@ -10,7 +10,11 @@ import {
   REQUEST_TOPIC_ID_HEADER,
   REQUEST_TRIGGER_HEADER,
 } from '@lobechat/const';
-import { type OfficialToolItem, type OperationSkillSet } from '@lobechat/context-engine';
+import {
+  type OfficialToolItem,
+  type OperationSkillSet,
+  stripContextMessageIdentity,
+} from '@lobechat/context-engine';
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
 import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
 import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
@@ -322,6 +326,7 @@ class ChatService {
       agentId: targetAgentId,
       // Use raw chatConfig values, not selectors with business logic that may force false
       enableHistoryCount: chatConfig.enableHistoryCount,
+      preserveMessageIdentity: Boolean(options?.contextBudget),
       enableUserMemories,
       groupId,
       // historyCount is number of history messages; add 1 for current user message
@@ -377,7 +382,11 @@ class ChatService {
     const { contextBudget: _, ...providerOptions } = options;
     const callProvider = async (budgetPayload: ClientBudgetedChatPayload) => {
       let contextWindowError: Parameters<NonNullable<FetchOptions['onErrorHandle']>>[0] | undefined;
-      const { providerMedia: _providerMedia, ...providerPayload } = budgetPayload;
+      const { messages, providerMedia: _providerMedia, ...providerParams } = budgetPayload;
+      const providerPayload = {
+        ...providerParams,
+        messages: stripContextMessageIdentity(messages),
+      };
       const response = await this.getChatCompletion(providerPayload as Partial<ChatStreamPayload>, {
         ...providerOptions,
         agentId: targetAgentId,
