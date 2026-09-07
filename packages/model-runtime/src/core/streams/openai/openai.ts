@@ -664,6 +664,18 @@ export interface OpenAIStreamOptions {
   payload?: ChatPayloadForTransformStream;
 }
 
+const isOpenAITerminalChunk = (chunk: unknown) => {
+  if (!chunk || typeof chunk !== 'object') return false;
+
+  const { choices, usage } = chunk as OpenAI.ChatCompletionChunk;
+  return (
+    Boolean(usage) ||
+    choices?.some(
+      (choice) => choice.finish_reason !== null && choice.finish_reason !== undefined,
+    ) === true
+  );
+};
+
 export const OpenAIStream = (
   stream: Stream<OpenAI.ChatCompletionChunk> | ReadableStream,
   {
@@ -690,6 +702,7 @@ export const OpenAIStream = (
       : convertIterableToStream(stream, {
           abortSignal,
           abortSignals,
+          isTerminalChunk: isOpenAITerminalChunk,
           model: payload?.model,
           operationId,
           provider: payload?.provider,

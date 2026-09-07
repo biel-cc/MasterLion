@@ -21,6 +21,20 @@ import {
 } from '../protocol';
 import type { OpenAIStreamOptions } from './openai';
 
+const OPENAI_RESPONSE_TERMINAL_EVENTS = new Set([
+  'response.completed',
+  'response.failed',
+  'response.incomplete',
+]);
+
+const isOpenAIResponseTerminalChunk = (chunk: unknown) =>
+  Boolean(
+    chunk &&
+      typeof chunk === 'object' &&
+      'type' in chunk &&
+      OPENAI_RESPONSE_TERMINAL_EVENTS.has(String(chunk.type)),
+  );
+
 const transformOpenAIStream = (
   chunk:
     | OpenAI.Responses.ResponseStreamEvent
@@ -226,6 +240,7 @@ export const OpenAIResponsesStream = (
       : convertIterableToStream(stream, {
           abortSignal,
           abortSignals,
+          isTerminalChunk: isOpenAIResponseTerminalChunk,
           model: payload?.model,
           operationId,
           provider: payload?.provider,

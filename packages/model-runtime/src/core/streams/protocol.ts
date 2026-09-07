@@ -202,6 +202,7 @@ const isAbortError = (error: unknown): boolean => {
 export type StreamErrorContext = {
   abortSignal?: AbortSignal;
   abortSignals?: ChatStreamAbortSignals;
+  isTerminalChunk?: (chunk: unknown) => boolean;
   model?: string;
   operationId?: string;
   provider?: string;
@@ -377,6 +378,7 @@ export const convertIterableToStream = <T>(
   // copy from https://github.com/vercel/ai/blob/d3aa5486529e3d1a38b30e3972b4f4c63ea4ae9a/packages/ai/streams/ai-stream.ts#L284
   // and add an error handle
   const it = iterable[Symbol.asyncIterator]();
+  let hasTerminalChunk = false;
 
   return new ReadableStream<T>({
     async cancel(reason) {
@@ -385,13 +387,20 @@ export const convertIterableToStream = <T>(
     async pull(controller) {
       try {
         const { done, value } = await it.next();
-        if (done) controller.close();
-        else controller.enqueue(value);
+        if (done) {
+          if (context?.abortSignal?.aborted && !hasTerminalChunk) {
+            controller.enqueue(getAbortStreamChunk(context) as T);
+          }
+          controller.close();
+        } else {
+          if (context?.isTerminalChunk?.(value)) hasTerminalChunk = true;
+          controller.enqueue(value);
+        }
       } catch (e) {
         const error = e as Error;
 
         if (isAbortError(error)) {
-          controller.enqueue(getAbortStreamChunk(context) as T);
+          if (!hasTerminalChunk) controller.enqueue(getAbortStreamChunk(context) as T);
           controller.close();
           return;
         }
@@ -404,13 +413,20 @@ export const convertIterableToStream = <T>(
     async start(controller) {
       try {
         const { done, value } = await it.next();
-        if (done) controller.close();
-        else controller.enqueue(value);
+        if (done) {
+          if (context?.abortSignal?.aborted && !hasTerminalChunk) {
+            controller.enqueue(getAbortStreamChunk(context) as T);
+          }
+          controller.close();
+        } else {
+          if (context?.isTerminalChunk?.(value)) hasTerminalChunk = true;
+          controller.enqueue(value);
+        }
       } catch (e) {
         const error = e as Error;
 
         if (isAbortError(error)) {
-          controller.enqueue(getAbortStreamChunk(context) as T);
+          if (!hasTerminalChunk) controller.enqueue(getAbortStreamChunk(context) as T);
           controller.close();
           return;
         }
