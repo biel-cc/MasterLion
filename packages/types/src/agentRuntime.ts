@@ -77,6 +77,8 @@ export const AgentRuntimeErrorType = {
   ProviderServiceUnavailable: 'ProviderServiceUnavailable',
   /** Network timeout / connection drop talking to the provider. */
   ProviderNetworkError: 'ProviderNetworkError',
+  /** Server-side total deadline elapsed while consuming an upstream model stream. */
+  UpstreamTotalTimeout: 'upstream_timeout',
   /** Proxy/router has no channel for the requested model (key pool exhausted, no upstream). */
   NoAvailableChannel: 'NoAvailableChannel',
   /** Upstream content-moderation / safety filter rejected the input or output. */

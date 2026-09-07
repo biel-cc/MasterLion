@@ -231,6 +231,8 @@ export default {
     'The model "{{model}}" is no longer available. Please pick a current model from the model selector.',
   'response.UnknownChatFetchError':
     'Sorry, an unknown request error occurred. Please check the information below or try again.',
+  'response.upstream_timeout':
+    'The model response exceeded the 300-second time limit. Please retry the request.',
   'stt.responseError': 'Service request failed, please check the configuration or try again',
   'supervisor.decisionFailed':
     'The group host is unable to function. Please check your host configuration to ensure the correct model, API Key, and API endpoint are set.',

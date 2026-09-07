@@ -79,6 +79,8 @@ export default {
     'The provider returned an HTTP error without further detail. Please try again, or check your request and model configuration.',
   UpstreamMalformedResponse:
     'The provider returned a malformed response that could not be parsed. Please retry; if it persists, try a different model or provider.',
+  upstream_timeout:
+    'The model response exceeded the 300-second time limit. Please retry the request.',
   UserConfigError:
     'Provider configuration is invalid (incorrect base URL, missing environment variable, virtual-key restriction, etc.). Please review the provider settings.',
 };

@@ -34,7 +34,10 @@ interface RetryOptions<T> {
 
 interface TimeoutOptions<T> {
   firstByteTimeoutMs?: number;
-  operation: (signal: AbortSignal) => Promise<T>;
+  operation: (
+    signal: AbortSignal,
+    sources: { requestSignal: AbortSignal; totalSignal: AbortSignal },
+  ) => Promise<T>;
   requestSignal: AbortSignal;
   totalSignal?: AbortSignal;
 }
@@ -175,6 +178,7 @@ export const callWithUpstreamTimeouts = async <T>({
   try {
     return await operation(
       AbortSignal.any([requestSignal, totalSignal, firstByteController.signal]),
+      { requestSignal, totalSignal },
     );
   } catch (error) {
     if (firstByteController.signal.aborted && !requestSignal.aborted && !totalSignal.aborted) {

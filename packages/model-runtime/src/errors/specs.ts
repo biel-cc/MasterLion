@@ -343,6 +343,17 @@ export const ERROR_CODE_SPECS: SpecMap = {
     countAsFailure: false,
     description: 'Connection timeout / network drop talking to the provider.',
   },
+  [AgentRuntimeErrorType.UpstreamTotalTimeout]: {
+    code: AgentRuntimeErrorType.UpstreamTotalTimeout,
+    numericId: 6002,
+    category: 'network',
+    severity: 'error',
+    attribution: 'provider',
+    httpStatus: 504,
+    retryable: true,
+    countAsFailure: true,
+    description: 'Upstream model stream exceeded the server-side total deadline.',
+  },
 
   // ─── 7xxx Stream / Runtime ────────────────────────────────────────────
   [AgentRuntimeErrorType.StreamChunkError]: {

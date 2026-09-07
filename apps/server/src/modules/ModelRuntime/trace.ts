@@ -98,6 +98,26 @@ export const createTraceOptions = (
     generation?.update({ endTime: new Date(), ...update });
   };
 
+  const getTimeoutMetadata = (error: unknown) => {
+    if (!error || typeof error !== 'object') return undefined;
+
+    const errorRecord = error as { body?: unknown; type?: unknown };
+    const body =
+      errorRecord.body && typeof errorRecord.body === 'object'
+        ? (errorRecord.body as Record<string, unknown>)
+        : undefined;
+
+    if (errorRecord.type !== 'upstream_timeout' && body?.timeoutType !== 'upstream_total_timeout') {
+      return undefined;
+    }
+
+    return {
+      errorType: 'upstream_timeout',
+      operationId: typeof body?.operationId === 'string' ? body.operationId : metadata?.operationId,
+      timeoutType: 'upstream_total_timeout',
+    };
+  };
+
   if (trace?.id) {
     headers.set(LOBE_CHAT_TRACE_ID, trace.id);
   }
@@ -108,7 +128,9 @@ export const createTraceOptions = (
 
   return {
     callback: {
-      onCompletion: async ({ text, thinking, usage, grounding, toolsCalling }) => {
+      onCompletion: async ({ error, text, thinking, usage, grounding, toolsCalling }) => {
+        if (getTimeoutMetadata(error)) return;
+
         const output =
           // if the toolsCalling is not empty, we need to return the toolsCalling
           !!toolsCalling && toolsCalling.length > 0
@@ -143,9 +165,15 @@ export const createTraceOptions = (
             ? error.message
             : 'Provider request failed';
         const output = { error: message };
+        const timeoutMetadata = getTimeoutMetadata(error);
 
-        finishGeneration({ level: 'ERROR', output, statusMessage: message });
-        trace?.update({ output });
+        finishGeneration({
+          level: 'ERROR',
+          ...(timeoutMetadata ? { metadata: timeoutMetadata } : {}),
+          output,
+          statusMessage: message,
+        });
+        trace?.update({ ...(timeoutMetadata ? { metadata: timeoutMetadata } : {}), output });
       },
 
       onFinal: trace

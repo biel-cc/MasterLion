@@ -6,6 +6,47 @@ import { createReadableStream, readStreamChunk } from '../utils';
 import { OpenAIResponsesStream } from './responsesStream';
 
 describe('OpenAIResponsesStream', () => {
+  it('should preserve upstream total timeout semantics for Responses API streams', async () => {
+    const requestController = new AbortController();
+    const totalController = new AbortController();
+    totalController.abort();
+    const combinedSignal = AbortSignal.any([requestController.signal, totalController.signal]);
+
+    async function* timeoutStream() {
+      yield {
+        content_index: 0,
+        delta: 'partial',
+        item_id: 'item-1',
+        output_index: 0,
+        type: 'response.output_text.delta',
+      };
+      const error = new Error('Request was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    }
+
+    const onError = vi.fn();
+    const chunks = await readStreamChunk(
+      OpenAIResponsesStream(timeoutStream() as any, {
+        abortSignal: combinedSignal,
+        abortSignals: {
+          requestSignal: requestController.signal,
+          totalSignal: totalController.signal,
+        },
+        callbacks: { onError },
+        operationId: 'operation-responses-123',
+      }),
+    );
+
+    expect(chunks.join('')).toContain('"type":"upstream_timeout"');
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ operationId: 'operation-responses-123' }),
+        type: 'upstream_timeout',
+      }),
+    );
+  });
+
   it('should transform OpenAI stream to protocol stream', async () => {
     const mockOpenAIStream = createReadableStream([
       {

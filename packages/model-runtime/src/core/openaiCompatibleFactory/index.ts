@@ -579,8 +579,14 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
         let response: Stream<OpenAI.Chat.Completions.ChatCompletionChunk>;
 
         const streamOptions: OpenAIStreamOptions = {
+          abortSignal: options?.signal,
+          abortSignals: options?.abortSignals,
           bizErrorTypeTransformer: chatCompletion?.handleStreamBizErrorType,
           callbacks: options?.callback,
+          operationId:
+            typeof options?.metadata?.operationId === 'string'
+              ? options.metadata.operationId
+              : undefined,
           payload: {
             apiMode: 'chat_completions',
             includeUsageRequested,
@@ -1344,8 +1350,14 @@ export const createOpenAICompatibleRuntime = <T extends Record<string, any> = an
       });
 
       const streamOptions: OpenAIStreamOptions = {
+        abortSignal: options?.signal,
+        abortSignals: options?.abortSignals,
         bizErrorTypeTransformer: chatCompletion?.handleStreamBizErrorType,
         callbacks: options?.callback,
+        operationId:
+          typeof options?.metadata?.operationId === 'string'
+            ? options.metadata.operationId
+            : undefined,
         payload: {
           apiMode: 'responses',
           model: payload.model,

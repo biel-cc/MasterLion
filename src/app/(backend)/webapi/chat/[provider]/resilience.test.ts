@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  callWithUpstreamTimeouts,
   isRetryableProviderError,
   resetProviderCircuitForTest,
   runWithTransientRetry,
@@ -10,6 +11,48 @@ import {
 afterEach(() => resetProviderCircuitForTest());
 
 describe('NewAPI resilience', () => {
+  it('marks the total timeout as a distinct abort source', async () => {
+    const requestController = new AbortController();
+    const totalController = new AbortController();
+    let combinedSignal: AbortSignal | undefined;
+    let totalSignal: AbortSignal | undefined;
+
+    await callWithUpstreamTimeouts({
+      operation: async (signal, sources) => {
+        combinedSignal = signal;
+        totalSignal = sources.totalSignal;
+        return 'started';
+      },
+      requestSignal: requestController.signal,
+      totalSignal: totalController.signal,
+    });
+
+    totalController.abort();
+
+    expect(combinedSignal?.reason).toBe(totalSignal?.reason);
+  });
+
+  it('preserves user cancellation when it happens before the total timeout', async () => {
+    const requestController = new AbortController();
+    const totalController = new AbortController();
+    const userAbort = new DOMException('The user aborted the request', 'AbortError');
+    let combinedSignal: AbortSignal | undefined;
+
+    await callWithUpstreamTimeouts({
+      operation: async (signal) => {
+        combinedSignal = signal;
+        return 'started';
+      },
+      requestSignal: requestController.signal,
+      totalSignal: totalController.signal,
+    });
+
+    requestController.abort(userAbort);
+    totalController.abort();
+
+    expect(combinedSignal?.reason).toBe(userAbort);
+  });
+
   it.each([
     [{ code: 'ECONNRESET' }, true],
     [{ status: 502 }, true],
