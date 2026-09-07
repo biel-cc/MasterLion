@@ -2,7 +2,7 @@ import type { ChatCitationItem, ChatMessageError } from '@lobechat/types';
 import type OpenAI from 'openai';
 import type { Stream } from 'openai/streaming';
 
-import type { ChatStreamCallbacks } from '../../../types';
+import type { ChatStreamAbortSignals, ChatStreamCallbacks } from '../../../types';
 import type { ILobeAgentRuntimeErrorType } from '../../../types/error';
 import { AgentRuntimeErrorType } from '../../../types/error';
 import { convertOpenAIUsage } from '../../usageConverters';
@@ -651,6 +651,8 @@ const transformOpenAIStream = (
 };
 
 export interface OpenAIStreamOptions {
+  abortSignal?: AbortSignal;
+  abortSignals?: ChatStreamAbortSignals;
   bizErrorTypeTransformer?: (error: {
     message: string;
     name: string;
@@ -658,16 +660,20 @@ export interface OpenAIStreamOptions {
   callbacks?: ChatStreamCallbacks;
   enableStreaming?: boolean; // Choose TPS calculation method (pass false for non-streaming)
   inputStartAt?: number;
+  operationId?: string;
   payload?: ChatPayloadForTransformStream;
 }
 
 export const OpenAIStream = (
   stream: Stream<OpenAI.ChatCompletionChunk> | ReadableStream,
   {
+    abortSignal,
+    abortSignals,
     callbacks,
     bizErrorTypeTransformer,
     payload,
     inputStartAt,
+    operationId,
     enableStreaming = true,
   }: OpenAIStreamOptions = {},
 ) => {
@@ -681,7 +687,13 @@ export const OpenAIStream = (
   const readableStream =
     stream instanceof ReadableStream
       ? stream
-      : convertIterableToStream(stream, { model: payload?.model, provider: payload?.provider });
+      : convertIterableToStream(stream, {
+          abortSignal,
+          abortSignals,
+          model: payload?.model,
+          operationId,
+          provider: payload?.provider,
+        });
 
   return (
     readableStream

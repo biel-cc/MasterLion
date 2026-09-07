@@ -174,7 +174,14 @@ export interface ChatStreamPayload {
   verbosity?: 'low' | 'medium' | 'high';
 }
 
+export interface ChatStreamAbortSignals {
+  requestSignal: AbortSignal;
+  totalSignal: AbortSignal;
+}
+
 export interface ChatMethodOptions {
+  /** Original abort sources used to distinguish user cancellation from the server total timeout. */
+  abortSignals?: ChatStreamAbortSignals;
   callback?: ChatStreamCallbacks;
   /**
    * response headers

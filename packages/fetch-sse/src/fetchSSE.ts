@@ -437,6 +437,7 @@ export const fetchSSE = async (url: string, options: RequestInit & FetchSSEOptio
         }
 
         case 'stop': {
+          if (data === 'abort') finishedType = 'abort';
           options.onMessageHandle?.({ reason: data, type: 'stop' });
           break;
         }

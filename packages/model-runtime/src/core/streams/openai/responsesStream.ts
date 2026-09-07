@@ -208,10 +208,13 @@ const transformOpenAIStream = (
 export const OpenAIResponsesStream = (
   stream: Stream<OpenAI.Responses.ResponseStreamEvent> | ReadableStream,
   {
+    abortSignal,
+    abortSignals,
     callbacks,
     bizErrorTypeTransformer,
     inputStartAt,
     enableStreaming = true,
+    operationId,
     payload,
   }: OpenAIStreamOptions = {},
 ) => {
@@ -220,7 +223,13 @@ export const OpenAIResponsesStream = (
   const readableStream =
     stream instanceof ReadableStream
       ? stream
-      : convertIterableToStream(stream, { model: payload?.model, provider: payload?.provider });
+      : convertIterableToStream(stream, {
+          abortSignal,
+          abortSignals,
+          model: payload?.model,
+          operationId,
+          provider: payload?.provider,
+        });
 
   // use closure to pass payload to transformOpenAIStream
   const transformWithPayload: typeof transformOpenAIStream = (chunk, streamContext) =>

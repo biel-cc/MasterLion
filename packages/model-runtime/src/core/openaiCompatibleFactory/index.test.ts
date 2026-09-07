@@ -827,6 +827,45 @@ describe('LobeOpenAICompatibleFactory', () => {
     });
 
     describe('cancel request', () => {
+      it('forwards timeout provenance into the streaming protocol', async () => {
+        const requestController = new AbortController();
+        const totalController = new AbortController();
+        totalController.abort();
+        const combinedSignal = AbortSignal.any([requestController.signal, totalController.signal]);
+
+        async function* timeoutStream() {
+          yield {
+            choices: [{ delta: { content: 'partial' }, index: 0 }],
+            id: 'completion-1',
+          };
+          const error = new Error('Request was aborted.');
+          error.name = 'AbortError';
+          throw error;
+        }
+
+        vi.spyOn(instance['client'].chat.completions, 'create').mockResolvedValue({
+          tee: () => [timeoutStream(), new ReadableStream()],
+        } as any);
+
+        const response = await instance.chat(
+          {
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'mistralai/mistral-7b-instruct:free',
+            temperature: 0,
+          },
+          {
+            abortSignals: {
+              requestSignal: requestController.signal,
+              totalSignal: totalController.signal,
+            },
+            metadata: { operationId: 'operation-123' },
+            signal: combinedSignal,
+          },
+        );
+
+        expect(await response.text()).toContain('"type":"upstream_timeout"');
+      });
+
       it('should cancel ongoing request correctly', async () => {
         const controller = new AbortController();
         const mockCreateMethod = vi

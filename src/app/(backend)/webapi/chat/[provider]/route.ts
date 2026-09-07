@@ -79,9 +79,10 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
 
     const execute = () =>
       callWithUpstreamTimeouts({
-        operation: (signal) =>
+        operation: (signal, abortSignals) =>
           modelRuntime.chat(data, {
             ...traceOptions,
+            abortSignals,
             callback: {
               ...traceOptions?.callback,
               onError: async (error) => {

@@ -110,6 +110,10 @@ describe('POST handler', () => {
 
       expect(response).toEqual(mockChatResponse);
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
+        abortSignals: {
+          requestSignal: expect.anything(),
+          totalSignal: expect.anything(),
+        },
         callback: { onError: expect.any(Function) },
         headers: expect.objectContaining({ 'x-request-id': expect.any(String) }),
         metadata: {

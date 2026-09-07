@@ -56,6 +56,52 @@ describe('createTraceOptions', () => {
     expect(mocks.shutdownAsync).toHaveBeenCalledOnce();
   });
 
+  it('records an upstream timeout once without overwriting it as a successful completion', async () => {
+    const options = createTraceOptions(
+      { messages: [{ content: 'hello', role: 'user' }], model: 'deepseek-v4-flash' },
+      {
+        metadata: { operationId: 'operation-123' },
+        provider: 'newapi',
+        shutdownMode: 'immediate',
+        trace: { enabled: true, traceId: 'trace-1', userId: 'user-1' },
+      },
+    );
+    const timeoutError = {
+      body: {
+        operationId: 'operation-123',
+        timeoutType: 'upstream_total_timeout',
+      },
+      message: 'Upstream model request exceeded the total timeout',
+      type: 'upstream_timeout',
+    };
+
+    await options.callback.onError?.(timeoutError);
+    await options.callback.onCompletion?.({ error: timeoutError, text: 'partial' });
+    await options.callback.onFinal?.({ error: timeoutError, text: 'partial' });
+
+    expect(mocks.generationUpdate).toHaveBeenCalledOnce();
+    expect(mocks.generationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'ERROR',
+        metadata: {
+          errorType: 'upstream_timeout',
+          operationId: 'operation-123',
+          timeoutType: 'upstream_total_timeout',
+        },
+      }),
+    );
+    expect(mocks.traceUpdate).toHaveBeenCalledOnce();
+    expect(mocks.traceUpdate).toHaveBeenCalledWith({
+      metadata: {
+        errorType: 'upstream_timeout',
+        operationId: 'operation-123',
+        timeoutType: 'upstream_total_timeout',
+      },
+      output: { error: 'Upstream model request exceeded the total timeout' },
+    });
+    expect(mocks.shutdownAsync).toHaveBeenCalledOnce();
+  });
+
   it('serializes object model parameters before sending them to Langfuse', () => {
     createTraceOptions(
       {

@@ -5,6 +5,94 @@ import { FIRST_CHUNK_ERROR_KEY } from '../protocol';
 import { OpenAIStream } from './openai';
 
 describe('OpenAIStream', () => {
+  it('should emit upstream_timeout after partial output when the total timeout aborts', async () => {
+    const requestController = new AbortController();
+    const totalTimeoutController = new AbortController();
+    totalTimeoutController.abort();
+    const combinedSignal = AbortSignal.any([
+      requestController.signal,
+      totalTimeoutController.signal,
+    ]);
+    requestController.abort();
+
+    async function* timeoutStream() {
+      yield {
+        choices: [{ delta: { content: 'partial' }, index: 0 }],
+        id: 'completion-1',
+      };
+      const error = new Error('Request was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    }
+
+    const onError = vi.fn();
+    const onFinal = vi.fn();
+    const protocolStream = OpenAIStream(timeoutStream() as any, {
+      abortSignal: combinedSignal,
+      abortSignals: {
+        requestSignal: requestController.signal,
+        totalSignal: totalTimeoutController.signal,
+      },
+      callbacks: { onError, onFinal },
+      operationId: 'operation-123',
+      payload: { model: 'gpt-test', provider: 'newapi' },
+    });
+
+    const decoder = new TextDecoder();
+    let output = '';
+    // @ts-ignore
+    for await (const chunk of protocolStream) output += decoder.decode(chunk, { stream: true });
+
+    expect(output).toContain('event: text\n');
+    expect(output).toContain('event: error\n');
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          operationId: 'operation-123',
+          timeoutType: 'upstream_total_timeout',
+        }),
+        type: 'upstream_timeout',
+      }),
+    );
+    expect(onFinal).toHaveBeenCalledOnce();
+  });
+
+  it('should keep user cancellation as stop abort', async () => {
+    const userController = new AbortController();
+    const totalController = new AbortController();
+    userController.abort(new DOMException('The user aborted the request', 'AbortError'));
+    const combinedSignal = AbortSignal.any([userController.signal, totalController.signal]);
+    totalController.abort();
+
+    async function* abortedStream() {
+      yield* [];
+      const error = new Error('Request was aborted.');
+      error.name = 'AbortError';
+      throw error;
+    }
+
+    const onError = vi.fn();
+    const protocolStream = OpenAIStream(abortedStream() as any, {
+      abortSignal: combinedSignal,
+      abortSignals: {
+        requestSignal: userController.signal,
+        totalSignal: totalController.signal,
+      },
+      callbacks: { onError },
+      operationId: 'operation-user-abort',
+    });
+    const decoder = new TextDecoder();
+    let output = '';
+    // @ts-ignore
+    for await (const chunk of protocolStream) output += decoder.decode(chunk, { stream: true });
+
+    expect(output).toContain('event: stop\n');
+    expect(output).toContain('data: "abort"\n\n');
+    expect(output).not.toContain('event: error\n');
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('should transform OpenAI stream to protocol stream', async () => {
     const mockOpenAIStream = new ReadableStream({
       start(controller) {

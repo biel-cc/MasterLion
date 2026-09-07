@@ -49,6 +49,62 @@ describe('fetchSSE', () => {
     });
   });
 
+  it('should finish as abort when a legacy server sends stop("abort")', async () => {
+    const mockOnFinish = vi.fn();
+
+    (fetchEventSource as any).mockImplementationOnce(
+      (_url: string, options: FetchEventSourceInit) => {
+        options.onopen!({ clone: () => ({ ok: true, headers: new Headers() }) } as any);
+        options.onmessage!({ event: 'stop', data: JSON.stringify('abort') } as any);
+      },
+    );
+
+    await fetchSSE('/', { onFinish: mockOnFinish, responseAnimation: 'none' });
+
+    expect(mockOnFinish).toHaveBeenCalledWith('', expect.objectContaining({ type: 'abort' }));
+  });
+
+  it('should keep a normal stop as done', async () => {
+    const mockOnFinish = vi.fn();
+
+    (fetchEventSource as any).mockImplementationOnce(
+      (_url: string, options: FetchEventSourceInit) => {
+        options.onopen!({ clone: () => ({ ok: true, headers: new Headers() }) } as any);
+        options.onmessage!({ event: 'stop', data: JSON.stringify('end_turn') } as any);
+      },
+    );
+
+    await fetchSSE('/', { onFinish: mockOnFinish, responseAnimation: 'none' });
+
+    expect(mockOnFinish).toHaveBeenCalledWith('', expect.objectContaining({ type: 'done' }));
+  });
+
+  it('should finish as error when the server sends upstream_timeout', async () => {
+    const mockOnErrorHandle = vi.fn();
+    const mockOnFinish = vi.fn();
+    const timeoutError = {
+      body: { operationId: 'operation-123', timeoutType: 'upstream_total_timeout' },
+      message: 'Upstream model request exceeded the total timeout',
+      type: 'upstream_timeout',
+    };
+
+    (fetchEventSource as any).mockImplementationOnce(
+      (_url: string, options: FetchEventSourceInit) => {
+        options.onopen!({ clone: () => ({ ok: true, headers: new Headers() }) } as any);
+        options.onmessage!({ event: 'error', data: JSON.stringify(timeoutError) } as any);
+      },
+    );
+
+    await fetchSSE('/', {
+      onErrorHandle: mockOnErrorHandle,
+      onFinish: mockOnFinish,
+      responseAnimation: 'none',
+    });
+
+    expect(mockOnErrorHandle).toHaveBeenCalledWith(timeoutError);
+    expect(mockOnFinish).toHaveBeenCalledWith('', expect.objectContaining({ type: 'error' }));
+  });
+
   it('should handle tool_calls event correctly', async () => {
     const mockOnMessageHandle = vi.fn();
     const mockOnFinish = vi.fn();
