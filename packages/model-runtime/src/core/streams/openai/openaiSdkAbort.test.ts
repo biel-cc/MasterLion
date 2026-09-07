@@ -100,6 +100,67 @@ describe('OpenAI SDK abort handling', () => {
     expect(onFinal).toHaveBeenCalledOnce();
   });
 
+  it('does not treat intermediate usage as completion before a swallowed timeout', async () => {
+    const requestController = new AbortController();
+    const totalController = new AbortController();
+    const combinedSignal = AbortSignal.any([
+      requestController.signal,
+      totalController.signal,
+    ]);
+    const client = new OpenAI({
+      apiKey: 'test-key',
+      baseURL: 'https://example.test/v1',
+      dangerouslyAllowBrowser: true,
+      fetch: createAbortingSSEFetch(
+        {
+          choices: [{ delta: { content: 'partial' }, finish_reason: null, index: 0 }],
+          created: 1,
+          id: 'completion-with-intermediate-usage',
+          model: 'compat-model',
+          object: 'chat.completion.chunk',
+          usage: { completion_tokens: 1, prompt_tokens: 10, total_tokens: 11 },
+        },
+        () =>
+          totalController.abort(
+            new DOMException('Upstream model request exceeded the total timeout', 'TimeoutError'),
+          ),
+      ),
+      maxRetries: 0,
+    });
+    const sdkStream = (await client.chat.completions.create(
+      {
+        messages: [{ content: 'hello', role: 'user' }],
+        model: 'compat-model',
+        stream: true,
+      },
+      { signal: combinedSignal },
+    )) as Stream<OpenAI.ChatCompletionChunk>;
+    const [productionStream] = sdkStream.tee();
+    const onCompletion = vi.fn();
+    const onError = vi.fn();
+
+    const output = await readSSE(
+      OpenAIStream(productionStream, {
+        abortSignal: combinedSignal,
+        abortSignals: {
+          requestSignal: requestController.signal,
+          totalSignal: totalController.signal,
+        },
+        callbacks: { onCompletion, onError },
+        operationId: 'operation-intermediate-usage-sdk',
+        payload: { model: 'compat-model', provider: 'newapi' },
+      }),
+    );
+
+    expect(output).toContain('event: text\n');
+    expect(output).toContain('event: error\n');
+    expect(output).toContain('"type":"upstream_timeout"');
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ type: 'upstream_timeout' }) }),
+    );
+  });
+
   it('emits upstream_timeout when Responses SDK swallows AbortError as done', async () => {
     const requestController = new AbortController();
     const totalController = new AbortController();

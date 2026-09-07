@@ -667,9 +667,8 @@ export interface OpenAIStreamOptions {
 const isOpenAITerminalChunk = (chunk: unknown) => {
   if (!chunk || typeof chunk !== 'object') return false;
 
-  const { choices, usage } = chunk as OpenAI.ChatCompletionChunk;
+  const { choices } = chunk as OpenAI.ChatCompletionChunk;
   return (
-    Boolean(usage) ||
     choices?.some(
       (choice) => choice.finish_reason !== null && choice.finish_reason !== undefined,
     ) === true
